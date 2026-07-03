@@ -1,0 +1,1369 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DEEP FIELD — MK-II</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body{height:100%;width:100%;overflow:hidden;background:#020306;color:#dce6f0;font-family:'IBM Plex Sans',system-ui,sans-serif;-webkit-font-smoothing:antialiased;}
+  @keyframes rrPulse{0%,100%{opacity:1}50%{opacity:.2}}
+  @keyframes rrBoot{from{width:0}to{width:100%}}
+  @keyframes rrFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
+  @keyframes rrSpin{to{transform:rotate(360deg)}}
+  .rr-lf{position:absolute;pointer-events:none;border-radius:50%;mix-blend-mode:screen;transform:translate(-50%,-50%);will-change:left,top,opacity;}
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+</head>
+<body>
+<div id="rr_root" style="position:fixed;inset:0;overflow:hidden;background:#020306;">
+  <canvas id="rr_c" style="display:block;width:100%;height:100%;"></canvas>
+  <div id="rr_lens" style="position:absolute;inset:0;pointer-events:none;z-index:8;overflow:hidden;"></div>
+
+  <!-- fatal error fallback -->
+  <div id="rr_fatal" style="position:absolute;inset:0;z-index:99;display:none;align-items:center;justify-content:center;background:#020306;text-align:center;padding:30px;">
+    <div style="max-width:460px;">
+      <div style="font-family:'IBM Plex Mono',monospace;color:#ff6a5a;letter-spacing:.3em;font-size:11px;margin-bottom:14px;">ERRORE DI CARICAMENTO</div>
+      <div style="font-size:16px;color:#eaf2fa;line-height:1.6;">Impossibile caricare le librerie 3D (Three.js) da CDN. Controlla la connessione o eventuali blocchi (adblock/firewall) verso cdnjs.cloudflare.com e cdn.jsdelivr.net, poi ricarica la pagina.</div>
+    </div>
+  </div>
+
+  <!-- ===================== HUD ===================== -->
+  <div id="rr_hud" style="position:absolute;inset:0;pointer-events:none;z-index:10;opacity:0;transition:opacity .6s;font-family:'IBM Plex Sans',sans-serif;">
+
+    <div style="position:absolute;top:18px;left:18px;background:rgba(7,12,19,.74);backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px);border:1px solid rgba(120,160,190,.20);border-radius:5px;padding:11px 15px;min-width:236px;">
+      <div style="display:flex;align-items:center;gap:9px;margin-bottom:7px;">
+        <div data-acc-bg="1" style="width:7px;height:7px;border-radius:50%;background:#5fd0e0;box-shadow:0 0 9px #5fd0e0;animation:rrPulse 1.9s infinite;"></div>
+        <span data-acc-fg="1" style="font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.24em;color:#5fd0e0;">SISTEMA ATTIVO</span>
+      </div>
+      <div id="rr_sysName" style="font-size:18px;font-weight:600;letter-spacing:.02em;color:#eaf2fa;line-height:1.1;">HIP 41420</div>
+      <div id="rr_sysSub" style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.12em;color:#7e90a4;margin-top:3px;">CLASSE G · 5700K · SETTORE 04-A</div>
+      <div id="rr_coords" style="font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.04em;color:#aab8c8;margin-top:9px;padding-top:9px;border-top:1px solid rgba(120,160,190,.14);">X +0000  Y +0000  Z +0000</div>
+    </div>
+
+    <div style="position:absolute;top:18px;left:50%;transform:translateX(-50%);background:rgba(7,12,19,.74);backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px);border:1px solid rgba(120,160,190,.20);border-radius:5px;padding:10px 22px;text-align:center;min-width:320px;max-width:540px;">
+      <div id="rr_mKick" data-acc-fg="1" style="font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.30em;color:#5fd0e0;font-weight:500;">DIRETTIVA 1 / 6</div>
+      <div id="rr_mTitle" style="font-size:15px;font-weight:600;color:#f1f6fb;margin-top:4px;">Calibrazione di volo</div>
+      <div id="rr_mObj" style="font-size:12px;color:#9fb0c2;margin-top:2px;">Attraversa il marcatore di rotta — segui l'anello verde</div>
+    </div>
+
+    <div style="position:absolute;top:18px;right:18px;background:rgba(7,12,19,.74);backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px);border:1px solid rgba(120,160,190,.20);border-radius:5px;padding:11px 15px;min-width:204px;display:flex;flex-direction:column;gap:9px;">
+      <div>
+        <div style="display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.16em;color:#9fb0c2;margin-bottom:4px;"><span style="color:#7fd0ff;">SCUDO</span><span id="rr_shieldN">100</span></div>
+        <div style="height:5px;border-radius:3px;background:rgba(255,255,255,.08);overflow:hidden;"><i id="rr_shield" style="display:block;height:100%;width:100%;background:linear-gradient(90deg,#3aa0e0,#7fd0ff);"></i></div>
+      </div>
+      <div>
+        <div style="display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.16em;color:#9fb0c2;margin-bottom:4px;"><span style="color:#f0a830;">SCAFO</span><span id="rr_hullN">100</span></div>
+        <div style="height:5px;border-radius:3px;background:rgba(255,255,255,.08);overflow:hidden;"><i id="rr_hull" style="display:block;height:100%;width:100%;background:linear-gradient(90deg,#d07a2a,#f0a830);"></i></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;gap:14px;padding-top:8px;border-top:1px solid rgba(120,160,190,.14);font-family:'IBM Plex Mono',monospace;">
+        <div style="text-align:center;"><div style="font-size:9px;letter-spacing:.14em;color:#7e90a4;">MINERALI</div><div id="rr_min" style="font-size:16px;color:#cfe0ee;font-weight:600;">0</div></div>
+        <div style="text-align:center;"><div style="font-size:9px;letter-spacing:.14em;color:#7e90a4;">SCANSIONI</div><div id="rr_scan" style="font-size:16px;color:#cfe0ee;font-weight:600;">0</div></div>
+        <div style="text-align:center;"><div style="font-size:9px;letter-spacing:.14em;color:#7e90a4;">OSTILI</div><div id="rr_kills" style="font-size:16px;color:#cfe0ee;font-weight:600;">0</div></div>
+      </div>
+    </div>
+
+    <div style="position:absolute;bottom:18px;left:18px;background:rgba(7,12,19,.74);backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px);border:1px solid rgba(120,160,190,.20);border-radius:5px;padding:10px;">
+      <div data-acc-fg="1" style="font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.20em;color:#5fd0e0;margin-bottom:7px;text-align:center;">SCANNER · 1800u</div>
+      <canvas id="rr_radar" width="150" height="150" style="display:block;width:150px;height:150px;"></canvas>
+    </div>
+
+    <div style="position:absolute;bottom:18px;left:50%;transform:translateX(-50%);background:rgba(7,12,19,.74);backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px);border:1px solid rgba(120,160,190,.20);border-radius:5px;padding:9px 16px;display:flex;align-items:center;gap:16px;">
+      <div style="text-align:center;min-width:62px;">
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.16em;color:#7e90a4;">SPINTA</div>
+        <div id="rr_thrN" data-acc-fg="1" style="font-family:'IBM Plex Mono',monospace;font-size:18px;font-weight:600;color:#5fd0e0;">35%</div>
+      </div>
+      <div style="width:200px;">
+        <div style="height:7px;border-radius:4px;background:rgba(255,255,255,.08);overflow:hidden;"><i id="rr_thr" data-acc-bg="1" style="display:block;height:100%;width:35%;background:#5fd0e0;"></i></div>
+        <div style="display:flex;justify-content:space-between;margin-top:5px;font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.1em;color:#7e90a4;"><span id="rr_boost" style="color:#445566;">⏵ TURBO</span><span><span id="rr_spd" style="color:#cfe0ee;">000</span> m/s</span></div>
+      </div>
+    </div>
+
+    <div id="rr_cross" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:30px;height:30px;pointer-events:none;">
+      <div style="position:absolute;top:50%;left:0;width:9px;height:1px;background:rgba(150,200,220,.55);"></div>
+      <div style="position:absolute;top:50%;right:0;width:9px;height:1px;background:rgba(150,200,220,.55);"></div>
+      <div style="position:absolute;left:50%;top:0;height:9px;width:1px;background:rgba(150,200,220,.55);"></div>
+      <div style="position:absolute;left:50%;bottom:0;height:9px;width:1px;background:rgba(150,200,220,.55);"></div>
+      <div data-acc-bg="1" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:3px;height:3px;border-radius:50%;background:#5fd0e0;"></div>
+    </div>
+
+    <div id="rr_bracket" style="position:absolute;top:0;left:0;width:74px;height:74px;transform:translate(-50%,-50%);display:none;pointer-events:none;">
+      <div data-acc-bd="1" style="position:absolute;top:0;left:0;width:16px;height:16px;border-top:1.5px solid #5fd0e0;border-left:1.5px solid #5fd0e0;"></div>
+      <div data-acc-bd="1" style="position:absolute;top:0;right:0;width:16px;height:16px;border-top:1.5px solid #5fd0e0;border-right:1.5px solid #5fd0e0;"></div>
+      <div data-acc-bd="1" style="position:absolute;bottom:0;left:0;width:16px;height:16px;border-bottom:1.5px solid #5fd0e0;border-left:1.5px solid #5fd0e0;"></div>
+      <div data-acc-bd="1" style="position:absolute;bottom:0;right:0;width:16px;height:16px;border-bottom:1.5px solid #5fd0e0;border-right:1.5px solid #5fd0e0;"></div>
+    </div>
+
+    <div id="rr_target" style="position:absolute;bottom:96px;right:18px;background:rgba(7,12,19,.74);backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px);border:1px solid rgba(120,160,190,.20);border-radius:5px;padding:10px 14px;min-width:200px;display:none;">
+      <div data-acc-fg="1" style="font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.20em;color:#5fd0e0;margin-bottom:5px;">▸ BERSAGLIO AGGANCIATO</div>
+      <div id="rr_tName" style="font-size:14px;font-weight:600;color:#eaf2fa;">—</div>
+      <div id="rr_tType" style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#8fa0b2;margin-top:2px;">—</div>
+      <div style="display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:10px;color:#aab8c8;margin-top:7px;"><span>DISTANZA</span><span id="rr_tDist">— u</span></div>
+      <div id="rr_tComp" style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#7e90a4;margin-top:5px;padding-top:6px;border-top:1px solid rgba(120,160,190,.14);">RISORSE: non analizzato</div>
+    </div>
+
+    <div id="rr_prompt" style="position:absolute;bottom:130px;left:50%;transform:translateX(-50%);background:rgba(7,12,19,.82);backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px);border:1px solid rgba(120,160,190,.28);border-radius:5px;padding:9px 16px;display:none;align-items:center;gap:10px;font-size:13px;color:#eaf2fa;">
+      <span id="rr_pKey" data-acc-bg="1" style="background:#5fd0e0;color:#04141a;font-family:'IBM Plex Mono',monospace;font-weight:600;border-radius:4px;padding:2px 9px;font-size:12px;">F</span>
+      <span id="rr_pText">Interagisci</span>
+    </div>
+
+    <div id="rr_dialog" style="position:absolute;bottom:30px;left:50%;transform:translateX(-50%);width:min(660px,90vw);background:rgba(7,12,19,.86);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(120,160,190,.28);border-radius:6px;padding:16px 22px;display:none;pointer-events:auto;cursor:pointer;">
+      <div id="rr_dWho" style="color:#f0a830;font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:11px;letter-spacing:.14em;margin-bottom:7px;">DR. HALSA — CONTROLLO MISSIONE</div>
+      <div id="rr_dLine" style="font-size:15px;line-height:1.55;color:#eaf2fa;"></div>
+      <div style="margin-top:9px;font-family:'IBM Plex Mono',monospace;font-size:10px;color:#6f7f92;letter-spacing:.1em;text-align:right;">click / SPAZIO per continuare ▸</div>
+    </div>
+
+    <div id="rr_toast" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) scale(.94);opacity:0;transition:.35s;background:rgba(8,13,21,.9);border:1px solid rgba(95,208,224,.5);border-radius:8px;padding:16px 38px;text-align:center;">
+      <div id="rr_toastT" data-acc-fg="1" style="font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.26em;color:#5fd0e0;font-weight:600;">DIRETTIVA COMPLETATA</div>
+      <div id="rr_toastM" style="font-size:20px;font-weight:600;color:#f7faff;margin-top:5px;">—</div>
+    </div>
+
+    <div style="position:absolute;bottom:5px;left:50%;transform:translateX(-50%);font-family:'IBM Plex Mono',monospace;color:rgba(150,170,195,.4);font-size:9.5px;letter-spacing:.04em;white-space:nowrap;">
+      <b style="color:rgba(180,200,225,.65);">MOUSE</b> rotta · <b style="color:rgba(180,200,225,.65);">W/S</b> spinta · <b style="color:rgba(180,200,225,.65);">SHIFT</b> turbo · <b style="color:rgba(180,200,225,.65);">SPAZIO</b> fuoco · <b style="color:rgba(180,200,225,.65);">TAB</b> aggancia · <b style="color:rgba(180,200,225,.65);">F</b> scansiona · <b style="color:rgba(180,200,225,.65);">G</b> estrai · <b style="color:rgba(180,200,225,.65);">M</b> mappa · <b style="color:rgba(180,200,225,.65);">V</b> audio
+    </div>
+  </div>
+
+  <div id="rr_vig" style="position:absolute;inset:0;pointer-events:none;z-index:11;box-shadow:inset 0 0 220px 40px rgba(0,0,0,.7);"></div>
+  <div id="rr_flash" style="position:absolute;inset:0;pointer-events:none;z-index:12;background:#cfeaff;opacity:0;transition:opacity .4s;"></div>
+  <div id="rr_dmg" style="position:absolute;inset:0;pointer-events:none;z-index:12;box-shadow:inset 0 0 160px 30px rgba(255,60,40,0);transition:box-shadow .25s;"></div>
+
+  <!-- ===================== GALAXY MAP ===================== -->
+  <div id="rr_map" style="position:absolute;inset:0;z-index:30;display:none;background:radial-gradient(120% 120% at 50% 40%,rgba(8,14,26,.93),rgba(2,4,8,.97));backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);pointer-events:auto;flex-direction:column;">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:18px 26px;border-bottom:1px solid rgba(120,160,190,.16);">
+      <div>
+        <div data-acc-fg="1" style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.3em;color:#5fd0e0;">CATALOGO DEEP FIELD</div>
+        <div style="font-size:22px;font-weight:700;color:#eef4fa;letter-spacing:.01em;margin-top:2px;">Mappa Galattica</div>
+      </div>
+      <div id="rr_mapClose" style="cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.12em;color:#9fb0c2;border:1px solid rgba(120,160,190,.3);border-radius:5px;padding:8px 14px;">CHIUDI · ESC</div>
+    </div>
+    <div style="flex:1;display:flex;min-height:0;">
+      <div style="flex:1;position:relative;min-width:0;"><canvas id="rr_mapC" style="display:block;width:100%;height:100%;"></canvas></div>
+      <div style="width:300px;border-left:1px solid rgba(120,160,190,.16);padding:22px;display:flex;flex-direction:column;">
+        <div data-acc-fg="1" style="font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.24em;color:#5fd0e0;">SISTEMA SELEZIONATO</div>
+        <div id="rr_mapName" style="font-size:20px;font-weight:600;color:#eef4fa;margin-top:6px;">—</div>
+        <div id="rr_mapClass" style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8fa0b2;margin-top:3px;">—</div>
+        <div style="margin-top:18px;display:flex;flex-direction:column;gap:11px;font-family:'IBM Plex Mono',monospace;font-size:12px;">
+          <div style="display:flex;justify-content:space-between;color:#aab8c8;"><span style="color:#7e90a4;">DISTANZA</span><span id="rr_mapDist">—</span></div>
+          <div style="display:flex;justify-content:space-between;color:#aab8c8;"><span style="color:#7e90a4;">PIANETI</span><span id="rr_mapPlanets">—</span></div>
+          <div style="display:flex;justify-content:space-between;color:#aab8c8;"><span style="color:#7e90a4;">PERICOLO</span><span id="rr_mapDanger">—</span></div>
+          <div style="display:flex;justify-content:space-between;color:#aab8c8;"><span style="color:#7e90a4;">STATO</span><span id="rr_mapState">—</span></div>
+        </div>
+        <div style="flex:1;"></div>
+        <div id="rr_mapWarp" data-acc-bg="1" style="cursor:pointer;text-align:center;background:#5fd0e0;color:#04141a;font-weight:700;letter-spacing:.1em;font-size:13px;border-radius:6px;padding:13px;opacity:.4;pointer-events:none;">⟶ SALTO IPERSPAZIALE</div>
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:#6f7f92;text-align:center;margin-top:9px;letter-spacing:.06em;">seleziona un sistema · ENTER per saltare</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== START OVERLAY ===================== -->
+  <div id="rr_overlay" style="position:absolute;inset:0;z-index:40;display:flex;flex-direction:column;align-items:center;justify-content:center;background:radial-gradient(125% 125% at 50% 32%,#0b1426 0%,#050810 55%,#020306 100%);cursor:pointer;transition:opacity .7s;">
+    <div data-acc-fg="1" style="font-family:'IBM Plex Mono',monospace;color:#5fd0e0;letter-spacing:.5em;font-size:11px;margin-bottom:16px;">PROGRAMMA DI RILEVAMENTO GALATTICO · MK-II</div>
+    <h1 style="font-size:74px;font-weight:700;letter-spacing:.06em;color:#eef4fa;text-shadow:0 6px 60px rgba(95,208,224,.28);margin-bottom:8px;">DEEP&nbsp;FIELD</h1>
+    <div style="color:#8b9bb0;font-size:15px;max-width:560px;text-align:center;line-height:1.65;margin-bottom:30px;">Sei un pilota della Survey Fleet. Calibra la nave, rileva e analizza i corpi del sistema, estrai minerali, difendi il settore e attiva l'ipermotore per saltare verso una galassia procedurale e sconfinata. Motore grafico MK-II: soli vivi, comete, stazioni orbitali, tunnel iperspaziale e audio procedurale.</div>
+    <div id="rr_start" data-acc-bg="1" style="font-family:'IBM Plex Mono',monospace;color:#04141a;background:#5fd0e0;padding:14px 46px;border-radius:6px;font-size:14px;font-weight:700;letter-spacing:.12em;box-shadow:0 14px 48px rgba(95,208,224,.32);animation:rrFloat 2.6s infinite;">⟶ AVVIA SEQUENZA</div>
+    <div style="margin-top:26px;width:230px;">
+      <div id="rr_bootTxt" style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5b6b80;text-align:center;margin-bottom:7px;">SINCRONIZZAZIONE CATALOGO STELLARE…</div>
+      <div style="height:2px;background:rgba(255,255,255,.1);border-radius:3px;overflow:hidden;"><i data-acc-bg="1" style="display:block;height:100%;background:#5fd0e0;animation:rrBoot 1.4s ease-out forwards;"></i></div>
+    </div>
+    <div style="margin-top:30px;display:flex;gap:24px;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.06em;color:#5b6b80;">
+      <span><b style="color:#9fb0c2;">MOUSE</b> rotta</span><span><b style="color:#9fb0c2;">W/S</b> spinta</span><span><b style="color:#9fb0c2;">SPAZIO</b> fuoco</span><span><b style="color:#9fb0c2;">F</b> scansiona</span><span><b style="color:#9fb0c2;">M</b> mappa</span><span><b style="color:#9fb0c2;">V</b> audio</span>
+    </div>
+  </div>
+
+  <!-- ===================== END OVERLAY ===================== -->
+  <div id="rr_end" style="position:absolute;inset:0;z-index:45;display:none;flex-direction:column;align-items:center;justify-content:center;background:radial-gradient(125% 125% at 50% 34%,#0a1c2a 0%,#050d12 60%,#020306 100%);cursor:pointer;">
+    <div data-acc-fg="1" style="font-family:'IBM Plex Mono',monospace;color:#5fd0e0;letter-spacing:.42em;font-size:11px;margin-bottom:14px;">RILEVAMENTO RIUSCITO</div>
+    <h1 id="rr_endTitle" style="font-size:58px;font-weight:700;color:#eef4fa;text-shadow:0 6px 50px rgba(95,208,224,.3);margin-bottom:10px;text-align:center;">SALTO COMPLETATO</h1>
+    <div id="rr_endSub" style="color:#9bb0c0;font-size:15px;max-width:520px;text-align:center;line-height:1.6;margin-bottom:30px;">Hai attraversato l'ipermotore e raggiunto un nuovo sistema. La galassia è tua: continua a esplorare.</div>
+    <div style="display:flex;gap:14px;">
+      <div id="rr_endCont" data-acc-bg="1" style="font-family:'IBM Plex Mono',monospace;color:#04141a;background:#5fd0e0;padding:13px 34px;border-radius:6px;font-weight:700;letter-spacing:.1em;font-size:13px;">CONTINUA L'ESPLORAZIONE</div>
+      <div id="rr_endRestart" style="font-family:'IBM Plex Mono',monospace;color:#cfe0ee;border:1px solid rgba(120,160,190,.3);padding:13px 30px;border-radius:6px;letter-spacing:.1em;font-size:13px;">RICOMINCIA</div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  'use strict';
+  if(!window.THREE){
+    var f=document.getElementById('rr_fatal'); if(f) f.style.display='flex';
+    return;
+  }
+  var PROPS={ bloomStrength:0.72, flightAssist:true, hudAccent:'Cyan' };
+  var TH=THREE;
+  var $=function(id){ return document.getElementById(id); };
+  var root=$('rr_root'), canvas=$('rr_c');
+  var W=window.innerWidth, H=window.innerHeight;
+
+  // ---------- accent ----------
+  var ACSET={Cyan:'#5fd0e0',Amber:'#f0a830',Mint:'#57d6a0'};
+  function curAccent(){ return ACSET[PROPS.hudAccent]||ACSET.Cyan; }
+  function applyAccent(){ var c=curAccent();
+    document.querySelectorAll('#rr_root [data-acc-fg]').forEach(function(e){ e.style.color=c; });
+    document.querySelectorAll('#rr_root [data-acc-bg]').forEach(function(e){ e.style.background=c; if(e.style.boxShadow) e.style.boxShadow='0 0 9px '+c; });
+    document.querySelectorAll('#rr_root [data-acc-bd]').forEach(function(e){ e.style.borderColor=c; });
+  }
+
+  // ---------- renderer ----------
+  var renderer=new TH.WebGLRenderer({canvas:canvas,antialias:true,preserveDrawingBuffer:true,powerPreference:'high-performance'});
+  renderer.setSize(W,H); renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+  renderer.outputEncoding=TH.sRGBEncoding; renderer.toneMapping=TH.ACESFilmicToneMapping; renderer.toneMappingExposure=1.05;
+  var scene=new TH.Scene();
+  var camera=new TH.PerspectiveCamera(62, W/H, 0.5, 90000);
+  camera.position.set(0,8,-26);
+
+  var amb=new TH.AmbientLight(0x22303f,0.55); scene.add(amb);
+  var hemi=new TH.HemisphereLight(0x33506e,0x05060c,0.34); scene.add(hemi);
+  var sunLight=new TH.DirectionalLight(0xffffff,2.6); sunLight.position.set(1,0.4,1); scene.add(sunLight);
+  var sunLight2=new TH.PointLight(0xffe0b0,0.0,4000); scene.add(sunLight2); // companion (binary) light
+
+  // ---------- post-processing: bloom + lente cinematica ----------
+  var FinalShader={
+    uniforms:{ tDiffuse:{value:null}, uTime:{value:0}, uAberr:{value:0.0009}, uWarp:{value:0}, uVig:{value:0.42} },
+    vertexShader:'varying vec2 vUv;void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
+    fragmentShader:[
+      'uniform sampler2D tDiffuse;uniform float uTime;uniform float uAberr;uniform float uWarp;uniform float uVig;varying vec2 vUv;',
+      'float rnd(vec2 c){return fract(sin(dot(c,vec2(12.9898,78.233)))*43758.5453);}',
+      'void main(){',
+      ' vec2 uv=vUv; vec2 c=uv-0.5; float r=length(c);',
+      ' uv=uv-c*(uWarp*0.24)*r*r;',
+      ' float ab=uAberr*(1.0+uWarp*7.0)*(0.35+r*1.7);',
+      ' vec2 dir=(r>0.001)?(c/r):vec2(0.0);',
+      ' float cr=texture2D(tDiffuse,uv+dir*ab).r;',
+      ' float cg=texture2D(tDiffuse,uv).g;',
+      ' float cb=texture2D(tDiffuse,uv-dir*ab).b;',
+      ' vec3 col=vec3(cr,cg,cb);',
+      ' col*=1.0-uVig*r*r*1.4;',
+      ' col+=vec3((rnd(uv*vec2(1487.0,911.0)+fract(uTime))-0.5)*0.028);',
+      ' col*=1.0-0.022*sin(uv.y*860.0);',
+      ' gl_FragColor=vec4(col,1.0);',
+      '}'
+    ].join('\n')
+  };
+  var composer=null, bloomPass=null, finalPass=null;
+  try{
+    composer=new TH.EffectComposer(renderer);
+    composer.addPass(new TH.RenderPass(scene,camera));
+    bloomPass=new TH.UnrealBloomPass(new TH.Vector2(W,H), PROPS.bloomStrength, 0.72, 0.55);
+    composer.addPass(bloomPass);
+    finalPass=new TH.ShaderPass(FinalShader);
+    finalPass.renderToScreen=true;
+    composer.addPass(finalPass);
+  }catch(e){ console.warn('post fx non disponibili',e); composer=null; }
+
+  // ---------- math / rng helpers ----------
+  function mulberry32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; var t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+  function hx(h){ h=h.replace('#',''); return [parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)]; }
+  function rgbArr(a,b,t){ var A=(typeof a==='string')?hx(a):a, B=(typeof b==='string')?hx(b):b; return [A[0]+(B[0]-A[0])*t,A[1]+(B[1]-A[1])*t,A[2]+(B[2]-A[2])*t]; }
+  function clamp01(v){ return v<0?0:(v>1?1:v); }
+  function glowTex(c){ var s=128,cv=document.createElement('canvas');cv.width=cv.height=s;var x=cv.getContext('2d');
+    var g=x.createRadialGradient(s/2,s/2,0,s/2,s/2,s/2); g.addColorStop(0,c); g.addColorStop(0.35,c.replace('1)','0.5)')); g.addColorStop(1,'rgba(0,0,0,0)');
+    x.fillStyle=g; x.fillRect(0,0,s,s); return new TH.CanvasTexture(cv); }
+  var GLOW_W=glowTex('rgba(255,255,255,1)');
+  function ringSpriteTex(){ var s=128,cv=document.createElement('canvas');cv.width=cv.height=s;var x=cv.getContext('2d');
+    x.strokeStyle='rgba(255,255,255,1)'; x.lineWidth=5; x.shadowColor='rgba(160,220,255,1)'; x.shadowBlur=10;
+    x.beginPath(); x.arc(s/2,s/2,s/2-10,0,7); x.stroke(); return new TH.CanvasTexture(cv); }
+  var RING_TEX=ringSpriteTex();
+
+  // seeded value-noise (perlin-ish), returns fbm(x,y,octaves)
+  function makeNoise2D(rng){
+    var perm=new Uint8Array(256); var i;
+    for(i=0;i<256;i++) perm[i]=i;
+    for(i=255;i>0;i--){ var j=Math.floor(rng()*(i+1)); var t=perm[i]; perm[i]=perm[j]; perm[j]=t; }
+    var p=new Uint8Array(512); for(i=0;i<512;i++) p[i]=perm[i&255];
+    function fade(t){ return t*t*t*(t*(t*6-15)+10); }
+    function lerp(a,b,t){ return a+t*(b-a); }
+    function grad(hash,x,y){ var h=hash&7; var u=h<4?x:y, v=h<4?y:x; return ((h&1)?-u:u)+((h&2)?-2*v:2*v); }
+    function noise(x,y){ var X=Math.floor(x)&255, Y=Math.floor(y)&255; x-=Math.floor(x); y-=Math.floor(y); var u=fade(x), v=fade(y);
+      var aa=p[p[X]+Y], ab=p[p[X]+Y+1], ba=p[p[X+1]+Y], bb=p[p[X+1]+Y+1];
+      return lerp(lerp(grad(aa,x,y),grad(ba,x-1,y),u), lerp(grad(ab,x,y-1),grad(bb,x-1,y-1),u), v); }
+    return function fbm(x,y,oct){ oct=oct||4; var a=1,f=1,sum=0,norm=0,i2; for(i2=0;i2<oct;i2++){ sum+=noise(x*f,y*f)*a; norm+=a; a*=0.52; f*=2.05; } return sum/norm; };
+  }
+
+  // ---------- procedural planet textures (MK-II: bump + luci notturne) ----------
+  var PALS={
+    terran:{water:'#0d3552',shallow:'#1f6a72',low:'#2f6e3c',high:'#6a5a38',peak:'#efe9de',snow:true,atmo:0x6fb8ff,clouds:true,city:true},
+    ocean:{water:'#0a3a5c',shallow:'#178c8a',low:'#2a8a4c',high:'#3f6a3a',peak:'#e8ecd8',snow:false,atmo:0x7fd0ff,clouds:true,city:true},
+    desert:{water:'#3a2410',shallow:'#7a4a2a',low:'#ab6a3a',high:'#d0a86c',peak:'#f0dcb0',snow:false,atmo:0xffb070,clouds:false},
+    ice:{water:'#7ea8c8',shallow:'#bcd8ee',low:'#e2f1ff',high:'#c8e4f5',peak:'#ffffff',snow:true,atmo:0xbfe0ff,clouds:false,crack:true},
+    rock:{water:'#2a2622',shallow:'#3a342f',low:'#56504a',high:'#7c7268',peak:'#a89c8e',snow:false,atmo:0,clouds:false,crater:true},
+    toxic:{water:'#233a12',shallow:'#4a6e1c',low:'#7a9a28',high:'#a8b840',peak:'#d8e88a',snow:false,atmo:0x9fe040,clouds:true},
+    lava:{water:'#100604',shallow:'#2a0f0a',low:'#3a1208',high:'#d6431f',peak:'#ff9a2a',snow:false,atmo:0xff5a2a,clouds:false,glow:true},
+    crystal:{water:'#180a2a',shallow:'#3a1a5a',low:'#6a2e9a',high:'#a850e0',peak:'#f0c8ff',snow:false,atmo:0xc080ff,clouds:false,glow:true,facet:true},
+    gas:{bands:true,b1:'#e8c99a',b2:'#8a5a34',b3:'#c9946a',atmo:0xffe0b0},
+    gasblue:{bands:true,b1:'#bfe0ff',b2:'#3a6494',b3:'#7fb0d8',atmo:0xaad0ff}
+  };
+  function planetTex(type,rng,S){
+    S=S||384;
+    var P=PALS[type]||PALS.rock;
+    var cv=document.createElement('canvas'); cv.width=cv.height=S; var x=cv.getContext('2d');
+    var rcv=document.createElement('canvas'); rcv.width=rcv.height=S; var rx=rcv.getContext('2d');
+    var bcv=document.createElement('canvas'); bcv.width=bcv.height=S; var bx=bcv.getContext('2d');
+    var lcv=null,lx=null,limg=null,ld=null;
+    if(P.city){ lcv=document.createElement('canvas'); lcv.width=lcv.height=S; lx=lcv.getContext('2d'); limg=lx.createImageData(S,S); ld=limg.data; }
+    var noise=makeNoise2D(rng), noise2=makeNoise2D(rng), warp=makeNoise2D(rng);
+    var img=x.createImageData(S,S), d=img.data;
+    var rimg=rx.createImageData(S,S), rd=rimg.data;
+    var bimg=bx.createImageData(S,S), bd=bimg.data;
+    var i, px, py;
+
+    if(P.bands){
+      for(py=0;py<S;py++){
+        var band = noise(0.6, py*0.045, 3);
+        var swirl = warp(1.4, py*0.045,2)*0.4;
+        for(px=0;px<S;px++){
+          var tnoise = noise(px*0.02+swirl*3, py*0.045+band*1.6, 3);
+          var t = clamp01(0.5 + tnoise*0.7);
+          var storm = 0;
+          var dx=px-S*0.66, dyv=py-S*0.42; var dist=Math.sqrt(dx*dx+dyv*dyv*2.4);
+          if(dist<S*0.12){ storm = clamp01(1-dist/(S*0.12))*0.85; }
+          var col = t<0.5 ? rgbArr(P.b2,P.b1,t*2) : rgbArr(P.b1,P.b3,(t-0.5)*2);
+          if(storm>0){ var sc=hx('#ff8a4a'); col=[col[0]+(sc[0]-col[0])*storm,col[1]+(sc[1]-col[1])*storm,col[2]+(sc[2]-col[2])*storm]; }
+          var idx=(py*S+px)*4;
+          d[idx]=col[0]; d[idx+1]=col[1]; d[idx+2]=col[2]; d[idx+3]=255;
+          rd[idx]=rd[idx+1]=rd[idx+2]=110; rd[idx+3]=255;
+          var bv=128+tnoise*60; bd[idx]=bd[idx+1]=bd[idx+2]=bv; bd[idx+3]=255;
+        }
+      }
+    } else {
+      for(py=0;py<S;py++){
+        var lat=Math.abs(py/S-0.5)*2;
+        for(px=0;px<S;px++){
+          var nx=px/S, ny=py/S;
+          var e = noise(nx*3.1+10, ny*3.1+10, 4)*0.7 + noise(nx*7+40,ny*7+40,4)*0.3;
+          e = e*0.5+0.5;
+          var col, rough, bump=e*255;
+          if(P.facet){
+            var f = Math.round(noise2(nx*9,ny*9,1)*6)/6;
+            var t2 = clamp01(0.4+f*1.2+e*0.3);
+            col = rgbArr(P.low,P.peak,t2);
+            rough=40; bump=f*160+e*60;
+          } else if(P.crack){
+            var cr = Math.abs(noise2(nx*10,ny*10,3));
+            col = cr<0.045 ? hx(P.water) : rgbArr(P.low,P.high, clamp01(e*1.1));
+            rough = cr<0.045?30:170; bump = cr<0.045?40:150+e*80;
+          } else if(P.crater){
+            col = rgbArr(P.low,P.high,clamp01(e));
+            var crat = noise2(nx*14,ny*14,2);
+            if(crat>0.42){ var dd=(crat-0.42)*3.2; col=rgbArr(col,hx(P.water),clamp01(dd*0.6)); bump=e*200-dd*120; }
+            rough=220;
+          } else {
+            var waterLevel=0.47;
+            if(e<waterLevel){
+              var wt=clamp01((waterLevel-e)/waterLevel);
+              col = rgbArr(P.shallow,P.water,wt);
+              rough=25+wt*10; bump=110;
+            } else {
+              var lt=clamp01((e-waterLevel)/(1-waterLevel));
+              if(lt<0.55) col=rgbArr(P.low,P.high,lt/0.55);
+              else col=rgbArr(P.high,P.peak,(lt-0.55)/0.45);
+              rough=200+lt*40; bump=115+lt*140;
+              if(P.snow && lat>0.76){ var snowT=clamp01((lat-0.76)/0.24); col=rgbArr(col,hx(P.peak),snowT); rough=rough*(1-snowT)+80*snowT; }
+              if(P.city && lat<0.72){
+                var cl=noise2(nx*8+3,ny*8+3,3);
+                if(cl>0.30 && rng()<0.4){ var lum=clamp01((cl-0.30)*4)*255;
+                  var lidx=(py*S+px)*4; ld[lidx]=lum; ld[lidx+1]=lum*0.75; ld[lidx+2]=lum*0.45; ld[lidx+3]=255; }
+              }
+            }
+          }
+          var idx2=(py*S+px)*4;
+          d[idx2]=col[0]; d[idx2+1]=col[1]; d[idx2+2]=col[2]; d[idx2+3]=255;
+          var rv = rough||150;
+          rd[idx2]=rd[idx2+1]=rd[idx2+2]=rv; rd[idx2+3]=255;
+          var bv2=Math.max(0,Math.min(255,bump)); bd[idx2]=bd[idx2+1]=bd[idx2+2]=bv2; bd[idx2+3]=255;
+        }
+      }
+    }
+    x.putImageData(img,0,0); rx.putImageData(rimg,0,0); bx.putImageData(bimg,0,0);
+    if(lx){ lx.putImageData(limg,0,0); }
+
+    if(P.glow){
+      x.globalCompositeOperation='lighter';
+      for(i=0;i<220;i++){ var gx=rng()*S,gy=rng()*S; if(noise2(gx/S*10,gy/S*10,2)>0.5) continue; var r=1+rng()*2.4;
+        var gg=x.createRadialGradient(gx,gy,0,gx,gy,r*5); gg.addColorStop(0,P.peak); gg.addColorStop(1,'rgba(0,0,0,0)'); x.fillStyle=gg; x.fillRect(gx-r*5,gy-r*5,r*10,r*10); }
+      x.globalCompositeOperation='source-over';
+    }
+    for(i=0;i<S*S*0.02;i++){ var g2=(rng()*255)|0; x.fillStyle='rgba('+g2+','+g2+','+g2+','+(0.015+rng()*0.04)+')'; x.fillRect(rng()*S,rng()*S,1.2,1.2); }
+
+    var tex=new TH.CanvasTexture(cv); tex.anisotropy=8;
+    var rtex=new TH.CanvasTexture(rcv);
+    var btex=new TH.CanvasTexture(bcv);
+    var ltex=lcv?new TH.CanvasTexture(lcv):null;
+    return {map:tex, rough:rtex, bump:btex, lights:ltex};
+  }
+  function cloudTex(rng,S){
+    S=S||256;
+    var cv=document.createElement('canvas'); cv.width=cv.height=S; var x=cv.getContext('2d');
+    var noise=makeNoise2D(rng);
+    var img=x.createImageData(S,S), d=img.data;
+    for(var py=0;py<S;py++){ for(var px=0;px<S;px++){
+      var e = noise(px/S*4+5,py/S*4+5,4)*0.7+noise(px/S*9+1,py/S*9+1,3)*0.3;
+      var a = clamp01((e-0.06))*255;
+      var idx=(py*S+px)*4; d[idx]=255; d[idx+1]=255; d[idx+2]=255; d[idx+3]=a*0.85;
+    }}
+    x.putImageData(img,0,0);
+    var t=new TH.CanvasTexture(cv); t.anisotropy=4; return t;
+  }
+  function atmosphere(radius,color,sunDir){
+    var m=new TH.ShaderMaterial({ uniforms:{glowColor:{value:new TH.Color(color)}, uSunDir:{value:(sunDir||new TH.Vector3(0,1,0)).clone()}},
+      vertexShader:[
+        'varying float i;varying vec3 wN;',
+        'void main(){',
+        ' vec3 vn=normalize(normalMatrix*normal);',
+        ' vec3 vp=normalize((modelViewMatrix*vec4(position,1.0)).xyz);',
+        ' wN=normalize(mat3(modelMatrix)*normal);',
+        ' i=pow(1.0-abs(dot(vn,vp)),2.4);',
+        ' gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}'
+      ].join('\n'),
+      fragmentShader:[
+        'uniform vec3 glowColor;uniform vec3 uSunDir;varying float i;varying vec3 wN;',
+        'void main(){',
+        ' float day=0.28+0.72*max(0.0,dot(normalize(wN),normalize(uSunDir)));',
+        ' gl_FragColor=vec4(glowColor*day+vec3(0.12,0.14,0.2)*day,i*0.95);}'
+      ].join('\n'),
+      side:TH.BackSide, blending:TH.AdditiveBlending, transparent:true, depthWrite:false });
+    return new TH.Mesh(new TH.SphereGeometry(radius*1.13,32,24), m);
+  }
+  function rockGeometry(radius,rng,detail){
+    var g=new TH.IcosahedronGeometry(radius, detail||1);
+    var pos=g.attributes.position; var v=new TH.Vector3();
+    for(var i=0;i<pos.count;i++){ v.fromBufferAttribute(pos,i); var n=v.clone().normalize(); var disp=1+(rng()-0.5)*0.55; v.copy(n).multiplyScalar(radius*disp); pos.setXYZ(i,v.x,v.y,v.z); }
+    g.computeVertexNormals();
+    return g;
+  }
+  // texture ad anelli planetari con bande radiali
+  function planetRingTex(rng,cool){
+    var Wt=256, cv=document.createElement('canvas'); cv.width=Wt; cv.height=4; var x=cv.getContext('2d');
+    var noise=makeNoise2D(rng);
+    var img=x.createImageData(Wt,4), d=img.data;
+    var A=cool?hx('#9fc8e8'):hx('#d8b98a'), B=cool?hx('#4a688a'):hx('#8a6a44');
+    for(var px=0;px<Wt;px++){
+      var t=px/Wt;
+      var n=noise(t*14,0.5,3)*0.5+0.5;
+      var gap=(noise(t*30,3.5,2)>0.28)?1:0.15;
+      var edge=Math.sin(t*Math.PI);
+      var a=clamp01(n*gap*edge*1.4)*235;
+      var col=rgbArr(A,B,n);
+      for(var py=0;py<4;py++){ var idx=(py*Wt+px)*4; d[idx]=col[0]; d[idx+1]=col[1]; d[idx+2]=col[2]; d[idx+3]=a; }
+    }
+    x.putImageData(img,0,0);
+    var t2=new TH.CanvasTexture(cv); return t2;
+  }
+  function makeRingMesh(rad,rng,cool){
+    var inner=rad*1.45, outer=rad*2.6;
+    var g=new TH.RingGeometry(inner,outer,96,1);
+    var pos=g.attributes.position, uv=g.attributes.uv, v=new TH.Vector2();
+    for(var i=0;i<pos.count;i++){ v.set(pos.getX(i),pos.getY(i)); var rr=(v.length()-inner)/(outer-inner); uv.setXY(i,rr,0.5); }
+    var m=new TH.MeshBasicMaterial({map:planetRingTex(rng,cool),transparent:true,side:TH.DoubleSide,depthWrite:false,opacity:0.92});
+    var mesh=new TH.Mesh(g,m);
+    mesh.rotation.x=Math.PI/2.25+(rng()-0.5)*0.2; mesh.rotation.y=rng()*0.3;
+    return mesh;
+  }
+
+  // ---------- starfield con scintillio ----------
+  var starUniforms={ uTime:{value:0} };
+  var starVert='attribute float aSize;attribute float aPhase;varying float vPhase;varying vec3 vColor;attribute vec3 color;\n'+
+    'void main(){ vPhase=aPhase; vColor=color; vec4 mv=modelViewMatrix*vec4(position,1.0); gl_PointSize=aSize*(3200.0/-mv.z); gl_Position=projectionMatrix*mv; }';
+  var starFrag='precision mediump float;uniform float uTime;varying float vPhase;varying vec3 vColor;\n'+
+    'void main(){ float d=length(gl_PointCoord-vec2(0.5)); if(d>0.5) discard; float tw=0.55+0.45*sin(uTime*1.6+vPhase*6.2831); float a=smoothstep(0.5,0.0,d)*tw; gl_FragColor=vec4(vColor,a); }';
+  var starMat=new TH.ShaderMaterial({ uniforms:starUniforms, vertexShader:starVert, fragmentShader:starFrag, transparent:true, depthWrite:false, blending:TH.AdditiveBlending });
+  var SN=7200; var sp2=[], sc2=[], ssz=[], sph=[];
+  for(var si=0;si<SN;si++){ var r=22000+Math.random()*32000, th=Math.random()*Math.PI*2, ph=Math.acos(2*Math.random()-1);
+    sp2.push(r*Math.sin(ph)*Math.cos(th), r*Math.cos(ph), r*Math.sin(ph)*Math.sin(th));
+    var k=Math.random(); var c=k<0.68?[0.86,0.92,1]:(k<0.87?[0.7,0.82,1]:[1,0.87,0.72]);
+    var b=0.55+Math.random()*0.6; sc2.push(c[0]*b,c[1]*b,c[2]*b);
+    ssz.push(2.2+Math.random()*4.4); sph.push(Math.random());
+  }
+  var SF=new TH.BufferGeometry();
+  SF.setAttribute('position',new TH.Float32BufferAttribute(sp2,3));
+  SF.setAttribute('color',new TH.Float32BufferAttribute(sc2,3));
+  SF.setAttribute('aSize',new TH.Float32BufferAttribute(ssz,1));
+  SF.setAttribute('aPhase',new TH.Float32BufferAttribute(sph,1));
+  var stars=new TH.Points(SF,starMat); scene.add(stars);
+  var starBoost=1.0;
+
+  // ---------- via lattea (banda galattica corretta) ----------
+  function milkyTex(){
+    var Sx=1024, Sy=256, cv=document.createElement('canvas'); cv.width=Sx; cv.height=Sy; var x=cv.getContext('2d');
+    var noise=makeNoise2D(mulberry32(777));
+    var img=x.createImageData(Sx,Sy), d=img.data;
+    var core=hx('#ffe9c8'), blue=hx('#8fb0ff');
+    for(var py=0;py<Sy;py++){ var band=Math.abs(py/Sy-0.5)*2; var falloff=Math.exp(-band*band*6.5);
+      for(var px=0;px<Sx;px++){
+        var n=noise(px/Sx*9,py/Sy*7,4)*0.5+0.5;
+        var dust=noise(px/Sx*22+9,py/Sy*16+9,3)*0.5+0.5;
+        var centerT=Math.exp(-Math.pow((px/Sx-0.5)*3.2,2));
+        var col=rgbArr(blue,core,clamp01(centerT*0.8+n*0.25));
+        var a=falloff*(0.08+n*0.30)*(0.35+dust*0.65);
+        var idx=(py*Sx+px)*4;
+        d[idx]=col[0]; d[idx+1]=col[1]; d[idx+2]=col[2]; d[idx+3]=Math.min(255,a*255);
+      }
+    }
+    x.putImageData(img,0,0);
+    return new TH.CanvasTexture(cv);
+  }
+  var milkyMesh=new TH.Mesh(new TH.PlaneGeometry(64000,21000), new TH.MeshBasicMaterial({map:milkyTex(),transparent:true,blending:TH.AdditiveBlending,depthWrite:false,side:TH.DoubleSide,opacity:0.55}));
+  milkyMesh.position.set(0,-6000,0); milkyMesh.rotation.x=Math.PI/2.1; milkyMesh.rotation.z=0.4; scene.add(milkyMesh);
+
+  // ---------- nebulose ----------
+  var _ns=99; function rndN(){ _ns=(_ns*1103515245+12345)&0x7fffffff; return _ns/0x7fffffff; }
+  function nebula(c){ var s=256,cv=document.createElement('canvas');cv.width=cv.height=s;var x=cv.getContext('2d');
+    for(var i=0;i<28;i++){ var cx=rndN()*s,cy=rndN()*s,r=20+rndN()*100; var g=x.createRadialGradient(cx,cy,0,cx,cy,r); g.addColorStop(0,c); g.addColorStop(1,'rgba(0,0,0,0)'); x.fillStyle=g; x.fillRect(0,0,s,s);} return new TH.CanvasTexture(cv); }
+  var nebulaSprites=[];
+  [['rgba(60,90,160,0.5)',-14000,4000,-9000],['rgba(120,70,150,0.42)',12000,-3000,-15000],['rgba(40,120,140,0.42)',-9000,-6000,14000],['rgba(150,60,110,0.32)',18000,6000,9000],['rgba(50,150,110,0.3)',-19000,-2000,-4000]].forEach(function(a){
+    var c=a[0],x=a[1],y=a[2],z=a[3];
+    var sp=new TH.Sprite(new TH.SpriteMaterial({map:nebula(c),blending:TH.AdditiveBlending,depthWrite:false,transparent:true,opacity:0.65}));
+    sp.position.set(x,y,z); sp.scale.set(17000,17000,1); scene.add(sp); nebulaSprites.push(sp);
+  });
+
+  // ---------- polvere spaziale (sensazione di velocità/profondità) ----------
+  var DUST_N=560, DUST_R=300;
+  var dustPos=new Float32Array(DUST_N*3);
+  for(var di0=0;di0<DUST_N;di0++){ dustPos[di0*3]=(Math.random()-0.5)*DUST_R*2; dustPos[di0*3+1]=(Math.random()-0.5)*DUST_R*2; dustPos[di0*3+2]=(Math.random()-0.5)*DUST_R*2; }
+  var dustGeo=new TH.BufferGeometry(); dustGeo.setAttribute('position',new TH.BufferAttribute(dustPos,3));
+  var dustMat=new TH.PointsMaterial({color:0x9fc4dd,size:1.5,transparent:true,opacity:0.5,depthWrite:false,blending:TH.AdditiveBlending,sizeAttenuation:true});
+  var dust=new TH.Points(dustGeo,dustMat); dust.frustumCulled=false; scene.add(dust);
+  function updateDust(){
+    var arr=dustGeo.attributes.position.array;
+    for(var i=0;i<DUST_N;i++){
+      for(var ax=0;ax<3;ax++){
+        var shipC=(ax===0?ship.position.x:(ax===1?ship.position.y:ship.position.z));
+        var dlt=arr[i*3+ax]-shipC;
+        dlt=((dlt%(DUST_R*2))+DUST_R*3)%(DUST_R*2)-DUST_R;
+        arr[i*3+ax]=shipC+dlt;
+      }
+    }
+    dustGeo.attributes.position.needsUpdate=true;
+  }
+
+  // ---------- linee di velocità (streaks a turbo/warp) ----------
+  var SL_N=80;
+  var slPos=new Float32Array(SL_N*2*3);
+  var slPts=[];
+  for(var sl0=0;sl0<SL_N;sl0++){ slPts.push(new TH.Vector3((Math.random()-0.5)*600,(Math.random()-0.5)*600,(Math.random()-0.5)*600)); }
+  var slGeo=new TH.BufferGeometry(); slGeo.setAttribute('position',new TH.BufferAttribute(slPos,3));
+  var slMat=new TH.LineBasicMaterial({color:0xaee2ff,transparent:true,opacity:0,depthWrite:false,blending:TH.AdditiveBlending});
+  var speedLines=new TH.LineSegments(slGeo,slMat); speedLines.frustumCulled=false; scene.add(speedLines);
+  function updateSpeedLines(speed,fwd,warping){
+    var vis=warping?0.85:clamp01((speed-100)/130)*0.6;
+    slMat.opacity+= (vis-slMat.opacity)*0.15;
+    if(slMat.opacity<0.02){ return; }
+    var len=warping?90:(4+speed*0.09);
+    for(var i=0;i<SL_N;i++){
+      var p=slPts[i];
+      if(p.distanceTo(ship.position)>620){
+        var side=new TH.Vector3(Math.random()-0.5,Math.random()-0.5,Math.random()-0.5).normalize().multiplyScalar(60+Math.random()*260);
+        p.copy(ship.position).addScaledVector(fwd,220+Math.random()*380).add(side);
+      } else {
+        p.addScaledVector(fwd,-speed*0.055);
+      }
+      slPos[i*6]=p.x; slPos[i*6+1]=p.y; slPos[i*6+2]=p.z;
+      slPos[i*6+3]=p.x-fwd.x*len; slPos[i*6+4]=p.y-fwd.y*len; slPos[i*6+5]=p.z-fwd.z*len;
+    }
+    slGeo.attributes.position.needsUpdate=true;
+  }
+
+  // ---------- motore audio procedurale ----------
+  var SND=(function(){
+    var C=null, master=null, noiseBuf=null, engF=null, engG=null, engA=null, engB=null, mineG=null, enabled=true, ready=false;
+    function mkNoise(){ var b=C.createBuffer(1,C.sampleRate*2,C.sampleRate); var ch=b.getChannelData(0); for(var i=0;i<ch.length;i++) ch[i]=Math.random()*2-1; return b; }
+    function init(){
+      if(ready) return;
+      try{
+        C=new (window.AudioContext||window.webkitAudioContext)();
+        master=C.createGain(); master.gain.value=0.5; master.connect(C.destination);
+        noiseBuf=mkNoise();
+        engA=C.createOscillator(); engA.type='sawtooth'; engA.frequency.value=48;
+        engB=C.createOscillator(); engB.type='sawtooth'; engB.frequency.value=48.7;
+        engF=C.createBiquadFilter(); engF.type='lowpass'; engF.frequency.value=180; engF.Q.value=4;
+        engG=C.createGain(); engG.gain.value=0;
+        engA.connect(engF); engB.connect(engF); engF.connect(engG); engG.connect(master);
+        engA.start(); engB.start();
+        var rumble=C.createBufferSource(); rumble.buffer=noiseBuf; rumble.loop=true;
+        var rf=C.createBiquadFilter(); rf.type='lowpass'; rf.frequency.value=90;
+        var rg=C.createGain(); rg.gain.value=0.05;
+        rumble.connect(rf); rf.connect(rg); rg.connect(master); rumble.start();
+        var p1=C.createOscillator(); p1.type='sine'; p1.frequency.value=64;
+        var p2=C.createOscillator(); p2.type='sine'; p2.frequency.value=96.4;
+        var pg=C.createGain(); pg.gain.value=0.022;
+        var lfo=C.createOscillator(); lfo.frequency.value=0.07; var lg=C.createGain(); lg.gain.value=0.012;
+        lfo.connect(lg); lg.connect(pg.gain);
+        p1.connect(pg); p2.connect(pg); pg.connect(master); p1.start(); p2.start(); lfo.start();
+        var mineSrc=C.createBufferSource(); mineSrc.buffer=noiseBuf; mineSrc.loop=true;
+        var mf=C.createBiquadFilter(); mf.type='bandpass'; mf.frequency.value=1300; mf.Q.value=8;
+        mineG=C.createGain(); mineG.gain.value=0;
+        mineSrc.connect(mf); mf.connect(mineG); mineG.connect(master); mineSrc.start();
+        ready=true;
+      }catch(e){ console.warn('audio non disponibile',e); }
+    }
+    function resume(){ if(C&&C.state==='suspended') C.resume(); }
+    function env(node,v,at,dur){ node.gain.cancelScheduledValues(at); node.gain.setValueAtTime(v,at); node.gain.exponentialRampToValueAtTime(0.0001,at+dur); }
+    function blip(freq,dur,type,vol,slideTo){
+      if(!ready||!enabled) return;
+      var t=C.currentTime;
+      var o=C.createOscillator(); o.type=type||'sine'; o.frequency.setValueAtTime(freq,t);
+      if(slideTo) o.frequency.exponentialRampToValueAtTime(slideTo,t+dur);
+      var g=C.createGain(); env(g,vol||0.12,t,dur);
+      o.connect(g); g.connect(master); o.start(t); o.stop(t+dur+0.05);
+    }
+    function noiseHit(fStart,fEnd,dur,vol,type){
+      if(!ready||!enabled) return;
+      var t=C.currentTime;
+      var src=C.createBufferSource(); src.buffer=noiseBuf;
+      var f=C.createBiquadFilter(); f.type=type||'lowpass'; f.frequency.setValueAtTime(fStart,t); f.frequency.exponentialRampToValueAtTime(Math.max(30,fEnd),t+dur);
+      var g=C.createGain(); env(g,vol,t,dur);
+      src.connect(f); f.connect(g); g.connect(master); src.start(t); src.stop(t+dur+0.1);
+    }
+    return {
+      init:init, resume:resume,
+      get enabled(){ return enabled; },
+      toggle:function(){ enabled=!enabled; if(master) master.gain.value=enabled?0.5:0; return enabled; },
+      engine:function(throttle,boost){
+        if(!ready||!enabled) return;
+        var t=C.currentTime;
+        engG.gain.setTargetAtTime(0.045+throttle*0.085+(boost?0.05:0),t,0.08);
+        engF.frequency.setTargetAtTime(140+throttle*680+(boost?520:0),t,0.1);
+        engA.frequency.setTargetAtTime(40+throttle*26+(boost?16:0),t,0.1);
+        engB.frequency.setTargetAtTime(40.7+throttle*27+(boost?17:0),t,0.1);
+      },
+      laser:function(){ blip(880,0.13,'square',0.09,180); noiseHit(4000,900,0.08,0.03,'highpass'); },
+      hit:function(){ blip(230,0.12,'square',0.1,90); noiseHit(2200,300,0.14,0.06); },
+      boom:function(big){ noiseHit(big?900:600,45,big?1.1:0.6,big?0.4:0.22); blip(64,big?0.9:0.5,'sine',big?0.3:0.16,32); },
+      scan:function(){ blip(520,0.07,'sine',0.08); setTimeout(function(){blip(700,0.07,'sine',0.08);},90); setTimeout(function(){blip(940,0.11,'sine',0.09);},185); },
+      ui:function(){ blip(660,0.06,'sine',0.05); },
+      mine:function(on){ if(!ready) return; mineG.gain.setTargetAtTime((on&&enabled)?0.06:0,C.currentTime,0.06); },
+      warpCharge:function(){ blip(70,1.15,'sawtooth',0.14,420); },
+      warpJump:function(){ noiseHit(300,6000,1.0,0.3,'bandpass'); blip(800,1.0,'sine',0.15,90); },
+      alarm:function(){ blip(620,0.16,'square',0.08,470); setTimeout(function(){blip(620,0.16,'square',0.08,470);},240); }
+    };
+  })();
+
+  // ---------- nave (modello MK-II più dettagliato) ----------
+  var ship=new TH.Group(); scene.add(ship);
+  var shipEngines=[], shipNavLights=[], engineLight=null;
+  (function(){
+    var body=new TH.MeshStandardMaterial({color:0xb9c4d0,metalness:0.85,roughness:0.32});
+    var dark=new TH.MeshStandardMaterial({color:0x2b333d,metalness:0.72,roughness:0.46});
+    var panel=new TH.MeshStandardMaterial({color:0x8b95a2,metalness:0.7,roughness:0.4});
+    var accentGlow=new TH.MeshStandardMaterial({color:0x5fd0e0,emissive:0x2a8090,emissiveIntensity:1.2,metalness:0.5,roughness:0.3});
+    var fus=new TH.Mesh(new TH.CylinderGeometry(0.5,0.92,5.2,18),body); fus.rotation.x=Math.PI/2; ship.add(fus);
+    var nose=new TH.Mesh(new TH.ConeGeometry(0.5,1.9,18),body); nose.rotation.x=-Math.PI/2; nose.position.z=3.4; ship.add(nose);
+    var canopy=new TH.Mesh(new TH.SphereGeometry(0.55,18,12,0,Math.PI*2,0,Math.PI/2),new TH.MeshStandardMaterial({color:0x6fd6ff,transparent:true,opacity:0.55,metalness:0.4,roughness:0.08,emissive:0x14303f,emissiveIntensity:0.6}));
+    canopy.rotation.x=-Math.PI/2; canopy.position.set(0,0.46,1.3); ship.add(canopy);
+    var wing=new TH.Mesh(new TH.BoxGeometry(5.6,0.16,1.7),dark); wing.position.z=-0.5; ship.add(wing);
+    [[-2.1,0.5],[2.1,0.5],[-1.4,-0.4],[1.4,-0.4]].forEach(function(pp){ var pl=new TH.Mesh(new TH.BoxGeometry(0.9,0.05,0.9),panel); pl.position.set(pp[0],0.09,pp[1]-0.5); ship.add(pl); });
+    // prese d'aria laterali + greeble
+    [[-0.85],[0.85]].forEach(function(a){ var it=new TH.Mesh(new TH.BoxGeometry(0.5,0.42,2.2),dark); it.position.set(a[0],-0.12,0.4); ship.add(it);
+      var lip=new TH.Mesh(new TH.BoxGeometry(0.54,0.1,0.3),panel); lip.position.set(a[0],0.1,1.5); ship.add(lip); });
+    // strisce luminose lungo la fusoliera
+    [[-0.42],[0.42]].forEach(function(a){ var st=new TH.Mesh(new TH.BoxGeometry(0.06,0.06,3.6),accentGlow); st.position.set(a[0],0.32,0.6); ship.add(st); });
+    // antenna
+    var ant=new TH.Mesh(new TH.CylinderGeometry(0.03,0.03,1.2,6),panel); ant.position.set(0,0.9,-0.6); ship.add(ant);
+    var antTip=new TH.Mesh(new TH.SphereGeometry(0.07,8,8),accentGlow); antTip.position.set(0,1.5,-0.6); ship.add(antTip);
+    var wtip=new TH.MeshStandardMaterial({color:0x5fd0e0,emissive:0x2a8090,emissiveIntensity:0.8,metalness:0.5,roughness:0.4});
+    [[-2.8],[2.8]].forEach(function(a){ var xw=a[0]; var t=new TH.Mesh(new TH.BoxGeometry(0.3,0.2,1.1),wtip); t.position.set(xw,0,-0.5); ship.add(t); });
+    var fin=new TH.Mesh(new TH.BoxGeometry(0.16,1.5,1.4),dark); fin.position.set(0,0.7,-1.9); ship.add(fin);
+    var finB=new TH.Mesh(new TH.BoxGeometry(0.16,0.8,1.0),dark); finB.position.set(0,-0.55,-1.8); ship.add(finB);
+    [[-2.75,0.85,'#ff4a3a'],[2.75,0.85,'#57d6a0']].forEach(function(a){
+      var xn=a[0],zn=a[1],col=a[2];
+      var s=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:col,blending:TH.AdditiveBlending,depthWrite:false,transparent:true}));
+      s.position.set(xn,0.12,zn); s.scale.set(0.45,0.45,1); ship.add(s); shipNavLights.push(s);
+    });
+    [[-1.05],[1.05]].forEach(function(a){
+      var xe=a[0];
+      var n=new TH.Mesh(new TH.CylinderGeometry(0.34,0.22,0.6,12),new TH.MeshBasicMaterial({color:0x9fe8ff})); n.rotation.x=Math.PI/2; n.position.set(xe,0,-2.9); ship.add(n);
+      var s=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0x6fd6ff,blending:TH.AdditiveBlending,depthWrite:false,transparent:true})); s.position.set(xe,0,-3.4); s.scale.set(2.6,2.6,1); ship.add(s); shipEngines.push(s);
+    });
+    engineLight=new TH.PointLight(0x6fd6ff,0.8,26); engineLight.position.set(0,0,-3.6); ship.add(engineLight);
+  })();
+
+  // scia dei motori
+  var trail=[]; var trailTimer=0;
+  function spawnTrail(pos,boost){
+    var s=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:boost?0xbfe8ff:0x5fc0e0,blending:TH.AdditiveBlending,depthWrite:false,transparent:true,opacity:0.75}));
+    s.position.copy(pos); var sc=boost?1.6:1.0; s.scale.set(sc,sc,1); scene.add(s);
+    trail.push({mesh:s, life:boost?0.5:0.32, maxLife:boost?0.5:0.32});
+    if(trail.length>170){ var tt=trail.shift(); scene.remove(tt.mesh); tt.mesh.material.dispose(); }
+  }
+  function updateTrail(dt){
+    for(var i=trail.length-1;i>=0;i--){ var t=trail[i]; t.life-=dt; var k=1-t.life/t.maxLife;
+      t.mesh.material.opacity=0.75*(1-k); t.mesh.scale.multiplyScalar(1+dt*1.8);
+      if(t.life<=0){ scene.remove(t.mesh); t.mesh.material.dispose(); trail.splice(i,1); }
+    }
+  }
+
+  // ---------- esplosioni cinematiche: flash + onda d'urto + detriti ----------
+  var explosions=[];
+  var debrisGeo=new TH.TetrahedronGeometry(1,0);
+  function explode(pos,scale,opts){
+    opts=opts||{};
+    var ex={t:0, dur:1.25, parts:[], debris:[], light:null};
+    var flash=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:opts.color||0xfff0c0,blending:TH.AdditiveBlending,depthWrite:false,transparent:true,opacity:1}));
+    flash.position.copy(pos); flash.scale.set(scale*6,scale*6,1); scene.add(flash);
+    ex.parts.push({m:flash,grow:scale*26,fade:2.2});
+    var fire=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0xff8a3a,blending:TH.AdditiveBlending,depthWrite:false,transparent:true,opacity:0.9}));
+    fire.position.copy(pos); fire.scale.set(scale*3.4,scale*3.4,1); scene.add(fire);
+    ex.parts.push({m:fire,grow:scale*13,fade:1.5});
+    var shock=new TH.Sprite(new TH.SpriteMaterial({map:RING_TEX,color:0xcfe8ff,blending:TH.AdditiveBlending,depthWrite:false,transparent:true,opacity:0.85}));
+    shock.position.copy(pos); shock.scale.set(scale*2,scale*2,1); scene.add(shock);
+    ex.parts.push({m:shock,grow:scale*44,fade:1.8});
+    if(scale>2.2){
+      var nD=Math.min(12,4+Math.floor(scale*1.4));
+      for(var i=0;i<nD;i++){
+        var dm=new TH.Mesh(debrisGeo,new TH.MeshBasicMaterial({color:(Math.random()<0.5)?0xffb060:0x6a625a,transparent:true,opacity:1}));
+        dm.position.copy(pos); var s2=0.25+Math.random()*0.5*scale*0.35; dm.scale.set(s2,s2,s2);
+        var vel=new TH.Vector3(Math.random()-0.5,Math.random()-0.5,Math.random()-0.5).normalize().multiplyScalar((14+Math.random()*30)*Math.max(1,scale*0.45));
+        scene.add(dm);
+        ex.debris.push({m:dm,vel:vel,rot:new TH.Vector3(Math.random()*6,Math.random()*6,Math.random()*6)});
+      }
+      ex.light=new TH.PointLight(0xffa050,3.2,scale*70); ex.light.position.copy(pos); scene.add(ex.light);
+    }
+    explosions.push(ex);
+    var d=camera.position.distanceTo(pos); if(d<420) shake=Math.max(shake,(1-d/420)*2.6*Math.min(2,scale*0.4));
+    SND.boom(scale>4.5);
+  }
+  function updateExplosions(dt){
+    for(var i=explosions.length-1;i>=0;i--){
+      var ex=explosions[i]; ex.t+=dt; var k=ex.t/ex.dur;
+      ex.parts.forEach(function(p){ p.m.scale.x+=p.grow*dt; p.m.scale.y+=p.grow*dt; p.m.material.opacity=Math.max(0,1-k*p.fade); });
+      ex.debris.forEach(function(db){ db.m.position.addScaledVector(db.vel,dt); db.vel.multiplyScalar(1-dt*0.7);
+        db.m.rotation.x+=db.rot.x*dt; db.m.rotation.y+=db.rot.y*dt; db.m.material.opacity=Math.max(0,1-k*1.15); });
+      if(ex.light) ex.light.intensity=Math.max(0,3.2*(1-k*1.6));
+      if(ex.t>=ex.dur){
+        ex.parts.forEach(function(p){ scene.remove(p.m); p.m.material.dispose(); });
+        ex.debris.forEach(function(db){ scene.remove(db.m); db.m.material.dispose(); });
+        if(ex.light) scene.remove(ex.light);
+        explosions.splice(i,1);
+      }
+    }
+  }
+  function flashAt(p){ explode(p,1.4,{color:0xcfeaff}); }
+
+  // ---------- lens flare (schermo) ----------
+  var lensRoot=$('rr_lens'), lensEls=[];
+  (function(){
+    function mk(sz,bg,extra){
+      var e=document.createElement('div'); e.className='rr-lf';
+      e.style.width=sz+'px'; e.style.height=sz+'px'; e.style.background=bg; e.style.opacity='0';
+      if(extra) for(var k in extra) e.style[k]=extra[k];
+      lensRoot.appendChild(e); return e;
+    }
+    lensEls.push({e:mk(260,'radial-gradient(circle,rgba(255,244,220,.95) 0%,rgba(255,220,160,.35) 30%,rgba(255,190,120,0) 70%)'),k:0,s:1});
+    lensEls.push({e:mk(700,'radial-gradient(circle,rgba(255,230,190,.28) 0%,rgba(255,210,150,0) 60%)'),k:0,s:1});
+    lensEls.push({e:mk(900,'linear-gradient(90deg,rgba(160,210,255,0) 0%,rgba(190,225,255,.55) 50%,rgba(160,210,255,0) 100%)',{height:'3px',borderRadius:'2px'}),k:0,s:1});
+    lensEls.push({e:mk(90,'radial-gradient(circle,rgba(140,220,255,.5) 0%,rgba(140,220,255,0) 70%)'),k:-0.35,s:0.8});
+    lensEls.push({e:mk(150,'radial-gradient(circle,rgba(255,170,140,.35) 0%,rgba(255,170,140,0) 70%)'),k:-0.7,s:1});
+    lensEls.push({e:mk(60,'radial-gradient(circle,rgba(200,255,220,.45) 0%,rgba(200,255,220,0) 70%)'),k:-1.15,s:0.7});
+    lensEls.push({e:mk(220,'radial-gradient(circle,rgba(150,190,255,.22) 0%,rgba(150,190,255,0) 72%)'),k:0.5,s:1.1});
+  })();
+  var _lfv=new TH.Vector3(), _lfDir=new TH.Vector3();
+  function updateLensFlare(){
+    if(!sun){ lensEls.forEach(function(o){ o.e.style.opacity='0'; }); return; }
+    _lfv.copy(sun.position).project(camera);
+    var behind=_lfv.z>1;
+    var sx=(_lfv.x*0.5+0.5)*W, sy=(-_lfv.y*0.5+0.5)*H;
+    var onScreen=!behind && sx>-200 && sx<W+200 && sy>-200 && sy<H+200;
+    var vis=0;
+    if(onScreen){
+      _lfDir.copy(sun.position).sub(camera.position).normalize();
+      var camF=new TH.Vector3(); camera.getWorldDirection(camF);
+      vis=Math.pow(Math.max(0,camF.dot(_lfDir)),2.5);
+      // occlusione dai pianeti
+      for(var i=0;i<bodies.length;i++){
+        var b=bodies[i];
+        var toB=b.mesh.position.clone().sub(camera.position);
+        var proj=toB.dot(_lfDir);
+        if(proj>0 && proj<camera.position.distanceTo(sun.position)){
+          var perp=toB.sub(_lfDir.clone().multiplyScalar(proj)).length();
+          if(perp<b.radius*1.05){ vis=0; break; }
+        }
+      }
+    }
+    var cx=W/2, cy=H/2;
+    lensEls.forEach(function(o){
+      var px=cx+(sx-cx)*(1+o.k*0)+ (o.k===0?0:0), py;
+      if(o.k===0){ px=sx; py=sy; }
+      else { px=cx+(sx-cx)*o.k*-1; py=cy+(sy-cy)*o.k*-1; }
+      o.e.style.left=px+'px'; o.e.style.top=py+'px';
+      o.e.style.opacity=(vis*0.9*o.s).toFixed(3);
+    });
+  }
+
+  // ---------- tunnel iperspaziale ----------
+  var tunnelMat=new TH.ShaderMaterial({
+    uniforms:{ uTime:{value:0}, uOp:{value:0} },
+    vertexShader:'varying vec2 vUv;void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
+    fragmentShader:[
+      'uniform float uTime;uniform float uOp;varying vec2 vUv;',
+      'void main(){',
+      ' float v=fract(vUv.y*7.0-uTime*2.6);',
+      ' float stripe=smoothstep(0.0,0.09,v)*smoothstep(0.34,0.09,v);',
+      ' float az=0.55+0.45*sin(vUv.x*52.0+uTime*4.0);',
+      ' float endFade=sin(vUv.y*3.14159);',
+      ' vec3 col=mix(vec3(0.25,0.75,0.95),vec3(0.85,0.97,1.0),stripe);',
+      ' gl_FragColor=vec4(col,stripe*az*endFade*uOp);',
+      '}'
+    ].join('\n'),
+    side:TH.BackSide, transparent:true, depthWrite:false, blending:TH.AdditiveBlending
+  });
+  var tunnel=new TH.Mesh(new TH.CylinderGeometry(75,75,1700,40,1,true),tunnelMat);
+  tunnel.visible=false; scene.add(tunnel);
+  var _yUp=new TH.Vector3(0,1,0);
+  function updateTunnel(dt,fwd,active){
+    tunnelMat.uniforms.uTime.value+=dt;
+    var target=active?0.9:0;
+    tunnelMat.uniforms.uOp.value+=(target-tunnelMat.uniforms.uOp.value)*Math.min(1,dt*5);
+    if(tunnelMat.uniforms.uOp.value<0.01 && !active){ tunnel.visible=false; return; }
+    tunnel.visible=true;
+    tunnel.position.copy(ship.position);
+    tunnel.quaternion.setFromUnitVectors(_yUp,fwd);
+  }
+
+  // ---------- sistema + stato galassia ----------
+  var sysGroup=new TH.Group(); scene.add(sysGroup);
+  var bodies=[], mineables=[], moons=[], decor=[], comets=[], sun=null, sunGlow=null, sunCorona=null, companion=null, beltGroups=[], sysName='';
+  var sunShaderMats=[];
+  var SPECTRAL=[{c:'O',col:0x9bb0ff,t:'30000K'},{c:'B',col:0xaabfff,t:'19000K'},{c:'A',col:0xcad7ff,t:'8800K'},{c:'F',col:0xf6f4ff,t:'7000K'},{c:'G',col:0xfff2e6,t:'5700K'},{c:'K',col:0xffd0a0,t:'4400K'},{c:'M',col:0xff9a66,t:'3300K'}];
+  var RES=['Ferrite','Idrogeno','Silicati','Titanio','Acqua','Elio-3','Platino','Iridio','Cobalto','Ammoniaca'];
+  function disposeObj(o){ o.traverse(function(c){ if(c.geometry) c.geometry.dispose(); if(c.material){ var m=Array.isArray(c.material)?c.material:[c.material]; m.forEach(function(mm){ if(mm.map) mm.map.dispose(); if(mm.roughnessMap) mm.roughnessMap.dispose(); if(mm.bumpMap) mm.bumpMap.dispose(); if(mm.emissiveMap&&mm.emissiveMap!==mm.map) mm.emissiveMap.dispose(); mm.dispose(); }); } }); }
+  function clearSystem(){ while(sysGroup.children.length){ var c=sysGroup.children[0]; sysGroup.remove(c); disposeObj(c); } bodies=[]; mineables=[]; moons=[]; decor=[]; comets=[]; sun=null; sunGlow=null; sunCorona=null; companion=null; beltGroups=[]; sunShaderMats=[]; sunLight2.intensity=0; }
+
+  // sole vivo: superficie turbolenta via shader
+  function sunMaterial(colHex){
+    var c=new TH.Color(colHex);
+    var hot=c.clone().lerp(new TH.Color(0xffffff),0.65);
+    var m=new TH.ShaderMaterial({
+      uniforms:{ uTime:{value:0}, uColA:{value:c}, uColB:{value:hot} },
+      vertexShader:'varying vec3 vN;varying vec3 vP;void main(){vN=normal;vP=normalize((modelViewMatrix*vec4(position,1.0)).xyz);gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
+      fragmentShader:[
+        'uniform float uTime;uniform vec3 uColA;uniform vec3 uColB;varying vec3 vN;varying vec3 vP;',
+        'float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}',
+        'float vnoise(vec2 p){vec2 i=floor(p);vec2 f=fract(p);vec2 u=f*f*(3.0-2.0*f);',
+        ' return mix(mix(hash(i),hash(i+vec2(1.,0.)),u.x),mix(hash(i+vec2(0.,1.)),hash(i+vec2(1.,1.)),u.x),u.y);}',
+        'float fbm(vec2 p){float s=0.;float a=0.5;for(int i=0;i<4;i++){s+=vnoise(p)*a;p*=2.1;a*=0.5;}return s;}',
+        'void main(){',
+        ' vec2 q1=vN.xy*3.0+vec2(uTime*0.045,0.0);',
+        ' vec2 q2=vN.yz*3.0-vec2(0.0,uTime*0.038);',
+        ' float n=fbm(q1)+fbm(q2);',
+        ' n=n*0.5;',
+        ' float limb=pow(abs(dot(normalize(vN),vec3(0.,0.,1.))),0.35);',
+        ' vec3 col=mix(uColA*0.85,uColB,smoothstep(0.25,0.85,n));',
+        ' col*=0.65+0.6*limb;',
+        ' col+=uColB*pow(smoothstep(0.7,1.0,n),2.0)*0.8;',
+        ' gl_FragColor=vec4(col*1.6,1.0);}'
+      ].join('\n')
+    });
+    sunShaderMats.push(m);
+    return m;
+  }
+
+  function buildSystem(seed, clsIdx){
+    clearSystem();
+    var rng=mulberry32(seed>>>0);
+    var sp=SPECTRAL[clsIdx!=null?clsIdx:(4+Math.floor(rng()*2))];
+    var sunDir=new TH.Vector3(0.6,0.18,0.78).normalize();
+    var sunPos=sunDir.clone().multiplyScalar(7000);
+    sun=new TH.Mesh(new TH.SphereGeometry(420,48,32),sunMaterial(sp.col));
+    sun.position.copy(sunPos); sysGroup.add(sun);
+    sunGlow=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:sp.col,blending:TH.AdditiveBlending,depthWrite:false,transparent:true}));
+    sunGlow.position.copy(sunPos); sunGlow.scale.set(3600,3600,1); sysGroup.add(sunGlow);
+    sunCorona=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:sp.col,blending:TH.AdditiveBlending,depthWrite:false,transparent:true,opacity:0.35}));
+    sunCorona.position.copy(sunPos); sunCorona.scale.set(7200,7200,1); sysGroup.add(sunCorona);
+    sunLight.position.copy(sunDir); sunLight.color.setHex(sp.col);
+
+    var isBinary = rng()<0.16;
+    if(isBinary){
+      var compAng=rng()*Math.PI*2; var compR=1800+rng()*900;
+      var compPos=sunPos.clone().add(new TH.Vector3(Math.cos(compAng)*compR, (rng()-0.5)*400, Math.sin(compAng)*compR));
+      var compCol=SPECTRAL[Math.floor(rng()*7)].col;
+      var compMesh=new TH.Mesh(new TH.SphereGeometry(190,32,24),sunMaterial(compCol));
+      compMesh.position.copy(compPos); sysGroup.add(compMesh);
+      var compGlow=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:compCol,blending:TH.AdditiveBlending,depthWrite:false,transparent:true}));
+      compGlow.position.copy(compPos); compGlow.scale.set(1800,1800,1); sysGroup.add(compGlow);
+      companion={mesh:compMesh, glow:compGlow, center:sunPos.clone(), r:compR, ang:compAng, speed:0.02+rng()*0.02};
+      sunLight2.position.copy(compPos); sunLight2.color.setHex(compCol); sunLight2.intensity=1.1;
+    }
+
+    var pcount=3+Math.floor(rng()*4);
+    var types=['terran','desert','ice','rock','lava','gas','gasblue','ocean','toxic','crystal'];
+    var i;
+    for(i=0;i<pcount;i++){
+      var type=types[Math.floor(rng()*types.length)];
+      var rad=34+rng()*86;
+      var dist=560+i*360+rng()*190;
+      var ang=rng()*Math.PI*2;
+      var px=Math.cos(ang)*dist, pz=Math.sin(ang)*dist, py=(rng()-0.5)*260;
+      var P=PALS[type];
+      var texset=planetTex(type,rng);
+      var matOpts={map:texset.map, roughness:0.9, metalness:0.04};
+      if(!P.bands){ matOpts.roughnessMap=texset.rough; matOpts.bumpMap=texset.bump; matOpts.bumpScale=rad*0.02; }
+      if(P.glow){ matOpts.emissive=new TH.Color(type==='crystal'?0x8a40d0:0xff5a2a); matOpts.emissiveMap=texset.map; matOpts.emissiveIntensity=type==='crystal'?0.5:0.55; }
+      else if(texset.lights){ matOpts.emissive=new TH.Color(0xffb070); matOpts.emissiveMap=texset.lights; matOpts.emissiveIntensity=0.85; }
+      var mat=new TH.MeshStandardMaterial(matOpts);
+      var pl=new TH.Mesh(new TH.SphereGeometry(rad,48,34),mat);
+      pl.position.set(px,py,pz); sysGroup.add(pl);
+      var cloudMesh=null;
+      if(P.atmo){ var a=atmosphere(rad,P.atmo,sunDir); pl.add(a); }
+      if(P.clouds){
+        var ctex=cloudTex(rng);
+        cloudMesh=new TH.Mesh(new TH.SphereGeometry(rad*1.025,32,22), new TH.MeshStandardMaterial({map:ctex,transparent:true,opacity:0.55,depthWrite:false,roughness:1}));
+        pl.add(cloudMesh);
+      }
+      if((type==='gas'||type==='gasblue')&&rng()<0.72){
+        pl.add(makeRingMesh(rad,rng,type==='gasblue'));
+      }
+      var resN=2+Math.floor(rng()*2); var res=[]; for(var r2=0;r2<resN;r2++){ var xr=RES[Math.floor(rng()*RES.length)]; if(res.indexOf(xr)<0) res.push(xr); }
+      var names=['Kepler','Gliese','Ross','Wolf','Tau','Lalande','Procyon','Eridani','Hydrae'];
+      bodies.push({mesh:pl, cloudMesh:cloudMesh, name:names[Math.floor(rng()*names.length)]+'-'+(100+Math.floor(rng()*899)), type:type, radius:rad, scanned:false, res:res, spin:0.04+rng()*0.08, isBody:true});
+
+      if(!P.bands && rng()<0.5){
+        var mCount=1+(rng()<0.28?1:0);
+        for(var mi=0;mi<mCount;mi++){
+          var mr=rad*(0.16+rng()*0.13);
+          var morbit=rad*(1.9+rng()*1.5+mi*1.15);
+          var mtexset=planetTex('rock',rng,160);
+          var moonMesh=new TH.Mesh(new TH.SphereGeometry(mr,18,13), new TH.MeshStandardMaterial({map:mtexset.map,roughnessMap:mtexset.rough,bumpMap:mtexset.bump,bumpScale:mr*0.04,metalness:0.03}));
+          sysGroup.add(moonMesh);
+          moons.push({mesh:moonMesh, parent:pl, orbitR:morbit, angle:rng()*Math.PI*2, speed:0.16+rng()*0.26, incl:(rng()-0.5)*0.6});
+        }
+      }
+    }
+
+    var beltR=620+rng()*260;
+    var Ntot=560;
+    var variants=4, geoms=[];
+    for(var gi=0;gi<variants;gi++) geoms.push(rockGeometry(1,rng,1));
+    var mm=new TH.MeshStandardMaterial({color:0x6a625a,roughness:0.95,metalness:0.08,flatShading:true});
+    var perVariant=Math.ceil(Ntot/variants);
+    var dum=new TH.Object3D();
+    for(gi=0;gi<variants;gi++){
+      var inst=new TH.InstancedMesh(geoms[gi],mm,perVariant);
+      for(var k=0;k<perVariant;k++){ var aa=rng()*Math.PI*2, rr2=beltR+(rng()-0.5)*190, yy=(rng()-0.5)*74;
+        dum.position.set(Math.cos(aa)*rr2,yy,Math.sin(aa)*rr2); dum.rotation.set(rng()*6,rng()*6,rng()*6); var s2=2+rng()*9; dum.scale.set(s2,s2*0.85,s2); dum.updateMatrix(); inst.setMatrixAt(k,dum.matrix); }
+      inst.instanceMatrix.needsUpdate=true; sysGroup.add(inst); beltGroups.push(inst);
+    }
+    for(i=0;i<14;i++){ var a2=rng()*Math.PI*2, rr3=beltR+(rng()-0.5)*160, yy2=(rng()-0.5)*64;
+      var rkMat=new TH.MeshStandardMaterial({color:0x7a7066,roughness:0.9,metalness:0.12,emissive:0x114a44,emissiveIntensity:0.5,flatShading:true});
+      var rk=new TH.Mesh(rockGeometry(13+rng()*8,rng,1),rkMat);
+      rk.position.set(Math.cos(a2)*rr3,yy2,Math.sin(a2)*rr3); rk.rotation.set(rng()*6,rng()*6,rng()*6); sysGroup.add(rk);
+      mineables.push({mesh:rk, name:'Asteroide '+(['Kx','Vn','Or','Zt'][Math.floor(rng()*4)])+'-'+(10+Math.floor(rng()*89)), type:'asteroide', radius:14, scanned:false, res:[RES[Math.floor(rng()*RES.length)],RES[Math.floor(rng()*RES.length)]], amount:30+Math.floor(rng()*40), spin:0.2+rng()*0.3, mineable:true});
+    }
+
+    // comete con coda di particelle
+    var nCom=(rng()<0.55)?(1+(rng()<0.3?1:0)):0;
+    for(i=0;i<nCom;i++){
+      var nucMat=new TH.MeshStandardMaterial({color:0xbfd8e8,roughness:0.6,metalness:0.1,emissive:0x446688,emissiveIntensity:0.4,flatShading:true});
+      var nuc=new TH.Mesh(rockGeometry(6+rng()*4,rng,1),nucMat); sysGroup.add(nuc);
+      var TN=70; var tp=new Float32Array(TN*3); var tc=new Float32Array(TN*3);
+      for(var ti=0;ti<TN;ti++){ var f=ti/TN; tc[ti*3]=0.55*(1-f)+0.1; tc[ti*3+1]=0.8*(1-f)+0.15; tc[ti*3+2]=1.0*(1-f)+0.2; }
+      var tg=new TH.BufferGeometry(); tg.setAttribute('position',new TH.BufferAttribute(tp,3)); tg.setAttribute('color',new TH.BufferAttribute(tc,3));
+      var tmat=new TH.PointsMaterial({size:7,vertexColors:true,transparent:true,opacity:0.7,depthWrite:false,blending:TH.AdditiveBlending,sizeAttenuation:true});
+      var tail=new TH.Points(tg,tmat); tail.frustumCulled=false; sysGroup.add(tail);
+      comets.push({nuc:nuc, tail:tail, tailN:TN, orbitR:1400+rng()*1400, ang:rng()*Math.PI*2, speed:0.010+rng()*0.014, h:(rng()-0.5)*500, jit:rng()*10});
+    }
+
+    // stazione orbitale rotante
+    if(rng()<0.4){
+      var st=new TH.Group();
+      var hullM=new TH.MeshStandardMaterial({color:0x9aa4b2,metalness:0.8,roughness:0.4});
+      var darkM=new TH.MeshStandardMaterial({color:0x3a4250,metalness:0.7,roughness:0.5});
+      var torus=new TH.Mesh(new TH.TorusGeometry(52,7,14,48),hullM); st.add(torus);
+      var hub=new TH.Mesh(new TH.CylinderGeometry(9,9,26,16),darkM); hub.rotation.x=Math.PI/2; st.add(hub);
+      for(var sk=0;sk<4;sk++){ var spoke=new TH.Mesh(new TH.BoxGeometry(3,3,52),hullM); spoke.rotation.z=sk*Math.PI/2; spoke.rotation.y=Math.PI/2; spoke.rotation.x=sk*Math.PI/2; 
+        var sm=new TH.Mesh(new TH.CylinderGeometry(1.6,1.6,50,8),hullM); sm.rotation.z=Math.PI/2; sm.rotation.y=sk*Math.PI/2;
+        var holder=new TH.Group(); holder.add(sm); holder.rotation.x=0; holder.rotation.z=sk*Math.PI/2; st.add(holder); }
+      var dish=new TH.Mesh(new TH.ConeGeometry(7,5,16,1,true),darkM); dish.position.set(0,0,20); dish.rotation.x=-Math.PI/2; st.add(dish);
+      for(var li=0;li<10;li++){ var la=li/10*Math.PI*2;
+        var lt=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:(li%2)?0x7fd0ff:0xf0a830,blending:TH.AdditiveBlending,depthWrite:false,transparent:true}));
+        lt.position.set(Math.cos(la)*52,Math.sin(la)*52,0); lt.scale.set(3,3,1); st.add(lt); }
+      st.add(new TH.PointLight(0x9fc8ff,1.0,300));
+      var stAng=rng()*Math.PI*2, stDist=800+rng()*600;
+      st.position.set(Math.cos(stAng)*stDist,(rng()-0.5)*180,Math.sin(stAng)*stDist);
+      st.rotation.set(rng()*0.6,rng()*6,rng()*0.6);
+      sysGroup.add(st);
+      decor.push({g:st, spin:0.05+rng()*0.04, phase:rng()*10, station:true});
+    }
+
+    // relitto alla deriva
+    if(rng()<0.32){
+      var wg=new TH.Group();
+      var hullMat=new TH.MeshStandardMaterial({color:0x4a4e56,metalness:0.75,roughness:0.55});
+      var h1=new TH.Mesh(new TH.CylinderGeometry(6,10,42,8),hullMat); h1.rotation.z=Math.PI/2.3; wg.add(h1);
+      var h2=new TH.Mesh(new TH.BoxGeometry(14,7,20),hullMat); h2.position.set(10,3,-6); h2.rotation.y=0.4; wg.add(h2);
+      var beacon=new TH.PointLight(0xff4a3a,1.4,90); beacon.position.set(-16,4,0); wg.add(beacon);
+      var bsprite=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0xff4a3a,blending:TH.AdditiveBlending,depthWrite:false,transparent:true})); bsprite.position.copy(beacon.position); bsprite.scale.set(3,3,1); wg.add(bsprite);
+      var wang=rng()*Math.PI*2, wdist=900+rng()*700;
+      wg.position.set(Math.cos(wang)*wdist,(rng()-0.5)*200,Math.sin(wang)*wdist);
+      wg.rotation.set(rng()*6,rng()*6,rng()*6);
+      sysGroup.add(wg);
+      decor.push({g:wg, beacon:beacon, sprite:bsprite, phase:rng()*10, spin:0.02});
+    }
+  }
+  function updateComets(dt){
+    comets.forEach(function(cm){
+      cm.ang+=dt*cm.speed;
+      var px=Math.cos(cm.ang)*cm.orbitR, pz=Math.sin(cm.ang)*cm.orbitR, py=cm.h+Math.sin(cm.ang*1.3)*80;
+      cm.nuc.position.set(px,py,pz); cm.nuc.rotation.y+=dt*0.4; cm.nuc.rotation.x+=dt*0.2;
+      var tailDir=cm.nuc.position.clone().sub(sun?sun.position:new TH.Vector3()).normalize();
+      var arr=cm.tail.geometry.attributes.position.array;
+      for(var i=0;i<cm.tailN;i++){
+        var f=i/cm.tailN, fl=Math.pow(f,1.35)*260;
+        var wob=Math.sin(cm.jit+f*9+performance.now()*0.0011)*f*16;
+        arr[i*3]=px+tailDir.x*fl+wob; arr[i*3+1]=py+tailDir.y*fl+Math.cos(cm.jit+f*7)*f*12; arr[i*3+2]=pz+tailDir.z*fl-wob*0.6;
+      }
+      cm.tail.geometry.attributes.position.needsUpdate=true;
+    });
+  }
+
+  // ---------- galassia ----------
+  var galaxy=[], galCur=0, galSel=-1;
+  function buildGalaxy(){
+    galaxy=[]; var rng=mulberry32(20260629);
+    var cats=['HIP','HD','GJ','TYC','Kepler','Gliese'];
+    var N=40;
+    for(var i=0;i<N;i++){
+      var arm=Math.floor(rng()*3); var t=rng(); var ang=arm*2.094+t*3.4+rng()*0.4; var rad=0.08+t*0.42;
+      var x=0.5+Math.cos(ang)*rad+(rng()-0.5)*0.05; var y=0.5+Math.sin(ang)*rad+(rng()-0.5)*0.05;
+      galaxy.push({ id:i, name:cats[Math.floor(rng()*cats.length)]+' '+(1000+Math.floor(rng()*8999)), x:x, y:y, cls:Math.floor(rng()*7), seed:(rng()*1e9)>>>0, danger:1+Math.floor(rng()*3), scanned:i===0 });
+    }
+    galCur=0; galSel=-1;
+  }
+
+  // ---------- combattimento / estrazione ----------
+  var bolts=[]; var drones=[]; var outpost=null; var waypoint=null;
+  function makeWaypoint(){ var g=new TH.Group(); var t=new TH.Mesh(new TH.TorusGeometry(26,2,12,40),new TH.MeshBasicMaterial({color:0x57d6a0})); g.add(t); var l=new TH.PointLight(0x57d6a0,1.2,200); g.add(l); g.userData.t=t; return g; }
+  var _qz=new TH.Vector3(0,0,1);
+  function _qFromDir(dv){ return new TH.Quaternion().setFromUnitVectors(_qz,dv.clone().normalize()).multiply(new TH.Quaternion().setFromAxisAngle(new TH.Vector3(1,0,0),Math.PI/2)); }
+  function spawnBolt(pos,dir,friendly){
+    var col=friendly?0x8fe8ff:0xff5a4a;
+    var m=new TH.Mesh(new TH.CylinderGeometry(0.25,0.25,5,6),new TH.MeshBasicMaterial({color:col}));
+    m.position.copy(pos); m.quaternion.copy(_qFromDir(dir)); scene.add(m);
+    var gl=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:col,blending:TH.AdditiveBlending,depthWrite:false,transparent:true,opacity:0.8}));
+    gl.scale.set(3,3,1); m.add(gl);
+    bolts.push({mesh:m, vel:dir.clone().multiplyScalar(friendly?520:300), life:2.6, friendly:friendly}); if(bolts.length>140){ var b=bolts.shift(); scene.remove(b.mesh); b.mesh.geometry.dispose(); }
+    if(friendly) SND.laser();
+  }
+  function droneModel(){
+    var g=new TH.Group();
+    var b=new TH.Mesh(new TH.OctahedronGeometry(2.4,0),new TH.MeshStandardMaterial({color:0x3a2228,metalness:0.7,roughness:0.4,emissive:0x300505,emissiveIntensity:0.4})); g.add(b);
+    var wingM=new TH.MeshStandardMaterial({color:0x241418,metalness:0.75,roughness:0.4});
+    [[-1],[1]].forEach(function(a){ var w=new TH.Mesh(new TH.BoxGeometry(3.4,0.18,1.2),wingM); w.position.x=a[0]*2.4; w.rotation.z=a[0]*0.35; g.add(w); });
+    var eye=new TH.Mesh(new TH.SphereGeometry(0.7,12,12),new TH.MeshBasicMaterial({color:0xff4a3a})); eye.position.z=2; g.add(eye);
+    var es=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0xff4a3a,blending:TH.AdditiveBlending,depthWrite:false,transparent:true})); es.position.z=2.2; es.scale.set(2.4,2.4,1); g.add(es);
+    var pl=new TH.PointLight(0xff4a3a,0.8,40); g.add(pl);
+    return g;
+  }
+  function spawnDrones(n){
+    drones.forEach(function(d){ scene.remove(d.g); disposeObj(d.g); }); drones=[];
+    for(var i=0;i<n;i++){
+      var g=droneModel();
+      var a=Math.random()*Math.PI*2; g.position.set(ship.position.x+Math.cos(a)*340, ship.position.y+(Math.random()-0.5)*120, ship.position.z+Math.sin(a)*340);
+      scene.add(g); drones.push({g:g, hp:68, fire:1+Math.random()*2, orbit:Math.random()*Math.PI*2});
+      explode(g.position,2.2,{color:0xff8a6a});
+    }
+    SND.alarm();
+  }
+  function deployOutpost(){
+    if(outpost){ scene.remove(outpost); disposeObj(outpost); }
+    outpost=new TH.Group();
+    var core=new TH.Mesh(new TH.CylinderGeometry(6,8,5,8),new TH.MeshStandardMaterial({color:0x8a929c,metalness:0.8,roughness:0.4})); outpost.add(core);
+    var ring=new TH.Mesh(new TH.TorusGeometry(13,1.2,10,40),new TH.MeshStandardMaterial({color:0xf0a830,emissive:0xf0a830,emissiveIntensity:1.1,metalness:0.5})); ring.rotation.x=Math.PI/2; outpost.add(ring);
+    var mast=new TH.Mesh(new TH.CylinderGeometry(0.5,0.5,14,8),new TH.MeshStandardMaterial({color:0x556,metalness:0.7,roughness:0.5})); mast.position.y=9; outpost.add(mast);
+    var beacon=new TH.Mesh(new TH.SphereGeometry(1.4,12,12),new TH.MeshBasicMaterial({color:0xf0a830})); beacon.position.y=16; outpost.add(beacon);
+    outpost.add(new TH.PointLight(0xf0a830,1.2,160));
+    var fwd=shipForward(); outpost.position.copy(ship.position).add(fwd.clone().multiplyScalar(40)); outpost.userData.beacon=beacon; outpost.userData.ring=ring; scene.add(outpost);
+  }
+
+  // ---------- stato di volo ----------
+  var shipYaw=0, shipPitch=0, throttle=0.35, boosting=false, mx=0, my=0;
+  var shield=100, hull=100, minerals=0, scanCount=0, kills=0;
+  var locked=null, fireTimer=0, shielTimer=0;
+  var mState=1, started=false, freeMode=false, warp=null, shake=0, minedM=0, beam=null;
+  var ambushTimer=75;
+  function shipForward(){ return new TH.Vector3(Math.sin(shipYaw)*Math.cos(shipPitch), Math.sin(shipPitch), Math.cos(shipYaw)*Math.cos(shipPitch)); }
+
+  var hud=$('rr_hud');
+  function setTxt(id,t){ var e=$(id); if(e) e.textContent=t; }
+  function pad(n){ var s=Math.abs(Math.round(n)).toString().padStart(4,'0'); return (n<0?'-':'+')+s; }
+  function setBars(){ $('rr_shield').style.width=Math.max(0,shield)+'%'; setTxt('rr_shieldN',Math.max(0,Math.round(shield))); $('rr_hull').style.width=Math.max(0,hull)+'%'; setTxt('rr_hullN',Math.max(0,Math.round(hull))); }
+  function mission(n,title,obj){ setTxt('rr_mKick','DIRETTIVA '+n+' / 6'); setTxt('rr_mTitle',title); setTxt('rr_mObj',obj); }
+  var toastTO=null;
+  function toast(t,m){ setTxt('rr_toastT',t); setTxt('rr_toastM',m); var x=$('rr_toast'); x.style.opacity='1'; x.style.transform='translate(-50%,-50%) scale(1)'; clearTimeout(toastTO); toastTO=setTimeout(function(){ x.style.opacity='0'; x.style.transform='translate(-50%,-50%) scale(.94)'; },1900); SND.ui(); }
+  function prompt2(key,text){ setTxt('rr_pKey',key); setTxt('rr_pText',text); $('rr_prompt').style.display='flex'; }
+  function hidePrompt(){ $('rr_prompt').style.display='none'; }
+  function flash(){ var f=$('rr_flash'); f.style.opacity='0.85'; setTimeout(function(){ f.style.opacity='0'; },420); }
+
+  var dQueue=[], dCb=null, dActive=false;
+  function dialog(who,lines,cb){ dActive=true; dQueue=lines.slice(); dCb=cb||null; setTxt('rr_dWho',who); $('rr_dialog').style.display='block'; dNext(); }
+  function dNext(){ if(dQueue.length===0){ $('rr_dialog').style.display='none'; dActive=false; var c=dCb; dCb=null; if(c)c(); return; } setTxt('rr_dLine',dQueue.shift()); }
+  $('rr_dialog').addEventListener('click',dNext);
+
+  var rdr=$('rr_radar'), rctx=rdr.getContext('2d'); var sweep=0;
+  function drawRadar(dt){
+    var w=150,h=150,cx=75,cy=75,R=68,range=1800; sweep+=dt*1.6;
+    rctx.clearRect(0,0,w,h);
+    rctx.strokeStyle='rgba(95,208,224,0.18)'; rctx.lineWidth=1;
+    [0.34,0.67,1].forEach(function(f){ rctx.beginPath(); rctx.arc(cx,cy,R*f,0,7); rctx.stroke(); });
+    rctx.beginPath(); rctx.moveTo(cx-R,cy); rctx.lineTo(cx+R,cy); rctx.moveTo(cx,cy-R); rctx.lineTo(cx,cy+R); rctx.stroke();
+    rctx.strokeStyle='rgba(95,208,224,0.5)'; rctx.beginPath(); rctx.moveTo(cx,cy); rctx.lineTo(cx+Math.cos(sweep)*R,cy+Math.sin(sweep)*R); rctx.stroke();
+    var cs=Math.cos(-shipYaw), sn=Math.sin(-shipYaw);
+    function blip(p,col,sz){ var dx=p.x-ship.position.x, dz=p.z-ship.position.z; var d=Math.hypot(dx,dz); if(d>range){ dx*=range/d; dz*=range/d; } var rx=dx*cs-dz*sn, rz=dx*sn+dz*cs; var X=cx+(rx/range)*R, Y=cy+(rz/range)*R; rctx.fillStyle=col; rctx.beginPath(); rctx.arc(X,Y,sz,0,7); rctx.fill(); }
+    bodies.forEach(function(b){ blip(b.mesh.position,'rgba(95,208,224,0.9)',2.6); });
+    mineables.forEach(function(b){ blip(b.mesh.position,'rgba(150,170,150,0.8)',1.8); });
+    drones.forEach(function(d){ blip(d.g.position,'rgba(255,80,70,1)',2.4); });
+    comets.forEach(function(c){ blip(c.nuc.position,'rgba(160,210,255,0.9)',2); });
+    decor.forEach(function(dc){ if(dc.station) blip(dc.g.position,'rgba(159,200,255,0.9)',2.6); });
+    if(outpost) blip(outpost.position,'rgba(240,168,48,1)',2.6);
+    if(waypoint&&waypoint.visible) blip(waypoint.position,'rgba(87,214,160,1)',3);
+    rctx.fillStyle='#eaf6ff'; rctx.beginPath(); rctx.moveTo(cx,cy-4); rctx.lineTo(cx-3,cy+3); rctx.lineTo(cx+3,cy+3); rctx.closePath(); rctx.fill();
+  }
+
+  var keys={};
+  function on(t,ev,fn,o){ t.addEventListener(ev,fn,o); }
+  on(window,'keydown',function(e){ var k=e.key.toLowerCase(); keys[k]=true;
+    if([' ','arrowup','arrowdown','arrowleft','arrowright','tab'].indexOf(k)>=0) e.preventDefault();
+    if(!started) return;
+    if(k==='tab'){ cycleLock(); }
+    if(k==='f'){ if(dActive){ dNext(); } else doInteract(); }
+    if(k===' '){ if(dActive) dNext(); }
+    if(k==='v'){ var en=SND.toggle(); toast('AUDIO',en?'Attivato':'Disattivato'); }
+    if(k==='m'){ if(mState>=6||freeMode) toggleMap(); else toast('IPERMOTORE OFFLINE','Completa le direttive precedenti'); }
+    if(k==='escape'){ if($('rr_map').style.display==='flex') closeMap(); }
+    if(k==='enter'){ if($('rr_map').style.display==='flex' && galSel>=0 && galSel!==galCur) doWarp(galaxy[galSel]); }
+  });
+  on(window,'keyup',function(e){ keys[e.key.toLowerCase()]=false; });
+  on(window,'mousemove',function(e){ var r=canvas.getBoundingClientRect(); mx=((e.clientX-r.left)/r.width-0.5)*2; my=((e.clientY-r.top)/r.height-0.5)*2; mx=Math.max(-1,Math.min(1,mx)); my=Math.max(-1,Math.min(1,my)); });
+  var firing=false;
+  on(canvas,'mousedown',function(e){ if(e.button===0) firing=true; });
+  on(window,'mouseup',function(){ firing=false; });
+
+  function allTargets(){ return bodies.concat(mineables).concat(drones.map(function(d){ return {mesh:d.g,name:'Drone Ostile',type:'ostile',radius:3,drone:d,res:[]}; })); }
+  function cycleLock(){ var list=allTargets(); if(!list.length){ locked=null; return; } var idx=list.indexOf(locked); idx=(idx+1)%list.length; locked=list[idx]; refreshTarget(); }
+  function autoLock(){
+    if(locked && allTargets().indexOf(locked)<0) locked=null;
+    if(locked) return;
+    var fwd=shipForward(); var best=null,bestA=0.3;
+    allTargets().forEach(function(o){ var to=o.mesh.position.clone().sub(ship.position); var d=to.length(); if(d>2600||d<1) return; var a=fwd.angleTo(to.clone().normalize()); if(a<bestA){ bestA=a; best=o; } });
+    if(best) locked=best;
+  }
+  function refreshTarget(){ var tp=$('rr_target'); if(!locked){ tp.style.display='none'; $('rr_bracket').style.display='none'; return; } tp.style.display='block'; setTxt('rr_tName',locked.name); setTxt('rr_tType',(locked.type||'').toUpperCase()); setTxt('rr_tComp', locked.scanned?('RISORSE: '+(locked.res&&locked.res.length?locked.res.join(', '):'nessuna')):(locked.drone?'OSTILE · armato':'RISORSE: non analizzato')); }
+
+  function doInteract(){
+    if(locked && !locked.drone && !locked.scanned){
+      locked.scanned=true; refreshTarget(); flash(); SND.scan(); toast('SCANSIONE COMPLETA', locked.name);
+      if(mState===2 && locked.isBody){ scanCount++; setTxt('rr_scan',scanCount); if(scanCount>=3){ mState=3; mission(3,'Estrazione mineraria','Avvicinati a un asteroide minerale e tieni premuto G per estrarre 60 unità'); toast('NUOVA DIRETTIVA','Estrai minerali'); } }
+      else if(mState===2 && !locked.isBody){ toast('NOTA','Scansiona 3 PIANETI per la direttiva'); }
+      return;
+    }
+    if(mState===5){ if(minerals>=40){ minerals-=40; setTxt('rr_min',Math.floor(minerals)); deployOutpost(); flash(); dialog('DR. HALSA — CONTROLLO MISSIONE',['Avamposto dispiegato. Bel lavoro, pilota.','Ora la parte grossa: carica l’ipermotore. Apri la mappa galattica con M e seleziona un sistema.','Premi ENTER o SALTO IPERSPAZIALE per attraversare. Ci vediamo dall’altra parte.'],function(){ mState=6; mission(6,'Salto iperspaziale','Premi M, seleziona un sistema e attiva l’ipermotore'); toast('IPERMOTORE PRONTO','Apri la mappa · M'); }); }
+      else toast('MINERALI INSUFFICIENTI','Servono 40 unità'); return; }
+  }
+
+  var mapC=$('rr_mapC'); var mctx=mapC.getContext('2d'); var mapHit=[];
+  function toggleMap(){ if($('rr_map').style.display==='flex') closeMap(); else openMap(); }
+  function openMap(){ $('rr_map').style.display='flex'; resizeMap(); drawMap(); }
+  function closeMap(){ $('rr_map').style.display='none'; }
+  function resizeMap(){ var r=mapC.getBoundingClientRect(); var dpr=Math.min(devicePixelRatio,2); mapC.width=r.width*dpr; mapC.height=r.height*dpr; mctx.setTransform(dpr,0,0,dpr,0,0); }
+  function drawMap(){
+    var r=mapC.getBoundingClientRect(), w=r.width, h=r.height; mctx.clearRect(0,0,w,h); mapHit=[];
+    var padv=60, sx=function(v){ return padv+v*(w-padv*2); }, sy=function(v){ return padv+v*(h-padv*2); };
+    mctx.strokeStyle='rgba(120,160,190,0.08)'; mctx.lineWidth=1;
+    for(var i=0;i<galaxy.length;i++){ for(var j=i+1;j<galaxy.length;j++){ var a=galaxy[i],b=galaxy[j]; var d=Math.hypot(a.x-b.x,a.y-b.y); if(d<0.16){ mctx.beginPath(); mctx.moveTo(sx(a.x),sy(a.y)); mctx.lineTo(sx(b.x),sy(b.y)); mctx.stroke(); } } }
+    galaxy.forEach(function(n){ var X=sx(n.x), Y=sy(n.y); var col='#'+new TH.Color(SPECTRAL[n.cls].col).getHexString(); var rad=3+(6-n.cls)*0.7;
+      mctx.fillStyle=col; mctx.shadowColor=col; mctx.shadowBlur=10; mctx.beginPath(); mctx.arc(X,Y,rad,0,7); mctx.fill(); mctx.shadowBlur=0;
+      if(n.id===galCur){ mctx.strokeStyle='#5fd0e0'; mctx.lineWidth=2; mctx.beginPath(); mctx.arc(X,Y,rad+7,0,7); mctx.stroke(); mctx.fillStyle='#5fd0e0'; mctx.font='10px IBM Plex Mono'; mctx.fillText('● ATTUALE',X+rad+10,Y+3); }
+      if(n.id===galSel){ mctx.strokeStyle='#ffffff'; mctx.lineWidth=2; mctx.beginPath(); mctx.arc(X,Y,rad+11,0,7); mctx.stroke(); }
+      if(n.id===galCur||n.id===galSel||n.scanned){ mctx.fillStyle='rgba(200,215,230,0.75)'; mctx.font='10px IBM Plex Mono'; mctx.fillText(n.name,X+rad+6,Y-6); }
+      mapHit.push({x:X,y:Y,r:rad+10,n:n}); });
+  }
+  on(mapC,'click',function(e){ var r=mapC.getBoundingClientRect(); var px=e.clientX-r.left, py=e.clientY-r.top; var hit=null; mapHit.forEach(function(o){ if(Math.hypot(px-o.x,py-o.y)<Math.max(o.r,12)) hit=o.n; }); if(hit){ galSel=hit.id; selectSystem(hit); drawMap(); SND.ui(); } });
+  $('rr_mapClose').addEventListener('click',closeMap);
+  function selectSystem(n){ setTxt('rr_mapName',n.name); var sp=SPECTRAL[n.cls]; setTxt('rr_mapClass','Classe '+sp.c+' · '+sp.t); var cur=galaxy[galCur]; var dist=(Math.hypot(n.x-cur.x,n.y-cur.y)*48).toFixed(1); setTxt('rr_mapDist',dist+' anni luce'); var rng=mulberry32(n.seed); setTxt('rr_mapPlanets',(3+Math.floor(rng()*4))+' stimati'); setTxt('rr_mapDanger',['—','BASSO','MEDIO','ALTO'][n.danger]); setTxt('rr_mapState',n.scanned?'CONOSCIUTO':'NON RILEVATO'); var wb=$('rr_mapWarp'); if(n.id===galCur){ wb.style.opacity='.4'; wb.style.pointerEvents='none'; } else { wb.style.opacity='1'; wb.style.pointerEvents='auto'; } }
+  $('rr_mapWarp').addEventListener('click',function(){ if(galSel>=0 && galSel!==galCur) doWarp(galaxy[galSel]); });
+
+  function doWarp(node){ closeMap(); warp={phase:'charge',t:0,node:node}; toast('CARICA IPERMOTORE','Destinazione: '+node.name); SND.warpCharge(); }
+  function finishWarp(node){
+    buildSystem(node.seed,node.cls); galCur=node.id; node.scanned=true; galSel=-1;
+    ship.position.set(0,0,0); shipYaw=0; shipPitch=0; throttle=0.35;
+    sysName=node.name; setTxt('rr_sysName',node.name); var sp=SPECTRAL[node.cls]; setTxt('rr_sysSub','CLASSE '+sp.c+' · '+sp.t+' · SETTORE '+(node.id<10?'0':'')+node.id+'-A');
+    locked=null; refreshTarget(); ambushTimer=60+Math.random()*60;
+    if(mState===6 && !freeMode){ freeMode=true; setTimeout(winOverlay,500); }
+    else toast('SISTEMA RAGGIUNTO',node.name);
+  }
+  function winOverlay(){ $('rr_endTitle').textContent='GALASSIA APERTA'; $('rr_endSub').textContent='Ipermotore validato e sistema raggiunto. La rete di rilevamento è completa: salta liberamente verso qualsiasi sistema dalla mappa galattica (M).'; $('rr_end').style.display='flex'; }
+
+  function resetGame(){
+    buildGalaxy(); buildSystem(galaxy[0].seed, galaxy[0].cls);
+    sysName=galaxy[0].name; setTxt('rr_sysName',sysName); var sp=SPECTRAL[galaxy[0].cls]; setTxt('rr_sysSub','CLASSE '+sp.c+' · '+sp.t+' · SETTORE 00-A');
+    ship.position.set(0,0,0); shipYaw=0; shipPitch=0; throttle=0.35;
+    shield=100; hull=100; minerals=0; scanCount=0; kills=0; locked=null; freeMode=false; warp=null; minedM=0; ambushTimer=75;
+    setTxt('rr_min',0); setTxt('rr_scan',0); setTxt('rr_kills',0); setBars(); refreshTarget();
+    drones.forEach(function(d){ scene.remove(d.g); disposeObj(d.g); }); drones=[];
+    if(outpost){ scene.remove(outpost); disposeObj(outpost); outpost=null; }
+    if(!waypoint){ waypoint=makeWaypoint(); scene.add(waypoint); } waypoint.visible=true; waypoint.position.set(0,30,640);
+    mState=1; mission(1,'Calibrazione di volo','Attraversa il marcatore di rotta — segui l’anello verde');
+    applyAccent();
+  }
+  function startGame(){ if(started) return; SND.init(); SND.resume(); var o=$('rr_overlay'); o.style.opacity='0'; setTimeout(function(){ o.style.display='none'; },700); $('rr_end').style.display='none'; hud.style.opacity='1'; started=true; resetGame(); }
+  $('rr_start').addEventListener('click',startGame);
+  $('rr_overlay').addEventListener('click',startGame);
+  $('rr_endCont').addEventListener('click',function(){ $('rr_end').style.display='none'; });
+  $('rr_endRestart').addEventListener('click',function(){ started=false; startGame(); });
+
+  function updateFlight(dt){
+    var assist=PROPS.flightAssist!==false;
+    var turn=(assist?1.0:1.5);
+    var dz=0.06; var ix=Math.abs(mx)>dz?mx:0, iy=Math.abs(my)>dz?my:0;
+    shipYaw -= ix*turn*dt; shipPitch -= iy*turn*dt; shipPitch=Math.max(-1.15,Math.min(1.15,shipPitch));
+    if(keys['w']) throttle=Math.min(1,throttle+dt*0.55); if(keys['s']) throttle=Math.max(0,throttle-dt*0.6);
+    boosting=!!keys['shift'];
+    var fwd=shipForward();
+    var maxv=70, speed=throttle*maxv*(boosting?2.8:1);
+    ship.position.addScaledVector(fwd,speed*dt);
+    var q=new TH.Quaternion().setFromUnitVectors(_qz,fwd);
+    var bank=new TH.Quaternion().setFromAxisAngle(fwd,-ix*0.6);
+    q.premultiply(bank); ship.quaternion.slerp(q,Math.min(1,dt*6));
+    var eg=0.6+throttle*0.5+(boosting?0.9:0); shipEngines.forEach(function(s){ s.scale.setScalar(2.2*eg+Math.sin(performance.now()*0.02)*0.1); });
+    if(engineLight) engineLight.intensity=0.5+throttle*1.2+(boosting?1.4:0);
+    shipNavLights.forEach(function(s,i2){ var b2=0.5+0.5*Math.sin(performance.now()*0.004+i2*3.1); s.material.opacity=b2; });
+    trailTimer-=dt; if(speed>4 && trailTimer<=0){ trailTimer=boosting?0.02:0.045;
+      var back=fwd.clone().multiplyScalar(-3.3);
+      spawnTrail(ship.position.clone().add(back).add(new TH.Vector3(-1.05,0,0).applyQuaternion(ship.quaternion)),boosting);
+      spawnTrail(ship.position.clone().add(back).add(new TH.Vector3(1.05,0,0).applyQuaternion(ship.quaternion)),boosting);
+    }
+    setTxt('rr_coords','X '+pad(ship.position.x)+'  Y '+pad(ship.position.y)+'  Z '+pad(ship.position.z));
+    setTxt('rr_thrN',Math.round(throttle*100)+'%'); $('rr_thr').style.width=(throttle*100)+'%'; setTxt('rr_spd',Math.round(speed));
+    $('rr_boost').style.color=boosting?curAccent():'#445566';
+    shielTimer+=dt; if(shield<100 && shielTimer>2){ shield=Math.min(100,shield+dt*6); setBars(); }
+    starBoost += ((boosting?2.0:1.0)-starBoost)*Math.min(1,dt*4);
+    SND.engine(throttle,boosting);
+    updateSpeedLines(speed,fwd,false);
+    return speed;
+  }
+  function updateCamera(dt){
+    var fwd=shipForward();
+    var back=fwd.clone().multiplyScalar(-26), up=new TH.Vector3(0,1,0).multiplyScalar(8);
+    var desired=ship.position.clone().add(back).add(up);
+    if(shake>0){ desired.x+=(Math.random()-0.5)*shake; desired.y+=(Math.random()-0.5)*shake; shake*=0.86; }
+    camera.position.lerp(desired,Math.min(1,dt*3.5));
+    camera.lookAt(ship.position.clone().add(fwd.clone().multiplyScalar(12)));
+    var fov=boosting?74:62; camera.fov+=(fov-camera.fov)*Math.min(1,dt*4); camera.updateProjectionMatrix();
+  }
+  function fire(dt){
+    fireTimer-=dt;
+    if((firing||keys[' ']) && !dActive && fireTimer<=0){ var fwd=shipForward(); spawnBolt(ship.position.clone().add(fwd.clone().multiplyScalar(4)),fwd,true); fireTimer=0.16; }
+  }
+  function updateBolts(dt){
+    for(var i=bolts.length-1;i>=0;i--){ var b=bolts[i]; b.mesh.position.addScaledVector(b.vel,dt); b.life-=dt;
+      var hit=false;
+      if(b.friendly){ for(var di=0;di<drones.length;di++){ var d=drones[di]; if(b.mesh.position.distanceTo(d.g.position)<8){ d.hp-=36; hit=true; flashAt(d.g.position); if(d.hp<=0){ explode(d.g.position,5.2); scene.remove(d.g); disposeObj(d.g); drones.splice(di,1); kills++; setTxt('rr_kills',kills); if(mState===4 && kills>=4){ mState=5; mission(5,'Avamposto di rilevamento','Premi F per dispiegare un avamposto (richiede 40 minerali)'); toast('SETTORE LIBERO','Dispiega un avamposto'); } } break; } } }
+      else { if(b.mesh.position.distanceTo(ship.position)<5){ hit=true; shield-=16; shielTimer=0; if(shield<0){ hull+=shield; shield=0; } setBars(); shake=1.6; SND.hit(); var dm=$('rr_dmg'); dm.style.boxShadow='inset 0 0 160px 30px rgba(255,60,40,0.5)'; setTimeout(function(){ dm.style.boxShadow='inset 0 0 160px 30px rgba(255,60,40,0)'; },250); if(hull<=0){ hull=100; shield=100; setBars(); toast('SCAFO RIPRISTINATO','Sistemi di emergenza'); } } }
+      if(hit||b.life<=0){ scene.remove(b.mesh); b.mesh.geometry.dispose(); bolts.splice(i,1); }
+    }
+  }
+  function updateDrones(dt){
+    drones.forEach(function(d){ d.orbit+=dt*0.4; var desired=ship.position.clone().add(new TH.Vector3(Math.cos(d.orbit)*200,40,Math.sin(d.orbit)*200)); d.g.position.lerp(desired,Math.min(1,dt*0.7)); d.g.lookAt(ship.position); d.fire-=dt; if(d.fire<=0){ d.fire=2+Math.random()*1.5; var dir=ship.position.clone().sub(d.g.position).normalize(); spawnBolt(d.g.position.clone().add(dir.clone().multiplyScalar(4)),dir,false); } });
+    if(freeMode && drones.length===0){
+      ambushTimer-=dt;
+      if(ambushTimer<=0){ ambushTimer=90+Math.random()*80; spawnDrones(2+Math.floor(Math.random()*2)); toast('ALLERTA','Pirati in avvicinamento!'); }
+    }
+  }
+  function updateMining(dt){
+    if(!locked||!locked.mineable){ removeBeam(); SND.mine(false); return; }
+    var dist=ship.position.distanceTo(locked.mesh.position);
+    if(keys['g'] && dist<170 && locked.amount>0){ locked.amount-=dt*16; var got=dt*16; minerals+=got; if(mState===3){ minedM+=got; if(minedM>=60){ mState=4; spawnDrones(4); mission(4,'Minaccia ostile','Distruggi 4 droni ostili — SPAZIO per fare fuoco'); toast('ALLERTA','Droni ostili in avvicinamento'); } } setTxt('rr_min',Math.floor(minerals)); locked.mesh.scale.multiplyScalar(1-dt*0.04); drawBeam(locked.mesh.position); SND.mine(true); if(locked.amount<=0){ explode(locked.mesh.position,4.2,{color:0x9fe8c0}); scene.remove(locked.mesh); disposeObj(locked.mesh); mineables.splice(mineables.indexOf(locked),1); locked=null; removeBeam(); SND.mine(false); refreshTarget(); } }
+    else { removeBeam(); SND.mine(false); }
+  }
+  function drawBeam(to){ if(!beam){ beam=new TH.Mesh(new TH.CylinderGeometry(0.4,0.4,1,6),new TH.MeshBasicMaterial({color:0x57d6a0,transparent:true,opacity:0.6})); scene.add(beam); } var from=ship.position.clone(); var mid=from.clone().add(to).multiplyScalar(0.5); var len=from.distanceTo(to); beam.position.copy(mid); beam.scale.set(1,len,1); beam.material.opacity=0.45+Math.sin(performance.now()*0.02)*0.2; beam.quaternion.setFromUnitVectors(new TH.Vector3(0,1,0),to.clone().sub(from).normalize()); }
+  function removeBeam(){ if(beam){ scene.remove(beam); beam.geometry.dispose(); beam.material.dispose(); beam=null; } }
+  var tmp=new TH.Vector3();
+  function updateBracket(){
+    if(!locked){ $('rr_bracket').style.display='none'; return; }
+    tmp.copy(locked.mesh.position).project(camera);
+    if(tmp.z>1){ $('rr_bracket').style.display='none'; return; }
+    var X=(tmp.x*0.5+0.5)*W, Y=(-tmp.y*0.5+0.5)*H; var b=$('rr_bracket'); b.style.display='block'; b.style.left=X+'px'; b.style.top=Y+'px';
+    var sz=Math.max(40,Math.min(220,(locked.radius||4)*5000/Math.max(60,ship.position.distanceTo(locked.mesh.position)))); b.style.width=sz+'px'; b.style.height=sz+'px';
+    setTxt('rr_tDist',Math.round(ship.position.distanceTo(locked.mesh.position))+' u');
+  }
+  function checkMissions(dt){
+    if(mState===1 && waypoint && waypoint.visible){ if(ship.position.distanceTo(waypoint.position)<30){ waypoint.visible=false; flash(); dialog('DR. HALSA — CONTROLLO MISSIONE',['Rotta calibrata, pilota. Bentornato in servizio.','Il tuo compito: rilevare questo sistema. Aggancia un corpo con TAB e premi F per scansionarlo.','Scansiona 3 pianeti. I corpi minori ce li vediamo dopo.'],function(){ mState=2; mission(2,'Rilevamento planetario','Aggancia (TAB) e scansiona (F) 3 pianeti'); toast('NUOVA DIRETTIVA','Scansiona 3 pianeti'); }); } }
+    if(dActive){ hidePrompt(); return; }
+    var shown=false;
+    if(locked && !locked.drone && !locked.scanned){ prompt2('F', locked.mineable?'Scansiona asteroide':'Scansiona '+locked.name); shown=true; }
+    if(mState===3 && locked && locked.mineable && ship.position.distanceTo(locked.mesh.position)<170){ prompt2('G','Tieni premuto · Estrai minerale'); shown=true; }
+    if(mState===5){ prompt2('F','Dispiega avamposto (40 minerali)'); shown=true; }
+    if(mState===6||freeMode){ if(!shown){ prompt2('M','Apri mappa galattica'); shown=true; } }
+    if(!shown) hidePrompt();
+  }
+  function updateWarp(dt){
+    warp.t+=dt;
+    var fwd=shipForward();
+    if(warp.phase==='charge'){ throttle=Math.min(1,throttle+dt*0.5); starBoost=1+warp.t*3; updateTunnel(dt,fwd,false);
+      if(warp.t>1.1){ warp.phase='jump'; warp.t=0; flash(); SND.warpJump(); } }
+    else if(warp.phase==='jump'){ ship.position.addScaledVector(fwd,900*dt); starBoost=4+warp.t*10; camera.fov=Math.min(110,camera.fov+dt*90); camera.updateProjectionMatrix();
+      updateTunnel(dt,fwd,true); updateSpeedLines(900,fwd,true);
+      if(finalPass) finalPass.uniforms.uWarp.value=Math.min(1,finalPass.uniforms.uWarp.value+dt*2.4);
+      if(warp.t>1.0){ finishWarp(warp.node); warp.phase='arrive'; warp.t=0; flash(); } }
+    else { starBoost=Math.max(1,4-warp.t*4); camera.fov+=(62-camera.fov)*Math.min(1,dt*3); camera.updateProjectionMatrix(); updateTunnel(dt,fwd,false);
+      if(finalPass) finalPass.uniforms.uWarp.value=Math.max(0,finalPass.uniforms.uWarp.value-dt*2.2);
+      if(warp.t>0.8){ starBoost=1; warp=null; } }
+  }
+
+  var clock=new TH.Clock();
+  function animate(){
+    requestAnimationFrame(animate);
+    var dt=Math.min(0.05,clock.getDelta());
+    var et=clock.elapsedTime;
+    starUniforms.uTime.value=et;
+    sunShaderMats.forEach(function(m){ m.uniforms.uTime.value=et; });
+    if(finalPass && !warp){ finalPass.uniforms.uTime.value=et; finalPass.uniforms.uWarp.value=Math.max(0,finalPass.uniforms.uWarp.value-dt*2.2)+(boosting?0.06:0); }
+    else if(finalPass) finalPass.uniforms.uTime.value=et;
+
+    bodies.forEach(function(b){ b.mesh.rotation.y+=dt*b.spin; if(b.cloudMesh) b.cloudMesh.rotation.y+=dt*b.spin*1.7; });
+    mineables.forEach(function(b){ b.mesh.rotation.y+=dt*b.spin*0.4; b.mesh.rotation.x+=dt*b.spin*0.15; });
+    moons.forEach(function(mn){ mn.angle+=dt*mn.speed; var px=mn.parent.position.x+Math.cos(mn.angle)*mn.orbitR; var pz=mn.parent.position.z+Math.sin(mn.angle)*mn.orbitR; var py=mn.parent.position.y+Math.sin(mn.angle*0.7)*mn.orbitR*Math.sin(mn.incl); mn.mesh.position.set(px,py,pz); mn.mesh.rotation.y+=dt*0.12; });
+    decor.forEach(function(dc){ dc.phase+=dt;
+      if(dc.beacon){ var b2=0.5+0.5*Math.sin(dc.phase*2.4); dc.beacon.intensity=0.6+b2*1.2; dc.sprite.material.opacity=0.4+b2*0.6; }
+      if(dc.station){ dc.g.rotation.z+=dt*dc.spin; } else { dc.g.rotation.y+=dt*(dc.spin||0.02); } });
+    if(sunGlow){ sunGlow.material.rotation+=dt*0.05; }
+    if(sunCorona){ var pulse=1+Math.sin(et*0.6)*0.05; sunCorona.scale.set(7200*pulse,7200*pulse,1); }
+    if(companion){ companion.ang+=dt*companion.speed; var cx=companion.center.x+Math.cos(companion.ang)*companion.r, cz=companion.center.z+Math.sin(companion.ang)*companion.r; companion.mesh.position.set(cx,companion.mesh.position.y,cz); companion.glow.position.copy(companion.mesh.position); sunLight2.position.copy(companion.mesh.position); }
+    if(outpost){ outpost.userData.ring.rotation.z+=dt*0.6; outpost.userData.beacon.material.color.setScalar(0.6+Math.sin(et*4)*0.4); }
+    if(waypoint&&waypoint.visible){ waypoint.userData.t.rotation.z+=dt*0.8; waypoint.userData.t.rotation.x+=dt*0.3; }
+    nebulaSprites.forEach(function(sp,i2){ sp.material.rotation+=dt*0.01*(i2%2?1:-1); });
+    updateComets(dt);
+    if(!warp) updateTunnel(dt,shipForward(),false);
+
+    if(started){
+      if(warp){ updateWarp(dt); }
+      else {
+        updateFlight(dt); autoLock(); refreshTarget(); fire(dt); updateMining(dt); updateDrones(dt);
+        checkMissions(dt); updateBracket();
+      }
+      updateBolts(dt); updateTrail(dt); updateExplosions(dt); updateCamera(dt); drawRadar(dt); updateDust();
+    } else {
+      camera.position.set(Math.sin(et*0.12)*60,18,Math.cos(et*0.12)*60); camera.lookAt(0,0,40); camera.fov=58; camera.updateProjectionMatrix();
+      updateExplosions(dt);
+    }
+    updateLensFlare();
+    if(composer) composer.render(); else renderer.render(scene,camera);
+  }
+
+  function onResize(){ W=window.innerWidth;H=window.innerHeight; renderer.setSize(W,H); camera.aspect=W/H; camera.updateProjectionMatrix(); if(composer) composer.setSize(W,H); if(bloomPass) bloomPass.setSize(W,H); }
+  on(window,'resize',onResize);
+
+  buildGalaxy(); buildSystem(galaxy[0].seed, galaxy[0].cls); setTxt('rr_sysName',galaxy[0].name);
+  applyAccent(); animate();
+})();
+</script>
+</body>
+</html>
