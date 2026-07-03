@@ -23,6 +23,7 @@
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/FXAAShader.js"></script>
 </head>
 <body>
 <div id="rr_root" style="position:fixed;inset:0;overflow:hidden;background:#020306;">
@@ -65,10 +66,11 @@
         <div style="display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.16em;color:#9fb0c2;margin-bottom:4px;"><span style="color:#f0a830;">SCAFO</span><span id="rr_hullN">100</span></div>
         <div style="height:5px;border-radius:3px;background:rgba(255,255,255,.08);overflow:hidden;"><i id="rr_hull" style="display:block;height:100%;width:100%;background:linear-gradient(90deg,#d07a2a,#f0a830);"></i></div>
       </div>
-      <div style="display:flex;justify-content:space-between;gap:14px;padding-top:8px;border-top:1px solid rgba(120,160,190,.14);font-family:'IBM Plex Mono',monospace;">
-        <div style="text-align:center;"><div style="font-size:9px;letter-spacing:.14em;color:#7e90a4;">MINERALI</div><div id="rr_min" style="font-size:16px;color:#cfe0ee;font-weight:600;">0</div></div>
-        <div style="text-align:center;"><div style="font-size:9px;letter-spacing:.14em;color:#7e90a4;">SCANSIONI</div><div id="rr_scan" style="font-size:16px;color:#cfe0ee;font-weight:600;">0</div></div>
-        <div style="text-align:center;"><div style="font-size:9px;letter-spacing:.14em;color:#7e90a4;">OSTILI</div><div id="rr_kills" style="font-size:16px;color:#cfe0ee;font-weight:600;">0</div></div>
+      <div style="display:flex;justify-content:space-between;gap:10px;padding-top:8px;border-top:1px solid rgba(120,160,190,.14);font-family:'IBM Plex Mono',monospace;">
+        <div style="text-align:center;"><div style="font-size:9px;letter-spacing:.12em;color:#7e90a4;">MINERALI</div><div id="rr_min" style="font-size:15px;color:#cfe0ee;font-weight:600;">0</div></div>
+        <div style="text-align:center;"><div style="font-size:9px;letter-spacing:.12em;color:#f0a830;">CREDITI</div><div id="rr_cred" style="font-size:15px;color:#f0c880;font-weight:600;">0</div></div>
+        <div style="text-align:center;"><div style="font-size:9px;letter-spacing:.12em;color:#7e90a4;">SCANSIONI</div><div id="rr_scan" style="font-size:15px;color:#cfe0ee;font-weight:600;">0</div></div>
+        <div style="text-align:center;"><div style="font-size:9px;letter-spacing:.12em;color:#7e90a4;">OSTILI</div><div id="rr_kills" style="font-size:15px;color:#cfe0ee;font-weight:600;">0</div></div>
       </div>
     </div>
 
@@ -84,7 +86,7 @@
       </div>
       <div style="width:200px;">
         <div style="height:7px;border-radius:4px;background:rgba(255,255,255,.08);overflow:hidden;"><i id="rr_thr" data-acc-bg="1" style="display:block;height:100%;width:35%;background:#5fd0e0;"></i></div>
-        <div style="display:flex;justify-content:space-between;margin-top:5px;font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.1em;color:#7e90a4;"><span id="rr_boost" style="color:#445566;">⏵ TURBO</span><span><span id="rr_spd" style="color:#cfe0ee;">000</span> m/s</span></div>
+        <div style="display:flex;justify-content:space-between;margin-top:5px;font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.1em;color:#7e90a4;"><span id="rr_boost" style="color:#445566;">⏵ TURBO</span><span id="rr_msl" style="color:#8fa0b2;">◈ MSL 2</span><span><span id="rr_spd" style="color:#cfe0ee;">000</span> m/s</span></div>
       </div>
     </div>
 
@@ -128,7 +130,7 @@
     </div>
 
     <div style="position:absolute;bottom:5px;left:50%;transform:translateX(-50%);font-family:'IBM Plex Mono',monospace;color:rgba(150,170,195,.4);font-size:9.5px;letter-spacing:.04em;white-space:nowrap;">
-      <b style="color:rgba(180,200,225,.65);">MOUSE</b> rotta · <b style="color:rgba(180,200,225,.65);">W/S</b> spinta · <b style="color:rgba(180,200,225,.65);">SHIFT</b> turbo · <b style="color:rgba(180,200,225,.65);">SPAZIO</b> fuoco · <b style="color:rgba(180,200,225,.65);">TAB</b> aggancia · <b style="color:rgba(180,200,225,.65);">F</b> scansiona · <b style="color:rgba(180,200,225,.65);">G</b> estrai · <b style="color:rgba(180,200,225,.65);">M</b> mappa · <b style="color:rgba(180,200,225,.65);">V</b> audio
+      <b style="color:rgba(180,200,225,.65);">MOUSE</b> rotta · <b style="color:rgba(180,200,225,.65);">W/S</b> spinta · <b style="color:rgba(180,200,225,.65);">SHIFT</b> turbo · <b style="color:rgba(180,200,225,.65);">SPAZIO</b> fuoco · <b style="color:rgba(180,200,225,.65);">TAB</b> aggancia · <b style="color:rgba(180,200,225,.65);">F</b> scansiona · <b style="color:rgba(180,200,225,.65);">G</b> estrai · <b style="color:rgba(180,200,225,.65);">R</b> missile · <b style="color:rgba(180,200,225,.65);">M</b> mappa · <b style="color:rgba(180,200,225,.65);">V</b> audio
     </div>
   </div>
 
@@ -164,11 +166,35 @@
     </div>
   </div>
 
+  <!-- ===================== HANGAR STAZIONE ===================== -->
+  <div id="rr_hangar" style="position:absolute;inset:0;z-index:34;display:none;align-items:center;justify-content:center;background:rgba(3,6,10,.78);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);pointer-events:auto;">
+    <div style="width:min(760px,94vw);background:rgba(9,15,23,.96);border:1px solid rgba(240,168,48,.4);border-radius:9px;padding:24px 28px;box-shadow:0 30px 90px rgba(0,0,0,.6);">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:6px;">
+        <div>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.3em;color:#f0a830;">STAZIONE ORBITALE · HANGAR</div>
+          <div style="font-size:22px;font-weight:700;color:#eef4fa;margin-top:3px;">Officina &amp; Mercato</div>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#7e90a4;margin-top:4px;">Scafo e scudi riparati automaticamente all'attracco.</div>
+        </div>
+        <div style="text-align:right;font-family:'IBM Plex Mono',monospace;">
+          <div style="font-size:10px;color:#7e90a4;letter-spacing:.14em;">CREDITI</div>
+          <div id="rr_hgCred" style="font-size:24px;font-weight:700;color:#f0c880;">0</div>
+          <div style="font-size:10px;color:#7e90a4;letter-spacing:.14em;margin-top:6px;">MINERALI</div>
+          <div id="rr_hgMin" style="font-size:15px;color:#cfe0ee;font-weight:600;">0</div>
+        </div>
+      </div>
+      <div id="rr_hgSell" style="cursor:pointer;margin:12px 0 16px;text-align:center;background:rgba(87,214,160,.14);border:1px solid rgba(87,214,160,.5);color:#8fe8c0;font-family:'IBM Plex Mono',monospace;font-weight:600;letter-spacing:.08em;font-size:12.5px;border-radius:6px;padding:11px;">⇪ VENDI TUTTI I MINERALI · 2 crediti / unità</div>
+      <div id="rr_hgGrid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;"></div>
+      <div style="display:flex;justify-content:center;margin-top:18px;">
+        <div id="rr_hgClose" data-acc-bg="1" style="cursor:pointer;font-family:'IBM Plex Mono',monospace;color:#04141a;background:#5fd0e0;padding:11px 34px;border-radius:6px;font-weight:700;letter-spacing:.1em;font-size:13px;">⟶ DECOLLA · ESC</div>
+      </div>
+    </div>
+  </div>
+
   <!-- ===================== START OVERLAY ===================== -->
   <div id="rr_overlay" style="position:absolute;inset:0;z-index:40;display:flex;flex-direction:column;align-items:center;justify-content:center;background:radial-gradient(125% 125% at 50% 32%,#0b1426 0%,#050810 55%,#020306 100%);cursor:pointer;transition:opacity .7s;">
-    <div data-acc-fg="1" style="font-family:'IBM Plex Mono',monospace;color:#5fd0e0;letter-spacing:.5em;font-size:11px;margin-bottom:16px;">PROGRAMMA DI RILEVAMENTO GALATTICO · MK-II</div>
+    <div data-acc-fg="1" style="font-family:'IBM Plex Mono',monospace;color:#5fd0e0;letter-spacing:.5em;font-size:11px;margin-bottom:16px;">PROGRAMMA DI RILEVAMENTO GALATTICO · MK-III</div>
     <h1 style="font-size:74px;font-weight:700;letter-spacing:.06em;color:#eef4fa;text-shadow:0 6px 60px rgba(95,208,224,.28);margin-bottom:8px;">DEEP&nbsp;FIELD</h1>
-    <div style="color:#8b9bb0;font-size:15px;max-width:560px;text-align:center;line-height:1.65;margin-bottom:30px;">Sei un pilota della Survey Fleet. Calibra la nave, rileva e analizza i corpi del sistema, estrai minerali, difendi il settore e attiva l'ipermotore per saltare verso una galassia procedurale e sconfinata. Motore grafico MK-II: soli vivi, comete, stazioni orbitali, tunnel iperspaziale e audio procedurale.</div>
+    <div style="color:#8b9bb0;font-size:15px;max-width:600px;text-align:center;line-height:1.65;margin-bottom:30px;">Sei un pilota della Survey Fleet. Rileva i corpi del sistema, estrai minerali, respingi droni e corvette pirata, attracca alle stazioni per vendere risorse e potenziare cannoni, scudi, motori e missili a guida. Poi attiva l'ipermotore verso una galassia procedurale sconfinata. Motore grafico MK-III: illuminazione PBR con riflessi, ombre dinamiche, normal map planetarie, raggi solari volumetrici, tunnel iperspaziale e audio procedurale.</div>
     <div id="rr_start" data-acc-bg="1" style="font-family:'IBM Plex Mono',monospace;color:#04141a;background:#5fd0e0;padding:14px 46px;border-radius:6px;font-size:14px;font-weight:700;letter-spacing:.12em;box-shadow:0 14px 48px rgba(95,208,224,.32);animation:rrFloat 2.6s infinite;">⟶ AVVIA SEQUENZA</div>
     <div style="margin-top:26px;width:230px;">
       <div id="rr_bootTxt" style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5b6b80;text-align:center;margin-bottom:7px;">SINCRONIZZAZIONE CATALOGO STELLARE…</div>
@@ -217,21 +243,57 @@
   var renderer=new TH.WebGLRenderer({canvas:canvas,antialias:true,preserveDrawingBuffer:true,powerPreference:'high-performance'});
   renderer.setSize(W,H); renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
   renderer.outputEncoding=TH.sRGBEncoding; renderer.toneMapping=TH.ACESFilmicToneMapping; renderer.toneMappingExposure=1.05;
+  renderer.shadowMap.enabled=true; renderer.shadowMap.type=TH.PCFSoftShadowMap;
   var scene=new TH.Scene();
   var camera=new TH.PerspectiveCamera(62, W/H, 0.5, 90000);
   camera.position.set(0,8,-26);
 
-  var amb=new TH.AmbientLight(0x22303f,0.55); scene.add(amb);
-  var hemi=new TH.HemisphereLight(0x33506e,0x05060c,0.34); scene.add(hemi);
+  var amb=new TH.AmbientLight(0x22303f,0.5); scene.add(amb);
+  var hemi=new TH.HemisphereLight(0x33506e,0x05060c,0.3); scene.add(hemi);
   var sunLight=new TH.DirectionalLight(0xffffff,2.6); sunLight.position.set(1,0.4,1); scene.add(sunLight);
+  sunLight.castShadow=true; sunLight.shadow.mapSize.set(2048,2048); sunLight.shadow.bias=-0.0005;
+  sunLight.shadow.camera.left=-300; sunLight.shadow.camera.right=300; sunLight.shadow.camera.top=300; sunLight.shadow.camera.bottom=-300;
+  sunLight.shadow.camera.near=1; sunLight.shadow.camera.far=1400;
+  scene.add(sunLight.target);
   var sunLight2=new TH.PointLight(0xffe0b0,0.0,4000); scene.add(sunLight2); // companion (binary) light
+
+  // ---------- environment map PBR: riflessi realistici su metalli e vetri ----------
+  (function(){
+    try{
+      var ec=document.createElement('canvas'); ec.width=512; ec.height=256; var ex=ec.getContext('2d');
+      var grad=ex.createLinearGradient(0,0,0,256);
+      grad.addColorStop(0,'#0a1220'); grad.addColorStop(0.45,'#050a14'); grad.addColorStop(0.55,'#0c1626'); grad.addColorStop(1,'#04070d');
+      ex.fillStyle=grad; ex.fillRect(0,0,512,256);
+      // banda galattica
+      var bg=ex.createLinearGradient(0,96,0,160);
+      bg.addColorStop(0,'rgba(120,150,220,0)'); bg.addColorStop(0.5,'rgba(170,190,240,0.35)'); bg.addColorStop(1,'rgba(120,150,220,0)');
+      ex.fillStyle=bg; ex.fillRect(0,96,512,64);
+      // blob nebulari colorati
+      [['rgba(80,110,200,0.5)',80,70,90],['rgba(160,80,170,0.4)',300,160,110],['rgba(60,160,170,0.4)',430,90,80],['rgba(220,140,80,0.55)',180,120,46]].forEach(function(nb){
+        var g2=ex.createRadialGradient(nb[1],nb[2],0,nb[1],nb[2],nb[3]);
+        g2.addColorStop(0,nb[0]); g2.addColorStop(1,'rgba(0,0,0,0)');
+        ex.fillStyle=g2; ex.fillRect(0,0,512,256);
+      });
+      // sole caldo per il riflesso chiave
+      var sg=ex.createRadialGradient(120,104,0,120,104,34);
+      sg.addColorStop(0,'rgba(255,244,220,1)'); sg.addColorStop(0.3,'rgba(255,214,150,0.8)'); sg.addColorStop(1,'rgba(255,180,100,0)');
+      ex.fillStyle=sg; ex.fillRect(0,0,512,256);
+      for(var i=0;i<160;i++){ var b3=0.3+Math.random()*0.7; ex.fillStyle='rgba(255,255,255,'+b3.toFixed(2)+')'; ex.fillRect(Math.random()*512,Math.random()*256,1,1); }
+      var envTex=new TH.CanvasTexture(ec); envTex.mapping=TH.EquirectangularReflectionMapping;
+      var pmrem=new TH.PMREMGenerator(renderer); pmrem.compileEquirectangularShader();
+      scene.environment=pmrem.fromEquirectangular(envTex).texture;
+      envTex.dispose(); pmrem.dispose();
+    }catch(e){ console.warn('env map non disponibile',e); }
+  })();
 
   // ---------- post-processing: bloom + lente cinematica ----------
   var FinalShader={
-    uniforms:{ tDiffuse:{value:null}, uTime:{value:0}, uAberr:{value:0.0009}, uWarp:{value:0}, uVig:{value:0.42} },
+    uniforms:{ tDiffuse:{value:null}, uTime:{value:0}, uAberr:{value:0.0009}, uWarp:{value:0}, uVig:{value:0.42},
+      uSunScreen:{value:new TH.Vector2(0.5,0.5)}, uSunI:{value:0}, uSunCol:{value:new TH.Color(0xfff0d0)}, uAspect:{value:W/H} },
     vertexShader:'varying vec2 vUv;void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
     fragmentShader:[
-      'uniform sampler2D tDiffuse;uniform float uTime;uniform float uAberr;uniform float uWarp;uniform float uVig;varying vec2 vUv;',
+      'uniform sampler2D tDiffuse;uniform float uTime;uniform float uAberr;uniform float uWarp;uniform float uVig;',
+      'uniform vec2 uSunScreen;uniform float uSunI;uniform vec3 uSunCol;uniform float uAspect;varying vec2 vUv;',
       'float rnd(vec2 c){return fract(sin(dot(c,vec2(12.9898,78.233)))*43758.5453);}',
       'void main(){',
       ' vec2 uv=vUv; vec2 c=uv-0.5; float r=length(c);',
@@ -242,6 +304,15 @@
       ' float cg=texture2D(tDiffuse,uv).g;',
       ' float cb=texture2D(tDiffuse,uv-dir*ab).b;',
       ' vec3 col=vec3(cr,cg,cb);',
+      ' // raggi solari volumetrici (light shafts)',
+      ' if(uSunI>0.002){',
+      '  vec2 sd=(vUv-uSunScreen)*vec2(uAspect,1.0);',
+      '  float dS=length(sd); float angS=atan(sd.y,sd.x);',
+      '  float ray=pow(abs(sin(angS*11.0+uTime*0.11)),4.0)*0.6+pow(abs(sin(angS*17.0-uTime*0.07+2.1)),6.0)*0.4;',
+      '  float shaft=uSunI*exp(-dS*2.3)*(0.3+0.7*ray);',
+      '  float core=uSunI*exp(-dS*9.0);',
+      '  col+=uSunCol*(shaft*0.42+core*0.5);',
+      ' }',
       ' col*=1.0-uVig*r*r*1.4;',
       ' col+=vec3((rnd(uv*vec2(1487.0,911.0)+fract(uTime))-0.5)*0.028);',
       ' col*=1.0-0.022*sin(uv.y*860.0);',
@@ -249,15 +320,21 @@
       '}'
     ].join('\n')
   };
-  var composer=null, bloomPass=null, finalPass=null;
+  var composer=null, bloomPass=null, finalPass=null, fxaaPass=null;
   try{
     composer=new TH.EffectComposer(renderer);
     composer.addPass(new TH.RenderPass(scene,camera));
     bloomPass=new TH.UnrealBloomPass(new TH.Vector2(W,H), PROPS.bloomStrength, 0.72, 0.55);
     composer.addPass(bloomPass);
     finalPass=new TH.ShaderPass(FinalShader);
-    finalPass.renderToScreen=true;
     composer.addPass(finalPass);
+    if(TH.FXAAShader){
+      fxaaPass=new TH.ShaderPass(TH.FXAAShader);
+      var pr0=renderer.getPixelRatio();
+      fxaaPass.uniforms.resolution.value.set(1/(W*pr0),1/(H*pr0));
+      fxaaPass.renderToScreen=true;
+      composer.addPass(fxaaPass);
+    } else { finalPass.renderToScreen=true; }
   }catch(e){ console.warn('post fx non disponibili',e); composer=null; }
 
   // ---------- math / rng helpers ----------
@@ -386,6 +463,24 @@
     x.putImageData(img,0,0); rx.putImageData(rimg,0,0); bx.putImageData(bimg,0,0);
     if(lx){ lx.putImageData(limg,0,0); }
 
+    // normal map dalle altezze (differenze centrali) — rilievo 3D reale sotto luce
+    var ncv=document.createElement('canvas'); ncv.width=ncv.height=S; var nx2=ncv.getContext('2d');
+    var nimg=nx2.createImageData(S,S), nd=nimg.data;
+    var str=P.bands?0.8:2.6;
+    for(py=0;py<S;py++){
+      var yU=Math.max(0,py-1), yD=Math.min(S-1,py+1);
+      for(px=0;px<S;px++){
+        var xL=(px-1+S)%S, xR=(px+1)%S;
+        var hL=bd[(py*S+xL)*4]/255, hR=bd[(py*S+xR)*4]/255;
+        var hU=bd[(yU*S+px)*4]/255, hD=bd[(yD*S+px)*4]/255;
+        var dxn=(hL-hR)*str, dyn=(hU-hD)*str;
+        var inv=1/Math.sqrt(dxn*dxn+dyn*dyn+1);
+        var idn=(py*S+px)*4;
+        nd[idn]=(dxn*inv*0.5+0.5)*255; nd[idn+1]=(dyn*inv*0.5+0.5)*255; nd[idn+2]=(inv*0.5+0.5)*255; nd[idn+3]=255;
+      }
+    }
+    nx2.putImageData(nimg,0,0);
+
     if(P.glow){
       x.globalCompositeOperation='lighter';
       for(i=0;i<220;i++){ var gx=rng()*S,gy=rng()*S; if(noise2(gx/S*10,gy/S*10,2)>0.5) continue; var r=1+rng()*2.4;
@@ -397,8 +492,9 @@
     var tex=new TH.CanvasTexture(cv); tex.anisotropy=8;
     var rtex=new TH.CanvasTexture(rcv);
     var btex=new TH.CanvasTexture(bcv);
+    var ntex=new TH.CanvasTexture(ncv);
     var ltex=lcv?new TH.CanvasTexture(lcv):null;
-    return {map:tex, rough:rtex, bump:btex, lights:ltex};
+    return {map:tex, rough:rtex, bump:btex, normal:ntex, lights:ltex};
   }
   function cloudTex(rng,S){
     S=S||256;
@@ -684,6 +780,7 @@
       var s=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0x6fd6ff,blending:TH.AdditiveBlending,depthWrite:false,transparent:true})); s.position.set(xe,0,-3.4); s.scale.set(2.6,2.6,1); ship.add(s); shipEngines.push(s);
     });
     engineLight=new TH.PointLight(0x6fd6ff,0.8,26); engineLight.position.set(0,0,-3.6); ship.add(engineLight);
+    ship.traverse(function(c){ if(c.isMesh){ c.castShadow=true; c.receiveShadow=true; } });
   })();
 
   // scia dei motori
@@ -790,12 +887,18 @@
     }
     var cx=W/2, cy=H/2;
     lensEls.forEach(function(o){
-      var px=cx+(sx-cx)*(1+o.k*0)+ (o.k===0?0:0), py;
+      var px, py;
       if(o.k===0){ px=sx; py=sy; }
       else { px=cx+(sx-cx)*o.k*-1; py=cy+(sy-cy)*o.k*-1; }
       o.e.style.left=px+'px'; o.e.style.top=py+'px';
       o.e.style.opacity=(vis*0.9*o.s).toFixed(3);
     });
+    if(finalPass){
+      finalPass.uniforms.uSunScreen.value.set(sx/W,1-(sy/H));
+      var cur=finalPass.uniforms.uSunI.value;
+      finalPass.uniforms.uSunI.value=cur+(vis*0.85-cur)*0.12;
+      if(sunGlow) finalPass.uniforms.uSunCol.value.copy(sunGlow.material.color).lerp(new TH.Color(0xffffff),0.35);
+    }
   }
 
   // ---------- tunnel iperspaziale ----------
@@ -831,10 +934,11 @@
   // ---------- sistema + stato galassia ----------
   var sysGroup=new TH.Group(); scene.add(sysGroup);
   var bodies=[], mineables=[], moons=[], decor=[], comets=[], sun=null, sunGlow=null, sunCorona=null, companion=null, beltGroups=[], sysName='';
+  var curSunDir=new TH.Vector3(0.6,0.18,0.78).normalize();
   var sunShaderMats=[];
   var SPECTRAL=[{c:'O',col:0x9bb0ff,t:'30000K'},{c:'B',col:0xaabfff,t:'19000K'},{c:'A',col:0xcad7ff,t:'8800K'},{c:'F',col:0xf6f4ff,t:'7000K'},{c:'G',col:0xfff2e6,t:'5700K'},{c:'K',col:0xffd0a0,t:'4400K'},{c:'M',col:0xff9a66,t:'3300K'}];
   var RES=['Ferrite','Idrogeno','Silicati','Titanio','Acqua','Elio-3','Platino','Iridio','Cobalto','Ammoniaca'];
-  function disposeObj(o){ o.traverse(function(c){ if(c.geometry) c.geometry.dispose(); if(c.material){ var m=Array.isArray(c.material)?c.material:[c.material]; m.forEach(function(mm){ if(mm.map) mm.map.dispose(); if(mm.roughnessMap) mm.roughnessMap.dispose(); if(mm.bumpMap) mm.bumpMap.dispose(); if(mm.emissiveMap&&mm.emissiveMap!==mm.map) mm.emissiveMap.dispose(); mm.dispose(); }); } }); }
+  function disposeObj(o){ o.traverse(function(c){ if(c.geometry) c.geometry.dispose(); if(c.material){ var m=Array.isArray(c.material)?c.material:[c.material]; m.forEach(function(mm){ if(mm.map) mm.map.dispose(); if(mm.roughnessMap) mm.roughnessMap.dispose(); if(mm.bumpMap) mm.bumpMap.dispose(); if(mm.normalMap) mm.normalMap.dispose(); if(mm.emissiveMap&&mm.emissiveMap!==mm.map) mm.emissiveMap.dispose(); mm.dispose(); }); } }); }
   function clearSystem(){ while(sysGroup.children.length){ var c=sysGroup.children[0]; sysGroup.remove(c); disposeObj(c); } bodies=[]; mineables=[]; moons=[]; decor=[]; comets=[]; sun=null; sunGlow=null; sunCorona=null; companion=null; beltGroups=[]; sunShaderMats=[]; sunLight2.intensity=0; }
 
   // sole vivo: superficie turbolenta via shader
@@ -866,7 +970,7 @@
     return m;
   }
 
-  function buildSystem(seed, clsIdx){
+  function buildSystem(seed, clsIdx, ensureStation){
     clearSystem();
     var rng=mulberry32(seed>>>0);
     var sp=SPECTRAL[clsIdx!=null?clsIdx:(4+Math.floor(rng()*2))];
@@ -878,7 +982,7 @@
     sunGlow.position.copy(sunPos); sunGlow.scale.set(3600,3600,1); sysGroup.add(sunGlow);
     sunCorona=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:sp.col,blending:TH.AdditiveBlending,depthWrite:false,transparent:true,opacity:0.35}));
     sunCorona.position.copy(sunPos); sunCorona.scale.set(7200,7200,1); sysGroup.add(sunCorona);
-    sunLight.position.copy(sunDir); sunLight.color.setHex(sp.col);
+    sunLight.position.copy(sunDir); sunLight.color.setHex(sp.col); curSunDir=sunDir.clone();
 
     var isBinary = rng()<0.16;
     if(isBinary){
@@ -905,11 +1009,13 @@
       var P=PALS[type];
       var texset=planetTex(type,rng);
       var matOpts={map:texset.map, roughness:0.9, metalness:0.04};
-      if(!P.bands){ matOpts.roughnessMap=texset.rough; matOpts.bumpMap=texset.bump; matOpts.bumpScale=rad*0.02; }
+      if(!P.bands){ matOpts.roughnessMap=texset.rough; }
+      matOpts.normalMap=texset.normal; matOpts.normalScale=new TH.Vector2(P.bands?0.5:1.5,P.bands?0.5:1.5);
       if(P.glow){ matOpts.emissive=new TH.Color(type==='crystal'?0x8a40d0:0xff5a2a); matOpts.emissiveMap=texset.map; matOpts.emissiveIntensity=type==='crystal'?0.5:0.55; }
       else if(texset.lights){ matOpts.emissive=new TH.Color(0xffb070); matOpts.emissiveMap=texset.lights; matOpts.emissiveIntensity=0.85; }
       var mat=new TH.MeshStandardMaterial(matOpts);
-      var pl=new TH.Mesh(new TH.SphereGeometry(rad,48,34),mat);
+      mat.envMapIntensity=0.25;
+      var pl=new TH.Mesh(new TH.SphereGeometry(rad,56,40),mat);
       pl.position.set(px,py,pz); sysGroup.add(pl);
       var cloudMesh=null;
       if(P.atmo){ var a=atmosphere(rad,P.atmo,sunDir); pl.add(a); }
@@ -931,7 +1037,7 @@
           var mr=rad*(0.16+rng()*0.13);
           var morbit=rad*(1.9+rng()*1.5+mi*1.15);
           var mtexset=planetTex('rock',rng,160);
-          var moonMesh=new TH.Mesh(new TH.SphereGeometry(mr,18,13), new TH.MeshStandardMaterial({map:mtexset.map,roughnessMap:mtexset.rough,bumpMap:mtexset.bump,bumpScale:mr*0.04,metalness:0.03}));
+          var moonMesh=new TH.Mesh(new TH.SphereGeometry(mr,22,16), new TH.MeshStandardMaterial({map:mtexset.map,roughnessMap:mtexset.rough,normalMap:mtexset.normal,normalScale:new TH.Vector2(1.6,1.6),metalness:0.03}));
           sysGroup.add(moonMesh);
           moons.push({mesh:moonMesh, parent:pl, orbitR:morbit, angle:rng()*Math.PI*2, speed:0.16+rng()*0.26, incl:(rng()-0.5)*0.6});
         }
@@ -943,6 +1049,7 @@
     var variants=4, geoms=[];
     for(var gi=0;gi<variants;gi++) geoms.push(rockGeometry(1,rng,1));
     var mm=new TH.MeshStandardMaterial({color:0x6a625a,roughness:0.95,metalness:0.08,flatShading:true});
+    mm.envMapIntensity=0.35;
     var perVariant=Math.ceil(Ntot/variants);
     var dum=new TH.Object3D();
     for(gi=0;gi<variants;gi++){
@@ -954,7 +1061,7 @@
     for(i=0;i<14;i++){ var a2=rng()*Math.PI*2, rr3=beltR+(rng()-0.5)*160, yy2=(rng()-0.5)*64;
       var rkMat=new TH.MeshStandardMaterial({color:0x7a7066,roughness:0.9,metalness:0.12,emissive:0x114a44,emissiveIntensity:0.5,flatShading:true});
       var rk=new TH.Mesh(rockGeometry(13+rng()*8,rng,1),rkMat);
-      rk.position.set(Math.cos(a2)*rr3,yy2,Math.sin(a2)*rr3); rk.rotation.set(rng()*6,rng()*6,rng()*6); sysGroup.add(rk);
+      rk.position.set(Math.cos(a2)*rr3,yy2,Math.sin(a2)*rr3); rk.rotation.set(rng()*6,rng()*6,rng()*6); rk.castShadow=true; rk.receiveShadow=true; sysGroup.add(rk);
       mineables.push({mesh:rk, name:'Asteroide '+(['Kx','Vn','Or','Zt'][Math.floor(rng()*4)])+'-'+(10+Math.floor(rng()*89)), type:'asteroide', radius:14, scanned:false, res:[RES[Math.floor(rng()*RES.length)],RES[Math.floor(rng()*RES.length)]], amount:30+Math.floor(rng()*40), spin:0.2+rng()*0.3, mineable:true});
     }
 
@@ -972,7 +1079,7 @@
     }
 
     // stazione orbitale rotante
-    if(rng()<0.4){
+    if(ensureStation || rng()<0.4){
       var st=new TH.Group();
       var hullM=new TH.MeshStandardMaterial({color:0x9aa4b2,metalness:0.8,roughness:0.4});
       var darkM=new TH.MeshStandardMaterial({color:0x3a4250,metalness:0.7,roughness:0.5});
@@ -989,6 +1096,7 @@
       var stAng=rng()*Math.PI*2, stDist=800+rng()*600;
       st.position.set(Math.cos(stAng)*stDist,(rng()-0.5)*180,Math.sin(stAng)*stDist);
       st.rotation.set(rng()*0.6,rng()*6,rng()*0.6);
+      st.traverse(function(c){ if(c.isMesh){ c.castShadow=true; c.receiveShadow=true; } });
       sysGroup.add(st);
       decor.push({g:st, spin:0.05+rng()*0.04, phase:rng()*10, station:true});
     }
@@ -1004,6 +1112,7 @@
       var wang=rng()*Math.PI*2, wdist=900+rng()*700;
       wg.position.set(Math.cos(wang)*wdist,(rng()-0.5)*200,Math.sin(wang)*wdist);
       wg.rotation.set(rng()*6,rng()*6,rng()*6);
+      wg.traverse(function(c){ if(c.isMesh){ c.castShadow=true; c.receiveShadow=true; } });
       sysGroup.add(wg);
       decor.push({g:wg, beacon:beacon, sprite:bsprite, phase:rng()*10, spin:0.02});
     }
@@ -1060,6 +1169,7 @@
     var eye=new TH.Mesh(new TH.SphereGeometry(0.7,12,12),new TH.MeshBasicMaterial({color:0xff4a3a})); eye.position.z=2; g.add(eye);
     var es=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0xff4a3a,blending:TH.AdditiveBlending,depthWrite:false,transparent:true})); es.position.z=2.2; es.scale.set(2.4,2.4,1); g.add(es);
     var pl=new TH.PointLight(0xff4a3a,0.8,40); g.add(pl);
+    g.traverse(function(c){ if(c.isMesh){ c.castShadow=true; c.receiveShadow=true; } });
     return g;
   }
   function spawnDrones(n){
@@ -1080,7 +1190,133 @@
     var mast=new TH.Mesh(new TH.CylinderGeometry(0.5,0.5,14,8),new TH.MeshStandardMaterial({color:0x556,metalness:0.7,roughness:0.5})); mast.position.y=9; outpost.add(mast);
     var beacon=new TH.Mesh(new TH.SphereGeometry(1.4,12,12),new TH.MeshBasicMaterial({color:0xf0a830})); beacon.position.y=16; outpost.add(beacon);
     outpost.add(new TH.PointLight(0xf0a830,1.2,160));
-    var fwd=shipForward(); outpost.position.copy(ship.position).add(fwd.clone().multiplyScalar(40)); outpost.userData.beacon=beacon; outpost.userData.ring=ring; scene.add(outpost);
+    var fwd=shipForward(); outpost.position.copy(ship.position).add(fwd.clone().multiplyScalar(40)); outpost.userData.beacon=beacon; outpost.userData.ring=ring;
+    outpost.traverse(function(c){ if(c.isMesh){ c.castShadow=true; c.receiveShadow=true; } });
+    scene.add(outpost);
+  }
+
+  // ---------- corvetta pirata (miniboss) ----------
+  function corvetteModel(){
+    var g=new TH.Group();
+    var hullM=new TH.MeshStandardMaterial({color:0x4a2a30,metalness:0.75,roughness:0.45});
+    var darkM=new TH.MeshStandardMaterial({color:0x241318,metalness:0.7,roughness:0.5});
+    var hull=new TH.Mesh(new TH.BoxGeometry(8,5,30),hullM); g.add(hull);
+    var prow=new TH.Mesh(new TH.ConeGeometry(4.4,9,4),hullM); prow.rotation.x=Math.PI/2; prow.position.z=19; g.add(prow);
+    var bridge=new TH.Mesh(new TH.BoxGeometry(5,3.4,7),darkM); bridge.position.set(0,4,-6); g.add(bridge);
+    [[-5.5],[5.5]].forEach(function(a){ var w=new TH.Mesh(new TH.BoxGeometry(4,0.8,14),darkM); w.position.set(a[0],0,-4); g.add(w); });
+    var turret=new TH.Mesh(new TH.SphereGeometry(2.2,12,10),darkM); turret.position.set(0,3.4,4); g.add(turret);
+    [[-2.4],[2.4]].forEach(function(a){ var e=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0xff7a4a,blending:TH.AdditiveBlending,depthWrite:false,transparent:true})); e.position.set(a[0],0,-16.5); e.scale.set(4,4,1); g.add(e); });
+    var eye=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0xff4a3a,blending:TH.AdditiveBlending,depthWrite:false,transparent:true})); eye.position.set(0,3.4,6.4); eye.scale.set(3,3,1); g.add(eye);
+    g.add(new TH.PointLight(0xff5a3a,0.9,70));
+    g.traverse(function(c){ if(c.isMesh){ c.castShadow=true; c.receiveShadow=true; } });
+    return g;
+  }
+  function spawnCorvette(){
+    var g=corvetteModel();
+    var a=Math.random()*Math.PI*2;
+    g.position.set(ship.position.x+Math.cos(a)*520, ship.position.y+(Math.random()-0.5)*160, ship.position.z+Math.sin(a)*520);
+    scene.add(g);
+    corvettes.push({g:g, hp:380, fire:3, orbit:Math.random()*Math.PI*2, name:'Corvetta Vekkar'});
+    explode(g.position,6,{color:0xff8a6a}); SND.alarm();
+    toast('ALLERTA ROSSA','Corvetta pirata nel settore!');
+  }
+  function updateCorvettes(dt){
+    corvettes.forEach(function(cv){
+      cv.orbit+=dt*0.14;
+      var desired=ship.position.clone().add(new TH.Vector3(Math.cos(cv.orbit)*300,60*Math.sin(cv.orbit*0.7),Math.sin(cv.orbit)*300));
+      cv.g.position.lerp(desired,Math.min(1,dt*0.35));
+      cv.g.lookAt(ship.position);
+      cv.fire-=dt;
+      if(cv.fire<=0){
+        cv.fire=2.6+Math.random()*1.4;
+        var base=ship.position.clone().sub(cv.g.position).normalize();
+        for(var s2=-1;s2<=1;s2++){
+          var dir=base.clone().applyAxisAngle(new TH.Vector3(0,1,0),s2*0.05);
+          spawnBolt(cv.g.position.clone().add(dir.clone().multiplyScalar(12)),dir,false);
+        }
+      }
+    });
+  }
+  function killDrone(di){
+    if(di<0) return; var d=drones[di];
+    explode(d.g.position,5.2); scene.remove(d.g); disposeObj(d.g); drones.splice(di,1);
+    kills++; setTxt('rr_kills',kills); credits+=15; updCred();
+    if(mState===4 && kills>=4){ mState=5; mission(5,'Avamposto di rilevamento','Premi F per dispiegare un avamposto (richiede 40 minerali)'); toast('SETTORE LIBERO','Dispiega un avamposto'); }
+  }
+  function killCorvette(ci){
+    if(ci<0) return; var cv=corvettes[ci];
+    explode(cv.g.position,11,{color:0xffc890}); scene.remove(cv.g); disposeObj(cv.g); corvettes.splice(ci,1);
+    kills++; setTxt('rr_kills',kills); minerals+=35; credits+=80; setTxt('rr_min',Math.floor(minerals)); updCred();
+    toast('CORVETTA DISTRUTTA','+35 minerali · +80 crediti');
+  }
+  function clearHostiles(){
+    corvettes.forEach(function(c){ scene.remove(c.g); disposeObj(c.g); }); corvettes=[];
+    missilesArr.forEach(function(m){ scene.remove(m.g); disposeObj(m.g); }); missilesArr=[];
+  }
+
+  // ---------- missili a guida ----------
+  function fireMissile(){
+    if(docked||warp||dActive) return;
+    if(missiles<=0){ toast('MISSILI ESAURITI','Rifornisci alla stazione'); return; }
+    var tgt=(locked&&(locked.drone||locked.corv))?locked:null;
+    if(!tgt){ toast('NESSUN AGGANCIO OSTILE','Aggancia un nemico con TAB'); return; }
+    missiles--; updMsl();
+    var g=new TH.Group();
+    var b=new TH.Mesh(new TH.ConeGeometry(0.35,2.6,8),new TH.MeshStandardMaterial({color:0xd8e0ea,metalness:0.7,roughness:0.3}));
+    b.rotation.x=Math.PI/2; g.add(b);
+    var gl=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0xffc060,blending:TH.AdditiveBlending,depthWrite:false,transparent:true})); gl.position.z=-1.4; gl.scale.set(2,2,1); g.add(gl);
+    g.position.copy(ship.position); scene.add(g);
+    missilesArr.push({g:g, vel:shipForward().multiplyScalar(140), tgt:tgt, life:7, smk:0});
+    SND.laser();
+  }
+  function missileTargetAlive(t){
+    if(t.drone) return drones.indexOf(t.drone)>=0;
+    if(t.corv) return corvettes.indexOf(t.corv)>=0;
+    return false;
+  }
+  function updateMissiles(dt){
+    for(var i=missilesArr.length-1;i>=0;i--){
+      var ms=missilesArr[i]; ms.life-=dt;
+      var alive=missileTargetAlive(ms.tgt);
+      if(alive){
+        var want=ms.tgt.mesh.position.clone().sub(ms.g.position).normalize();
+        ms.vel.lerp(want.multiplyScalar(Math.min(320,ms.vel.length()+dt*200)),Math.min(1,dt*3.4));
+      }
+      ms.g.position.addScaledVector(ms.vel,dt);
+      var dirv=ms.vel.clone().normalize();
+      ms.g.quaternion.setFromUnitVectors(new TH.Vector3(0,0,1),dirv);
+      ms.smk-=dt; if(ms.smk<=0){ ms.smk=0.03; spawnTrail(ms.g.position.clone().addScaledVector(dirv,-1.6),false); }
+      var hit=false;
+      if(alive && ms.g.position.distanceTo(ms.tgt.mesh.position)<(ms.tgt.corv?17:9)){
+        hit=true; explode(ms.g.position,7,{color:0xffd090});
+        if(ms.tgt.drone){ ms.tgt.drone.hp-=160; if(ms.tgt.drone.hp<=0) killDrone(drones.indexOf(ms.tgt.drone)); }
+        else if(ms.tgt.corv){ ms.tgt.corv.hp-=160; if(ms.tgt.corv.hp<=0) killCorvette(corvettes.indexOf(ms.tgt.corv)); }
+      }
+      if(hit||ms.life<=0){ if(!hit) explode(ms.g.position,2.5); scene.remove(ms.g); disposeObj(ms.g); missilesArr.splice(i,1); }
+    }
+  }
+
+  // ---------- collisioni fisiche ----------
+  var collideCd=0;
+  function collideHit(dmg){
+    if(collideCd>0) return; collideCd=0.5;
+    shield-=dmg; shielTimer=0; if(shield<0){ hull+=shield; shield=0; }
+    if(hull<=0){ hull=100; shield=maxShield(); toast('SCAFO RIPRISTINATO','Sistemi di emergenza'); }
+    setBars(); shake=Math.max(shake,2.2); SND.hit();
+    var dm=$('rr_dmg'); dm.style.boxShadow='inset 0 0 160px 30px rgba(255,60,40,0.5)'; setTimeout(function(){ dm.style.boxShadow='inset 0 0 160px 30px rgba(255,60,40,0)'; },250);
+  }
+  function updateCollisions(dt){
+    collideCd=Math.max(0,collideCd-dt);
+    var i,o,d2,r,n;
+    for(i=0;i<mineables.length;i++){ o=mineables[i]; r=14*o.mesh.scale.x+5;
+      d2=ship.position.distanceTo(o.mesh.position);
+      if(d2<r){ n=ship.position.clone().sub(o.mesh.position).normalize(); ship.position.copy(o.mesh.position).addScaledVector(n,r); collideHit(10); } }
+    for(i=0;i<bodies.length;i++){ o=bodies[i]; r=o.radius+9;
+      d2=ship.position.distanceTo(o.mesh.position);
+      if(d2<r){ n=ship.position.clone().sub(o.mesh.position).normalize(); ship.position.copy(o.mesh.position).addScaledVector(n,r); collideHit(18); } }
+    for(i=0;i<decor.length;i++){ if(!decor[i].station) continue; o=decor[i];
+      d2=ship.position.distanceTo(o.g.position);
+      if(d2<72){ n=ship.position.clone().sub(o.g.position).normalize(); ship.position.copy(o.g.position).addScaledVector(n,72); collideHit(8); } }
   }
 
   // ---------- stato di volo ----------
@@ -1089,12 +1325,22 @@
   var locked=null, fireTimer=0, shielTimer=0;
   var mState=1, started=false, freeMode=false, warp=null, shake=0, minedM=0, beam=null;
   var ambushTimer=75;
+  var credits=0, missiles=2, MSL_MAX=8;
+  var upgrades={cannon:0,shield:0,engine:0};
+  var docked=false, nearStation=null;
+  var missilesArr=[], corvettes=[];
+  function maxShield(){ return 100+upgrades.shield*40; }
+  function fireCd(){ return [0.16,0.11,0.08][upgrades.cannon]; }
+  function boltDmg(){ return [36,52,72][upgrades.cannon]; }
+  function maxSpd(){ return [70,90,112][upgrades.engine]; }
+  function updMsl(){ setTxt('rr_msl','◈ MSL '+missiles); }
+  function updCred(){ setTxt('rr_cred',Math.floor(credits)); }
   function shipForward(){ return new TH.Vector3(Math.sin(shipYaw)*Math.cos(shipPitch), Math.sin(shipPitch), Math.cos(shipYaw)*Math.cos(shipPitch)); }
 
   var hud=$('rr_hud');
   function setTxt(id,t){ var e=$(id); if(e) e.textContent=t; }
   function pad(n){ var s=Math.abs(Math.round(n)).toString().padStart(4,'0'); return (n<0?'-':'+')+s; }
-  function setBars(){ $('rr_shield').style.width=Math.max(0,shield)+'%'; setTxt('rr_shieldN',Math.max(0,Math.round(shield))); $('rr_hull').style.width=Math.max(0,hull)+'%'; setTxt('rr_hullN',Math.max(0,Math.round(hull))); }
+  function setBars(){ $('rr_shield').style.width=(Math.max(0,shield)/maxShield()*100)+'%'; setTxt('rr_shieldN',Math.max(0,Math.round(shield))); $('rr_hull').style.width=Math.max(0,hull)+'%'; setTxt('rr_hullN',Math.max(0,Math.round(hull))); }
   function mission(n,title,obj){ setTxt('rr_mKick','DIRETTIVA '+n+' / 6'); setTxt('rr_mTitle',title); setTxt('rr_mObj',obj); }
   var toastTO=null;
   function toast(t,m){ setTxt('rr_toastT',t); setTxt('rr_toastM',m); var x=$('rr_toast'); x.style.opacity='1'; x.style.transform='translate(-50%,-50%) scale(1)'; clearTimeout(toastTO); toastTO=setTimeout(function(){ x.style.opacity='0'; x.style.transform='translate(-50%,-50%) scale(.94)'; },1900); SND.ui(); }
@@ -1120,6 +1366,7 @@
     bodies.forEach(function(b){ blip(b.mesh.position,'rgba(95,208,224,0.9)',2.6); });
     mineables.forEach(function(b){ blip(b.mesh.position,'rgba(150,170,150,0.8)',1.8); });
     drones.forEach(function(d){ blip(d.g.position,'rgba(255,80,70,1)',2.4); });
+    corvettes.forEach(function(c){ blip(c.g.position,'rgba(255,80,70,1)',3.6); });
     comets.forEach(function(c){ blip(c.nuc.position,'rgba(160,210,255,0.9)',2); });
     decor.forEach(function(dc){ if(dc.station) blip(dc.g.position,'rgba(159,200,255,0.9)',2.6); });
     if(outpost) blip(outpost.position,'rgba(240,168,48,1)',2.6);
@@ -1132,9 +1379,11 @@
   on(window,'keydown',function(e){ var k=e.key.toLowerCase(); keys[k]=true;
     if([' ','arrowup','arrowdown','arrowleft','arrowright','tab'].indexOf(k)>=0) e.preventDefault();
     if(!started) return;
+    if(docked){ if(k==='escape'||k==='f') closeHangar(); return; }
     if(k==='tab'){ cycleLock(); }
     if(k==='f'){ if(dActive){ dNext(); } else doInteract(); }
     if(k===' '){ if(dActive) dNext(); }
+    if(k==='r'){ fireMissile(); }
     if(k==='v'){ var en=SND.toggle(); toast('AUDIO',en?'Attivato':'Disattivato'); }
     if(k==='m'){ if(mState>=6||freeMode) toggleMap(); else toast('IPERMOTORE OFFLINE','Completa le direttive precedenti'); }
     if(k==='escape'){ if($('rr_map').style.display==='flex') closeMap(); }
@@ -1146,19 +1395,24 @@
   on(canvas,'mousedown',function(e){ if(e.button===0) firing=true; });
   on(window,'mouseup',function(){ firing=false; });
 
-  function allTargets(){ return bodies.concat(mineables).concat(drones.map(function(d){ return {mesh:d.g,name:'Drone Ostile',type:'ostile',radius:3,drone:d,res:[]}; })); }
+  function droneWrapper(d){ if(!d._tw) d._tw={mesh:d.g,name:'Drone Ostile',type:'ostile',radius:3,drone:d,res:[]}; return d._tw; }
+  function corvWrapper(c){ if(!c._tw) c._tw={mesh:c.g,name:c.name,type:'ostile · corvetta',radius:16,corv:c,res:[]}; return c._tw; }
+  function allTargets(){ return bodies.concat(mineables).concat(drones.map(droneWrapper)).concat(corvettes.map(corvWrapper)); }
   function cycleLock(){ var list=allTargets(); if(!list.length){ locked=null; return; } var idx=list.indexOf(locked); idx=(idx+1)%list.length; locked=list[idx]; refreshTarget(); }
   function autoLock(){
     if(locked && allTargets().indexOf(locked)<0) locked=null;
     if(locked) return;
-    var fwd=shipForward(); var best=null,bestA=0.3;
-    allTargets().forEach(function(o){ var to=o.mesh.position.clone().sub(ship.position); var d=to.length(); if(d>2600||d<1) return; var a=fwd.angleTo(to.clone().normalize()); if(a<bestA){ bestA=a; best=o; } });
-    if(best) locked=best;
+    var fwd=shipForward();
+    function bestOf(list,maxA){ var b=null,ba=maxA; list.forEach(function(o){ var to=o.mesh.position.clone().sub(ship.position); var d=to.length(); if(d>2600||d<1) return; var a=fwd.angleTo(to.clone().normalize()); if(a<ba){ ba=a; b=o; } }); return b; }
+    var hostiles=drones.map(droneWrapper).concat(corvettes.map(corvWrapper));
+    locked=bestOf(hostiles,0.45)||bestOf(bodies.concat(mineables),0.3);
   }
-  function refreshTarget(){ var tp=$('rr_target'); if(!locked){ tp.style.display='none'; $('rr_bracket').style.display='none'; return; } tp.style.display='block'; setTxt('rr_tName',locked.name); setTxt('rr_tType',(locked.type||'').toUpperCase()); setTxt('rr_tComp', locked.scanned?('RISORSE: '+(locked.res&&locked.res.length?locked.res.join(', '):'nessuna')):(locked.drone?'OSTILE · armato':'RISORSE: non analizzato')); }
+  function refreshTarget(){ var tp=$('rr_target'); if(!locked){ tp.style.display='none'; $('rr_bracket').style.display='none'; return; } tp.style.display='block'; setTxt('rr_tName',locked.name); setTxt('rr_tType',(locked.type||'').toUpperCase()); setTxt('rr_tComp', locked.scanned?('RISORSE: '+(locked.res&&locked.res.length?locked.res.join(', '):'nessuna')):((locked.drone||locked.corv)?'OSTILE · armato — missile pronto (R)':'RISORSE: non analizzato')); }
 
   function doInteract(){
-    if(locked && !locked.drone && !locked.scanned){
+    if(docked) return;
+    if(nearStation){ openHangar(); return; }
+    if(locked && !locked.drone && !locked.corv && !locked.scanned){
       locked.scanned=true; refreshTarget(); flash(); SND.scan(); toast('SCANSIONE COMPLETA', locked.name);
       if(mState===2 && locked.isBody){ scanCount++; setTxt('rr_scan',scanCount); if(scanCount>=3){ mState=3; mission(3,'Estrazione mineraria','Avvicinati a un asteroide minerale e tieni premuto G per estrarre 60 unità'); toast('NUOVA DIRETTIVA','Estrai minerali'); } }
       else if(mState===2 && !locked.isBody){ toast('NOTA','Scansiona 3 PIANETI per la direttiva'); }
@@ -1190,24 +1444,72 @@
   function selectSystem(n){ setTxt('rr_mapName',n.name); var sp=SPECTRAL[n.cls]; setTxt('rr_mapClass','Classe '+sp.c+' · '+sp.t); var cur=galaxy[galCur]; var dist=(Math.hypot(n.x-cur.x,n.y-cur.y)*48).toFixed(1); setTxt('rr_mapDist',dist+' anni luce'); var rng=mulberry32(n.seed); setTxt('rr_mapPlanets',(3+Math.floor(rng()*4))+' stimati'); setTxt('rr_mapDanger',['—','BASSO','MEDIO','ALTO'][n.danger]); setTxt('rr_mapState',n.scanned?'CONOSCIUTO':'NON RILEVATO'); var wb=$('rr_mapWarp'); if(n.id===galCur){ wb.style.opacity='.4'; wb.style.pointerEvents='none'; } else { wb.style.opacity='1'; wb.style.pointerEvents='auto'; } }
   $('rr_mapWarp').addEventListener('click',function(){ if(galSel>=0 && galSel!==galCur) doWarp(galaxy[galSel]); });
 
+  // ---------- hangar stazione: vendita e potenziamenti ----------
+  var HG_ITEMS=[
+    {key:'cannon',name:'Cannone a impulsi',desc:'Cadenza di tiro e danno superiori',prices:[80,190]},
+    {key:'shield',name:'Matrice scudi',desc:'+40 scudo massimo e rigenerazione più rapida',prices:[70,170]},
+    {key:'engine',name:'Propulsori vettoriali',desc:'Velocità massima aumentata',prices:[70,170]},
+    {key:'msl',name:'Missili Hunter ×2',desc:'Ordigni a guida autonoma — fuoco con R (max 8)',price:50}
+  ];
+  function openHangar(){
+    docked=true; hidePrompt(); removeBeam(); SND.mine(false); firing=false;
+    shield=maxShield(); hull=100; setBars();
+    $('rr_hangar').style.display='flex'; renderHangar(); SND.scan();
+  }
+  function closeHangar(){ docked=false; $('rr_hangar').style.display='none'; }
+  function renderHangar(){
+    setTxt('rr_hgCred',Math.floor(credits)); setTxt('rr_hgMin',Math.floor(minerals));
+    var g=$('rr_hgGrid'); var html='';
+    HG_ITEMS.forEach(function(it,idx){
+      var tag,price,disabled,label;
+      if(it.key==='msl'){ price=it.price; disabled=missiles>=MSL_MAX||credits<price; label=missiles>=MSL_MAX?'SCORTA PIENA':('ACQUISTA · '+price+' cr'); tag='x'+missiles; }
+      else { var lvl=upgrades[it.key]; tag='MK-'+(lvl+1);
+        if(lvl>=2){ disabled=true; label='LIVELLO MASSIMO'; }
+        else { price=it.prices[lvl]; disabled=credits<price; label='MIGLIORA · '+price+' cr'; } }
+      html+='<div style="border:1px solid rgba(120,160,190,.22);border-radius:7px;padding:13px 14px;background:rgba(255,255,255,.02);">'
+        +'<div style="display:flex;justify-content:space-between;align-items:baseline;"><b style="color:#eaf2fa;font-size:13.5px;">'+it.name+'</b><span style="font-family:\'IBM Plex Mono\',monospace;font-size:10px;color:#5fd0e0;">'+tag+'</span></div>'
+        +'<div style="font-size:11px;color:#8fa0b2;margin:5px 0 10px;">'+it.desc+'</div>'
+        +'<div data-hg="'+idx+'" style="cursor:'+(disabled?'default':'pointer')+';text-align:center;font-family:\'IBM Plex Mono\',monospace;font-size:11px;font-weight:600;letter-spacing:.06em;border-radius:5px;padding:8px;'+(disabled?'background:rgba(255,255,255,.05);color:#5b6b80;':'background:rgba(95,208,224,.16);border:1px solid rgba(95,208,224,.5);color:#8fe0f0;')+'">'+label+'</div>'
+        +'</div>';
+    });
+    g.innerHTML=html;
+  }
+  $('rr_hgGrid').addEventListener('click',function(e){
+    var t=e.target.closest?e.target.closest('[data-hg]'):null; if(!t) return;
+    var it=HG_ITEMS[Number(t.getAttribute('data-hg'))];
+    if(it.key==='msl'){ if(missiles>=MSL_MAX||credits<it.price) return; credits-=it.price; missiles=Math.min(MSL_MAX,missiles+2); updMsl(); }
+    else { var lvl=upgrades[it.key]; if(lvl>=2||credits<it.prices[lvl]) return; credits-=it.prices[lvl]; upgrades[it.key]=lvl+1; if(it.key==='shield'){ shield=maxShield(); setBars(); } }
+    updCred(); renderHangar(); SND.ui(); toast('POTENZIAMENTO INSTALLATO',it.name);
+  });
+  $('rr_hgSell').addEventListener('click',function(){
+    var m=Math.floor(minerals); if(m<=0){ toast('STIVA VUOTA','Nessun minerale da vendere'); return; }
+    credits+=m*2; minerals-=m; setTxt('rr_min',Math.floor(minerals)); updCred(); renderHangar(); SND.scan(); toast('VENDITA COMPLETATA','+'+(m*2)+' crediti');
+  });
+  $('rr_hgClose').addEventListener('click',closeHangar);
+
   function doWarp(node){ closeMap(); warp={phase:'charge',t:0,node:node}; toast('CARICA IPERMOTORE','Destinazione: '+node.name); SND.warpCharge(); }
   function finishWarp(node){
     buildSystem(node.seed,node.cls); galCur=node.id; node.scanned=true; galSel=-1;
     ship.position.set(0,0,0); shipYaw=0; shipPitch=0; throttle=0.35;
     sysName=node.name; setTxt('rr_sysName',node.name); var sp=SPECTRAL[node.cls]; setTxt('rr_sysSub','CLASSE '+sp.c+' · '+sp.t+' · SETTORE '+(node.id<10?'0':'')+node.id+'-A');
     locked=null; refreshTarget(); ambushTimer=60+Math.random()*60;
+    drones.forEach(function(d){ scene.remove(d.g); disposeObj(d.g); }); drones=[];
+    clearHostiles();
     if(mState===6 && !freeMode){ freeMode=true; setTimeout(winOverlay,500); }
     else toast('SISTEMA RAGGIUNTO',node.name);
   }
   function winOverlay(){ $('rr_endTitle').textContent='GALASSIA APERTA'; $('rr_endSub').textContent='Ipermotore validato e sistema raggiunto. La rete di rilevamento è completa: salta liberamente verso qualsiasi sistema dalla mappa galattica (M).'; $('rr_end').style.display='flex'; }
 
   function resetGame(){
-    buildGalaxy(); buildSystem(galaxy[0].seed, galaxy[0].cls);
+    buildGalaxy(); buildSystem(galaxy[0].seed, galaxy[0].cls, true);
     sysName=galaxy[0].name; setTxt('rr_sysName',sysName); var sp=SPECTRAL[galaxy[0].cls]; setTxt('rr_sysSub','CLASSE '+sp.c+' · '+sp.t+' · SETTORE 00-A');
     ship.position.set(0,0,0); shipYaw=0; shipPitch=0; throttle=0.35;
     shield=100; hull=100; minerals=0; scanCount=0; kills=0; locked=null; freeMode=false; warp=null; minedM=0; ambushTimer=75;
-    setTxt('rr_min',0); setTxt('rr_scan',0); setTxt('rr_kills',0); setBars(); refreshTarget();
+    credits=0; missiles=2; upgrades={cannon:0,shield:0,engine:0}; docked=false; nearStation=null;
+    $('rr_hangar').style.display='none';
+    setTxt('rr_min',0); setTxt('rr_scan',0); setTxt('rr_kills',0); setBars(); refreshTarget(); updMsl(); updCred();
     drones.forEach(function(d){ scene.remove(d.g); disposeObj(d.g); }); drones=[];
+    clearHostiles();
     if(outpost){ scene.remove(outpost); disposeObj(outpost); outpost=null; }
     if(!waypoint){ waypoint=makeWaypoint(); scene.add(waypoint); } waypoint.visible=true; waypoint.position.set(0,30,640);
     mState=1; mission(1,'Calibrazione di volo','Attraversa il marcatore di rotta — segui l’anello verde');
@@ -1227,7 +1529,7 @@
     if(keys['w']) throttle=Math.min(1,throttle+dt*0.55); if(keys['s']) throttle=Math.max(0,throttle-dt*0.6);
     boosting=!!keys['shift'];
     var fwd=shipForward();
-    var maxv=70, speed=throttle*maxv*(boosting?2.8:1);
+    var maxv=maxSpd(), speed=throttle*maxv*(boosting?2.8:1);
     ship.position.addScaledVector(fwd,speed*dt);
     var q=new TH.Quaternion().setFromUnitVectors(_qz,fwd);
     var bank=new TH.Quaternion().setFromAxisAngle(fwd,-ix*0.6);
@@ -1243,7 +1545,7 @@
     setTxt('rr_coords','X '+pad(ship.position.x)+'  Y '+pad(ship.position.y)+'  Z '+pad(ship.position.z));
     setTxt('rr_thrN',Math.round(throttle*100)+'%'); $('rr_thr').style.width=(throttle*100)+'%'; setTxt('rr_spd',Math.round(speed));
     $('rr_boost').style.color=boosting?curAccent():'#445566';
-    shielTimer+=dt; if(shield<100 && shielTimer>2){ shield=Math.min(100,shield+dt*6); setBars(); }
+    shielTimer+=dt; if(shield<maxShield() && shielTimer>2){ shield=Math.min(maxShield(),shield+dt*(6+upgrades.shield*2)); setBars(); }
     starBoost += ((boosting?2.0:1.0)-starBoost)*Math.min(1,dt*4);
     SND.engine(throttle,boosting);
     updateSpeedLines(speed,fwd,false);
@@ -1260,21 +1562,26 @@
   }
   function fire(dt){
     fireTimer-=dt;
-    if((firing||keys[' ']) && !dActive && fireTimer<=0){ var fwd=shipForward(); spawnBolt(ship.position.clone().add(fwd.clone().multiplyScalar(4)),fwd,true); fireTimer=0.16; }
+    if((firing||keys[' ']) && !dActive && fireTimer<=0){ var fwd=shipForward(); spawnBolt(ship.position.clone().add(fwd.clone().multiplyScalar(4)),fwd,true); fireTimer=fireCd(); }
   }
   function updateBolts(dt){
     for(var i=bolts.length-1;i>=0;i--){ var b=bolts[i]; b.mesh.position.addScaledVector(b.vel,dt); b.life-=dt;
       var hit=false;
-      if(b.friendly){ for(var di=0;di<drones.length;di++){ var d=drones[di]; if(b.mesh.position.distanceTo(d.g.position)<8){ d.hp-=36; hit=true; flashAt(d.g.position); if(d.hp<=0){ explode(d.g.position,5.2); scene.remove(d.g); disposeObj(d.g); drones.splice(di,1); kills++; setTxt('rr_kills',kills); if(mState===4 && kills>=4){ mState=5; mission(5,'Avamposto di rilevamento','Premi F per dispiegare un avamposto (richiede 40 minerali)'); toast('SETTORE LIBERO','Dispiega un avamposto'); } } break; } } }
-      else { if(b.mesh.position.distanceTo(ship.position)<5){ hit=true; shield-=16; shielTimer=0; if(shield<0){ hull+=shield; shield=0; } setBars(); shake=1.6; SND.hit(); var dm=$('rr_dmg'); dm.style.boxShadow='inset 0 0 160px 30px rgba(255,60,40,0.5)'; setTimeout(function(){ dm.style.boxShadow='inset 0 0 160px 30px rgba(255,60,40,0)'; },250); if(hull<=0){ hull=100; shield=100; setBars(); toast('SCAFO RIPRISTINATO','Sistemi di emergenza'); } } }
+      if(b.friendly){
+        for(var di=0;di<drones.length;di++){ var d=drones[di]; if(b.mesh.position.distanceTo(d.g.position)<8){ d.hp-=boltDmg(); hit=true; flashAt(d.g.position); if(d.hp<=0) killDrone(di); break; } }
+        if(!hit){ for(var ci=0;ci<corvettes.length;ci++){ var cv2=corvettes[ci]; if(b.mesh.position.distanceTo(cv2.g.position)<17){ cv2.hp-=boltDmg(); hit=true; flashAt(b.mesh.position); if(cv2.hp<=0) killCorvette(ci); break; } } }
+      }
+      else { if(b.mesh.position.distanceTo(ship.position)<5){ hit=true; shield-=16; shielTimer=0; if(shield<0){ hull+=shield; shield=0; } setBars(); shake=1.6; SND.hit(); var dm=$('rr_dmg'); dm.style.boxShadow='inset 0 0 160px 30px rgba(255,60,40,0.5)'; setTimeout(function(){ dm.style.boxShadow='inset 0 0 160px 30px rgba(255,60,40,0)'; },250); if(hull<=0){ hull=100; shield=maxShield(); setBars(); toast('SCAFO RIPRISTINATO','Sistemi di emergenza'); } } }
       if(hit||b.life<=0){ scene.remove(b.mesh); b.mesh.geometry.dispose(); bolts.splice(i,1); }
     }
   }
   function updateDrones(dt){
     drones.forEach(function(d){ d.orbit+=dt*0.4; var desired=ship.position.clone().add(new TH.Vector3(Math.cos(d.orbit)*200,40,Math.sin(d.orbit)*200)); d.g.position.lerp(desired,Math.min(1,dt*0.7)); d.g.lookAt(ship.position); d.fire-=dt; if(d.fire<=0){ d.fire=2+Math.random()*1.5; var dir=ship.position.clone().sub(d.g.position).normalize(); spawnBolt(d.g.position.clone().add(dir.clone().multiplyScalar(4)),dir,false); } });
-    if(freeMode && drones.length===0){
+    if(freeMode && drones.length===0 && corvettes.length===0){
       ambushTimer-=dt;
-      if(ambushTimer<=0){ ambushTimer=90+Math.random()*80; spawnDrones(2+Math.floor(Math.random()*2)); toast('ALLERTA','Pirati in avvicinamento!'); }
+      if(ambushTimer<=0){ ambushTimer=90+Math.random()*80;
+        if(Math.random()<0.35){ spawnCorvette(); }
+        else { spawnDrones(2+Math.floor(Math.random()*2)); toast('ALLERTA','Pirati in avvicinamento!'); } }
     }
   }
   function updateMining(dt){
@@ -1297,10 +1604,13 @@
   function checkMissions(dt){
     if(mState===1 && waypoint && waypoint.visible){ if(ship.position.distanceTo(waypoint.position)<30){ waypoint.visible=false; flash(); dialog('DR. HALSA — CONTROLLO MISSIONE',['Rotta calibrata, pilota. Bentornato in servizio.','Il tuo compito: rilevare questo sistema. Aggancia un corpo con TAB e premi F per scansionarlo.','Scansiona 3 pianeti. I corpi minori ce li vediamo dopo.'],function(){ mState=2; mission(2,'Rilevamento planetario','Aggancia (TAB) e scansiona (F) 3 pianeti'); toast('NUOVA DIRETTIVA','Scansiona 3 pianeti'); }); } }
     if(dActive){ hidePrompt(); return; }
+    nearStation=null;
+    for(var i2=0;i2<decor.length;i2++){ if(decor[i2].station && ship.position.distanceTo(decor[i2].g.position)<190){ nearStation=decor[i2]; break; } }
     var shown=false;
-    if(locked && !locked.drone && !locked.scanned){ prompt2('F', locked.mineable?'Scansiona asteroide':'Scansiona '+locked.name); shown=true; }
+    if(locked && !locked.drone && !locked.corv && !locked.scanned){ prompt2('F', locked.mineable?'Scansiona asteroide':'Scansiona '+locked.name); shown=true; }
     if(mState===3 && locked && locked.mineable && ship.position.distanceTo(locked.mesh.position)<170){ prompt2('G','Tieni premuto · Estrai minerale'); shown=true; }
     if(mState===5){ prompt2('F','Dispiega avamposto (40 minerali)'); shown=true; }
+    if(nearStation){ prompt2('F','Attracca alla stazione — riparazioni e hangar'); shown=true; }
     if(mState===6||freeMode){ if(!shown){ prompt2('M','Apri mappa galattica'); shown=true; } }
     if(!shown) hidePrompt();
   }
@@ -1343,13 +1653,18 @@
     updateComets(dt);
     if(!warp) updateTunnel(dt,shipForward(),false);
 
+    sunLight.position.copy(ship.position).addScaledVector(curSunDir,600);
+    sunLight.target.position.copy(ship.position);
+
     if(started){
       if(warp){ updateWarp(dt); }
-      else {
+      else if(!docked){
         updateFlight(dt); autoLock(); refreshTarget(); fire(dt); updateMining(dt); updateDrones(dt);
+        updateCorvettes(dt); updateMissiles(dt); updateCollisions(dt);
         checkMissions(dt); updateBracket();
       }
-      updateBolts(dt); updateTrail(dt); updateExplosions(dt); updateCamera(dt); drawRadar(dt); updateDust();
+      if(!docked) updateBolts(dt);
+      updateTrail(dt); updateExplosions(dt); updateCamera(dt); drawRadar(dt); updateDust();
     } else {
       camera.position.set(Math.sin(et*0.12)*60,18,Math.cos(et*0.12)*60); camera.lookAt(0,0,40); camera.fov=58; camera.updateProjectionMatrix();
       updateExplosions(dt);
@@ -1358,10 +1673,14 @@
     if(composer) composer.render(); else renderer.render(scene,camera);
   }
 
-  function onResize(){ W=window.innerWidth;H=window.innerHeight; renderer.setSize(W,H); camera.aspect=W/H; camera.updateProjectionMatrix(); if(composer) composer.setSize(W,H); if(bloomPass) bloomPass.setSize(W,H); }
+  function onResize(){ W=window.innerWidth;H=window.innerHeight; renderer.setSize(W,H); camera.aspect=W/H; camera.updateProjectionMatrix(); if(composer) composer.setSize(W,H); if(bloomPass) bloomPass.setSize(W,H); if(finalPass) finalPass.uniforms.uAspect.value=W/H; if(fxaaPass){ var pr=renderer.getPixelRatio(); fxaaPass.uniforms.resolution.value.set(1/(W*pr),1/(H*pr)); } }
   on(window,'resize',onResize);
 
-  buildGalaxy(); buildSystem(galaxy[0].seed, galaxy[0].cls); setTxt('rr_sysName',galaxy[0].name);
+  // console di debug: DF.spawnCorvette(), DF.spawnDrones(3), DF.addCredits(100), DF.openHangar()
+  window.DF={ openHangar:openHangar, spawnCorvette:spawnCorvette, spawnDrones:spawnDrones,
+    addCredits:function(n){ credits+=(n||100); updCred(); } };
+
+  buildGalaxy(); buildSystem(galaxy[0].seed, galaxy[0].cls, true); setTxt('rr_sysName',galaxy[0].name);
   applyAccent(); animate();
 })();
 </script>
