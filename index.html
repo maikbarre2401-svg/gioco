@@ -130,7 +130,7 @@
     </div>
 
     <div style="position:absolute;bottom:5px;left:50%;transform:translateX(-50%);font-family:'IBM Plex Mono',monospace;color:rgba(150,170,195,.4);font-size:9.5px;letter-spacing:.04em;white-space:nowrap;">
-      <b style="color:rgba(180,200,225,.65);">MOUSE</b> rotta · <b style="color:rgba(180,200,225,.65);">W/S</b> spinta · <b style="color:rgba(180,200,225,.65);">SHIFT</b> turbo · <b style="color:rgba(180,200,225,.65);">SPAZIO</b> fuoco · <b style="color:rgba(180,200,225,.65);">TAB</b> aggancia · <b style="color:rgba(180,200,225,.65);">F</b> scansiona · <b style="color:rgba(180,200,225,.65);">G</b> estrai · <b style="color:rgba(180,200,225,.65);">R</b> missile · <b style="color:rgba(180,200,225,.65);">M</b> mappa · <b style="color:rgba(180,200,225,.65);">V</b> audio
+      <b style="color:rgba(180,200,225,.65);">MOUSE</b> rotta · <b style="color:rgba(180,200,225,.65);">W/S</b> spinta · <b style="color:rgba(180,200,225,.65);">SHIFT</b> turbo · <b style="color:rgba(180,200,225,.65);">SPAZIO</b> fuoco · <b style="color:rgba(180,200,225,.65);">TAB</b> aggancia · <b style="color:rgba(180,200,225,.65);">F</b> scansiona · <b style="color:rgba(180,200,225,.65);">G</b> estrai · <b style="color:rgba(180,200,225,.65);">R</b> missile · <b style="color:rgba(180,200,225,.65);">L</b> atterra · <b style="color:rgba(180,200,225,.65);">M</b> mappa · <b style="color:rgba(180,200,225,.65);">V</b> audio
     </div>
   </div>
 
@@ -192,9 +192,9 @@
 
   <!-- ===================== START OVERLAY ===================== -->
   <div id="rr_overlay" style="position:absolute;inset:0;z-index:40;display:flex;flex-direction:column;align-items:center;justify-content:center;background:radial-gradient(125% 125% at 50% 32%,#0b1426 0%,#050810 55%,#020306 100%);cursor:pointer;transition:opacity .7s;">
-    <div data-acc-fg="1" style="font-family:'IBM Plex Mono',monospace;color:#5fd0e0;letter-spacing:.5em;font-size:11px;margin-bottom:16px;">PROGRAMMA DI RILEVAMENTO GALATTICO · MK-III</div>
+    <div data-acc-fg="1" style="font-family:'IBM Plex Mono',monospace;color:#5fd0e0;letter-spacing:.5em;font-size:11px;margin-bottom:16px;">PROGRAMMA DI RILEVAMENTO GALATTICO · MK-IV</div>
     <h1 style="font-size:74px;font-weight:700;letter-spacing:.06em;color:#eef4fa;text-shadow:0 6px 60px rgba(95,208,224,.28);margin-bottom:8px;">DEEP&nbsp;FIELD</h1>
-    <div style="color:#8b9bb0;font-size:15px;max-width:600px;text-align:center;line-height:1.65;margin-bottom:30px;">Sei un pilota della Survey Fleet. Rileva i corpi del sistema, estrai minerali, respingi droni e corvette pirata, attracca alle stazioni per vendere risorse e potenziare cannoni, scudi, motori e missili a guida. Poi attiva l'ipermotore verso una galassia procedurale sconfinata. Motore grafico MK-III: illuminazione PBR con riflessi, ombre dinamiche, normal map planetarie, raggi solari volumetrici, tunnel iperspaziale e audio procedurale.</div>
+    <div style="color:#8b9bb0;font-size:15px;max-width:620px;text-align:center;line-height:1.65;margin-bottom:30px;">Parti dal Sistema Sol, in orbita sopra la Terra. <b style="color:#bfd4e8;">Atterra sui pianeti (L)</b> ed esplorali a piedi in prima persona: foreste, deserti, mondi di lava e cristallo. Estrai minerali, respingi droni e corvette pirata, attracca alle stazioni per potenziare la nave, poi salta con l'ipermotore attraverso 110 sistemi procedurali. Motore MK-IV: PBR, ombre dinamiche, terreni procedurali, raggi volumetrici e audio sintetizzato.</div>
     <div id="rr_start" data-acc-bg="1" style="font-family:'IBM Plex Mono',monospace;color:#04141a;background:#5fd0e0;padding:14px 46px;border-radius:6px;font-size:14px;font-weight:700;letter-spacing:.12em;box-shadow:0 14px 48px rgba(95,208,224,.32);animation:rrFloat 2.6s infinite;">⟶ AVVIA SEQUENZA</div>
     <div style="margin-top:26px;width:230px;">
       <div id="rr_bootTxt" style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5b6b80;text-align:center;margin-bottom:7px;">SINCRONIZZAZIONE CATALOGO STELLARE…</div>
@@ -862,26 +862,31 @@
     lensEls.push({e:mk(60,'radial-gradient(circle,rgba(200,255,220,.45) 0%,rgba(200,255,220,0) 70%)'),k:-1.15,s:0.7});
     lensEls.push({e:mk(220,'radial-gradient(circle,rgba(150,190,255,.22) 0%,rgba(150,190,255,0) 72%)'),k:0.5,s:1.1});
   })();
-  var _lfv=new TH.Vector3(), _lfDir=new TH.Vector3();
+  var _lfv=new TH.Vector3(), _lfDir=new TH.Vector3(), _lfSrc=new TH.Vector3();
   function updateLensFlare(){
-    if(!sun){ lensEls.forEach(function(o){ o.e.style.opacity='0'; }); return; }
-    _lfv.copy(sun.position).project(camera);
+    var srcOk=false;
+    if(mode==='surface'&&surf.active){ _lfSrc.copy(surf.sunDir).multiplyScalar(5000).add(camera.position); srcOk=true; }
+    else if(sun){ _lfSrc.copy(sun.position); srcOk=true; }
+    if(!srcOk){ lensEls.forEach(function(o){ o.e.style.opacity='0'; }); if(finalPass) finalPass.uniforms.uSunI.value*=0.9; return; }
+    _lfv.copy(_lfSrc).project(camera);
     var behind=_lfv.z>1;
     var sx=(_lfv.x*0.5+0.5)*W, sy=(-_lfv.y*0.5+0.5)*H;
     var onScreen=!behind && sx>-200 && sx<W+200 && sy>-200 && sy<H+200;
     var vis=0;
     if(onScreen){
-      _lfDir.copy(sun.position).sub(camera.position).normalize();
+      _lfDir.copy(_lfSrc).sub(camera.position).normalize();
       var camF=new TH.Vector3(); camera.getWorldDirection(camF);
       vis=Math.pow(Math.max(0,camF.dot(_lfDir)),2.5);
-      // occlusione dai pianeti
-      for(var i=0;i<bodies.length;i++){
-        var b=bodies[i];
-        var toB=b.mesh.position.clone().sub(camera.position);
-        var proj=toB.dot(_lfDir);
-        if(proj>0 && proj<camera.position.distanceTo(sun.position)){
-          var perp=toB.sub(_lfDir.clone().multiplyScalar(proj)).length();
-          if(perp<b.radius*1.05){ vis=0; break; }
+      // occlusione dai pianeti (solo nello spazio)
+      if(mode!=='surface'){
+        for(var i=0;i<bodies.length;i++){
+          var b=bodies[i];
+          var toB=b.mesh.position.clone().sub(camera.position);
+          var proj=toB.dot(_lfDir);
+          if(proj>0 && proj<camera.position.distanceTo(_lfSrc)){
+            var perp=toB.sub(_lfDir.clone().multiplyScalar(proj)).length();
+            if(perp<b.radius*1.05){ vis=0; break; }
+          }
         }
       }
     }
@@ -897,7 +902,8 @@
       finalPass.uniforms.uSunScreen.value.set(sx/W,1-(sy/H));
       var cur=finalPass.uniforms.uSunI.value;
       finalPass.uniforms.uSunI.value=cur+(vis*0.85-cur)*0.12;
-      if(sunGlow) finalPass.uniforms.uSunCol.value.copy(sunGlow.material.color).lerp(new TH.Color(0xffffff),0.35);
+      if(mode==='surface') finalPass.uniforms.uSunCol.value.setHex(0xfff2dc);
+      else if(sunGlow) finalPass.uniforms.uSunCol.value.copy(sunGlow.material.color).lerp(new TH.Color(0xffffff),0.35);
     }
   }
 
@@ -997,7 +1003,7 @@
       sunLight2.position.copy(compPos); sunLight2.color.setHex(compCol); sunLight2.intensity=1.1;
     }
 
-    var pcount=3+Math.floor(rng()*4);
+    var pcount=4+Math.floor(rng()*5);
     var types=['terran','desert','ice','rock','lava','gas','gasblue','ocean','toxic','crystal'];
     var i;
     for(i=0;i<pcount;i++){
@@ -1005,6 +1011,7 @@
       var rad=34+rng()*86;
       var dist=560+i*360+rng()*190;
       var ang=rng()*Math.PI*2;
+      if(ensureStation && i===0){ type='terran'; rad=62; dist=620; }
       var px=Math.cos(ang)*dist, pz=Math.sin(ang)*dist, py=(rng()-0.5)*260;
       var P=PALS[type];
       var texset=planetTex(type,rng);
@@ -1029,9 +1036,10 @@
       }
       var resN=2+Math.floor(rng()*2); var res=[]; for(var r2=0;r2<resN;r2++){ var xr=RES[Math.floor(rng()*RES.length)]; if(res.indexOf(xr)<0) res.push(xr); }
       var names=['Kepler','Gliese','Ross','Wolf','Tau','Lalande','Procyon','Eridani','Hydrae'];
-      bodies.push({mesh:pl, cloudMesh:cloudMesh, name:names[Math.floor(rng()*names.length)]+'-'+(100+Math.floor(rng()*899)), type:type, radius:rad, scanned:false, res:res, spin:0.04+rng()*0.08, isBody:true});
+      var pname=(ensureStation&&i===0)?'Terra':(names[Math.floor(rng()*names.length)]+'-'+(100+Math.floor(rng()*899)));
+      bodies.push({mesh:pl, cloudMesh:cloudMesh, name:pname, type:type, radius:rad, scanned:false, res:res, spin:0.04+rng()*0.08, isBody:true, seed:(rng()*1e9)>>>0});
 
-      if(!P.bands && rng()<0.5){
+      if((!P.bands && rng()<0.5) || (ensureStation&&i===0)){
         var mCount=1+(rng()<0.28?1:0);
         for(var mi=0;mi<mCount;mi++){
           var mr=rad*(0.16+rng()*0.13);
@@ -1138,12 +1146,13 @@
   function buildGalaxy(){
     galaxy=[]; var rng=mulberry32(20260629);
     var cats=['HIP','HD','GJ','TYC','Kepler','Gliese'];
-    var N=40;
+    var N=110;
     for(var i=0;i<N;i++){
-      var arm=Math.floor(rng()*3); var t=rng(); var ang=arm*2.094+t*3.4+rng()*0.4; var rad=0.08+t*0.42;
-      var x=0.5+Math.cos(ang)*rad+(rng()-0.5)*0.05; var y=0.5+Math.sin(ang)*rad+(rng()-0.5)*0.05;
+      var arm=Math.floor(rng()*4); var t=rng(); var ang=arm*1.5708+t*4.2+rng()*0.4; var rad=0.06+t*0.44;
+      var x=0.5+Math.cos(ang)*rad+(rng()-0.5)*0.04; var y=0.5+Math.sin(ang)*rad+(rng()-0.5)*0.04;
       galaxy.push({ id:i, name:cats[Math.floor(rng()*cats.length)]+' '+(1000+Math.floor(rng()*8999)), x:x, y:y, cls:Math.floor(rng()*7), seed:(rng()*1e9)>>>0, danger:1+Math.floor(rng()*3), scanned:i===0 });
     }
+    galaxy[0].name='Sistema Sol'; galaxy[0].cls=4;
     galCur=0; galSel=-1;
   }
 
@@ -1319,6 +1328,223 @@
       if(d2<72){ n=ship.position.clone().sub(o.g.position).normalize(); ship.position.copy(o.g.position).addScaledVector(n,72); collideHit(8); } }
   }
 
+  // ================== ESPLORAZIONE DI SUPERFICIE (prima persona) ==================
+  var surf={ active:false, group:null, heightFn:null, waterY:-9999, amp:20, grav:20, jump:9.5,
+    sunDir:new TH.Vector3(0.45,0.62,0.4).normalize(), returnPos:new TH.Vector3(), wpVis:false,
+    pp:new TH.Vector3(), pv:new TH.Vector3(), onGround:false, walkPhase:0, body:null, water:null };
+  var plYaw=0, plPitch=0;
+  var SURF_CFG={
+    terran:{amp:26,water:-2,grav:20,jump:9.5},  ocean:{amp:9,water:2,grav:20,jump:9.5},
+    desert:{amp:16,water:-9999,grav:18,jump:10},ice:{amp:22,water:-9999,grav:13,jump:11},
+    rock:{amp:36,water:-9999,grav:11,jump:12},  lava:{amp:26,water:-5,grav:19,jump:9.5},
+    toxic:{amp:20,water:-3,grav:19,jump:10},    crystal:{amp:24,water:-9999,grav:15,jump:11}
+  };
+  function buildSurface(body){
+    var type=body.type, P=PALS[type]||PALS.rock, cfg=SURF_CFG[type]||SURF_CFG.rock;
+    var rng2=mulberry32((body.seed||12345)>>>0);
+    var noiseS=makeNoise2D(rng2);
+    surf.amp=cfg.amp; surf.waterY=cfg.water; surf.grav=cfg.grav; surf.jump=cfg.jump; surf.body=body;
+    surf.heightFn=function(x,z){ return noiseS(x*0.0038+7,z*0.0038+7,4)*surf.amp + noiseS(x*0.021+3,z*0.021+3,3)*surf.amp*0.16; };
+    surf.group=new TH.Group(); scene.add(surf.group);
+
+    // terreno con vertex color
+    var SEG=150, SIZE=4200;
+    var tg=new TH.PlaneGeometry(SIZE,SIZE,SEG,SEG); tg.rotateX(-Math.PI/2);
+    var pos=tg.attributes.position, colArr=[];
+    var cw=hx(P.shallow||P.low), cl=hx(P.low), ch=hx(P.high), cp=hx(P.peak);
+    for(var vi=0;vi<pos.count;vi++){
+      var vx=pos.getX(vi), vz=pos.getZ(vi);
+      var vy=surf.heightFn(vx,vz);
+      pos.setY(vi,vy);
+      var c;
+      if(vy<surf.waterY+1.4) c=cw;
+      else { var t=clamp01((vy-surf.waterY)/(surf.amp*1.5));
+        c=t<0.55?rgbArr(cl,ch,t/0.55):rgbArr(ch,cp,(t-0.55)/0.45); }
+      var jit=0.92+rng2()*0.16;
+      colArr.push(c[0]/255*jit,c[1]/255*jit,c[2]/255*jit);
+    }
+    tg.setAttribute('color',new TH.Float32BufferAttribute(colArr,3));
+    tg.computeVertexNormals();
+    var tmat=new TH.MeshStandardMaterial({vertexColors:true,roughness:0.95,metalness:0.02});
+    tmat.envMapIntensity=0.2;
+    var terrain=new TH.Mesh(tg,tmat); terrain.receiveShadow=true; surf.group.add(terrain);
+
+    // acqua / lava / liquido tossico
+    surf.water=null;
+    if(surf.waterY>-9000){
+      var isLava=(type==='lava');
+      var wmat=new TH.MeshStandardMaterial({ color:new TH.Color(P.water),
+        transparent:!isLava, opacity:isLava?1:0.84, roughness:isLava?0.6:0.1, metalness:0.05 });
+      if(isLava){ wmat.emissive=new TH.Color(0xff5a2a); wmat.emissiveIntensity=0.9; }
+      wmat.envMapIntensity=1.1;
+      surf.water=new TH.Mesh(new TH.PlaneGeometry(SIZE,SIZE),wmat);
+      surf.water.rotation.x=-Math.PI/2; surf.water.position.y=surf.waterY; surf.group.add(surf.water);
+    }
+
+    // cielo: cupola con gradiente + disco solare (solo se c'è atmosfera)
+    var horCol;
+    if(P.atmo){
+      var atmoCol=new TH.Color(P.atmo);
+      var topCol=atmoCol.clone().multiplyScalar(0.5);
+      horCol=atmoCol.clone().lerp(new TH.Color(0xffffff),0.48);
+      var domeMat=new TH.ShaderMaterial({
+        uniforms:{ uTop:{value:topCol}, uHor:{value:horCol}, uSunDir:{value:surf.sunDir} },
+        vertexShader:'varying vec3 vDir;void main(){vDir=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
+        fragmentShader:[
+          'uniform vec3 uTop;uniform vec3 uHor;uniform vec3 uSunDir;varying vec3 vDir;',
+          'void main(){ vec3 d=normalize(vDir); float h=clamp(d.y*0.5+0.5,0.0,1.0);',
+          ' vec3 col=mix(uHor,uTop,pow(h,1.35));',
+          ' float s=max(0.0,dot(d,normalize(uSunDir)));',
+          ' col+=vec3(1.0,0.93,0.75)*pow(s,220.0)*1.6+vec3(1.0,0.85,0.6)*pow(s,10.0)*0.22;',
+          ' gl_FragColor=vec4(col,1.0);}'
+        ].join('\n'),
+        side:TH.BackSide, depthWrite:false, fog:false
+      });
+      var dome=new TH.Mesh(new TH.SphereGeometry(5600,28,18),domeMat);
+      dome.renderOrder=-2; surf.group.add(dome);
+      scene.fog=new TH.Fog(horCol.getHex(),520,3200);
+    } else {
+      horCol=new TH.Color(0x05070c);
+      scene.fog=new TH.Fog(0x05070c,300,3200);
+    }
+
+    // vegetazione / formazioni per bioma (instanziate)
+    var dum=new TH.Object3D();
+    function inst(geo,mat,count){ var m=new TH.InstancedMesh(geo,mat,count); m.castShadow=true; m.receiveShadow=true; m.count=0; surf.group.add(m); return m; }
+    function place(m,x,y,z,s,ry,tilt){ if(m.count>=149) return; dum.position.set(x,y,z); dum.rotation.set(tilt||0,ry||0,0); dum.scale.set(s,s,s); dum.updateMatrix(); m.setMatrixAt(m.count++,dum.matrix); }
+    var rc=rgbArr(ch,cl,0.4);
+    var rocks=inst(rockGeometry(1,rng2,1), new TH.MeshStandardMaterial({color:new TH.Color(rc[0]/255,rc[1]/255,rc[2]/255),roughness:0.95,metalness:0.05,flatShading:true}),150);
+    var A=null,B=null;
+    if(type==='terran'||type==='ocean'){
+      A=inst(new TH.CylinderGeometry(0.14,0.24,1,6), new TH.MeshStandardMaterial({color:0x6a4a2e,roughness:0.9}),150);
+      B=inst(new TH.ConeGeometry(0.85,2.2,7), new TH.MeshStandardMaterial({color:type==='ocean'?0x2e8a4c:0x2e7a3a,roughness:0.9}),150);
+    } else if(type==='ice'){
+      B=inst(new TH.ConeGeometry(0.5,2.6,5), new TH.MeshStandardMaterial({color:0xcfe8ff,roughness:0.15,metalness:0.1,emissive:0x6fa8cc,emissiveIntensity:0.15}),150);
+    } else if(type==='crystal'){
+      B=inst(new TH.ConeGeometry(0.55,2.8,5), new TH.MeshStandardMaterial({color:0xb070e8,roughness:0.2,metalness:0.2,emissive:0x8a40d0,emissiveIntensity:0.8}),150);
+    } else if(type==='toxic'){
+      A=inst(new TH.CylinderGeometry(0.18,0.26,1,6), new TH.MeshStandardMaterial({color:0xc8d0a8,roughness:0.8}),150);
+      B=inst(new TH.SphereGeometry(0.8,10,7), new TH.MeshStandardMaterial({color:0x8fd040,roughness:0.5,emissive:0x6fae20,emissiveIntensity:0.55}),150);
+    } else if(type==='lava'){
+      B=inst(rockGeometry(1,rng2,1), new TH.MeshStandardMaterial({color:0x241410,roughness:0.9,emissive:0xff5a2a,emissiveIntensity:0.6,flatShading:true}),150);
+    } else if(type==='desert'){
+      B=inst(new TH.CylinderGeometry(0.3,0.4,2.4,7), new TH.MeshStandardMaterial({color:0x4a7a3a,roughness:0.85}),150);
+    }
+    for(var pi=0;pi<240;pi++){
+      var px2=(rng2()-0.5)*3600, pz2=(rng2()-0.5)*3600, py2=surf.heightFn(px2,pz2);
+      if(py2<surf.waterY+0.8) continue;
+      var pick=rng2(), s2=2.2+rng2()*3.2, ry2=rng2()*6.283;
+      if(B && pick<0.62){
+        if(A){ place(A,px2,py2+0.5*s2,pz2,s2,ry2); place(B,px2,py2+s2+1.05*s2,pz2,s2,ry2); }
+        else place(B,px2,py2+1.15*s2,pz2,s2,ry2,(rng2()-0.5)*0.3);
+      } else {
+        var s3=1.4+rng2()*4.6;
+        place(rocks,px2,py2+0.3*s3,pz2,s3,ry2,(rng2()-0.5)*0.5);
+      }
+    }
+    [rocks,A,B].forEach(function(m){ if(m) m.instanceMatrix.needsUpdate=true; });
+
+    // illuminazione superficie (bloom tarato per lo spazio: quaggiù va ridotto)
+    amb.intensity=P.atmo?0.55:0.35; hemi.intensity=P.atmo?0.42:0.22; sunLight.intensity=1.35;
+    if(bloomPass){ bloomPass.strength=0.22; bloomPass.threshold=0.85; }
+    // con atmosfera il cielo copre lo spazio profondo: niente stelle/via lattea in additive
+    if(P.atmo){ stars.visible=false; milkyMesh.visible=false; nebulaSprites.forEach(function(sp){ sp.visible=false; }); }
+    surf.active=true;
+  }
+  function destroySurface(){
+    if(surf.group){ scene.remove(surf.group); disposeObj(surf.group); surf.group=null; }
+    scene.fog=null; surf.active=false; surf.water=null;
+    amb.intensity=0.5; hemi.intensity=0.3; sunLight.intensity=2.6;
+    if(bloomPass){ bloomPass.strength=PROPS.bloomStrength; bloomPass.threshold=0.55; }
+    stars.visible=true; milkyMesh.visible=true; nebulaSprites.forEach(function(sp){ sp.visible=true; });
+  }
+  function tryLand(){
+    if(mode!=='space'||warp||docked||dActive) return;
+    var b=(locked&&locked.isBody)?locked:null;
+    if(!b){ toast('NESSUN PIANETA AGGANCIATO','Aggancia un pianeta con TAB'); return; }
+    if(PALS[b.type].bands){ toast('ATTERRAGGIO IMPOSSIBILE','I giganti gassosi non hanno superficie solida'); return; }
+    var d=ship.position.distanceTo(b.mesh.position);
+    if(d>b.radius*4.5){ toast('TROPPO LONTANO','Avvicinati a '+b.name+' per atterrare'); return; }
+    var outDir=ship.position.clone().sub(b.mesh.position).normalize();
+    surf.returnPos.copy(b.mesh.position).addScaledVector(outDir,b.radius*2.6);
+    landingBody=b; mode='landing'; landT=0;
+    toast('SEQUENZA DI ATTERRAGGIO','Ingresso atmosferico su '+b.name+'…'); SND.warpCharge();
+  }
+  function updateLanding(dt){
+    landT+=dt;
+    var b=landingBody;
+    var target=b.mesh.position.clone().add(ship.position.clone().sub(b.mesh.position).normalize().multiplyScalar(b.radius*1.05));
+    ship.position.lerp(target,Math.min(1,dt*1.5));
+    shake=Math.max(shake,1.3);
+    if(finalPass) finalPass.uniforms.uWarp.value=Math.min(0.55,finalPass.uniforms.uWarp.value+dt*0.6);
+    if(landT>1.7){ if(finalPass) finalPass.uniforms.uWarp.value=0; flash(); enterSurface(b); }
+  }
+  function enterSurface(body){
+    buildSurface(body);
+    sysGroup.visible=false; dust.visible=false; boosting=false; firing=false;
+    bolts.forEach(function(b2){ scene.remove(b2.mesh); b2.mesh.geometry.dispose(); }); bolts=[];
+    drones.forEach(function(d){ scene.remove(d.g); disposeObj(d.g); }); drones=[];
+    clearHostiles(); removeBeam(); SND.mine(false);
+    if(outpost) outpost.visible=false;
+    surf.wpVis=!!(waypoint&&waypoint.visible); if(waypoint) waypoint.visible=false;
+    locked=null; refreshTarget(); hidePrompt();
+    // nave parcheggiata sul terreno
+    var sy=surf.heightFn(12,18);
+    ship.position.set(12,sy+1.7,18);
+    ship.quaternion.set(0,0,0,1); ship.rotateY(Math.PI*0.7); ship.rotateZ(0.02);
+    plYaw=0; plPitch=-0.04;
+    surf.pp.set(0,surf.heightFn(0,0)+1.75,0); surf.pv.set(0,0,0); surf.onGround=true;
+    camera.rotation.order='YXZ'; camera.fov=70; camera.updateProjectionMatrix();
+    camera.position.copy(surf.pp); camera.rotation.set(plPitch,plYaw,0);
+    mode='surface';
+    mission('★','Superficie di '+body.name,'Esplora in prima persona — torna alla nave e premi T per decollare');
+    toast('ATTERRATO SU '+body.name.toUpperCase(),'Clicca per guardarti intorno · WASD muovi · SPAZIO salta');
+    SND.scan();
+  }
+  function tryTakeoff(){
+    if(mode!=='surface') return;
+    if(surf.pp.distanceTo(ship.position)>24){ toast('TROPPO LONTANO DALLA NAVE','Torna alla nave per decollare'); return; }
+    destroySurface();
+    if(document.exitPointerLock) document.exitPointerLock();
+    sysGroup.visible=true; dust.visible=true;
+    if(outpost) outpost.visible=true;
+    if(waypoint) waypoint.visible=surf.wpVis;
+    ship.position.copy(surf.returnPos);
+    mode='space'; camera.fov=62; camera.updateProjectionMatrix();
+    mission(mState<6?mState:'6','Rotta libera','Riprendi le direttive di volo');
+    flash(); SND.warpJump(); toast('IN ORBITA','Sistemi di volo riattivati');
+  }
+  function updateSurface(dt){
+    var sp=keys['shift']?26:11;
+    var fz=(keys['w']?1:0)-(keys['s']?1:0), fx=(keys['d']?1:0)-(keys['a']?1:0);
+    var sy=Math.sin(plYaw), cy=Math.cos(plYaw);
+    var mvx=(-sy*fz+cy*fx), mvz=(-cy*fz-sy*fx);
+    var mlen=Math.hypot(mvx,mvz)||1;
+    surf.pp.x+=mvx/mlen*sp*dt*(fz||fx?1:0);
+    surf.pp.z+=mvz/mlen*sp*dt*(fz||fx?1:0);
+    surf.pp.x=Math.max(-1950,Math.min(1950,surf.pp.x));
+    surf.pp.z=Math.max(-1950,Math.min(1950,surf.pp.z));
+    if(keys[' ']&&surf.onGround&&!dActive){ surf.pv.y=surf.jump; surf.onGround=false; }
+    surf.pv.y-=surf.grav*dt;
+    surf.pp.y+=surf.pv.y*dt;
+    var gy=surf.heightFn(surf.pp.x,surf.pp.z)+1.75;
+    if(surf.waterY>-9000) gy=Math.max(gy,surf.waterY+1.2);
+    if(surf.pp.y<=gy){ surf.pp.y=gy; surf.pv.y=0; surf.onGround=true; }
+    var moving=(fz||fx)&&surf.onGround;
+    if(moving) surf.walkPhase+=dt*sp*0.55;
+    camera.position.copy(surf.pp);
+    if(moving) camera.position.y+=Math.sin(surf.walkPhase)*0.09;
+    camera.rotation.set(plPitch,plYaw,0);
+    if(surf.water) surf.water.position.y=surf.waterY+Math.sin(clock.elapsedTime*0.5)*0.12;
+    setTxt('rr_coords','X '+pad(surf.pp.x)+'  Y '+pad(surf.pp.y)+'  Z '+pad(surf.pp.z));
+    setTxt('rr_spd',Math.round((fz||fx)?sp:0)); setTxt('rr_thrN','—');
+    SND.engine(0.03,false);
+    if(dActive){ hidePrompt(); return; }
+    if(surf.pp.distanceTo(ship.position)<24) prompt2('T','Decolla');
+    else if(document.pointerLockElement!==canvas) prompt2('CLIC','Blocca il mouse per guardarti intorno');
+    else hidePrompt();
+  }
+
   // ---------- stato di volo ----------
   var shipYaw=0, shipPitch=0, throttle=0.35, boosting=false, mx=0, my=0;
   var shield=100, hull=100, minerals=0, scanCount=0, kills=0;
@@ -1329,6 +1555,7 @@
   var upgrades={cannon:0,shield:0,engine:0};
   var docked=false, nearStation=null;
   var missilesArr=[], corvettes=[];
+  var mode='space', landingBody=null, landT=0;
   function maxShield(){ return 100+upgrades.shield*40; }
   function fireCd(){ return [0.16,0.11,0.08][upgrades.cannon]; }
   function boltDmg(){ return [36,52,72][upgrades.cannon]; }
@@ -1356,6 +1583,18 @@
   var rdr=$('rr_radar'), rctx=rdr.getContext('2d'); var sweep=0;
   function drawRadar(dt){
     var w=150,h=150,cx=75,cy=75,R=68,range=1800; sweep+=dt*1.6;
+    if(mode==='surface'){
+      rctx.clearRect(0,0,w,h);
+      rctx.strokeStyle='rgba(95,208,224,0.18)'; rctx.lineWidth=1;
+      [0.34,0.67,1].forEach(function(f){ rctx.beginPath(); rctx.arc(cx,cy,R*f,0,7); rctx.stroke(); });
+      var range2=600, csS=Math.cos(-plYaw), snS=Math.sin(-plYaw);
+      var dxS=ship.position.x-surf.pp.x, dzS=ship.position.z-surf.pp.z;
+      var dS=Math.hypot(dxS,dzS); if(dS>range2){ dxS*=range2/dS; dzS*=range2/dS; }
+      var rxS=dxS*csS-dzS*snS, rzS=dxS*snS+dzS*csS;
+      rctx.fillStyle='rgba(95,208,224,1)'; rctx.beginPath(); rctx.arc(cx+(rxS/range2)*R,cy+(rzS/range2)*R,3.4,0,7); rctx.fill();
+      rctx.fillStyle='#eaf6ff'; rctx.beginPath(); rctx.moveTo(cx,cy-4); rctx.lineTo(cx-3,cy+3); rctx.lineTo(cx+3,cy+3); rctx.closePath(); rctx.fill();
+      return;
+    }
     rctx.clearRect(0,0,w,h);
     rctx.strokeStyle='rgba(95,208,224,0.18)'; rctx.lineWidth=1;
     [0.34,0.67,1].forEach(function(f){ rctx.beginPath(); rctx.arc(cx,cy,R*f,0,7); rctx.stroke(); });
@@ -1380,19 +1619,38 @@
     if([' ','arrowup','arrowdown','arrowleft','arrowright','tab'].indexOf(k)>=0) e.preventDefault();
     if(!started) return;
     if(docked){ if(k==='escape'||k==='f') closeHangar(); return; }
+    if(mode==='surface'){
+      if(k==='t'){ tryTakeoff(); }
+      if(k===' '&&dActive) dNext();
+      if(k==='f'&&dActive) dNext();
+      if(k==='v'){ var en2=SND.toggle(); toast('AUDIO',en2?'Attivato':'Disattivato'); }
+      if(k==='m') toast('MAPPA NON DISPONIBILE','Solo in volo spaziale');
+      return;
+    }
     if(k==='tab'){ cycleLock(); }
     if(k==='f'){ if(dActive){ dNext(); } else doInteract(); }
     if(k===' '){ if(dActive) dNext(); }
     if(k==='r'){ fireMissile(); }
+    if(k==='l'){ tryLand(); }
     if(k==='v'){ var en=SND.toggle(); toast('AUDIO',en?'Attivato':'Disattivato'); }
     if(k==='m'){ if(mState>=6||freeMode) toggleMap(); else toast('IPERMOTORE OFFLINE','Completa le direttive precedenti'); }
     if(k==='escape'){ if($('rr_map').style.display==='flex') closeMap(); }
     if(k==='enter'){ if($('rr_map').style.display==='flex' && galSel>=0 && galSel!==galCur) doWarp(galaxy[galSel]); }
   });
   on(window,'keyup',function(e){ keys[e.key.toLowerCase()]=false; });
-  on(window,'mousemove',function(e){ var r=canvas.getBoundingClientRect(); mx=((e.clientX-r.left)/r.width-0.5)*2; my=((e.clientY-r.top)/r.height-0.5)*2; mx=Math.max(-1,Math.min(1,mx)); my=Math.max(-1,Math.min(1,my)); });
+  on(window,'mousemove',function(e){
+    if(mode==='surface'){
+      if(document.pointerLockElement===canvas){
+        plYaw-=e.movementX*0.0023; plPitch-=e.movementY*0.0023;
+        plPitch=Math.max(-1.45,Math.min(1.45,plPitch));
+      }
+      return;
+    }
+    var r=canvas.getBoundingClientRect(); mx=((e.clientX-r.left)/r.width-0.5)*2; my=((e.clientY-r.top)/r.height-0.5)*2; mx=Math.max(-1,Math.min(1,mx)); my=Math.max(-1,Math.min(1,my)); });
   var firing=false;
-  on(canvas,'mousedown',function(e){ if(e.button===0) firing=true; });
+  on(canvas,'mousedown',function(e){
+    if(mode==='surface'){ try{ if(document.pointerLockElement!==canvas) canvas.requestPointerLock(); }catch(err){} return; }
+    if(e.button===0) firing=true; });
   on(window,'mouseup',function(){ firing=false; });
 
   function droneWrapper(d){ if(!d._tw) d._tw={mesh:d.g,name:'Drone Ostile',type:'ostile',radius:3,drone:d,res:[]}; return d._tw; }
@@ -1441,7 +1699,7 @@
   }
   on(mapC,'click',function(e){ var r=mapC.getBoundingClientRect(); var px=e.clientX-r.left, py=e.clientY-r.top; var hit=null; mapHit.forEach(function(o){ if(Math.hypot(px-o.x,py-o.y)<Math.max(o.r,12)) hit=o.n; }); if(hit){ galSel=hit.id; selectSystem(hit); drawMap(); SND.ui(); } });
   $('rr_mapClose').addEventListener('click',closeMap);
-  function selectSystem(n){ setTxt('rr_mapName',n.name); var sp=SPECTRAL[n.cls]; setTxt('rr_mapClass','Classe '+sp.c+' · '+sp.t); var cur=galaxy[galCur]; var dist=(Math.hypot(n.x-cur.x,n.y-cur.y)*48).toFixed(1); setTxt('rr_mapDist',dist+' anni luce'); var rng=mulberry32(n.seed); setTxt('rr_mapPlanets',(3+Math.floor(rng()*4))+' stimati'); setTxt('rr_mapDanger',['—','BASSO','MEDIO','ALTO'][n.danger]); setTxt('rr_mapState',n.scanned?'CONOSCIUTO':'NON RILEVATO'); var wb=$('rr_mapWarp'); if(n.id===galCur){ wb.style.opacity='.4'; wb.style.pointerEvents='none'; } else { wb.style.opacity='1'; wb.style.pointerEvents='auto'; } }
+  function selectSystem(n){ setTxt('rr_mapName',n.name); var sp=SPECTRAL[n.cls]; setTxt('rr_mapClass','Classe '+sp.c+' · '+sp.t); var cur=galaxy[galCur]; var dist=(Math.hypot(n.x-cur.x,n.y-cur.y)*48).toFixed(1); setTxt('rr_mapDist',dist+' anni luce'); var rng=mulberry32(n.seed); setTxt('rr_mapPlanets',(4+Math.floor(rng()*5))+' stimati'); setTxt('rr_mapDanger',['—','BASSO','MEDIO','ALTO'][n.danger]); setTxt('rr_mapState',n.scanned?'CONOSCIUTO':'NON RILEVATO'); var wb=$('rr_mapWarp'); if(n.id===galCur){ wb.style.opacity='.4'; wb.style.pointerEvents='none'; } else { wb.style.opacity='1'; wb.style.pointerEvents='auto'; } }
   $('rr_mapWarp').addEventListener('click',function(){ if(galSel>=0 && galSel!==galCur) doWarp(galaxy[galSel]); });
 
   // ---------- hangar stazione: vendita e potenziamenti ----------
@@ -1501,6 +1759,8 @@
   function winOverlay(){ $('rr_endTitle').textContent='GALASSIA APERTA'; $('rr_endSub').textContent='Ipermotore validato e sistema raggiunto. La rete di rilevamento è completa: salta liberamente verso qualsiasi sistema dalla mappa galattica (M).'; $('rr_end').style.display='flex'; }
 
   function resetGame(){
+    if(mode!=='space'){ destroySurface(); sysGroup.visible=true; dust.visible=true; mode='space'; camera.fov=62; camera.updateProjectionMatrix(); }
+    landingBody=null;
     buildGalaxy(); buildSystem(galaxy[0].seed, galaxy[0].cls, true);
     sysName=galaxy[0].name; setTxt('rr_sysName',sysName); var sp=SPECTRAL[galaxy[0].cls]; setTxt('rr_sysSub','CLASSE '+sp.c+' · '+sp.t+' · SETTORE 00-A');
     ship.position.set(0,0,0); shipYaw=0; shipPitch=0; throttle=0.35;
@@ -1610,6 +1870,7 @@
     if(locked && !locked.drone && !locked.corv && !locked.scanned){ prompt2('F', locked.mineable?'Scansiona asteroide':'Scansiona '+locked.name); shown=true; }
     if(mState===3 && locked && locked.mineable && ship.position.distanceTo(locked.mesh.position)<170){ prompt2('G','Tieni premuto · Estrai minerale'); shown=true; }
     if(mState===5){ prompt2('F','Dispiega avamposto (40 minerali)'); shown=true; }
+    if(locked && locked.isBody && !PALS[locked.type].bands && ship.position.distanceTo(locked.mesh.position)<locked.radius*4.5){ prompt2('L','Atterra su '+locked.name); shown=true; }
     if(nearStation){ prompt2('F','Attracca alla stazione — riparazioni e hangar'); shown=true; }
     if(mState===6||freeMode){ if(!shown){ prompt2('M','Apri mappa galattica'); shown=true; } }
     if(!shown) hidePrompt();
@@ -1635,7 +1896,7 @@
     var et=clock.elapsedTime;
     starUniforms.uTime.value=et;
     sunShaderMats.forEach(function(m){ m.uniforms.uTime.value=et; });
-    if(finalPass && !warp){ finalPass.uniforms.uTime.value=et; finalPass.uniforms.uWarp.value=Math.max(0,finalPass.uniforms.uWarp.value-dt*2.2)+(boosting?0.06:0); }
+    if(finalPass && !warp && mode!=='landing'){ finalPass.uniforms.uTime.value=et; finalPass.uniforms.uWarp.value=Math.max(0,finalPass.uniforms.uWarp.value-dt*2.2)+(boosting?0.06:0); }
     else if(finalPass) finalPass.uniforms.uTime.value=et;
 
     bodies.forEach(function(b){ b.mesh.rotation.y+=dt*b.spin; if(b.cloudMesh) b.cloudMesh.rotation.y+=dt*b.spin*1.7; });
@@ -1653,18 +1914,24 @@
     updateComets(dt);
     if(!warp) updateTunnel(dt,shipForward(),false);
 
-    sunLight.position.copy(ship.position).addScaledVector(curSunDir,600);
-    sunLight.target.position.copy(ship.position);
+    var focus=(mode==='surface')?camera.position:ship.position;
+    var sdir=(mode==='surface'&&surf.active)?surf.sunDir:curSunDir;
+    sunLight.position.copy(focus).addScaledVector(sdir,600);
+    sunLight.target.position.copy(focus);
 
     if(started){
-      if(warp){ updateWarp(dt); }
+      if(warp){ updateWarp(dt); updateCamera(dt); }
+      else if(mode==='landing'){ updateLanding(dt); if(mode==='landing') updateCamera(dt); }
+      else if(mode==='surface'){ updateSurface(dt); }
       else if(!docked){
         updateFlight(dt); autoLock(); refreshTarget(); fire(dt); updateMining(dt); updateDrones(dt);
         updateCorvettes(dt); updateMissiles(dt); updateCollisions(dt);
         checkMissions(dt); updateBracket();
-      }
-      if(!docked) updateBolts(dt);
-      updateTrail(dt); updateExplosions(dt); updateCamera(dt); drawRadar(dt); updateDust();
+        updateCamera(dt);
+      } else { updateCamera(dt); }
+      if(!docked && mode==='space') updateBolts(dt);
+      updateTrail(dt); updateExplosions(dt); drawRadar(dt);
+      if(mode==='space') updateDust();
     } else {
       camera.position.set(Math.sin(et*0.12)*60,18,Math.cos(et*0.12)*60); camera.lookAt(0,0,40); camera.fov=58; camera.updateProjectionMatrix();
       updateExplosions(dt);
@@ -1676,9 +1943,14 @@
   function onResize(){ W=window.innerWidth;H=window.innerHeight; renderer.setSize(W,H); camera.aspect=W/H; camera.updateProjectionMatrix(); if(composer) composer.setSize(W,H); if(bloomPass) bloomPass.setSize(W,H); if(finalPass) finalPass.uniforms.uAspect.value=W/H; if(fxaaPass){ var pr=renderer.getPixelRatio(); fxaaPass.uniforms.resolution.value.set(1/(W*pr),1/(H*pr)); } }
   on(window,'resize',onResize);
 
-  // console di debug: DF.spawnCorvette(), DF.spawnDrones(3), DF.addCredits(100), DF.openHangar()
+  // console di debug: DF.spawnCorvette(), DF.spawnDrones(3), DF.addCredits(100), DF.openHangar(), DF.gotoPlanet(0), DF.land()
   window.DF={ openHangar:openHangar, spawnCorvette:spawnCorvette, spawnDrones:spawnDrones,
-    addCredits:function(n){ credits+=(n||100); updCred(); } };
+    addCredits:function(n){ credits+=(n||100); updCred(); },
+    gotoPlanet:function(i){ var b=bodies[i||0]; if(!b) return; ship.position.copy(b.mesh.position).add(new TH.Vector3(b.radius*2.5,b.radius*0.4,0)); locked=b; refreshTarget(); },
+    land:tryLand, takeoff:tryTakeoff,
+    state:function(){ return {mode:mode, pp:[Math.round(surf.pp.x),Math.round(surf.pp.y),Math.round(surf.pp.z)], ship:[Math.round(ship.position.x),Math.round(ship.position.y),Math.round(ship.position.z)]}; },
+    look:function(pitch,yaw){ plPitch=pitch||0; plYaw=yaw||0; },
+    bodyNames:function(){ return bodies.map(function(b){ return b.name+' ('+b.type+')'; }); } };
 
   buildGalaxy(); buildSystem(galaxy[0].seed, galaxy[0].cls, true); setTxt('rr_sysName',galaxy[0].name);
   applyAccent(); animate();
