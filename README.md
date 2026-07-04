@@ -1,4 +1,4 @@
-# ◈ ORION // SPY OSINT CINEMA PRO
+# ◈ ORION // SPY OSINT CINEMA PRO — created by MAIKGOST
 
 Un **simulatore d'intelligence dall'estetica cinematografica** (interfaccia
 in stile film di spionaggio) scritto in Python + Tkinter.
@@ -12,27 +12,43 @@ in stile film di spionaggio) scritto in Python + Tkinter.
 > dimostrazione di interfaccia. I "ritratti" sono silhouette astratte generate
 > dal codice: **non sono persone reali**.
 
-## ✨ Novità di questa versione
+## ✨ Funzionalità
 
-- **Cinematic Gallery** completamente rifatta:
-  - **Intro a schermo intero non bloccante** (30 fps): pioggia "matrix",
-    campo di particelle, radar rotante, titolo con effetto *glitch*,
-    scrittura a macchina, boot-log tecnico e chiusura a serranda.
-    Premi **Spazio/Invio** per saltare, **Esc** per uscire.
-  - **Ritratti "da sorveglianza" procedurali** (Pillow): silhouette con
-    capelli e *rim light*, grana CRT, *scanline*, vignettatura, cornice HUD,
-    ID camera, timestamp e timbro `MATCH %`.
-  - **Griglia stile Netflix** con effetto *hover* luminoso e schede cliccabili.
-  - **Animazione di riconoscimento facciale** nella vista di dettaglio
-    (linea di scansione + box di *lock* + esito `IDENTITY MATCH`).
+**Cinematic Gallery**
+- **Intro a schermo intero non bloccante e più corta (~2.6 s)**: pioggia
+  "matrix", particelle, radar rotante, titolo con *glitch*, scrittura a
+  macchina, boot-log, chiusura a serranda. **Spazio/Invio** = salta,
+  **Esc** = esci.
+- **Ritratti "da sorveglianza" procedurali** (Pillow): silhouette con capelli
+  e *rim light*, grana CRT, *scanline*, vignettatura, cornice HUD, ID camera,
+  coordinate GPS, mini-barcode, barra **REDACTED**, glitch, timbro `MATCH %` e
+  watermark **MAIKGOST**.
+- **Griglia stile Netflix** con *hover* luminoso e schede cliccabili.
+- **Riconoscimento facciale animato** nella vista di dettaglio.
+- **🎞 Slideshow** automatico a schermo intero (← → per navigare).
+
+**Strumenti (pannello 🧰)**
+- **📄 Esporta dossier** in `.txt` e `.json`.
+- **📋 Copia sommario** negli appunti.
+- **🎲 Target casuale** e **🔁 Rigenera** (ignora la cache).
+
+**Schede intelligence**
+- 📊 Intelligence con **radar/spider chart** delle metriche e KPI a tile.
+- 👥 Social · 🕵 Identità multiple · 🕐 **Timeline eventi**.
+- 🕸 **Rete**: grafo relazioni animato (target ▸ identità ▸ entità).
+- 🗺 **Mappa**: ping geolocalizzati animati con archi tra le posizioni.
+- 🌐 Footprint · 📈 Comportamento.
+
+**Sotto il cofano**
+- **Firma del creatore `MAIKGOST` presente ovunque** (titolo, logo, intro,
+  ritratti, report, console, gallery).
 - **Dati deterministici**: lo stesso nome produce sempre lo stesso dossier.
-- **UI ridisegnata**: palette coerente, orologio live, titolo animato,
-  metriche a schede, console colorate a tag, banner di simulazione sempre
-  visibile.
-- **Meno dipendenze**: rimossi `opencv`, `pygame`, `requests`, `bs4`
-  (non necessari). Serve solo **Pillow**.
-- Codice riorganizzato in moduli logici, animazioni tramite `after()`
-  (niente `time.sleep` sul thread grafico), gestione errori robusta.
+- Logo con *glow*, palette coerente, orologio live, banner di simulazione
+  sempre visibile.
+- Animazioni via `after()` (niente `time.sleep` sul thread grafico),
+  animatori canvas interrompibili, gestione errori robusta.
+- **Poche dipendenze**: solo **Pillow** (rimossi `opencv`, `pygame`,
+  `requests`, `bs4`).
 
 ## 🚀 Avvio
 
@@ -45,10 +61,14 @@ Requisiti: Python 3.8+, `tkinter` (incluso in Python), `Pillow`.
 
 ## 🎮 Come si usa
 
-1. Scrivi un nome nel campo **NOME BERSAGLIO** (o usa i bersagli rapidi).
-2. Premi **▶ AVVIA SCANSIONE OSINT**: la barra di progresso "raccoglie"
-   il dossier simulato e popola le schede (Intelligence, Social, Identità,
-   Footprint, Comportamento).
-3. Premi **💀 LANCIA CINEMATIC GALLERY** per l'intro a schermo intero e la
-   galleria di ritratti per identità.
-4. Clicca una scheda foto per la vista di dettaglio con la scansione facciale.
+1. Scrivi un nome nel campo **NOME BERSAGLIO** (o usa i bersagli rapidi /
+   🎲 casuale).
+2. Premi **▶ AVVIA SCANSIONE OSINT**: si popolano tutte le schede (radar,
+   rete, mappa, timeline, ecc.).
+3. Premi **💀 GALLERY** per l'intro cinematica e la galleria per identità,
+   oppure **🎞 SLIDESHOW** per la presentazione automatica.
+4. Clicca una scheda foto per il dettaglio con la scansione facciale.
+5. **📄 Esporta** o **📋 Copia** il dossier quando vuoi.
+
+---
+*created by **MAIKGOST** · progetto dimostrativo/gioco.*
