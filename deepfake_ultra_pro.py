@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-🎭 DEEPFAKE ULTRA PRO 7.3  ⚡  (real-time face swap)
+🎭 DEEPFAKE ULTRA PRO 7.4  ⚡  (real-time face swap)
 
 Più impostazioni, più realismo, più potenza.
+
+NOVITÀ della 7.4 (stile Deep-Live-Cam)
+  * MATCH TARGET: in una scena con più persone, sostituisce SOLO la persona
+    scelta (riconoscimento d'identità via embedding). Carichi la foto di "chi
+    sostituire" 🎯 e vengono swappati solo i volti che le somigliano.
 
 NOVITÀ della 7.3
   * EXPORT VIDEO HQ (offline): processa un file video a risoluzione nativa,
@@ -103,6 +108,8 @@ config = {
     'stabilize': 0.40,      # anti-jitter temporale (0=off, 0.9=molto fermo)
     'coast_frames': 6,      # frame in cui "tiene" l'ultima faccia se il detect salta
     'occlusion': 0.0,       # protezione occlusioni (0=off): ciuffi/occhiali/oggetti
+    'match': False,         # sostituisci SOLO la persona-target (per identità)
+    'match_thresh': 0.35,   # soglia similarità coseno (buffalo_l w600k)
 }
 
 MODE_RES = {'fast': (640, 360), 'balanced': (854, 480), 'quality': (960, 540)}
@@ -128,6 +135,8 @@ class FaceEngine:
         self.swapper = None
         self.enhancer = None
         self.enhancer_ready = False
+        self.matcher = None            # detector con recognition (match identità)
+        self.matcher_ready = False
         self.loaded = False
 
         self.providers = []
@@ -247,6 +256,30 @@ class FaceEngine:
         """Rilevamento diretto (no stride/cache) — per l'export offline."""
         with self._lock:
             return self.detector.get(frame)
+
+    def ensure_matcher(self):
+        """Costruisce (lazy) un detector con detection+landmark+recognition,
+        usato per il match d'identità. Ritorna (ok, messaggio)."""
+        if self.matcher_ready:
+            return True, "matcher pronto"
+        try:
+            from insightface.app import FaceAnalysis
+            self.matcher = FaceAnalysis(
+                name=config['detector_name'],
+                allowed_modules=['detection', 'landmark_2d_106', 'recognition'],
+                providers=self.providers)
+            self.matcher.prepare(ctx_id=self.ctx_id,
+                                 det_size=(config['det_size'], config['det_size']),
+                                 det_thresh=config['det_thresh'])
+            self.matcher_ready = True
+            return True, "match identità pronto"
+        except Exception as e:
+            return False, f"errore matcher: {str(e)[:80]}"
+
+    def detect_match(self, frame):
+        """Rilevamento con embedding (per il match d'identità)."""
+        with self._lock:
+            return self.matcher.get(frame)
 
     def detect_live(self, frame, stride=1):
         self._frame_idx += 1
@@ -538,7 +571,7 @@ class DeepfakeUltraPro:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("🎭 DEEPFAKE ULTRA PRO 7.3")
+        self.root.title("🎭 DEEPFAKE ULTRA PRO 7.4")
         self.root.geometry("1680x940")
         self.root.configure(bg='#0a0a0a')
 
@@ -573,11 +606,12 @@ class DeepfakeUltraPro:
                        ('swap_threshold', 'mask_size', 'feather', 'color_strength',
                         'sharpen', 'smooth', 'multi_face', 'realistic_blend', 'mirror',
                         'precise_mask', 'keep_mouth', 'stabilize', 'forehead',
-                        'occlusion')}
+                        'occlusion', 'match', 'match_thresh')}
         self.params['enhance'] = False
         self.stabilizer = FaceStabilizer()
         self._coast_faces = None
         self._coast = 0
+        self.target_ref = None        # embedding della persona da sostituire
 
         self.capture_queue = queue.Queue(maxsize=2)
         self.display_queue = queue.Queue(maxsize=2)
@@ -631,7 +665,7 @@ class DeepfakeUltraPro:
 
         tk.Label(self.left_panel, text="🎭 DEEPFAKE ULTRA", font=('Arial', 15, 'bold'),
                  bg=self.colors['panel'], fg='white').pack(pady=(12, 0))
-        tk.Label(self.left_panel, text="PRO 7.3", font=('Arial', 11),
+        tk.Label(self.left_panel, text="PRO 7.4", font=('Arial', 11),
                  bg=self.colors['panel'], fg=self.colors['primary']).pack(pady=(0, 8))
 
         self.status_var = tk.StringVar(value="⚡ Loading AI...")
@@ -737,6 +771,7 @@ class DeepfakeUltraPro:
         self.v_stabilize = tk.DoubleVar(value=config['stabilize'])
         self.v_forehead = tk.DoubleVar(value=config['forehead'])
         self.v_occlusion = tk.DoubleVar(value=config['occlusion'])
+        self.v_matchthresh = tk.DoubleVar(value=config['match_thresh'])
         self._slider(adj, "Swap thresh", self.v_thresh, 0.20, 0.70)
         self._slider(adj, "Mask size", self.v_mask, 0.60, 1.30)
         self._slider(adj, "Forehead", self.v_forehead, 0.0, 0.60)
@@ -747,6 +782,7 @@ class DeepfakeUltraPro:
         self._slider(adj, "Keep mouth", self.v_keepmouth, 0.0, 1.0)
         self._slider(adj, "Occlusion", self.v_occlusion, 0.0, 1.0)
         self._slider(adj, "Stabilize", self.v_stabilize, 0.0, 0.90)
+        self._slider(adj, "Match thresh", self.v_matchthresh, 0.20, 0.70)
 
         opt = self._card(self.right_panel, "OPTIONS")
         self.v_realistic = tk.BooleanVar(value=config['realistic_blend'])
@@ -754,6 +790,7 @@ class DeepfakeUltraPro:
         self.v_multi = tk.BooleanVar(value=config['multi_face'])
         self.v_mirror = tk.BooleanVar(value=config['mirror'])
         self.v_enhance = tk.BooleanVar(value=False)
+        self.v_match = tk.BooleanVar(value=False)
         self.v_bbox = tk.BooleanVar(value=True)
         self.v_fps = tk.BooleanVar(value=True)
         self._toggle(opt, "Realistic blend (feather+color)", self.v_realistic)
@@ -767,6 +804,14 @@ class DeepfakeUltraPro:
                                          activebackground=self.colors['card'],
                                          activeforeground='white', font=('Arial', 8), anchor='w')
         self.enhance_cb.pack(anchor='w', padx=10, pady=1)
+        mrow2 = tk.Frame(opt, bg=self.colors['card']); mrow2.pack(fill=tk.X, padx=10, pady=1)
+        tk.Checkbutton(mrow2, text="Match target (solo 1 persona)",
+                       variable=self.v_match, command=self.on_match_toggle,
+                       bg=self.colors['card'], fg='white', selectcolor=self.colors['card'],
+                       activebackground=self.colors['card'], activeforeground='white',
+                       font=('Arial', 8), anchor='w').pack(side=tk.LEFT)
+        tk.Button(mrow2, text="🎯 Target", command=self.load_target_image,
+                  bg='#663399', fg='white', font=('Arial', 7, 'bold')).pack(side=tk.RIGHT)
         self._toggle(opt, "Show bounding box", self.v_bbox)
         self._toggle(opt, "Show FPS", self.v_fps)
         crow = tk.Frame(opt, bg=self.colors['card']); crow.pack(fill=tk.X, padx=10, pady=4)
@@ -781,7 +826,7 @@ class DeepfakeUltraPro:
                                height=10, relief='flat', wrap='word')
         self.console.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
 
-        self.bottom_status = tk.Label(self.root, text="Deepfake Ultra Pro 7.3 | Initializing...",
+        self.bottom_status = tk.Label(self.root, text="Deepfake Ultra Pro 7.4 | Initializing...",
                                       bg='#1a1a2e', fg='white', font=('Arial', 10),
                                       relief='sunken', anchor='w')
         self.bottom_status.pack(side=tk.BOTTOM, fill=tk.X)
@@ -812,6 +857,8 @@ class DeepfakeUltraPro:
                 'stabilize': float(self.v_stabilize.get()),
                 'forehead': float(self.v_forehead.get()),
                 'occlusion': float(self.v_occlusion.get()),
+                'match': bool(self.v_match.get()),
+                'match_thresh': float(self.v_matchthresh.get()),
                 'enhance': bool(self.v_enhance.get()) and self.engine is not None
                 and self.engine.enhancer_ready,
             })
@@ -924,8 +971,20 @@ class DeepfakeUltraPro:
                 result = frame
 
                 if self.swap_active and self.models_ready and self.source_face is not None:
-                    faces = self.engine.detect_live(frame, stride=stride)
+                    match_on = (p.get('match') and self.target_ref is not None
+                                and self.engine.matcher_ready)
+                    if match_on:
+                        faces = self.engine.detect_match(frame)
+                    else:
+                        faces = self.engine.detect_live(frame, stride=stride)
                     faces = [f for f in faces if f.det_score >= p['swap_threshold']]
+                    if match_on and faces:
+                        # sostituisci SOLO chi somiglia alla persona-target
+                        ref = self.target_ref
+                        mt = float(p.get('match_thresh', 0.35))
+                        faces = [f for f in faces
+                                 if getattr(f, 'normed_embedding', None) is not None
+                                 and float(np.dot(f.normed_embedding, ref)) >= mt]
                     if faces:
                         if not p['multi_face']:
                             faces = [max(faces, key=lambda f: f.det_score)]
@@ -1000,7 +1059,7 @@ class DeepfakeUltraPro:
         self.ram_label.config(text=f"RAM: {s['ram']:.1f}%")
         rec = " | ⏺REC" if self.recording else ""
         self.bottom_status.config(
-            text=f"Deepfake Ultra Pro 7.3 | FPS: {s['fps']} (avg {s['avg_fps']}) | "
+            text=f"Deepfake Ultra Pro 7.4 | FPS: {s['fps']} (avg {s['avg_fps']}) | "
                  f"Swap: {'ON' if self.swap_active else 'OFF'} | "
                  f"Multi: {'ON' if self.params['multi_face'] else 'OFF'} | "
                  f"Mode: {self.mode_var.get().upper()} | "
@@ -1106,6 +1165,46 @@ class DeepfakeUltraPro:
             self.v_realistic.set(True)  # l'enhance sul crop gira nel blend realistico
         else:
             self.v_enhance.set(False)
+
+    def load_target_image(self):
+        """Carica la foto della PERSONA DA SOSTITUIRE (target). In match mode
+        solo i volti che le somigliano verranno swappati."""
+        if not self.models_ready:
+            messagebox.showwarning("Aspetta", "Modelli in caricamento"); return
+        fp = filedialog.askopenfilename(title="Foto della persona da sostituire",
+                                        filetypes=[("Image files", "*.jpg *.jpeg *.png *.bmp"),
+                                                   ("All files", "*.*")])
+        if not fp:
+            return
+        try:
+            img = cv2.imread(fp)
+            if img is None:
+                messagebox.showerror("Error", "Cannot read image file"); return
+            face = self.engine.detect_source(img)  # include l'embedding
+            emb = getattr(face, 'normed_embedding', None) if face is not None else None
+            if emb is None:
+                messagebox.showwarning("No face", "Nessun volto/embedding nell'immagine"); return
+            self.target_ref = np.asarray(emb, np.float32)
+            self.log(f"🎯 Target impostato: {os.path.basename(fp)}")
+            self.v_match.set(True)
+            self.on_match_toggle()
+        except Exception as e:
+            self.log(f"❌ Target error: {e}")
+
+    def on_match_toggle(self):
+        if not self.v_match.get():
+            return
+        if self.target_ref is None:
+            self.log("⚠️ Match: carica prima una foto 🎯 Target")
+            self.v_match.set(False); return
+        self.log("⏳ Preparo il match d'identità...")
+        threading.Thread(target=self._load_matcher_bg, daemon=True).start()
+
+    def _load_matcher_bg(self):
+        ok, msg = self.engine.ensure_matcher()
+        self.log(("✅ " if ok else "⚠️ ") + msg)
+        if not ok:
+            self.v_match.set(False)
 
     def apply_preset(self, name):
         """Imposta gli slider su combinazioni collaudate."""
@@ -1285,7 +1384,7 @@ class DeepfakeUltraPro:
 # ============================================================
 def main():
     print("=" * 80)
-    print("🚀 DEEPFAKE ULTRA PRO 7.3 - STARTING")
+    print("🚀 DEEPFAKE ULTRA PRO 7.4 - STARTING")
     ram = f"{psutil.virtual_memory().percent}%" if _HAS_PSUTIL else "n/a"
     print(f"🔥 PID {os.getpid()} | CPU {_cpu_count()} | RAM {ram}")
     print("=" * 80)

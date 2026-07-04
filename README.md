@@ -1,4 +1,4 @@
-# gioco — Deepfake Ultra Pro 7.3 🎭
+# gioco — Deepfake Ultra Pro 7.4 🎭
 
 Face-swap in tempo reale (webcam **o file video**) basato su **insightface** +
 `inswapper_128.onnx`, con interfaccia Tkinter. Versione ottimizzata: **più
@@ -21,8 +21,14 @@ elimina:
    e sembra un'altra faccia. Si mitiga con **Keep mouth** (mostra la tua bocca
    reale) e con l'**enhancer GFPGAN** (più dettaglio), ma non si azzera.
 
-Ciò che la 7.0 aggiunge lavora *entro* questi limiti — è lo stesso approccio dei
-tool open-source "seri" (es. FaceFusion).
+Ciò che la 7.0+ aggiunge lavora *entro* questi limiti — è lo stesso approccio dei
+tool open-source "seri" (FaceFusion, **Deep-Live-Cam**).
+
+> **"Voglio Deep-Live-Cam"** — Deep-Live-Cam usa **gli stessi modelli** di questo
+> progetto (`inswapper_128` + GFPGAN), quindi ha **gli stessi limiti** (niente
+> capelli, 128px). Questo strumento è nella sua stessa classe e in più ha
+> occlusione, estensione fronte, export HQ e — dalla 7.4 — il **match d'identità**
+> (sostituire una sola persona in gruppo), che è la sua feature "pro".
 
 ## Novità della 7.0 (realismo del volto)
 
@@ -64,6 +70,14 @@ tool open-source "seri" (es. FaceFusion).
   di ottenere la qualità **massima** — molto meglio della registrazione live.
   L'output è in `output/export_*.mp4`, **senza audio**; per rimettere l'audio:
   `ffmpeg -i export.mp4 -i originale.mp4 -c copy -map 0:v -map 1:a finale.mp4`.
+- **Match target (identità)** — la feature "pro" tipo Deep-Live-Cam. In una
+  scena con più persone sostituisce **solo quella scelta**:
+  1. **LOAD FACE IMAGE** = la faccia che vuoi *mettere* (source).
+  2. **🎯 Target** = la foto della persona *da sostituire* nel video.
+  3. Attiva **Match target**. Verranno swappati solo i volti che somigliano al
+     target (similarità coseno ≥ **Match thresh**, default 0.35). Gli altri
+     restano intatti. Usa il primo passaggio con recognition attivo → un filo
+     più pesante, ma sulla 4070 è ok.
 
 ## Novità della 6.0
 
