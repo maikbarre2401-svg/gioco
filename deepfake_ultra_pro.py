@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-🎭 DEEPFAKE ULTRA PRO 7.2  ⚡  (real-time face swap)
+🎭 DEEPFAKE ULTRA PRO 7.3  ⚡  (real-time face swap)
 
 Più impostazioni, più realismo, più potenza.
+
+NOVITÀ della 7.3
+  * EXPORT VIDEO HQ (offline): processa un file video a risoluzione nativa,
+    ogni frame, senza vincolo di FPS → qualità massima. Output MP4 (senza audio).
 
 NOVITÀ della 7.2
   * OCCLUSION: dove nell'area del volto non c'è pelle (ciuffi, occhiali,
@@ -238,6 +242,11 @@ class FaceEngine:
         if not faces:
             return None
         return max(faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
+
+    def detect(self, frame):
+        """Rilevamento diretto (no stride/cache) — per l'export offline."""
+        with self._lock:
+            return self.detector.get(frame)
 
     def detect_live(self, frame, stride=1):
         self._frame_idx += 1
@@ -529,7 +538,7 @@ class DeepfakeUltraPro:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("🎭 DEEPFAKE ULTRA PRO 7.2")
+        self.root.title("🎭 DEEPFAKE ULTRA PRO 7.3")
         self.root.geometry("1680x940")
         self.root.configure(bg='#0a0a0a')
 
@@ -622,7 +631,7 @@ class DeepfakeUltraPro:
 
         tk.Label(self.left_panel, text="🎭 DEEPFAKE ULTRA", font=('Arial', 15, 'bold'),
                  bg=self.colors['panel'], fg='white').pack(pady=(12, 0))
-        tk.Label(self.left_panel, text="PRO 7.2", font=('Arial', 11),
+        tk.Label(self.left_panel, text="PRO 7.3", font=('Arial', 11),
                  bg=self.colors['panel'], fg=self.colors['primary']).pack(pady=(0, 8))
 
         self.status_var = tk.StringVar(value="⚡ Loading AI...")
@@ -661,6 +670,10 @@ class DeepfakeUltraPro:
         self.rec_btn = tk.Button(brow2, text="⏺ REC", command=self.toggle_record,
                                  bg='#aa0044', fg='white', font=('Arial', 8, 'bold'))
         self.rec_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
+        self.export_btn = tk.Button(src, text="🎞 EXPORT VIDEO HQ (offline)",
+                                    command=self.export_video, bg='#6a0dad', fg='white',
+                                    font=('Arial', 8, 'bold'))
+        self.export_btn.pack(fill=tk.X, padx=8, pady=(0, 6))
 
         st = self._card(self.left_panel, "PERFORMANCE")
         self.fps_label = tk.Label(st, text="FPS: 0", font=('Arial', 22),
@@ -768,7 +781,7 @@ class DeepfakeUltraPro:
                                height=10, relief='flat', wrap='word')
         self.console.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
 
-        self.bottom_status = tk.Label(self.root, text="Deepfake Ultra Pro 7.2 | Initializing...",
+        self.bottom_status = tk.Label(self.root, text="Deepfake Ultra Pro 7.3 | Initializing...",
                                       bg='#1a1a2e', fg='white', font=('Arial', 10),
                                       relief='sunken', anchor='w')
         self.bottom_status.pack(side=tk.BOTTOM, fill=tk.X)
@@ -987,7 +1000,7 @@ class DeepfakeUltraPro:
         self.ram_label.config(text=f"RAM: {s['ram']:.1f}%")
         rec = " | ⏺REC" if self.recording else ""
         self.bottom_status.config(
-            text=f"Deepfake Ultra Pro 7.2 | FPS: {s['fps']} (avg {s['avg_fps']}) | "
+            text=f"Deepfake Ultra Pro 7.3 | FPS: {s['fps']} (avg {s['avg_fps']}) | "
                  f"Swap: {'ON' if self.swap_active else 'OFF'} | "
                  f"Multi: {'ON' if self.params['multi_face'] else 'OFF'} | "
                  f"Mode: {self.mode_var.get().upper()} | "
@@ -1128,6 +1141,67 @@ class DeepfakeUltraPro:
         self._sync_params()
         self.log(f"🎚️ Preset '{name}' applicato")
 
+    # ---- actions: export offline HQ -----------------------------------------
+    def export_video(self):
+        """Processa un file video OFFLINE alla risoluzione nativa, ogni frame,
+        con le impostazioni correnti → qualità massima (niente vincolo FPS)."""
+        if not self.models_ready or self.source_face is None:
+            messagebox.showwarning("Aspetta", "Carica prima una faccia e i modelli")
+            return
+        inp = filedialog.askopenfilename(title="Video da processare",
+                                         filetypes=[("Video", "*.mp4 *.avi *.mov *.mkv"),
+                                                    ("All files", "*.*")])
+        if not inp:
+            return
+        threading.Thread(target=self._export_worker, args=(inp,), daemon=True).start()
+
+    def _export_worker(self, inp):
+        cap = cv2.VideoCapture(inp)
+        if not cap.isOpened():
+            self.log("❌ Export: impossibile aprire il video"); return
+        fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
+        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 0
+        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        self._ensure_output()
+        out_path = os.path.join(config['output_dir'],
+                                f"export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4")
+        writer = cv2.VideoWriter(out_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
+        if not writer.isOpened():
+            self.log("❌ Export: writer non disponibile"); cap.release(); return
+
+        self.export_btn.config(state='disabled')
+        self.log(f"🎞 Export avviato: {os.path.basename(inp)} ({w}x{h}, {total} frame)")
+        p = dict(self.params)          # snapshot impostazioni
+        stab = FaceStabilizer()        # stabilizer separato dal live
+        i = 0
+        while self.running:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            i += 1
+            result = frame
+            try:
+                faces = self.engine.detect(frame)
+                faces = [f for f in faces if f.det_score >= p['swap_threshold']]
+                if faces:
+                    if not p['multi_face']:
+                        faces = [max(faces, key=lambda f: f.det_score)]
+                    if p['stabilize'] > 0:
+                        faces = stab.update(faces, p['stabilize'])
+                    for face in faces:
+                        result = self.engine.swap_one(result, face, self.source_face, p)
+            except Exception:
+                pass
+            writer.write(result)
+            if total and i % 10 == 0:
+                pct = 100.0 * i / total
+                self.root.after(0, lambda v=pct: self.status_var.set(f"⏳ Export {v:.0f}%"))
+        writer.release(); cap.release()
+        self.root.after(0, lambda: self.status_var.set("✅ Export completato"))
+        self.root.after(0, lambda: self.export_btn.config(state='normal'))
+        self.log(f"✅ Export salvato: {out_path} ({i} frame) — video senza audio")
+
     # ---- actions: capture ---------------------------------------------------
     def _ensure_output(self):
         os.makedirs(config['output_dir'], exist_ok=True)
@@ -1211,7 +1285,7 @@ class DeepfakeUltraPro:
 # ============================================================
 def main():
     print("=" * 80)
-    print("🚀 DEEPFAKE ULTRA PRO 7.2 - STARTING")
+    print("🚀 DEEPFAKE ULTRA PRO 7.3 - STARTING")
     ram = f"{psutil.virtual_memory().percent}%" if _HAS_PSUTIL else "n/a"
     print(f"🔥 PID {os.getpid()} | CPU {_cpu_count()} | RAM {ram}")
     print("=" * 80)

@@ -1,4 +1,4 @@
-# gioco — Deepfake Ultra Pro 7.2 🎭
+# gioco — Deepfake Ultra Pro 7.3 🎭
 
 Face-swap in tempo reale (webcam **o file video**) basato su **insightface** +
 `inswapper_128.onnx`, con interfaccia Tkinter. Versione ottimizzata: **più
@@ -58,6 +58,12 @@ tool open-source "seri" (es. FaceFusion).
   "spalmata" sopra le cose. Basato su rilevamento pelle YCrCb. *Limite:* le mani
   sono color pelle, quindi non vengono protette. Default 0 (attivo nei preset
   Talking/Quality).
+- **Export video HQ (offline)** — pulsante **🎞 EXPORT VIDEO HQ**: scegli un
+  file video e lo processa **a risoluzione nativa, ogni frame, senza vincolo di
+  FPS**, con le impostazioni correnti (attiva **Enhancer** per il top). È il modo
+  di ottenere la qualità **massima** — molto meglio della registrazione live.
+  L'output è in `output/export_*.mp4`, **senza audio**; per rimettere l'audio:
+  `ffmpeg -i export.mp4 -i originale.mp4 -c copy -map 0:v -map 1:a finale.mp4`.
 
 ## Novità della 6.0
 
