@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-🎭 DEEPFAKE ULTRA PRO 7.4  ⚡  (real-time face swap)
+🎭 DEEPFAKE ULTRA PRO 7.5  ⚡  (real-time face swap)
 
 Più impostazioni, più realismo, più potenza.
+
+NOVITÀ della 7.5
+  * OCCLUDER AI: modello neurale di occlusione → quando metti la MANO (o un
+    oggetto) davanti al viso, la faccia swappata si ritira e si vede la mano
+    vera. Il colore-pelle non bastava (la mano è pelle); questo sì.
+  * COASTING più lungo (9 frame): quando ti muovi veloce lo swap non "si stacca".
 
 NOVITÀ della 7.4 (stile Deep-Live-Cam)
   * MATCH TARGET: in una scena con più persone, sostituisce SOLO la persona
@@ -91,6 +97,7 @@ config = {
     'record_fps': 24,
     'output_dir': 'output',
     'gfpgan_model': 'GFPGANv1.4.pth',
+    'occluder_model': 'face_occluder.onnx',
     # default regolazioni
     'swap_threshold': 0.35,
     'mask_size': 1.0,       # 0.6 - 1.3
@@ -106,7 +113,7 @@ config = {
     'forehead': 0.30,       # estensione maschera verso la fronte (0-0.6)
     'keep_mouth': 0.30,     # 0=bocca sorgente, 1=bocca reale (lingua/parlato)
     'stabilize': 0.40,      # anti-jitter temporale (0=off, 0.9=molto fermo)
-    'coast_frames': 6,      # frame in cui "tiene" l'ultima faccia se il detect salta
+    'coast_frames': 9,      # frame in cui "tiene" l'ultima faccia se il detect salta
     'occlusion': 0.0,       # protezione occlusioni (0=off): ciuffi/occhiali/oggetti
     'match': False,         # sostituisci SOLO la persona-target (per identità)
     'match_thresh': 0.35,   # soglia similarità coseno (buffalo_l w600k)
@@ -137,6 +144,11 @@ class FaceEngine:
         self.enhancer_ready = False
         self.matcher = None            # detector con recognition (match identità)
         self.matcher_ready = False
+        self.occluder = None           # modello neurale di occlusione (mani/oggetti)
+        self.occluder_ready = False
+        self.occluder_in = None
+        self._occ_size = 256
+        self._occ_nchw = False
         self.loaded = False
 
         self.providers = []
@@ -281,6 +293,75 @@ class FaceEngine:
         with self._lock:
             return self.matcher.get(frame)
 
+    OCCLUDER_URLS = [
+        'https://github.com/facefusion/facefusion-assets/releases/download/'
+        'models/face_occluder.onnx',
+        'https://huggingface.co/facefusion/models/resolve/main/face_occluder.onnx',
+    ]
+
+    @staticmethod
+    def _download_first(urls, dest):
+        import urllib.request
+        d = os.path.dirname(dest)
+        if d:
+            os.makedirs(d, exist_ok=True)
+        for u in urls:
+            try:
+                urllib.request.urlretrieve(u, dest)
+                if os.path.exists(dest) and os.path.getsize(dest) > 10000:
+                    return True
+            except Exception:
+                continue
+        return False
+
+    def try_load_occluder(self):
+        """Carica il modello neurale di occlusione (gestisce anche le MANI).
+        Scarica il file se manca. Ritorna (ok, messaggio)."""
+        if self.occluder_ready:
+            return True, "occluder pronto"
+        try:
+            import onnxruntime as ort
+        except Exception:
+            return False, "onnxruntime non disponibile"
+        path = config['occluder_model']
+        if not os.path.exists(path):
+            if not self._download_first(self.OCCLUDER_URLS, path):
+                return False, f"scarica 'face_occluder.onnx' e mettilo come {path}"
+        try:
+            so = ort.SessionOptions()
+            so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            self.occluder = ort.InferenceSession(path, sess_options=so,
+                                                 providers=self.providers)
+            inp = self.occluder.get_inputs()[0]
+            self.occluder_in = inp.name
+            shape = inp.shape  # [1,3,H,W] (NCHW) oppure [1,H,W,3] (NHWC)
+            self._occ_nchw = len(shape) == 4 and shape[1] == 3
+            dim = shape[2] if self._occ_nchw else shape[1]
+            self._occ_size = int(dim) if isinstance(dim, int) and dim > 0 else 256
+            self.occluder_ready = True
+            return True, f"occluder AI pronto ({'NCHW' if self._occ_nchw else 'NHWC'}"\
+                         f" {self._occ_size})"
+        except Exception as e:
+            return False, f"errore occluder: {str(e)[:80]}"
+
+    def occlusion_mask_crop(self, crop):
+        """Maschera 'faccia visibile' (1=faccia, 0=occluso) sul crop allineato.
+        Dove c'è una mano/oggetto davanti, il modello restituisce ~0."""
+        if not self.occluder_ready:
+            return None
+        try:
+            s = self._occ_size
+            img = cv2.resize(crop, (s, s))[:, :, ::-1].astype(np.float32) / 255.0
+            blob = np.transpose(img, (2, 0, 1))[None] if self._occ_nchw else img[None]
+            out = self.occluder.run(None, {self.occluder_in: blob})[0]
+            m = np.asarray(out, np.float32).squeeze()
+            if m.ndim == 3:
+                m = m[0] if m.shape[0] < m.shape[-1] else m[..., 0]
+            m = np.clip(m, 0.0, 1.0)
+            return cv2.resize(m, (crop.shape[1], crop.shape[0]))
+        except Exception:
+            return None
+
     def detect_live(self, frame, stride=1):
         self._frame_idx += 1
         if stride > 1 and self._last_faces and (self._frame_idx % stride) != 0:
@@ -418,7 +499,14 @@ class FaceEngine:
             if mm is not None:
                 mask_full = mask_full * (1.0 - km * mm)
 
-        # occlusione: dove NON c'è pelle nell'area del volto, mostra l'originale
+        # occlusione neurale (mani/oggetti): il modello dice dov'è la faccia vera
+        if p.get('occluder') and self.occluder_ready:
+            occm = self.occlusion_mask_crop(aimg)
+            if occm is not None:
+                occ_full = cv2.warpAffine(occm, IM, (w, h), borderValue=1.0)
+                mask_full = mask_full * occ_full
+
+        # occlusione "leggera": dove NON c'è pelle nell'area del volto, originale
         occ = float(p.get('occlusion', 0.0))
         if occ > 0:
             skin = self._skin_prob(frame)
@@ -571,7 +659,7 @@ class DeepfakeUltraPro:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("🎭 DEEPFAKE ULTRA PRO 7.4")
+        self.root.title("🎭 DEEPFAKE ULTRA PRO 7.5")
         self.root.geometry("1680x940")
         self.root.configure(bg='#0a0a0a')
 
@@ -608,6 +696,7 @@ class DeepfakeUltraPro:
                         'precise_mask', 'keep_mouth', 'stabilize', 'forehead',
                         'occlusion', 'match', 'match_thresh')}
         self.params['enhance'] = False
+        self.params['occluder'] = False
         self.stabilizer = FaceStabilizer()
         self._coast_faces = None
         self._coast = 0
@@ -665,7 +754,7 @@ class DeepfakeUltraPro:
 
         tk.Label(self.left_panel, text="🎭 DEEPFAKE ULTRA", font=('Arial', 15, 'bold'),
                  bg=self.colors['panel'], fg='white').pack(pady=(12, 0))
-        tk.Label(self.left_panel, text="PRO 7.4", font=('Arial', 11),
+        tk.Label(self.left_panel, text="PRO 7.5", font=('Arial', 11),
                  bg=self.colors['panel'], fg=self.colors['primary']).pack(pady=(0, 8))
 
         self.status_var = tk.StringVar(value="⚡ Loading AI...")
@@ -791,6 +880,7 @@ class DeepfakeUltraPro:
         self.v_mirror = tk.BooleanVar(value=config['mirror'])
         self.v_enhance = tk.BooleanVar(value=False)
         self.v_match = tk.BooleanVar(value=False)
+        self.v_occluder = tk.BooleanVar(value=False)
         self.v_bbox = tk.BooleanVar(value=True)
         self.v_fps = tk.BooleanVar(value=True)
         self._toggle(opt, "Realistic blend (feather+color)", self.v_realistic)
@@ -804,6 +894,13 @@ class DeepfakeUltraPro:
                                          activebackground=self.colors['card'],
                                          activeforeground='white', font=('Arial', 8), anchor='w')
         self.enhance_cb.pack(anchor='w', padx=10, pady=1)
+        self.occluder_cb = tk.Checkbutton(opt, text="Occluder AI (mani/oggetti sul viso)",
+                                          variable=self.v_occluder, command=self.on_occluder_toggle,
+                                          bg=self.colors['card'], fg='white',
+                                          selectcolor=self.colors['card'],
+                                          activebackground=self.colors['card'],
+                                          activeforeground='white', font=('Arial', 8), anchor='w')
+        self.occluder_cb.pack(anchor='w', padx=10, pady=1)
         mrow2 = tk.Frame(opt, bg=self.colors['card']); mrow2.pack(fill=tk.X, padx=10, pady=1)
         tk.Checkbutton(mrow2, text="Match target (solo 1 persona)",
                        variable=self.v_match, command=self.on_match_toggle,
@@ -826,7 +923,7 @@ class DeepfakeUltraPro:
                                height=10, relief='flat', wrap='word')
         self.console.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
 
-        self.bottom_status = tk.Label(self.root, text="Deepfake Ultra Pro 7.4 | Initializing...",
+        self.bottom_status = tk.Label(self.root, text="Deepfake Ultra Pro 7.5 | Initializing...",
                                       bg='#1a1a2e', fg='white', font=('Arial', 10),
                                       relief='sunken', anchor='w')
         self.bottom_status.pack(side=tk.BOTTOM, fill=tk.X)
@@ -861,6 +958,8 @@ class DeepfakeUltraPro:
                 'match_thresh': float(self.v_matchthresh.get()),
                 'enhance': bool(self.v_enhance.get()) and self.engine is not None
                 and self.engine.enhancer_ready,
+                'occluder': bool(self.v_occluder.get()) and self.engine is not None
+                and self.engine.occluder_ready,
             })
         except Exception:
             pass
@@ -1059,7 +1158,7 @@ class DeepfakeUltraPro:
         self.ram_label.config(text=f"RAM: {s['ram']:.1f}%")
         rec = " | ⏺REC" if self.recording else ""
         self.bottom_status.config(
-            text=f"Deepfake Ultra Pro 7.4 | FPS: {s['fps']} (avg {s['avg_fps']}) | "
+            text=f"Deepfake Ultra Pro 7.5 | FPS: {s['fps']} (avg {s['avg_fps']}) | "
                  f"Swap: {'ON' if self.swap_active else 'OFF'} | "
                  f"Multi: {'ON' if self.params['multi_face'] else 'OFF'} | "
                  f"Mode: {self.mode_var.get().upper()} | "
@@ -1165,6 +1264,22 @@ class DeepfakeUltraPro:
             self.v_realistic.set(True)  # l'enhance sul crop gira nel blend realistico
         else:
             self.v_enhance.set(False)
+
+    def on_occluder_toggle(self):
+        if not self.v_occluder.get():
+            return
+        if not self.models_ready:
+            self.v_occluder.set(False); return
+        self.log("⏳ Carico l'occluder AI (prima volta: scarica ~fewMB)...")
+        threading.Thread(target=self._load_occluder_bg, daemon=True).start()
+
+    def _load_occluder_bg(self):
+        ok, msg = self.engine.try_load_occluder()
+        self.log(("✅ " if ok else "⚠️ ") + msg)
+        if ok:
+            self.v_realistic.set(True)  # l'occluder agisce nel blend realistico
+        else:
+            self.v_occluder.set(False)
 
     def load_target_image(self):
         """Carica la foto della PERSONA DA SOSTITUIRE (target). In match mode
@@ -1384,7 +1499,7 @@ class DeepfakeUltraPro:
 # ============================================================
 def main():
     print("=" * 80)
-    print("🚀 DEEPFAKE ULTRA PRO 7.4 - STARTING")
+    print("🚀 DEEPFAKE ULTRA PRO 7.5 - STARTING")
     ram = f"{psutil.virtual_memory().percent}%" if _HAS_PSUTIL else "n/a"
     print(f"🔥 PID {os.getpid()} | CPU {_cpu_count()} | RAM {ram}")
     print("=" * 80)

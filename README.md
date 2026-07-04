@@ -1,4 +1,4 @@
-# gioco — Deepfake Ultra Pro 7.4 🎭
+# gioco — Deepfake Ultra Pro 7.5 🎭
 
 Face-swap in tempo reale (webcam **o file video**) basato su **insightface** +
 `inswapper_128.onnx`, con interfaccia Tkinter. Versione ottimizzata: **più
@@ -58,12 +58,16 @@ tool open-source "seri" (FaceFusion, **Deep-Live-Cam**).
   (upscale 512 → restore → blend), non su tutto il frame. Su **RTX 4070** gira
   in tempo reale e dà il dettaglio vero a denti/pelle/bocca. Il modello si
   scarica da solo al primo click.
-- **Occlusion** (nuovo slider): dove nell'area del volto **non c'è pelle**
-  (ciuffi di capelli, occhiali, un microfono, oggetti scuri che ci passano
-  davanti) lo swap si ritira e mostra l'immagine reale → niente più faccia
-  "spalmata" sopra le cose. Basato su rilevamento pelle YCrCb. *Limite:* le mani
-  sono color pelle, quindi non vengono protette. Default 0 (attivo nei preset
-  Talking/Quality).
+- **Occluder AI** (toggle, la soluzione vera per le MANI): modello neurale di
+  occlusione. Quando metti la **mano** o un oggetto davanti al viso, la faccia
+  swappata **si ritira** e si vede la mano vera — non più la faccia "spalmata"
+  sulla mano. Il modello (`face_occluder.onnx`, pochi MB) si **scarica da solo**
+  al primo click. È il modo giusto di risolvere il problema (lo slider
+  *Occlusion* qui sotto è solo un ripiego leggero basato sul colore-pelle, che
+  con le mani non funziona).
+- **Occlusion** (slider leggero, senza download): dove nell'area del volto
+  **non c'è pelle** (ciuffi, occhiali, oggetti scuri) lo swap si ritira. *Limite:*
+  le mani sono color pelle → per le mani usa **Occluder AI**.
 - **Export video HQ (offline)** — pulsante **🎞 EXPORT VIDEO HQ**: scegli un
   file video e lo processa **a risoluzione nativa, ogni frame, senza vincolo di
   FPS**, con le impostazioni correnti (attiva **Enhancer** per il top). È il modo
@@ -176,9 +180,11 @@ Scorciatoia: premi **💎 Quality** (o **🗣 Talking**) e sei quasi a posto. A 
    coperti dallo swap.
 9. Foto sorgente **frontale, nitida, ben illuminata**, sfondo semplice.
 
-Se vedi ancora lo stacco sulle sopracciglia → alza **Forehead**. Se scatta →
-alza **Stabilize** e usa **det 512** in modalità Quality. Se un ciuffo/occhiali
-vengono "spalmati" dallo swap → alza **Occlusion**.
+Se vedi ancora lo stacco sulle sopracciglia → alza **Forehead**. Se lo swap
+**si stacca quando ti muovi** → usa **det 512** (Quality) e alza **Stabilize**;
+il coasting ora tiene 9 frame. Se la faccia appare **sulla mano** → attiva
+**Occluder AI**. Se un ciuffo/occhiali vengono "spalmati" → **Occluder AI** o
+alza **Occlusion**.
 
 ### Se vuoi VERAMENTE anche i capelli
 Serve un'altra pipeline (non questo modello): approcci full-head / reenactment
