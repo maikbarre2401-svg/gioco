@@ -1,4 +1,4 @@
-# gioco — Deepfake Ultra Pro 7.0 🎭
+# gioco — Deepfake Ultra Pro 7.1 🎭
 
 Face-swap in tempo reale (webcam **o file video**) basato su **insightface** +
 `inswapper_128.onnx`, con interfaccia Tkinter. Versione ottimizzata: **più
@@ -37,6 +37,22 @@ tool open-source "seri" (es. FaceFusion).
 - **Preset rapidi**: pulsanti **🗣 Talking / 💎 Quality / ⚡ Speed** che tarano
   tutti gli slider in un colpo.
 
+### Fix realismo (sopracciglia/fronte + scatti)
+
+- **Forehead** (nuovo slider): con *precise mask* i landmark si fermano alle
+  sopracciglia, quindi **fronte e sopracciglia** restavano dell'originale e si
+  vedeva lo stacco. Ora la maschera si **estende verso la fronte** seguendo
+  l'inclinazione della testa → niente più bordo sulle sopracciglia. Default 0.30
+  (alza fino a ~0.45 se hai la fronte alta/scoperta).
+- **Coasting anti-scatto**: quando il detector "salta" un frame, prima lo swap
+  si spegneva per un istante → effetto "a trattini". Ora la posizione viene
+  **tenuta per qualche frame** (config `coast_frames`), così il volto non
+  sfarfalla. Se combinato con **Stabilize** il movimento diventa fluido.
+- **Enhancer sul crop (GPU)**: l'enhancer ora lavora solo sul ritaglio del volto
+  (upscale 512 → restore → blend), non su tutto il frame. Su **RTX 4070** gira
+  in tempo reale e dà il dettaglio vero a denti/pelle/bocca. Il modello si
+  scarica da solo al primo click.
+
 ## Novità della 6.0
 
 **Più impostazioni (regolabili dal vivo)**
@@ -68,8 +84,17 @@ tool open-source "seri" (es. FaceFusion).
 pip install -r requirements.txt
 ```
 
-Per GPU NVIDIA: in `requirements.txt` usa `onnxruntime-gpu` al posto di
-`onnxruntime` (serve CUDA/cuDNN installati).
+### Setup GPU NVIDIA (RTX 4070) — consigliato
+1. Installa CUDA 12.x + cuDNN 9.x.
+2. `requirements.txt` usa già `onnxruntime-gpu`.
+3. Verifica: `python -c "import onnxruntime as o; print(o.get_available_providers())"`
+   deve elencare `CUDAExecutionProvider`. All'avvio lo status mostra
+   **`✅ Ready · CUDA (GPU)`**.
+4. Per l'enhancer: `pip install gfpgan` + torch/torchvision build CUDA
+   (`--index-url https://download.pytorch.org/whl/cu121`).
+
+Con la 4070 puoi tenere **Quality (det 512) + Enhancer + Stabilize** e restare
+fluido.
 
 ## Modello
 
@@ -112,15 +137,19 @@ python deepfake_ultra_pro.py
 attiva il toggle **Enhancer GFPGAN**. Migliora molto la qualità dei volti ma è
 **lento**: usalo su GPU o per registrare/esportare, non per il massimo dei FPS.
 
-## Ricetta per il massimo realismo
-Scorciatoia: premi il preset **🗣 Talking** e sei già a posto. Oppure a mano:
-1. **Precise mask** ON + **Feather** ~0.08 → bordi che seguono la mascella.
-2. **Keep mouth** 0.3–0.6 → parlato e lingua naturali (usa la tua bocca reale).
-3. **Stabilize** 0.4–0.6 → togli il tremolìo (fondamentale nei video).
-4. **Color match** 0.7–1.0 → l'illuminazione combacia con la scena.
-5. **Skin smooth** 0.2–0.4 + **Sharpen** 0.2 → pelle uniforme ma nitida.
-6. **Enhancer GFPGAN** ON (se hai GPU) → denti/pelle ad alta fedeltà.
-7. Foto sorgente **frontale, nitida, ben illuminata**, sfondo semplice.
+## Ricetta per il massimo realismo (RTX 4070)
+Scorciatoia: premi **💎 Quality** (o **🗣 Talking**) e sei quasi a posto. A mano:
+1. **Precise mask** ON + **Forehead** 0.30–0.45 → copre bene fronte e sopracciglia.
+2. **Feather** ~0.08 → bordi morbidi che seguono la mascella.
+3. **Keep mouth** 0.3–0.6 → parlato e lingua naturali (usa la tua bocca reale).
+4. **Stabilize** 0.4–0.6 → togli il tremolìo/gli scatti (fondamentale nei video).
+5. **Color match** 0.8–1.0 → l'illuminazione combacia con la scena.
+6. **Skin smooth** 0.2–0.4 + **Sharpen** 0.2 → pelle uniforme ma nitida.
+7. **Enhancer** ON → denti/pelle/bocca ad alta fedeltà (sulla 4070 è real-time).
+8. Foto sorgente **frontale, nitida, ben illuminata**, sfondo semplice.
+
+Se vedi ancora lo stacco sulle sopracciglia → alza **Forehead**. Se scatta →
+alza **Stabilize** e usa **det 512** in modalità Quality.
 
 ### Se vuoi VERAMENTE anche i capelli
 Serve un'altra pipeline (non questo modello): approcci full-head / reenactment

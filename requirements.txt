@@ -1,4 +1,4 @@
-# Deepfake Ultra Pro 5.0 - dependencies
+# Deepfake Ultra Pro 7.x - dependencies
 insightface>=0.7.3
 opencv-python>=4.8.0
 numpy>=1.24
@@ -6,14 +6,22 @@ pillow>=10.0
 psutil>=5.9
 
 # --- ONNX Runtime: scegli UNO ---
-# CPU (funziona ovunque):
-onnxruntime>=1.16
-# GPU NVIDIA (CUDA) -> commenta la riga sopra e usa questa:
-# onnxruntime-gpu>=1.16
+# GPU NVIDIA (CUDA) — CONSIGLIATO per RTX 4070:
+onnxruntime-gpu>=1.17
+# CPU (se non hai GPU) -> commenta la riga sopra e usa questa:
+# onnxruntime>=1.17
 # GPU Windows (DirectML):
-# onnxruntime-directml>=1.16
+# onnxruntime-directml>=1.17
 
-# --- OPZIONALE: enhancer volti ad alta fedeltà ---
-# Attiva il toggle "Enhancer GFPGAN" nella UI. Serve anche il file
-# GFPGANv1.4.pth nella cartella dello script.
+# --- OPZIONALE: enhancer volti ad alta fedeltà (GFPGAN) ---
+# Attiva il toggle "Enhancer" nella UI; il modello GFPGANv1.4.pth si scarica
+# da solo al primo uso. Su RTX 4070 gira anche in tempo reale.
 # gfpgan>=1.3.8
+# torch e torchvision con CUDA (necessari a gfpgan): installa la build CUDA da
+#   https://pytorch.org/get-started/locally/
+#   es. pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# NOTE onnxruntime-gpu: richiede CUDA + cuDNN compatibili con la versione ORT.
+# Per ORT 1.17-1.18 servono CUDA 12.x e cuDNN 9.x. Verifica dopo l'installazione:
+#   python -c "import onnxruntime as o; print(o.get_available_providers())"
+# Deve comparire 'CUDAExecutionProvider'.

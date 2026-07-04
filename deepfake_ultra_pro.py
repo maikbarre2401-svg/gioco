@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-🎭 DEEPFAKE ULTRA PRO 7.0  ⚡  (real-time face swap)
+🎭 DEEPFAKE ULTRA PRO 7.1  ⚡  (real-time face swap)
 
 Più impostazioni, più realismo, più potenza.
+
+NOVITÀ della 7.1 (fix realismo + GPU)
+  * FOREHEAD: la maschera precisa ora si estende verso la FRONTE seguendo
+    l'inclinazione della testa → sopracciglia e fronte coperte, niente stacco.
+  * COASTING: se il detector salta un frame la posizione viene tenuta per
+    qualche frame → basta swap "a trattini"/flicker.
+  * ENHANCER SUL CROP (GFPGAN): lavora solo sul volto (512→restore→blend),
+    real-time su GPU (es. RTX 4070); il modello si scarica da solo.
 
 NOVITÀ della 7.0 (realismo del volto)
   * MASCHERA PRECISA dai landmark 2D-106: segue la reale forma di mascella/
@@ -82,8 +90,10 @@ config = {
     'mirror': False,
     'fast_detect_stride': 2,
     'precise_mask': True,   # maschera dai landmark (segue la mascella)
+    'forehead': 0.30,       # estensione maschera verso la fronte (0-0.6)
     'keep_mouth': 0.30,     # 0=bocca sorgente, 1=bocca reale (lingua/parlato)
     'stabilize': 0.40,      # anti-jitter temporale (0=off, 0.9=molto fermo)
+    'coast_frames': 6,      # frame in cui "tiene" l'ultima faccia se il detect salta
 }
 
 MODE_RES = {'fast': (640, 360), 'balanced': (854, 480), 'quality': (960, 540)}
@@ -173,36 +183,44 @@ class FaceEngine:
         self.loaded = True
         return True
 
+    GFPGAN_URL = ('https://github.com/TencentARC/GFPGAN/releases/download/'
+                  'v1.3.0/GFPGANv1.4.pth')
+
     def try_load_enhancer(self):
-        """Carica GFPGAN se disponibile. Ritorna (ok, messaggio)."""
+        """Carica GFPGAN. Usa il file locale se c'è, altrimenti lo scarica.
+        Ritorna (ok, messaggio)."""
         if self.enhancer_ready:
             return True, "enhancer già pronto"
         try:
             from gfpgan import GFPGANer
         except Exception:
             return False, "pacchetto 'gfpgan' non installato (pip install gfpgan)"
-        if not os.path.exists(config['gfpgan_model']):
-            return False, f"modello {config['gfpgan_model']} non trovato"
+        local = config['gfpgan_model']
+        model = local if os.path.exists(local) else self.GFPGAN_URL
         try:
-            self.enhancer = GFPGANer(model_path=config['gfpgan_model'], upscale=1,
-                                     arch='clean', channel_multiplier=2,
-                                     bg_upsampler=None)
+            self.enhancer = GFPGANer(model_path=model, upscale=1, arch='clean',
+                                     channel_multiplier=2, bg_upsampler=None)
             self.enhancer_ready = True
-            return True, "GFPGAN caricato"
+            src = "file locale" if model == local else "download automatico"
+            return True, f"GFPGAN pronto ({src})"
         except Exception as e:
-            return False, f"errore GFPGAN: {str(e)[:60]}"
+            return False, f"errore GFPGAN: {str(e)[:80]}"
 
-    def enhance(self, frame):
+    def enhance_crop(self, crop):
+        """Migliora SOLO il crop del volto (aligned): veloce, adatto al live su
+        GPU. Upscale a 512, restore, torna alla dimensione originale."""
         if not self.enhancer_ready:
-            return frame
+            return crop
         try:
-            with self._lock:
-                _, _, out = self.enhancer.enhance(frame, has_aligned=False,
-                                                  only_center_face=False,
-                                                  paste_back=True)
-            return out if out is not None else frame
+            a = cv2.resize(crop, (512, 512), interpolation=cv2.INTER_LINEAR)
+            _, restored, _ = self.enhancer.enhance(a, has_aligned=True,
+                                                   paste_back=False)
+            if restored:
+                return cv2.resize(restored[0], (crop.shape[1], crop.shape[0]),
+                                  interpolation=cv2.INTER_AREA)
         except Exception:
-            return frame
+            pass
+        return crop
 
     def set_det_size(self, n):
         with self._lock:
@@ -261,19 +279,29 @@ class FaceEngine:
         return cv2.warpAffine(mask, IM, (w, h), borderValue=0)
 
     @staticmethod
-    def _landmark_mask_full(face, w, h, ms):
+    def _landmark_mask_full(face, w, h, ms, forehead, M):
         """Maschera che segue la reale forma del volto (convex hull dei 106
-        landmark), dilatata per includere la fronte."""
+        landmark) ED estesa verso la FRONTE lungo l'asse 'su' della testa —
+        così sopracciglia e fronte vengono coperte dallo swap (niente stacco)."""
         pts = getattr(face, 'landmark_2d_106', None)
         if pts is None:
             return None
         try:
-            pts = np.asarray(pts, dtype=np.int32)
-            hull = cv2.convexHull(pts)
+            pts = np.asarray(pts, dtype=np.float32)
+            allpts = pts
+            if forehead > 0:
+                # direzione "su" del volto in coordinate frame (dal crop allineato)
+                IM = cv2.invertAffineTransform(M)
+                up = -IM[:, 1].astype(np.float32)
+                up = up / (float(np.linalg.norm(up)) + 1e-6)
+                fh = float(pts[:, 1].max() - pts[:, 1].min())
+                shift = up * (fh * float(forehead))
+                allpts = np.vstack([pts, pts + shift])
+            hull = cv2.convexHull(allpts.astype(np.int32))
             mask = np.zeros((h, w), np.float32)
             cv2.fillConvexPoly(mask, hull, 1.0)
             fw = float(face.bbox[2] - face.bbox[0])
-            k = max(1, int(fw * 0.06 * ms))
+            k = max(1, int(fw * 0.05 * ms))
             mask = cv2.dilate(mask, np.ones((k, k), np.uint8))
             return mask
         except Exception:
@@ -300,6 +328,9 @@ class FaceEngine:
 
     def _blend(self, frame, bgr_fake, M, face, p):
         h, w = frame.shape[:2]
+        # enhancer sul crop (denti/pelle/bocca ad alta fedeltà) prima del blend
+        if p.get('enhance') and self.enhancer_ready:
+            bgr_fake = self.enhance_crop(bgr_fake)
         size = bgr_fake.shape[0]
 
         aimg = cv2.warpAffine(frame, M, (size, size), flags=cv2.INTER_LINEAR)
@@ -318,7 +349,8 @@ class FaceEngine:
         ms = float(p['mask_size'])
         mask_full = None
         if p.get('precise_mask'):
-            mask_full = self._landmark_mask_full(face, w, h, ms)
+            mask_full = self._landmark_mask_full(face, w, h, ms,
+                                                 float(p.get('forehead', 0.0)), M)
         if mask_full is None:
             mask_full = self._ellipse_mask_full(M, size, w, h, ms)
 
@@ -475,7 +507,7 @@ class DeepfakeUltraPro:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("🎭 DEEPFAKE ULTRA PRO 7.0")
+        self.root.title("🎭 DEEPFAKE ULTRA PRO 7.1")
         self.root.geometry("1680x940")
         self.root.configure(bg='#0a0a0a')
 
@@ -509,8 +541,11 @@ class DeepfakeUltraPro:
         self.params = {k: config[k] for k in
                        ('swap_threshold', 'mask_size', 'feather', 'color_strength',
                         'sharpen', 'smooth', 'multi_face', 'realistic_blend', 'mirror',
-                        'precise_mask', 'keep_mouth', 'stabilize')}
+                        'precise_mask', 'keep_mouth', 'stabilize', 'forehead')}
+        self.params['enhance'] = False
         self.stabilizer = FaceStabilizer()
+        self._coast_faces = None
+        self._coast = 0
 
         self.capture_queue = queue.Queue(maxsize=2)
         self.display_queue = queue.Queue(maxsize=2)
@@ -564,7 +599,7 @@ class DeepfakeUltraPro:
 
         tk.Label(self.left_panel, text="🎭 DEEPFAKE ULTRA", font=('Arial', 15, 'bold'),
                  bg=self.colors['panel'], fg='white').pack(pady=(12, 0))
-        tk.Label(self.left_panel, text="PRO 7.0", font=('Arial', 11),
+        tk.Label(self.left_panel, text="PRO 7.1", font=('Arial', 11),
                  bg=self.colors['panel'], fg=self.colors['primary']).pack(pady=(0, 8))
 
         self.status_var = tk.StringVar(value="⚡ Loading AI...")
@@ -664,8 +699,10 @@ class DeepfakeUltraPro:
         self.v_smooth = tk.DoubleVar(value=config['smooth'])
         self.v_keepmouth = tk.DoubleVar(value=config['keep_mouth'])
         self.v_stabilize = tk.DoubleVar(value=config['stabilize'])
+        self.v_forehead = tk.DoubleVar(value=config['forehead'])
         self._slider(adj, "Swap thresh", self.v_thresh, 0.20, 0.70)
         self._slider(adj, "Mask size", self.v_mask, 0.60, 1.30)
+        self._slider(adj, "Forehead", self.v_forehead, 0.0, 0.60)
         self._slider(adj, "Feather", self.v_feather, 0.02, 0.15)
         self._slider(adj, "Color match", self.v_color, 0.0, 1.0)
         self._slider(adj, "Sharpen", self.v_sharpen, 0.0, 1.0)
@@ -706,7 +743,7 @@ class DeepfakeUltraPro:
                                height=10, relief='flat', wrap='word')
         self.console.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
 
-        self.bottom_status = tk.Label(self.root, text="Deepfake Ultra Pro 7.0 | Initializing...",
+        self.bottom_status = tk.Label(self.root, text="Deepfake Ultra Pro 7.1 | Initializing...",
                                       bg='#1a1a2e', fg='white', font=('Arial', 10),
                                       relief='sunken', anchor='w')
         self.bottom_status.pack(side=tk.BOTTOM, fill=tk.X)
@@ -735,6 +772,9 @@ class DeepfakeUltraPro:
                 'precise_mask': bool(self.v_precise.get()),
                 'keep_mouth': float(self.v_keepmouth.get()),
                 'stabilize': float(self.v_stabilize.get()),
+                'forehead': float(self.v_forehead.get()),
+                'enhance': bool(self.v_enhance.get()) and self.engine is not None
+                and self.engine.enhancer_ready,
             })
         except Exception:
             pass
@@ -852,10 +892,19 @@ class DeepfakeUltraPro:
                             faces = [max(faces, key=lambda f: f.det_score)]
                         if p['stabilize'] > 0:
                             faces = self.stabilizer.update(faces, p['stabilize'])
+                        self._coast_faces = faces
+                        self._coast = 0
+                    elif (self._coast_faces is not None
+                          and self._coast < config['coast_frames']):
+                        # il detect ha "saltato" un frame: tieni l'ultima posizione
+                        # (niente scatto/flicker "a trattini")
+                        faces = self._coast_faces
+                        self._coast += 1
+                    else:
+                        self._coast_faces = None
+                    if faces:
                         for face in faces:
                             result = self.engine.swap_one(result, face, self.source_face, p)
-                        if self.v_enhance.get() and self.engine.enhancer_ready:
-                            result = self.engine.enhance(result)
                         if self.v_bbox.get():
                             color = self.COLOR_MAP.get(self.color_combo.get(), (0, 255, 0))
                             for face in faces:
@@ -912,7 +961,7 @@ class DeepfakeUltraPro:
         self.ram_label.config(text=f"RAM: {s['ram']:.1f}%")
         rec = " | ⏺REC" if self.recording else ""
         self.bottom_status.config(
-            text=f"Deepfake Ultra Pro 7.0 | FPS: {s['fps']} (avg {s['avg_fps']}) | "
+            text=f"Deepfake Ultra Pro 7.1 | FPS: {s['fps']} (avg {s['avg_fps']}) | "
                  f"Swap: {'ON' if self.swap_active else 'OFF'} | "
                  f"Multi: {'ON' if self.params['multi_face'] else 'OFF'} | "
                  f"Mode: {self.mode_var.get().upper()} | "
@@ -991,6 +1040,8 @@ class DeepfakeUltraPro:
             self.log("⚡ Face swap ACTIVATED")
         else:
             self.swap_btn.config(text="🔴 SWAP OFF", bg='#cc0000')
+            self._coast_faces = None
+            self._coast = 0
             self.log("⚡ Face swap DEACTIVATED")
 
     def on_detsize(self, _e=None):
@@ -1005,26 +1056,33 @@ class DeepfakeUltraPro:
             return
         if not self.models_ready:
             self.v_enhance.set(False); return
+        self.log("⏳ Carico GFPGAN (prima volta: può scaricare il modello)...")
+        # load in background per non bloccare la UI
+        threading.Thread(target=self._load_enhancer_bg, daemon=True).start()
+
+    def _load_enhancer_bg(self):
         ok, msg = self.engine.try_load_enhancer()
         self.log(("✅ " if ok else "⚠️ ") + msg)
-        if not ok:
+        if ok:
+            self.v_realistic.set(True)  # l'enhance sul crop gira nel blend realistico
+        else:
             self.v_enhance.set(False)
 
     def apply_preset(self, name):
         """Imposta gli slider su combinazioni collaudate."""
         presets = {
-            # realismo del parlato: bocca reale, maschera precisa, bordi morbidi
+            # realismo del parlato: bocca reale, maschera precisa, fronte coperta
             'talking': dict(mode='balanced', det=320, thresh=0.35, mask=1.0,
-                            feather=0.09, color=0.85, sharpen=0.20, smooth=0.30,
-                            keep=0.55, stab=0.55, precise=True, multi=False),
-            # massima fedeltà
+                            forehead=0.32, feather=0.09, color=0.85, sharpen=0.20,
+                            smooth=0.30, keep=0.55, stab=0.55, precise=True, multi=False),
+            # massima fedeltà (adatto a GPU tipo RTX 4070)
             'quality': dict(mode='quality', det=512, thresh=0.35, mask=1.05,
-                            feather=0.07, color=0.90, sharpen=0.25, smooth=0.35,
-                            keep=0.30, stab=0.45, precise=True, multi=True),
+                            forehead=0.35, feather=0.07, color=0.90, sharpen=0.25,
+                            smooth=0.35, keep=0.30, stab=0.50, precise=True, multi=True),
             # massimi FPS
             'speed': dict(mode='fast', det=256, thresh=0.40, mask=1.0,
-                          feather=0.05, color=0.70, sharpen=0.10, smooth=0.0,
-                          keep=0.20, stab=0.30, precise=False, multi=False),
+                          forehead=0.25, feather=0.05, color=0.70, sharpen=0.10,
+                          smooth=0.0, keep=0.20, stab=0.35, precise=True, multi=False),
         }
         p = presets.get(name)
         if not p:
@@ -1033,6 +1091,7 @@ class DeepfakeUltraPro:
         self.detsize_combo.set(str(p['det']))
         self.on_detsize()
         self.v_thresh.set(p['thresh']); self.v_mask.set(p['mask'])
+        self.v_forehead.set(p['forehead'])
         self.v_feather.set(p['feather']); self.v_color.set(p['color'])
         self.v_sharpen.set(p['sharpen']); self.v_smooth.set(p['smooth'])
         self.v_keepmouth.set(p['keep']); self.v_stabilize.set(p['stab'])
@@ -1123,7 +1182,7 @@ class DeepfakeUltraPro:
 # ============================================================
 def main():
     print("=" * 80)
-    print("🚀 DEEPFAKE ULTRA PRO 7.0 - STARTING")
+    print("🚀 DEEPFAKE ULTRA PRO 7.1 - STARTING")
     ram = f"{psutil.virtual_memory().percent}%" if _HAS_PSUTIL else "n/a"
     print(f"🔥 PID {os.getpid()} | CPU {_cpu_count()} | RAM {ram}")
     print("=" * 80)
