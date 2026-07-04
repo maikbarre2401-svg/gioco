@@ -24,6 +24,7 @@
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/FXAAShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
 </head>
 <body>
 <div id="rr_root" style="position:fixed;inset:0;overflow:hidden;background:#020306;">
@@ -49,6 +50,7 @@
       <div id="rr_sysName" style="font-size:18px;font-weight:600;letter-spacing:.02em;color:#eaf2fa;line-height:1.1;">HIP 41420</div>
       <div id="rr_sysSub" style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.12em;color:#7e90a4;margin-top:3px;">CLASSE G · 5700K · SETTORE 04-A</div>
       <div id="rr_coords" style="font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.04em;color:#aab8c8;margin-top:9px;padding-top:9px;border-top:1px solid rgba(120,160,190,.14);">X +0000  Y +0000  Z +0000</div>
+      <div id="rr_netHud" style="display:none;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.1em;color:#57d6a0;margin-top:7px;padding-top:7px;border-top:1px solid rgba(120,160,190,.14);">◉ ONLINE · —</div>
     </div>
 
     <div style="position:absolute;top:18px;left:50%;transform:translateX(-50%);background:rgba(7,12,19,.74);backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px);border:1px solid rgba(120,160,190,.20);border-radius:5px;padding:10px 22px;text-align:center;min-width:320px;max-width:540px;">
@@ -192,10 +194,17 @@
 
   <!-- ===================== START OVERLAY ===================== -->
   <div id="rr_overlay" style="position:absolute;inset:0;z-index:40;display:flex;flex-direction:column;align-items:center;justify-content:center;background:radial-gradient(125% 125% at 50% 32%,#0b1426 0%,#050810 55%,#020306 100%);cursor:pointer;transition:opacity .7s;">
-    <div data-acc-fg="1" style="font-family:'IBM Plex Mono',monospace;color:#5fd0e0;letter-spacing:.5em;font-size:11px;margin-bottom:16px;">PROGRAMMA DI RILEVAMENTO GALATTICO · MK-IV</div>
+    <div data-acc-fg="1" style="font-family:'IBM Plex Mono',monospace;color:#5fd0e0;letter-spacing:.5em;font-size:11px;margin-bottom:16px;">PROGRAMMA DI RILEVAMENTO GALATTICO · MK-V</div>
     <h1 style="font-size:74px;font-weight:700;letter-spacing:.06em;color:#eef4fa;text-shadow:0 6px 60px rgba(95,208,224,.28);margin-bottom:8px;">DEEP&nbsp;FIELD</h1>
     <div style="color:#8b9bb0;font-size:15px;max-width:620px;text-align:center;line-height:1.65;margin-bottom:30px;">Parti dal Sistema Sol, in orbita sopra la Terra. <b style="color:#bfd4e8;">Atterra sui pianeti (L)</b> ed esplorali a piedi in prima persona: foreste, deserti, mondi di lava e cristallo. Estrai minerali, respingi droni e corvette pirata, attracca alle stazioni per potenziare la nave, poi salta con l'ipermotore attraverso 110 sistemi procedurali. Motore MK-IV: PBR, ombre dinamiche, terreni procedurali, raggi volumetrici e audio sintetizzato.</div>
     <div id="rr_start" data-acc-bg="1" style="font-family:'IBM Plex Mono',monospace;color:#04141a;background:#5fd0e0;padding:14px 46px;border-radius:6px;font-size:14px;font-weight:700;letter-spacing:.12em;box-shadow:0 14px 48px rgba(95,208,224,.32);animation:rrFloat 2.6s infinite;">⟶ AVVIA SEQUENZA</div>
+    <div id="rr_netBox" style="margin-top:20px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:center;cursor:default;">
+      <input id="rr_nick" placeholder="Nome pilota" maxlength="12" style="background:rgba(255,255,255,.06);border:1px solid rgba(120,160,190,.3);border-radius:5px;color:#dce6f0;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:8px 10px;width:130px;outline:none;">
+      <div id="rr_hostBtn" style="cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;letter-spacing:.08em;color:#8fe0f0;border:1px solid rgba(95,208,224,.5);background:rgba(95,208,224,.12);border-radius:5px;padding:8px 14px;">CREA STANZA</div>
+      <input id="rr_code" placeholder="CODICE" maxlength="4" style="background:rgba(255,255,255,.06);border:1px solid rgba(120,160,190,.3);border-radius:5px;color:#dce6f0;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:8px 10px;width:76px;text-transform:uppercase;outline:none;text-align:center;">
+      <div id="rr_joinBtn" style="cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;letter-spacing:.08em;color:#8fe0f0;border:1px solid rgba(95,208,224,.5);background:rgba(95,208,224,.12);border-radius:5px;padding:8px 14px;">ENTRA</div>
+    </div>
+    <div id="rr_netStat" style="margin-top:9px;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.06em;color:#6f8296;">MULTIGIOCATORE CO-OP · crea una stanza o inserisci un codice, poi avvia</div>
     <div style="margin-top:26px;width:230px;">
       <div id="rr_bootTxt" style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5b6b80;text-align:center;margin-bottom:7px;">SINCRONIZZAZIONE CATALOGO STELLARE…</div>
       <div style="height:2px;background:rgba(255,255,255,.1);border-radius:3px;overflow:hidden;"><i data-acc-bg="1" style="display:block;height:100%;background:#5fd0e0;animation:rrBoot 1.4s ease-out forwards;"></i></div>
@@ -743,10 +752,9 @@
     };
   })();
 
-  // ---------- nave (modello MK-II più dettagliato) ----------
-  var ship=new TH.Group(); scene.add(ship);
-  var shipEngines=[], shipNavLights=[], engineLight=null;
-  (function(){
+  // ---------- nave (modello riutilizzabile: locale + giocatori remoti) ----------
+  function buildShipModel(ship,lite){
+    var shipEngines=[], shipNavLights=[], engineLight=null;
     var body=new TH.MeshStandardMaterial({color:0xb9c4d0,metalness:0.85,roughness:0.32});
     var dark=new TH.MeshStandardMaterial({color:0x2b333d,metalness:0.72,roughness:0.46});
     var panel=new TH.MeshStandardMaterial({color:0x8b95a2,metalness:0.7,roughness:0.4});
@@ -779,9 +787,13 @@
       var n=new TH.Mesh(new TH.CylinderGeometry(0.34,0.22,0.6,12),new TH.MeshBasicMaterial({color:0x9fe8ff})); n.rotation.x=Math.PI/2; n.position.set(xe,0,-2.9); ship.add(n);
       var s=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0x6fd6ff,blending:TH.AdditiveBlending,depthWrite:false,transparent:true})); s.position.set(xe,0,-3.4); s.scale.set(2.6,2.6,1); ship.add(s); shipEngines.push(s);
     });
-    engineLight=new TH.PointLight(0x6fd6ff,0.8,26); engineLight.position.set(0,0,-3.6); ship.add(engineLight);
+    if(!lite){ engineLight=new TH.PointLight(0x6fd6ff,0.8,26); engineLight.position.set(0,0,-3.6); ship.add(engineLight); }
     ship.traverse(function(c){ if(c.isMesh){ c.castShadow=true; c.receiveShadow=true; } });
-  })();
+    return {engines:shipEngines, navs:shipNavLights, engineLight:engineLight};
+  }
+  var ship=new TH.Group(); scene.add(ship);
+  var _sm=buildShipModel(ship,false);
+  var shipEngines=_sm.engines, shipNavLights=_sm.navs, engineLight=_sm.engineLight;
 
   // scia dei motori
   var trail=[]; var trailTimer=0;
@@ -877,6 +889,7 @@
       _lfDir.copy(_lfSrc).sub(camera.position).normalize();
       var camF=new TH.Vector3(); camera.getWorldDirection(camF);
       vis=Math.pow(Math.max(0,camF.dot(_lfDir)),2.5);
+      if(mode==='surface') vis*=clamp01(surf.sunDir.y*3);
       // occlusione dai pianeti (solo nello spazio)
       if(mode!=='surface'){
         for(var i=0;i<bodies.length;i++){
@@ -1331,7 +1344,9 @@
   // ================== ESPLORAZIONE DI SUPERFICIE (prima persona) ==================
   var surf={ active:false, group:null, heightFn:null, waterY:-9999, amp:20, grav:20, jump:9.5,
     sunDir:new TH.Vector3(0.45,0.62,0.4).normalize(), returnPos:new TH.Vector3(), wpVis:false,
-    pp:new TH.Vector3(), pv:new TH.Vector3(), onGround:false, walkPhase:0, body:null, water:null };
+    pp:new TH.Vector3(), pv:new TH.Vector3(), onGround:false, walkPhase:0, body:null, water:null,
+    time:0.1, hasAtmo:false, dayHor:null, nightFog:new TH.Color(0x070a12), nodes:[], clouds:[], nearNode:null };
+  var _sunWhite=new TH.Color(0xffffff), _sunWarm=new TH.Color(0xff9a50);
   var plYaw=0, plPitch=0;
   var SURF_CFG={
     terran:{amp:26,water:-2,grav:20,jump:9.5},  ocean:{amp:9,water:2,grav:20,jump:9.5},
@@ -1392,10 +1407,17 @@
         vertexShader:'varying vec3 vDir;void main(){vDir=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
         fragmentShader:[
           'uniform vec3 uTop;uniform vec3 uHor;uniform vec3 uSunDir;varying vec3 vDir;',
-          'void main(){ vec3 d=normalize(vDir); float h=clamp(d.y*0.5+0.5,0.0,1.0);',
-          ' vec3 col=mix(uHor,uTop,pow(h,1.35));',
-          ' float s=max(0.0,dot(d,normalize(uSunDir)));',
-          ' col+=vec3(1.0,0.93,0.75)*pow(s,220.0)*1.6+vec3(1.0,0.85,0.6)*pow(s,10.0)*0.22;',
+          'void main(){ vec3 d=normalize(vDir); vec3 sd=normalize(uSunDir);',
+          ' float h=clamp(d.y*0.5+0.5,0.0,1.0);',
+          ' float el=sd.y;',
+          ' float day=smoothstep(-0.12,0.22,el);',
+          ' float dusk=clamp(1.0-abs(el)*3.2,0.0,1.0);',
+          ' vec3 top=mix(vec3(0.012,0.016,0.035),uTop,day);',
+          ' vec3 hor=mix(vec3(0.035,0.04,0.07),uHor,day);',
+          ' hor=mix(hor,vec3(0.98,0.45,0.18),dusk*0.5);',
+          ' vec3 col=mix(hor,top,pow(h,1.35));',
+          ' float s=max(0.0,dot(d,sd));',
+          ' col+=(vec3(1.0,0.93,0.75)*pow(s,220.0)*1.6+vec3(1.0,0.8,0.55)*pow(s,10.0)*0.22)*smoothstep(-0.09,0.05,el);',
           ' gl_FragColor=vec4(col,1.0);}'
         ].join('\n'),
         side:TH.BackSide, depthWrite:false, fog:false
@@ -1403,9 +1425,35 @@
       var dome=new TH.Mesh(new TH.SphereGeometry(5600,28,18),domeMat);
       dome.renderOrder=-2; surf.group.add(dome);
       scene.fog=new TH.Fog(horCol.getHex(),520,3200);
+      surf.dayHor=horCol.clone(); surf.hasAtmo=true;
     } else {
       horCol=new TH.Color(0x05070c);
       scene.fog=new TH.Fog(0x05070c,300,3200);
+      surf.dayHor=null; surf.hasAtmo=false;
+    }
+    surf.time=0.1;
+
+    // frammenti minerali raccoglibili
+    surf.nodes=[]; surf.nearNode=null;
+    for(var ni=0;ni<12;ni++){
+      var nx3=(rng2()-0.5)*1500, nz3=(rng2()-0.5)*1500, ny3=surf.heightFn(nx3,nz3);
+      if(ny3<surf.waterY+0.8) continue;
+      var nm=new TH.Mesh(new TH.OctahedronGeometry(0.9,0), new TH.MeshStandardMaterial({color:0x9fe8c0,emissive:0x2ee08a,emissiveIntensity:0.9,metalness:0.3,roughness:0.3}));
+      nm.position.set(nx3,ny3+0.9,nz3); surf.group.add(nm);
+      var gl2=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0x57d6a0,blending:TH.AdditiveBlending,depthWrite:false,transparent:true,opacity:0.8}));
+      gl2.position.copy(nm.position); gl2.scale.set(4.5,4.5,1); surf.group.add(gl2);
+      surf.nodes.push({m:nm,g:gl2,ph:rng2()*6.28});
+    }
+
+    // nuvole alla deriva
+    surf.clouds=[];
+    if(P.atmo){
+      for(var ci2=0;ci2<10;ci2++){
+        var cs=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0xffffff,transparent:true,opacity:0.15,depthWrite:false}));
+        cs.position.set((rng2()-0.5)*4200, 340+rng2()*300, (rng2()-0.5)*4200);
+        var csc=520+rng2()*760; cs.scale.set(csc,csc*0.32,1);
+        cs.userData.v=3+rng2()*6; surf.group.add(cs); surf.clouds.push(cs);
+      }
     }
 
     // vegetazione / formazioni per bioma (instanziate)
@@ -1514,7 +1562,37 @@
     mission(mState<6?mState:'6','Rotta libera','Riprendi le direttive di volo');
     flash(); SND.warpJump(); toast('IN ORBITA','Sistemi di volo riattivati');
   }
+  function collectNode(){
+    if(!surf.nearNode) return;
+    var n=surf.nearNode;
+    explode(n.m.position.clone(),1.6,{color:0x9fe8c0});
+    surf.group.remove(n.m); surf.group.remove(n.g);
+    n.m.geometry.dispose(); n.m.material.dispose(); n.g.material.dispose();
+    surf.nodes.splice(surf.nodes.indexOf(n),1); surf.nearNode=null;
+    minerals+=5; setTxt('rr_min',Math.floor(minerals));
+    SND.scan(); toast('MINERALE RACCOLTO','+5 unità · totale '+Math.floor(minerals));
+  }
   function updateSurface(dt){
+    // ciclo giorno/notte
+    surf.time=(surf.time+dt/300)%1;
+    var sunAng=surf.time*Math.PI*2;
+    surf.sunDir.set(Math.cos(sunAng)*0.75,Math.sin(sunAng),0.38).normalize();
+    var el=surf.sunDir.y;
+    var day=clamp01((el+0.12)/0.34);
+    sunLight.intensity=0.06+1.3*Math.max(0,el);
+    sunLight.color.copy(_sunWhite).lerp(_sunWarm,clamp01(1-el*2.2)*0.85);
+    if(surf.hasAtmo){
+      amb.intensity=0.1+0.48*day; hemi.intensity=0.06+0.38*day;
+      if(scene.fog&&surf.dayHor) scene.fog.color.copy(surf.dayHor).lerp(surf.nightFog,1-day);
+      var nightSky=day<0.35;
+      stars.visible=nightSky; milkyMesh.visible=nightSky;
+    }
+    surf.clouds.forEach(function(c){ c.position.x+=c.userData.v*dt; if(c.position.x>2600) c.position.x=-2600; c.material.opacity=0.05+0.11*day; });
+    surf.nearNode=null;
+    var bestD=7;
+    surf.nodes.forEach(function(n){ n.ph+=dt*1.6; n.m.rotation.y+=dt*1.2; n.m.position.y+=Math.sin(n.ph)*dt*0.25; n.g.position.copy(n.m.position);
+      var d2=surf.pp.distanceTo(n.m.position); if(d2<bestD){ bestD=d2; surf.nearNode=n; } });
+
     var sp=keys['shift']?26:11;
     var fz=(keys['w']?1:0)-(keys['s']?1:0), fx=(keys['d']?1:0)-(keys['a']?1:0);
     var sy=Math.sin(plYaw), cy=Math.cos(plYaw);
@@ -1540,7 +1618,8 @@
     setTxt('rr_spd',Math.round((fz||fx)?sp:0)); setTxt('rr_thrN','—');
     SND.engine(0.03,false);
     if(dActive){ hidePrompt(); return; }
-    if(surf.pp.distanceTo(ship.position)<24) prompt2('T','Decolla');
+    if(surf.nearNode) prompt2('F','Raccogli frammento minerale (+5)');
+    else if(surf.pp.distanceTo(ship.position)<24) prompt2('T','Decolla');
     else if(document.pointerLockElement!==canvas) prompt2('CLIC','Blocca il mouse per guardarti intorno');
     else hidePrompt();
   }
@@ -1615,14 +1694,14 @@
 
   var keys={};
   function on(t,ev,fn,o){ t.addEventListener(ev,fn,o); }
-  on(window,'keydown',function(e){ var k=e.key.toLowerCase(); keys[k]=true;
+  on(window,'keydown',function(e){ if(e.target&&e.target.tagName==='INPUT') return; var k=e.key.toLowerCase(); keys[k]=true;
     if([' ','arrowup','arrowdown','arrowleft','arrowright','tab'].indexOf(k)>=0) e.preventDefault();
     if(!started) return;
     if(docked){ if(k==='escape'||k==='f') closeHangar(); return; }
     if(mode==='surface'){
       if(k==='t'){ tryTakeoff(); }
       if(k===' '&&dActive) dNext();
-      if(k==='f'&&dActive) dNext();
+      if(k==='f'){ if(dActive) dNext(); else collectNode(); }
       if(k==='v'){ var en2=SND.toggle(); toast('AUDIO',en2?'Attivato':'Disattivato'); }
       if(k==='m') toast('MAPPA NON DISPONIBILE','Solo in volo spaziale');
       return;
@@ -1822,7 +1901,7 @@
   }
   function fire(dt){
     fireTimer-=dt;
-    if((firing||keys[' ']) && !dActive && fireTimer<=0){ var fwd=shipForward(); spawnBolt(ship.position.clone().add(fwd.clone().multiplyScalar(4)),fwd,true); fireTimer=fireCd(); }
+    if((firing||keys[' ']) && !dActive && fireTimer<=0){ var fwd=shipForward(); var bp=ship.position.clone().add(fwd.clone().multiplyScalar(4)); spawnBolt(bp,fwd,true); NET.sendFire(bp,fwd); fireTimer=fireCd(); }
   }
   function updateBolts(dt){
     for(var i=bolts.length-1;i>=0;i--){ var b=bolts[i]; b.mesh.position.addScaledVector(b.vel,dt); b.life-=dt;
@@ -1936,6 +2015,7 @@
       camera.position.set(Math.sin(et*0.12)*60,18,Math.cos(et*0.12)*60); camera.lookAt(0,0,40); camera.fov=58; camera.updateProjectionMatrix();
       updateExplosions(dt);
     }
+    NET.tick(dt);
     updateLensFlare();
     if(composer) composer.render(); else renderer.render(scene,camera);
   }
@@ -1943,12 +2023,120 @@
   function onResize(){ W=window.innerWidth;H=window.innerHeight; renderer.setSize(W,H); camera.aspect=W/H; camera.updateProjectionMatrix(); if(composer) composer.setSize(W,H); if(bloomPass) bloomPass.setSize(W,H); if(finalPass) finalPass.uniforms.uAspect.value=W/H; if(fxaaPass){ var pr=renderer.getPixelRatio(); fxaaPass.uniforms.resolution.value.set(1/(W*pr),1/(H*pr)); } }
   on(window,'resize',onResize);
 
+  // ================== MULTIGIOCATORE CO-OP (P2P via PeerJS) ==================
+  var NET=(function(){
+    var peer=null, conns=[], isHost=false, room=null, myName='PILOTA-'+(100+Math.floor(Math.random()*900));
+    var players={}, sendT=0, connected=false;
+    var q=null; try{ q=new URLSearchParams(location.search); }catch(e){}
+    function peerOpts(){
+      if(q&&q.get('ph')) return {host:q.get('ph'),port:parseInt(q.get('pp')||'9000',10),path:q.get('pt')||'/',secure:false};
+      return undefined; // cloud PeerJS pubblico
+    }
+    function stat(t){ setTxt('rr_netStat',t); }
+    function hudUpdate(){
+      var e=$('rr_netHud'); if(!e) return;
+      if(!connected){ e.style.display='none'; return; }
+      e.style.display='block';
+      e.textContent='◉ ONLINE · stanza '+(room||'—')+' · '+(Object.keys(players).length+1)+' navi';
+    }
+    function nameTag(text){
+      var cv=document.createElement('canvas'); cv.width=256; cv.height=64; var x=cv.getContext('2d');
+      x.font='600 30px IBM Plex Mono,monospace'; x.textAlign='center';
+      var w=Math.min(240,x.measureText(text).width+26);
+      x.fillStyle='rgba(6,10,16,0.55)'; x.fillRect(128-w/2,8,w,44);
+      x.fillStyle='#9fe8ff'; x.fillText(text,128,40);
+      var t=new TH.CanvasTexture(cv);
+      var s=new TH.Sprite(new TH.SpriteMaterial({map:t,transparent:true,depthWrite:false}));
+      s.scale.set(14,3.5,1); s.position.y=4.5; return s;
+    }
+    function ensurePlayer(id,name){
+      if(players[id]) return players[id];
+      var g=new TH.Group(); buildShipModel(g,true);
+      g.add(nameTag(name||'PILOTA')); scene.add(g);
+      players[id]={g:g, name:name||'PILOTA', p:new TH.Vector3(), qr:new TH.Quaternion(), sys:0, mode:'space', last:performance.now()};
+      toast('PILOTA IN ARRIVO',(name||'PILOTA')+' è nel settore'); hudUpdate();
+      return players[id];
+    }
+    function dropPlayer(id){
+      var pl=players[id]; if(!pl) return;
+      scene.remove(pl.g); disposeObj(pl.g); delete players[id];
+      toast('PILOTA USCITO',pl.name); hudUpdate();
+    }
+    function broadcast(msg,except){ conns.forEach(function(c){ if(c!==except && c.open){ try{ c.send(msg); }catch(e){} } }); }
+    function handle(msg,fromConn){
+      if(!msg||!msg.t) return;
+      if(msg.t==='state'){
+        var pl=ensurePlayer(msg.id,msg.name);
+        pl.name=msg.name||pl.name;
+        pl.p.fromArray(msg.p); pl.qr.fromArray(msg.q); pl.sys=msg.sys; pl.mode=msg.mode; pl.last=performance.now();
+      } else if(msg.t==='fire'){
+        if(msg.sys===galCur && mode==='space') spawnBolt(new TH.Vector3().fromArray(msg.p), new TH.Vector3().fromArray(msg.d), true);
+      } else if(msg.t==='bye'){ dropPlayer(msg.id); }
+      if(isHost) broadcast(msg,fromConn);
+    }
+    function setupConn(c){
+      c.on('data',function(m){ handle(m,c); });
+      c.on('open',function(){ connected=true; stat(isHost?('STANZA '+room+' · '+conns.length+' piloti connessi'):('CONNESSO ALLA STANZA '+room+' — avvia la sequenza!')); hudUpdate(); });
+      c.on('close',function(){ conns=conns.filter(function(x){ return x!==c; });
+        if(isHost){ stat('STANZA '+room+' · '+conns.length+' piloti connessi'); }
+        else { connected=false; stat('CONNESSIONE CHIUSA'); Object.keys(players).forEach(dropPlayer); } hudUpdate(); });
+    }
+    function host(){
+      if(!window.Peer){ stat('LIBRERIA P2P NON DISPONIBILE — controlla la connessione'); return; }
+      if(peer) return;
+      var letters='ABCDEFGHJKLMNPQRSTUVWXYZ'; room='';
+      for(var i=0;i<4;i++) room+=letters[Math.floor(Math.random()*letters.length)];
+      isHost=true; stat('CREAZIONE STANZA…');
+      peer=new Peer('deepfield26-'+room, peerOpts());
+      peer.on('open',function(){ connected=true; stat('STANZA CREATA · CODICE: '+room+' — dallo ai tuoi amici, poi avvia'); hudUpdate(); });
+      peer.on('connection',function(c){ conns.push(c); setupConn(c); });
+      peer.on('error',function(e){ stat('ERRORE P2P: '+e.type); });
+    }
+    function join(code){
+      if(!window.Peer){ stat('LIBRERIA P2P NON DISPONIBILE — controlla la connessione'); return; }
+      if(peer) return;
+      code=(code||'').trim().toUpperCase();
+      if(code.length<4){ stat('INSERISCI IL CODICE DI 4 LETTERE'); return; }
+      room=code; isHost=false; stat('CONNESSIONE A '+room+'…');
+      peer=new Peer(peerOpts());
+      peer.on('open',function(){ var c=peer.connect('deepfield26-'+room,{reliable:false}); conns.push(c); setupConn(c); });
+      peer.on('error',function(e){ stat('ERRORE P2P: '+e.type); });
+    }
+    function tick(dt){
+      if(!connected||!peer) return;
+      sendT-=dt;
+      if(sendT<=0 && started){
+        sendT=0.1;
+        broadcast({t:'state', id:peer.id, name:myName, sys:galCur, mode:mode,
+          p:[+ship.position.x.toFixed(1),+ship.position.y.toFixed(1),+ship.position.z.toFixed(1)],
+          q:[+ship.quaternion.x.toFixed(3),+ship.quaternion.y.toFixed(3),+ship.quaternion.z.toFixed(3),+ship.quaternion.w.toFixed(3)]},null);
+      }
+      var now=performance.now();
+      Object.keys(players).forEach(function(id){
+        var pl=players[id];
+        if(now-pl.last>8000){ dropPlayer(id); return; }
+        pl.g.position.lerp(pl.p,Math.min(1,dt*8));
+        pl.g.quaternion.slerp(pl.qr,Math.min(1,dt*8));
+        pl.g.visible=(pl.sys===galCur && pl.mode==='space' && mode==='space');
+      });
+    }
+    function sendFire(p,d){ if(!connected||!peer) return; broadcast({t:'fire',id:peer.id,sys:galCur,p:[p.x,p.y,p.z],d:[d.x,d.y,d.z]},null); }
+    var nb=$('rr_netBox');
+    if(nb) nb.addEventListener('click',function(e){ e.stopPropagation(); });
+    $('rr_hostBtn').addEventListener('click',function(){ myName=($('rr_nick').value||myName).slice(0,12); host(); });
+    $('rr_joinBtn').addEventListener('click',function(){ myName=($('rr_nick').value||myName).slice(0,12); join($('rr_code').value); });
+    window.addEventListener('beforeunload',function(){ if(peer&&connected){ try{ broadcast({t:'bye',id:peer.id},null); }catch(e){} } });
+    return { tick:tick, sendFire:sendFire, host:host, join:join,
+      dbg:function(){ return {connected:connected, host:isHost, room:room, players:Object.keys(players).length, id:peer?peer.id:null}; } };
+  })();
+
   // console di debug: DF.spawnCorvette(), DF.spawnDrones(3), DF.addCredits(100), DF.openHangar(), DF.gotoPlanet(0), DF.land()
   window.DF={ openHangar:openHangar, spawnCorvette:spawnCorvette, spawnDrones:spawnDrones,
     addCredits:function(n){ credits+=(n||100); updCred(); },
     gotoPlanet:function(i){ var b=bodies[i||0]; if(!b) return; ship.position.copy(b.mesh.position).add(new TH.Vector3(b.radius*2.5,b.radius*0.4,0)); locked=b; refreshTarget(); },
     land:tryLand, takeoff:tryTakeoff,
-    state:function(){ return {mode:mode, pp:[Math.round(surf.pp.x),Math.round(surf.pp.y),Math.round(surf.pp.z)], ship:[Math.round(ship.position.x),Math.round(ship.position.y),Math.round(ship.position.z)]}; },
+    state:function(){ return {mode:mode, pp:[Math.round(surf.pp.x),Math.round(surf.pp.y),Math.round(surf.pp.z)], ship:[Math.round(ship.position.x),Math.round(ship.position.y),Math.round(ship.position.z)], daylight:+surf.sunDir.y.toFixed(2), nodes:surf.nodes.length}; },
+    net:NET.dbg, netHost:NET.host, netJoin:NET.join,
     look:function(pitch,yaw){ plPitch=pitch||0; plYaw=yaw||0; },
     bodyNames:function(){ return bodies.map(function(b){ return b.name+' ('+b.type+')'; }); } };
 
