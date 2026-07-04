@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-🎭 DEEPFAKE ULTRA PRO 7.1  ⚡  (real-time face swap)
+🎭 DEEPFAKE ULTRA PRO 7.2  ⚡  (real-time face swap)
 
 Più impostazioni, più realismo, più potenza.
+
+NOVITÀ della 7.2
+  * OCCLUSION: dove nell'area del volto non c'è pelle (ciuffi, occhiali,
+    oggetti) lo swap si ritira → niente faccia "spalmata" sopra le cose.
 
 NOVITÀ della 7.1 (fix realismo + GPU)
   * FOREHEAD: la maschera precisa ora si estende verso la FRONTE seguendo
@@ -94,6 +98,7 @@ config = {
     'keep_mouth': 0.30,     # 0=bocca sorgente, 1=bocca reale (lingua/parlato)
     'stabilize': 0.40,      # anti-jitter temporale (0=off, 0.9=molto fermo)
     'coast_frames': 6,      # frame in cui "tiene" l'ultima faccia se il detect salta
+    'occlusion': 0.0,       # protezione occlusioni (0=off): ciuffi/occhiali/oggetti
 }
 
 MODE_RES = {'fast': (640, 360), 'balanced': (854, 480), 'quality': (960, 540)}
@@ -326,6 +331,17 @@ class FaceEngine:
         b = b + 1 if b % 2 == 0 else b
         return cv2.GaussianBlur(m, (b, b), 0)
 
+    @staticmethod
+    def _skin_prob(bgr):
+        """Probabilità di pelle (YCrCb). Serve a NON coprire con lo swap ciò
+        che non è pelle dentro l'area del volto (ciuffi, occhiali, oggetti).
+        Nota: le mani sono color pelle, quindi non vengono protette."""
+        ycrcb = cv2.cvtColor(bgr, cv2.COLOR_BGR2YCrCb)
+        lower = np.array([0, 133, 77], np.uint8)
+        upper = np.array([255, 173, 127], np.uint8)
+        m = cv2.inRange(ycrcb, lower, upper).astype(np.float32) / 255.0
+        return cv2.GaussianBlur(m, (7, 7), 0)
+
     def _blend(self, frame, bgr_fake, M, face, p):
         h, w = frame.shape[:2]
         # enhancer sul crop (denti/pelle/bocca ad alta fedeltà) prima del blend
@@ -359,6 +375,12 @@ class FaceEngine:
             mm = self._mouth_mask_full(face, w, h)
             if mm is not None:
                 mask_full = mask_full * (1.0 - km * mm)
+
+        # occlusione: dove NON c'è pelle nell'area del volto, mostra l'originale
+        occ = float(p.get('occlusion', 0.0))
+        if occ > 0:
+            skin = self._skin_prob(frame)
+            mask_full = mask_full * (1.0 - occ * (1.0 - skin))
 
         scale = float(np.sqrt(M[0, 0] ** 2 + M[0, 1] ** 2)) + 1e-6
         face_px = size / scale
@@ -507,7 +529,7 @@ class DeepfakeUltraPro:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("🎭 DEEPFAKE ULTRA PRO 7.1")
+        self.root.title("🎭 DEEPFAKE ULTRA PRO 7.2")
         self.root.geometry("1680x940")
         self.root.configure(bg='#0a0a0a')
 
@@ -541,7 +563,8 @@ class DeepfakeUltraPro:
         self.params = {k: config[k] for k in
                        ('swap_threshold', 'mask_size', 'feather', 'color_strength',
                         'sharpen', 'smooth', 'multi_face', 'realistic_blend', 'mirror',
-                        'precise_mask', 'keep_mouth', 'stabilize', 'forehead')}
+                        'precise_mask', 'keep_mouth', 'stabilize', 'forehead',
+                        'occlusion')}
         self.params['enhance'] = False
         self.stabilizer = FaceStabilizer()
         self._coast_faces = None
@@ -599,7 +622,7 @@ class DeepfakeUltraPro:
 
         tk.Label(self.left_panel, text="🎭 DEEPFAKE ULTRA", font=('Arial', 15, 'bold'),
                  bg=self.colors['panel'], fg='white').pack(pady=(12, 0))
-        tk.Label(self.left_panel, text="PRO 7.1", font=('Arial', 11),
+        tk.Label(self.left_panel, text="PRO 7.2", font=('Arial', 11),
                  bg=self.colors['panel'], fg=self.colors['primary']).pack(pady=(0, 8))
 
         self.status_var = tk.StringVar(value="⚡ Loading AI...")
@@ -700,6 +723,7 @@ class DeepfakeUltraPro:
         self.v_keepmouth = tk.DoubleVar(value=config['keep_mouth'])
         self.v_stabilize = tk.DoubleVar(value=config['stabilize'])
         self.v_forehead = tk.DoubleVar(value=config['forehead'])
+        self.v_occlusion = tk.DoubleVar(value=config['occlusion'])
         self._slider(adj, "Swap thresh", self.v_thresh, 0.20, 0.70)
         self._slider(adj, "Mask size", self.v_mask, 0.60, 1.30)
         self._slider(adj, "Forehead", self.v_forehead, 0.0, 0.60)
@@ -708,6 +732,7 @@ class DeepfakeUltraPro:
         self._slider(adj, "Sharpen", self.v_sharpen, 0.0, 1.0)
         self._slider(adj, "Skin smooth", self.v_smooth, 0.0, 1.0)
         self._slider(adj, "Keep mouth", self.v_keepmouth, 0.0, 1.0)
+        self._slider(adj, "Occlusion", self.v_occlusion, 0.0, 1.0)
         self._slider(adj, "Stabilize", self.v_stabilize, 0.0, 0.90)
 
         opt = self._card(self.right_panel, "OPTIONS")
@@ -743,7 +768,7 @@ class DeepfakeUltraPro:
                                height=10, relief='flat', wrap='word')
         self.console.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
 
-        self.bottom_status = tk.Label(self.root, text="Deepfake Ultra Pro 7.1 | Initializing...",
+        self.bottom_status = tk.Label(self.root, text="Deepfake Ultra Pro 7.2 | Initializing...",
                                       bg='#1a1a2e', fg='white', font=('Arial', 10),
                                       relief='sunken', anchor='w')
         self.bottom_status.pack(side=tk.BOTTOM, fill=tk.X)
@@ -773,6 +798,7 @@ class DeepfakeUltraPro:
                 'keep_mouth': float(self.v_keepmouth.get()),
                 'stabilize': float(self.v_stabilize.get()),
                 'forehead': float(self.v_forehead.get()),
+                'occlusion': float(self.v_occlusion.get()),
                 'enhance': bool(self.v_enhance.get()) and self.engine is not None
                 and self.engine.enhancer_ready,
             })
@@ -961,7 +987,7 @@ class DeepfakeUltraPro:
         self.ram_label.config(text=f"RAM: {s['ram']:.1f}%")
         rec = " | ⏺REC" if self.recording else ""
         self.bottom_status.config(
-            text=f"Deepfake Ultra Pro 7.1 | FPS: {s['fps']} (avg {s['avg_fps']}) | "
+            text=f"Deepfake Ultra Pro 7.2 | FPS: {s['fps']} (avg {s['avg_fps']}) | "
                  f"Swap: {'ON' if self.swap_active else 'OFF'} | "
                  f"Multi: {'ON' if self.params['multi_face'] else 'OFF'} | "
                  f"Mode: {self.mode_var.get().upper()} | "
@@ -1074,15 +1100,18 @@ class DeepfakeUltraPro:
             # realismo del parlato: bocca reale, maschera precisa, fronte coperta
             'talking': dict(mode='balanced', det=320, thresh=0.35, mask=1.0,
                             forehead=0.32, feather=0.09, color=0.85, sharpen=0.20,
-                            smooth=0.30, keep=0.55, stab=0.55, precise=True, multi=False),
+                            smooth=0.30, keep=0.55, stab=0.55, occ=0.40,
+                            precise=True, multi=False),
             # massima fedeltà (adatto a GPU tipo RTX 4070)
             'quality': dict(mode='quality', det=512, thresh=0.35, mask=1.05,
                             forehead=0.35, feather=0.07, color=0.90, sharpen=0.25,
-                            smooth=0.35, keep=0.30, stab=0.50, precise=True, multi=True),
+                            smooth=0.35, keep=0.30, stab=0.50, occ=0.50,
+                            precise=True, multi=True),
             # massimi FPS
             'speed': dict(mode='fast', det=256, thresh=0.40, mask=1.0,
                           forehead=0.25, feather=0.05, color=0.70, sharpen=0.10,
-                          smooth=0.0, keep=0.20, stab=0.35, precise=True, multi=False),
+                          smooth=0.0, keep=0.20, stab=0.35, occ=0.0,
+                          precise=True, multi=False),
         }
         p = presets.get(name)
         if not p:
@@ -1091,7 +1120,7 @@ class DeepfakeUltraPro:
         self.detsize_combo.set(str(p['det']))
         self.on_detsize()
         self.v_thresh.set(p['thresh']); self.v_mask.set(p['mask'])
-        self.v_forehead.set(p['forehead'])
+        self.v_forehead.set(p['forehead']); self.v_occlusion.set(p['occ'])
         self.v_feather.set(p['feather']); self.v_color.set(p['color'])
         self.v_sharpen.set(p['sharpen']); self.v_smooth.set(p['smooth'])
         self.v_keepmouth.set(p['keep']); self.v_stabilize.set(p['stab'])
@@ -1182,7 +1211,7 @@ class DeepfakeUltraPro:
 # ============================================================
 def main():
     print("=" * 80)
-    print("🚀 DEEPFAKE ULTRA PRO 7.1 - STARTING")
+    print("🚀 DEEPFAKE ULTRA PRO 7.2 - STARTING")
     ram = f"{psutil.virtual_memory().percent}%" if _HAS_PSUTIL else "n/a"
     print(f"🔥 PID {os.getpid()} | CPU {_cpu_count()} | RAM {ram}")
     print("=" * 80)

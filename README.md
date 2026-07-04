@@ -1,4 +1,4 @@
-# gioco — Deepfake Ultra Pro 7.1 🎭
+# gioco — Deepfake Ultra Pro 7.2 🎭
 
 Face-swap in tempo reale (webcam **o file video**) basato su **insightface** +
 `inswapper_128.onnx`, con interfaccia Tkinter. Versione ottimizzata: **più
@@ -52,6 +52,12 @@ tool open-source "seri" (es. FaceFusion).
   (upscale 512 → restore → blend), non su tutto il frame. Su **RTX 4070** gira
   in tempo reale e dà il dettaglio vero a denti/pelle/bocca. Il modello si
   scarica da solo al primo click.
+- **Occlusion** (nuovo slider): dove nell'area del volto **non c'è pelle**
+  (ciuffi di capelli, occhiali, un microfono, oggetti scuri che ci passano
+  davanti) lo swap si ritira e mostra l'immagine reale → niente più faccia
+  "spalmata" sopra le cose. Basato su rilevamento pelle YCrCb. *Limite:* le mani
+  sono color pelle, quindi non vengono protette. Default 0 (attivo nei preset
+  Talking/Quality).
 
 ## Novità della 6.0
 
@@ -146,10 +152,13 @@ Scorciatoia: premi **💎 Quality** (o **🗣 Talking**) e sei quasi a posto. A 
 5. **Color match** 0.8–1.0 → l'illuminazione combacia con la scena.
 6. **Skin smooth** 0.2–0.4 + **Sharpen** 0.2 → pelle uniforme ma nitida.
 7. **Enhancer** ON → denti/pelle/bocca ad alta fedeltà (sulla 4070 è real-time).
-8. Foto sorgente **frontale, nitida, ben illuminata**, sfondo semplice.
+8. **Occlusion** 0.4–0.6 → capelli/occhiali/oggetti davanti al viso non vengono
+   coperti dallo swap.
+9. Foto sorgente **frontale, nitida, ben illuminata**, sfondo semplice.
 
 Se vedi ancora lo stacco sulle sopracciglia → alza **Forehead**. Se scatta →
-alza **Stabilize** e usa **det 512** in modalità Quality.
+alza **Stabilize** e usa **det 512** in modalità Quality. Se un ciuffo/occhiali
+vengono "spalmati" dallo swap → alza **Occlusion**.
 
 ### Se vuoi VERAMENTE anche i capelli
 Serve un'altra pipeline (non questo modello): approcci full-head / reenactment
