@@ -1,36 +1,34 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-🎭 DEEPFAKE ULTRA PRO 5.0  ⚡  (real-time face swap)
+🎭 DEEPFAKE ULTRA PRO 6.0  ⚡  (real-time face swap)
 
-Versione ottimizzata: più veloce e più realistica.
+Più impostazioni, più realismo, più potenza.
 
-Miglioramenti rispetto alla 4.1
---------------------------------
-VELOCITÀ
-  * Auto-selezione del provider ONNX (CUDA / CoreML / DirectML / CPU):
-    usa la GPU quando è disponibile invece del solo CPUExecutionProvider.
-  * Detector "detection-only" per il flusso live: salta i modelli di
-    recognition/landmark/genderage che il face-swap non usa.
-  * Un solo thread di inferenza (niente più lock contesi tra N thread che
-    di fatto serializzavano tutto) + una coda "ultimo frame".
-  * Session ONNX con ottimizzazione del grafo attiva e thread intra-op.
-  * Cache di rilevamento corretta (la vecchia usava id(frame): non colpiva
-    mai e poteva restituire dati obsoleti). Ora si può saltare il detect
-    ogni N frame in modalità FAST riusando l'ultimo risultato.
+NOVITÀ rispetto alla 5.0
+------------------------
+IMPOSTAZIONI (regolabili dal vivo)
+  * Slider: soglia swap, dimensione maschera, feather (bordi), intensità
+    color-match, sharpen, skin-smooth.
+  * Selettore det_size (256/320/512/640) applicato a caldo.
+  * Toggle: blend realistico, multi-face, mirror, enhancer, bbox, FPS.
 
 REALISMO
-  * Blending ellittico con bordi sfumati (feather) al posto del quadrato.
-  * Color transfer LAB: la faccia sostituita adotta luminosità/tinta della
-    scena, così l'illuminazione combacia.
-  * Selezione della faccia sorgente in base alla dimensione (il soggetto),
-    non solo allo score.
+  * Blending ellittico con feather regolabile + color transfer LAB regolabile.
+  * Skin-smooth (bilateral) e sharpen (unsharp) sulla faccia sostituita.
+  * Enhancer opzionale GFPGAN (se installato) per volti ad alta fedeltà.
+
+POTENZA
+  * MULTI-FACE: sostituisce tutti i volti sopra soglia, non solo il migliore.
+  * Input da FILE VIDEO oltre alla webcam (playback in loop).
+  * SNAPSHOT (PNG) e REGISTRAZIONE video (MP4) dell'output.
+  * Provider ONNX auto (CUDA/CoreML/DirectML/CPU), detector detection-only,
+    un solo thread di inferenza.
 
 Uso etico: usa solo volti per cui hai il consenso. Non creare contenuti
 ingannevoli o che ledano le persone.
 
-Requisiti: vedi requirements.txt
-Modello:  inswapper_128.onnx  (deepinsight/insightface releases)
+Requisiti: vedi requirements.txt · Modello: inswapper_128.onnx
 """
 
 import warnings
@@ -41,7 +39,6 @@ os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '3')
 os.environ.setdefault('KMP_DUPLICATE_LIB_OK', 'TRUE')
 os.environ.setdefault('OMP_NUM_THREADS', str(max(1, (os.cpu_count() or 4))))
 
-import sys
 import time
 import queue
 import threading
@@ -62,19 +59,31 @@ except Exception:
 
 
 # ============================================================
-# 🔥 CONFIG
+# 🔥 CONFIG (default; molti valori sono regolabili dalla UI)
 # ============================================================
 config = {
     'model_path': 'inswapper_128.onnx',
     'detector_name': 'buffalo_l',
-    'camera_id': 0,
-    'swap_threshold': 0.35,     # score minimo per applicare lo swap
-    'det_size': 320,            # input rete di detection (256=veloce, 512=preciso)
+    'det_size': 320,
     'det_thresh': 0.5,
-    'realistic_blend': True,    # feather + color-match
-    'fast_detect_stride': 2,    # in modalità FAST: rileva 1 frame su N
-    'display_hz': 60,           # frequenza di refresh della UI
+    'display_hz': 60,
+    'record_fps': 24,
+    'output_dir': 'output',
+    'gfpgan_model': 'GFPGANv1.4.pth',
+    # default regolazioni
+    'swap_threshold': 0.35,
+    'mask_size': 1.0,       # 0.6 - 1.3
+    'feather': 0.06,        # 0.02 - 0.15
+    'color_strength': 0.80,  # 0 - 1
+    'sharpen': 0.15,        # 0 - 1
+    'smooth': 0.0,          # 0 - 1
+    'multi_face': True,
+    'realistic_blend': True,
+    'mirror': False,
+    'fast_detect_stride': 2,
 }
+
+MODE_RES = {'fast': (640, 360), 'balanced': (854, 480), 'quality': (960, 540)}
 
 
 def _cpu_count():
@@ -84,26 +93,19 @@ def _cpu_count():
         return os.cpu_count() or 4
 
 
-def _sys_banner():
-    print("=" * 80)
-    print("⚡ DEEPFAKE ULTRA PRO 5.0")
-    print("=" * 80)
-    ram = f"{psutil.virtual_memory().percent}%" if _HAS_PSUTIL else "n/a"
-    print(f"🔥 PID: {os.getpid()} | CPU cores: {_cpu_count()} | RAM: {ram}")
-    print("=" * 80)
-
-
 # ============================================================
-# 🧠 FACE ENGINE  (detection + swap + blending)
+# 🧠 FACE ENGINE
 # ============================================================
 class FaceEngine:
-    """Carica i modelli e fornisce rilevamento e face-swap ottimizzati."""
+    """Carica i modelli e fornisce rilevamento, swap, blending ed enhance."""
 
     def __init__(self, model_path):
         self.model_path = model_path
-        self.detector = None      # detection-only (flusso live, veloce)
-        self.app = None           # completo (embedding della faccia sorgente)
-        self.swapper = None       # inswapper_128
+        self.detector = None      # detection-only (live)
+        self.app = None           # completo (embedding sorgente)
+        self.swapper = None
+        self.enhancer = None
+        self.enhancer_ready = False
         self.loaded = False
 
         self.providers = []
@@ -114,20 +116,15 @@ class FaceEngine:
         self._last_faces = []
         self._frame_idx = 0
 
-    # ---- provider selection -------------------------------------------------
+    # ---- providers ----------------------------------------------------------
     def _select_providers(self):
         try:
             import onnxruntime as ort
             avail = ort.get_available_providers()
         except Exception:
             avail = ['CPUExecutionProvider']
-
-        preferred = [
-            'CUDAExecutionProvider',
-            'CoreMLExecutionProvider',
-            'DmlExecutionProvider',
-            'CPUExecutionProvider',
-        ]
+        preferred = ['CUDAExecutionProvider', 'CoreMLExecutionProvider',
+                     'DmlExecutionProvider', 'CPUExecutionProvider']
         self.providers = [p for p in preferred if p in avail] or ['CPUExecutionProvider']
         top = self.providers[0]
         self.provider_name = {
@@ -151,59 +148,82 @@ class FaceEngine:
         self._select_providers()
         print(f"⚡ Execution provider: {self.provider_name}")
 
-        det_size = (config['det_size'], config['det_size'])
-
-        # Detector veloce per il live: SOLO detection (niente recognition/landmark).
-        self.detector = FaceAnalysis(
-            name=config['detector_name'],
-            allowed_modules=['detection'],
-            providers=self.providers,
-        )
-        self.detector.prepare(ctx_id=self.ctx_id, det_size=det_size,
+        det = (config['det_size'], config['det_size'])
+        self.detector = FaceAnalysis(name=config['detector_name'],
+                                     allowed_modules=['detection'],
+                                     providers=self.providers)
+        self.detector.prepare(ctx_id=self.ctx_id, det_size=det,
                               det_thresh=config['det_thresh'])
 
-        # App completa: serve l'embedding (recognition) della faccia sorgente.
-        self.app = FaceAnalysis(
-            name=config['detector_name'],
-            allowed_modules=['detection', 'recognition'],
-            providers=self.providers,
-        )
+        self.app = FaceAnalysis(name=config['detector_name'],
+                                allowed_modules=['detection', 'recognition'],
+                                providers=self.providers)
         self.app.prepare(ctx_id=self.ctx_id, det_size=(320, 320),
                          det_thresh=config['det_thresh'])
 
         if not os.path.exists(self.model_path):
             print(f"❌ Modello non trovato: {self.model_path}")
             return False
-
-        self.swapper = insightface.model_zoo.get_model(
-            self.model_path, providers=self.providers
-        )
+        self.swapper = insightface.model_zoo.get_model(self.model_path,
+                                                       providers=self.providers)
         self.loaded = True
         return True
 
+    def try_load_enhancer(self):
+        """Carica GFPGAN se disponibile. Ritorna (ok, messaggio)."""
+        if self.enhancer_ready:
+            return True, "enhancer già pronto"
+        try:
+            from gfpgan import GFPGANer
+        except Exception:
+            return False, "pacchetto 'gfpgan' non installato (pip install gfpgan)"
+        if not os.path.exists(config['gfpgan_model']):
+            return False, f"modello {config['gfpgan_model']} non trovato"
+        try:
+            self.enhancer = GFPGANer(model_path=config['gfpgan_model'], upscale=1,
+                                     arch='clean', channel_multiplier=2,
+                                     bg_upsampler=None)
+            self.enhancer_ready = True
+            return True, "GFPGAN caricato"
+        except Exception as e:
+            return False, f"errore GFPGAN: {str(e)[:60]}"
+
+    def enhance(self, frame):
+        if not self.enhancer_ready:
+            return frame
+        try:
+            with self._lock:
+                _, _, out = self.enhancer.enhance(frame, has_aligned=False,
+                                                  only_center_face=False,
+                                                  paste_back=True)
+            return out if out is not None else frame
+        except Exception:
+            return frame
+
+    def set_det_size(self, n):
+        with self._lock:
+            self.detector.prepare(ctx_id=self.ctx_id, det_size=(int(n), int(n)),
+                                  det_thresh=config['det_thresh'])
+
     # ---- detection ----------------------------------------------------------
     def detect_source(self, img):
-        """Rileva la faccia della foto sorgente (con embedding). Prende la
-        faccia più grande = il soggetto principale."""
         faces = self.app.get(img)
         if not faces:
             return None
         return max(faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
 
     def detect_live(self, frame, stride=1):
-        """Rilevamento veloce sul flusso live. Con stride>1 riusa l'ultimo
-        risultato per i frame intermedi (compromesso latenza/fluidità)."""
         self._frame_idx += 1
         if stride > 1 and self._last_faces and (self._frame_idx % stride) != 0:
             return self._last_faces
-        faces = self.detector.get(frame)
+        with self._lock:
+            faces = self.detector.get(frame)
         self._last_faces = faces
         return faces
 
-    # ---- swap + blend -------------------------------------------------------
+    # ---- blending -----------------------------------------------------------
     @staticmethod
     def _color_transfer(src, ref):
-        """Adatta le statistiche di colore (LAB) di src a quelle di ref."""
         s = cv2.cvtColor(src, cv2.COLOR_BGR2LAB).astype(np.float32)
         r = cv2.cvtColor(ref, cv2.COLOR_BGR2LAB).astype(np.float32)
         out = s.copy()
@@ -213,29 +233,47 @@ class FaceEngine:
             out[..., i] = (s[..., i] - sm) * (rs / ss) + rm
         return cv2.cvtColor(np.clip(out, 0, 255).astype(np.uint8), cv2.COLOR_LAB2BGR)
 
-    def _blend(self, frame, bgr_fake, M):
-        """Fonde la faccia generata nel frame con maschera ellittica sfumata
-        e color-match rispetto all'illuminazione locale."""
+    @staticmethod
+    def _sharpen(img, amount):
+        if amount <= 0:
+            return img
+        blur = cv2.GaussianBlur(img, (0, 0), 3)
+        return cv2.addWeighted(img, 1.0 + amount, blur, -amount, 0)
+
+    @staticmethod
+    def _smooth(img, amount):
+        if amount <= 0:
+            return img
+        sm = cv2.bilateralFilter(img, 7, 45, 45)
+        return cv2.addWeighted(img, 1.0 - amount, sm, amount, 0)
+
+    def _blend(self, frame, bgr_fake, M, p):
         h, w = frame.shape[:2]
         size = bgr_fake.shape[0]
 
-        # crop originale allineato (stesso M dello swapper) per il color-match
         aimg = cv2.warpAffine(frame, M, (size, size), flags=cv2.INTER_LINEAR)
-        fake = self._color_transfer(bgr_fake, aimg)
+        cs = float(p['color_strength'])
+        if cs > 0:
+            ct = self._color_transfer(bgr_fake, aimg)
+            fake = cv2.addWeighted(bgr_fake, 1.0 - cs, ct, cs, 0)
+        else:
+            fake = bgr_fake
+        fake = self._smooth(fake, float(p['smooth']))
+        fake = self._sharpen(fake, float(p['sharpen']))
 
-        # maschera ellittica nello spazio del crop (evita gli angoli quadrati)
+        ms = float(p['mask_size'])
+        ax = int(np.clip(size * 0.42 * ms, 4, size // 2))
+        ay = int(np.clip(size * 0.50 * ms, 4, size // 2))
         mask = np.zeros((size, size), np.float32)
-        cv2.ellipse(mask, (size // 2, size // 2),
-                    (int(size * 0.42), int(size * 0.50)), 0, 0, 360, 1.0, -1)
+        cv2.ellipse(mask, (size // 2, size // 2), (ax, ay), 0, 0, 360, 1.0, -1)
 
         IM = cv2.invertAffineTransform(M)
         fake_full = cv2.warpAffine(fake, IM, (w, h), borderValue=0)
         mask_full = cv2.warpAffine(mask, IM, (w, h), borderValue=0)
 
-        # feather proporzionale alla dimensione reale della faccia nel frame
-        scale = float(np.sqrt(M[0, 0] ** 2 + M[0, 1] ** 2)) + 1e-6  # frame->crop
+        scale = float(np.sqrt(M[0, 0] ** 2 + M[0, 1] ** 2)) + 1e-6
         face_px = size / scale
-        blur = int(max(5, face_px * 0.06))
+        blur = int(max(3, face_px * float(p['feather'])))
         blur = blur + 1 if blur % 2 == 0 else blur
         mask_full = cv2.GaussianBlur(mask_full, (blur, blur), 0)
         mask_full = np.clip(mask_full, 0.0, 1.0)[..., None]
@@ -244,25 +282,23 @@ class FaceEngine:
             frame.astype(np.float32) * (1.0 - mask_full)
         return out.astype(np.uint8)
 
-    def swap(self, frame, target_face, source_face, realistic=True):
-        if not self.loaded or target_face is None or source_face is None:
+    def swap_one(self, frame, target, source, p):
+        if not self.loaded or target is None or source is None:
             return frame
         with self._lock:
-            if realistic:
+            if p['realistic_blend']:
                 try:
-                    bgr_fake, M = self.swapper.get(frame, target_face, source_face,
-                                                   paste_back=False)
-                    return self._blend(frame, bgr_fake, M)
+                    bgr_fake, M = self.swapper.get(frame, target, source, paste_back=False)
                 except Exception:
-                    pass  # fallback al paste_back nativo
-            result = self.swapper.get(frame, target_face, source_face, paste_back=True)
-            return result if result is not None else frame
+                    return self.swapper.get(frame, target, source, paste_back=True) or frame
+            else:
+                return self.swapper.get(frame, target, source, paste_back=True) or frame
+        # blend fuori dal lock (solo numpy/cv2)
+        return self._blend(frame, bgr_fake, M, p)
 
     @staticmethod
     def best_face(faces):
-        if not faces:
-            return None
-        return max(faces, key=lambda f: f.det_score)
+        return max(faces, key=lambda f: f.det_score) if faces else None
 
 
 # ============================================================
@@ -309,8 +345,8 @@ class DeepfakeUltraPro:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("🎭 DEEPFAKE ULTRA PRO 5.0")
-        self.root.geometry("1600x900")
+        self.root.title("🎭 DEEPFAKE ULTRA PRO 6.0")
+        self.root.geometry("1680x940")
         self.root.configure(bg='#0a0a0a')
 
         self.colors = {
@@ -331,9 +367,19 @@ class DeepfakeUltraPro:
         self.source_image = None
 
         self.cap = None
-        self.camera_index = 0
+        self.source_mode = 'camera'   # 'camera' | 'video'
+        self.video_path = None
 
-        # code: teniamo solo l'ultimo frame per ridurre la latenza
+        self.last_result = None       # ultimo frame processato (BGR) per snapshot/rec
+        self.recording = False
+        self.writer = None
+        self.rec_size = None
+
+        # parametri sincronizzati dal main thread (thread-safe per l'inferenza)
+        self.params = {k: config[k] for k in
+                       ('swap_threshold', 'mask_size', 'feather', 'color_strength',
+                        'sharpen', 'smooth', 'multi_face', 'realistic_blend', 'mirror')}
+
         self.capture_queue = queue.Queue(maxsize=2)
         self.display_queue = queue.Queue(maxsize=2)
 
@@ -343,153 +389,177 @@ class DeepfakeUltraPro:
         self.root.after(500, self.stats_pump)
         print("✅ System initialized")
 
+    # ---- helpers UI ---------------------------------------------------------
+    def _card(self, parent, title):
+        border = tk.Frame(parent, bg=self.colors['primary'])
+        border.pack(pady=8, padx=10, fill=tk.X)
+        card = tk.Frame(border, bg=self.colors['card'])
+        card.pack(padx=1, pady=1, fill=tk.BOTH, expand=True)
+        if title:
+            tk.Label(card, text=title, bg=self.colors['card'], fg='white',
+                     font=('Arial', 10, 'bold')).pack(pady=4)
+        return card
+
+    def _slider(self, parent, label, var, frm, to, fmt="{:.2f}"):
+        row = tk.Frame(parent, bg=self.colors['card'])
+        row.pack(fill=tk.X, padx=10, pady=2)
+        lab = tk.Label(row, text=label, bg=self.colors['card'], fg='white',
+                       font=('Arial', 8), width=14, anchor='w')
+        lab.pack(side=tk.LEFT)
+        val = tk.Label(row, text=fmt.format(var.get()), bg=self.colors['card'],
+                       fg=self.colors['primary'], font=('Arial', 8), width=5)
+        val.pack(side=tk.RIGHT)
+        s = ttk.Scale(row, from_=frm, to=to, variable=var, orient='horizontal',
+                      command=lambda _v, l=val, f=fmt, vv=var: l.config(text=f.format(vv.get())))
+        s.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
+        return s
+
+    def _toggle(self, parent, text, var):
+        tk.Checkbutton(parent, text=text, variable=var, bg=self.colors['card'],
+                       fg='white', selectcolor=self.colors['card'],
+                       activebackground=self.colors['card'], activeforeground='white',
+                       font=('Arial', 8), anchor='w').pack(anchor='w', padx=10, pady=1)
+
     # ---- UI -----------------------------------------------------------------
     def init_ui(self):
         self.main_frame = tk.Frame(self.root, bg=self.colors['bg'])
         self.main_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        # ----- LEFT -----
-        self.left_panel = tk.Frame(self.main_frame, width=280, bg=self.colors['panel'])
+        # ---------- LEFT ----------
+        self.left_panel = tk.Frame(self.main_frame, width=290, bg=self.colors['panel'])
         self.left_panel.pack(side=tk.LEFT, fill=tk.Y)
         self.left_panel.pack_propagate(False)
 
-        tk.Label(self.left_panel, text="🎭", font=('Arial', 48),
-                 bg=self.colors['panel'], fg=self.colors['primary']).pack(pady=10)
-        tk.Label(self.left_panel, text="DEEPFAKE ULTRA", font=('Arial', 16, 'bold'),
-                 bg=self.colors['panel'], fg='white').pack()
-        tk.Label(self.left_panel, text="PRO 5.0", font=('Arial', 12),
-                 bg=self.colors['panel'], fg=self.colors['primary']).pack(pady=(0, 20))
+        tk.Label(self.left_panel, text="🎭 DEEPFAKE ULTRA", font=('Arial', 15, 'bold'),
+                 bg=self.colors['panel'], fg='white').pack(pady=(12, 0))
+        tk.Label(self.left_panel, text="PRO 6.0", font=('Arial', 11),
+                 bg=self.colors['panel'], fg=self.colors['primary']).pack(pady=(0, 8))
 
         self.status_var = tk.StringVar(value="⚡ Loading AI...")
-        tk.Label(self.left_panel, textvariable=self.status_var, font=('Arial', 10),
-                 bg=self.colors['panel'], fg=self.colors['warning']).pack(pady=10)
+        tk.Label(self.left_panel, textvariable=self.status_var, font=('Arial', 9),
+                 bg=self.colors['panel'], fg=self.colors['warning']).pack(pady=4)
 
         self.load_btn = tk.Button(self.left_panel, text="📁 LOAD FACE IMAGE",
                                   command=self.load_face_image, state='disabled',
                                   bg='#0066cc', fg='white', font=('Arial', 10, 'bold'),
-                                  relief='raised', padx=10, pady=5)
-        self.load_btn.pack(pady=10, padx=20, fill=tk.X)
+                                  relief='raised', padx=8, pady=5)
+        self.load_btn.pack(pady=6, padx=18, fill=tk.X)
 
-        face_border = tk.Frame(self.left_panel, bg=self.colors['primary'])
-        face_border.pack(pady=10, padx=10, fill=tk.X)
-        face_frame = tk.Frame(face_border, bg=self.colors['card'])
-        face_frame.pack(padx=1, pady=1, fill=tk.BOTH, expand=True)
-        tk.Label(face_frame, text="FACE PREVIEW", bg=self.colors['card'], fg='white',
-                 font=('Arial', 10, 'bold')).pack(pady=5)
-        self.face_label = tk.Label(face_frame,
-                                   text="No face loaded\n\nSelect clear frontal photo",
+        pv = self._card(self.left_panel, "FACE PREVIEW")
+        self.face_label = tk.Label(pv, text="No face loaded\n\nFoto frontale nitida",
                                    bg='#000033', fg='#8888ff', font=('Arial', 9),
-                                   width=30, height=10)
-        self.face_label.pack(pady=10, padx=10)
+                                   width=30, height=8)
+        self.face_label.pack(pady=8, padx=8)
 
         self.swap_btn = tk.Button(self.left_panel, text="🔴 SWAP OFF",
                                   command=self.toggle_swap, state='disabled',
                                   bg='#cc0000', fg='white', font=('Arial', 12, 'bold'),
-                                  relief='raised', padx=10, pady=10)
-        self.swap_btn.pack(pady=10, padx=20, fill=tk.X)
+                                  relief='raised', padx=8, pady=8)
+        self.swap_btn.pack(pady=6, padx=18, fill=tk.X)
 
-        # settings
-        settings_border = tk.Frame(self.left_panel, bg=self.colors['primary'])
-        settings_border.pack(pady=10, padx=10, fill=tk.X)
-        settings_frame = tk.Frame(settings_border, bg=self.colors['card'])
-        settings_frame.pack(padx=1, pady=1, fill=tk.BOTH, expand=True)
-        tk.Label(settings_frame, text="SETTINGS", bg=self.colors['card'], fg='white',
-                 font=('Arial', 10, 'bold')).pack(pady=5)
+        src = self._card(self.left_panel, "SOURCE / CAPTURE")
+        brow = tk.Frame(src, bg=self.colors['card']); brow.pack(fill=tk.X, padx=8, pady=4)
+        tk.Button(brow, text="📷 Cam", command=self.use_camera, bg='#334', fg='white',
+                  font=('Arial', 8, 'bold')).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
+        tk.Button(brow, text="🎬 Video", command=self.load_video_file, bg='#334',
+                  fg='white', font=('Arial', 8, 'bold')).pack(side=tk.LEFT, expand=True,
+                                                              fill=tk.X, padx=2)
+        brow2 = tk.Frame(src, bg=self.colors['card']); brow2.pack(fill=tk.X, padx=8, pady=(0, 6))
+        tk.Button(brow2, text="📸 Snapshot", command=self.snapshot, bg='#0088aa',
+                  fg='white', font=('Arial', 8, 'bold')).pack(side=tk.LEFT, expand=True,
+                                                             fill=tk.X, padx=2)
+        self.rec_btn = tk.Button(brow2, text="⏺ REC", command=self.toggle_record,
+                                 bg='#aa0044', fg='white', font=('Arial', 8, 'bold'))
+        self.rec_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
 
-        self.realistic_var = tk.BooleanVar(value=config['realistic_blend'])
-        tk.Checkbutton(settings_frame, text="Realistic blend (feather + color)",
-                       variable=self.realistic_var, bg=self.colors['card'], fg='white',
-                       selectcolor=self.colors['card'], activebackground=self.colors['card'],
-                       activeforeground='white').pack(anchor='w', padx=10, pady=5)
-
-        self.bbox_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(settings_frame, text="Show bounding box", variable=self.bbox_var,
-                       bg=self.colors['card'], fg='white', selectcolor=self.colors['card'],
-                       activebackground=self.colors['card'],
-                       activeforeground='white').pack(anchor='w', padx=10, pady=5)
-
-        self.fps_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(settings_frame, text="Show FPS counter", variable=self.fps_var,
-                       bg=self.colors['card'], fg='white', selectcolor=self.colors['card'],
-                       activebackground=self.colors['card'],
-                       activeforeground='white').pack(anchor='w', padx=10, pady=5)
-
-        color_frame = tk.Frame(settings_frame, bg=self.colors['card'])
-        color_frame.pack(fill=tk.X, padx=10, pady=5)
-        tk.Label(color_frame, text="Box color:", bg=self.colors['card'],
-                 fg='white').pack(side=tk.LEFT)
-        self.color_combo = ttk.Combobox(color_frame,
-                                        values=list(self.COLOR_MAP.keys()),
-                                        state='readonly', width=10)
-        self.color_combo.set('green')
-        self.color_combo.pack(side=tk.RIGHT)
-
-        # performance
-        stats_border = tk.Frame(self.left_panel, bg=self.colors['primary'])
-        stats_border.pack(pady=10, padx=10, fill=tk.X)
-        stats_frame = tk.Frame(stats_border, bg=self.colors['card'])
-        stats_frame.pack(padx=1, pady=1, fill=tk.BOTH, expand=True)
-        tk.Label(stats_frame, text="PERFORMANCE", bg=self.colors['card'], fg='white',
-                 font=('Arial', 10, 'bold')).pack(pady=5)
-        self.fps_label = tk.Label(stats_frame, text="FPS: 0", font=('Arial', 24),
+        st = self._card(self.left_panel, "PERFORMANCE")
+        self.fps_label = tk.Label(st, text="FPS: 0", font=('Arial', 22),
                                   bg=self.colors['card'], fg='#00ff00')
-        self.fps_label.pack(pady=10)
-        self.cpu_label = tk.Label(stats_frame, text="CPU: 0%", bg=self.colors['card'],
-                                  fg='white')
+        self.fps_label.pack(pady=6)
+        self.cpu_label = tk.Label(st, text="CPU: 0%", bg=self.colors['card'], fg='white')
         self.cpu_label.pack()
-        self.ram_label = tk.Label(stats_frame, text="RAM: 0%", bg=self.colors['card'],
-                                  fg='white')
-        self.ram_label.pack(pady=(0, 10))
+        self.ram_label = tk.Label(st, text="RAM: 0%", bg=self.colors['card'], fg='white')
+        self.ram_label.pack(pady=(0, 8))
 
-        # ----- CENTER -----
+        # ---------- CENTER ----------
         self.center_panel = tk.Frame(self.main_frame, bg=self.colors['bg'])
         self.center_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5)
-        video_border = tk.Frame(self.center_panel, bg=self.colors['primary'])
-        video_border.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        video_frame = tk.Frame(video_border, bg='black')
-        video_frame.pack(padx=1, pady=1, fill=tk.BOTH, expand=True)
-        tk.Label(video_frame, text="LIVE CAMERA", bg='black', fg='white',
-                 font=('Arial', 12, 'bold')).pack(pady=5)
-        self.video_label = tk.Label(video_frame, bg='black')
+        vb = tk.Frame(self.center_panel, bg=self.colors['primary'])
+        vb.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        vf = tk.Frame(vb, bg='black'); vf.pack(padx=1, pady=1, fill=tk.BOTH, expand=True)
+        tk.Label(vf, text="LIVE PREVIEW", bg='black', fg='white',
+                 font=('Arial', 12, 'bold')).pack(pady=4)
+        self.video_label = tk.Label(vf, bg='black')
         self.video_label.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
 
-        # ----- RIGHT -----
-        self.right_panel = tk.Frame(self.main_frame, width=250, bg=self.colors['panel'])
+        # ---------- RIGHT ----------
+        self.right_panel = tk.Frame(self.main_frame, width=320, bg=self.colors['panel'])
         self.right_panel.pack(side=tk.RIGHT, fill=tk.Y)
         self.right_panel.pack_propagate(False)
 
-        mode_border = tk.Frame(self.right_panel, bg=self.colors['primary'])
-        mode_border.pack(pady=10, padx=10, fill=tk.X)
-        mode_frame = tk.Frame(mode_border, bg=self.colors['card'])
-        mode_frame.pack(padx=1, pady=1, fill=tk.BOTH, expand=True)
-        tk.Label(mode_frame, text="PROCESSING MODE", bg=self.colors['card'], fg='white',
-                 font=('Arial', 10, 'bold')).pack(pady=5)
+        md = self._card(self.right_panel, "PROCESSING MODE")
         self.mode_var = tk.StringVar(value='balanced')
-        for text, val in [("⚡ FAST (Max FPS)", 'fast'),
-                          ("⚖️ BALANCED", 'balanced'),
-                          ("🎯 QUALITY", 'quality')]:
-            tk.Radiobutton(mode_frame, text=text, variable=self.mode_var, value=val,
-                           bg=self.colors['card'], fg='white',
-                           selectcolor=self.colors['card'],
-                           activebackground=self.colors['card'],
-                           activeforeground='white').pack(anchor='w', padx=10, pady=2)
+        mrow = tk.Frame(md, bg=self.colors['card']); mrow.pack(fill=tk.X, padx=6, pady=2)
+        for text, val in [("⚡Fast", 'fast'), ("⚖Balanced", 'balanced'), ("🎯Quality", 'quality')]:
+            tk.Radiobutton(mrow, text=text, variable=self.mode_var, value=val,
+                           bg=self.colors['card'], fg='white', selectcolor=self.colors['card'],
+                           activebackground=self.colors['card'], activeforeground='white',
+                           font=('Arial', 8)).pack(side=tk.LEFT, expand=True)
+        drow = tk.Frame(md, bg=self.colors['card']); drow.pack(fill=tk.X, padx=8, pady=(2, 6))
+        tk.Label(drow, text="Detector size:", bg=self.colors['card'], fg='white',
+                 font=('Arial', 8)).pack(side=tk.LEFT)
+        self.detsize_combo = ttk.Combobox(drow, values=['256', '320', '512', '640'],
+                                          state='readonly', width=6)
+        self.detsize_combo.set(str(config['det_size']))
+        self.detsize_combo.pack(side=tk.RIGHT)
+        self.detsize_combo.bind('<<ComboboxSelected>>', self.on_detsize)
 
-        console_border = tk.Frame(self.right_panel, bg=self.colors['primary'])
-        console_border.pack(pady=10, padx=10, fill=tk.BOTH, expand=True)
-        console_frame = tk.Frame(console_border, bg=self.colors['card'])
-        console_frame.pack(padx=1, pady=1, fill=tk.BOTH, expand=True)
-        tk.Label(console_frame, text="SYSTEM LOG", bg=self.colors['card'], fg='white',
-                 font=('Arial', 10, 'bold')).pack(pady=5)
-        self.console = tk.Text(console_frame, bg='#0a0a0a', fg='#00ffaa',
-                               font=('Consolas', 8), height=15, relief='flat', wrap='word')
+        adj = self._card(self.right_panel, "ADJUSTMENTS")
+        self.v_thresh = tk.DoubleVar(value=config['swap_threshold'])
+        self.v_mask = tk.DoubleVar(value=config['mask_size'])
+        self.v_feather = tk.DoubleVar(value=config['feather'])
+        self.v_color = tk.DoubleVar(value=config['color_strength'])
+        self.v_sharpen = tk.DoubleVar(value=config['sharpen'])
+        self.v_smooth = tk.DoubleVar(value=config['smooth'])
+        self._slider(adj, "Swap thresh", self.v_thresh, 0.20, 0.70)
+        self._slider(adj, "Mask size", self.v_mask, 0.60, 1.30)
+        self._slider(adj, "Feather", self.v_feather, 0.02, 0.15)
+        self._slider(adj, "Color match", self.v_color, 0.0, 1.0)
+        self._slider(adj, "Sharpen", self.v_sharpen, 0.0, 1.0)
+        self._slider(adj, "Skin smooth", self.v_smooth, 0.0, 1.0)
+
+        opt = self._card(self.right_panel, "OPTIONS")
+        self.v_realistic = tk.BooleanVar(value=config['realistic_blend'])
+        self.v_multi = tk.BooleanVar(value=config['multi_face'])
+        self.v_mirror = tk.BooleanVar(value=config['mirror'])
+        self.v_enhance = tk.BooleanVar(value=False)
+        self.v_bbox = tk.BooleanVar(value=True)
+        self.v_fps = tk.BooleanVar(value=True)
+        self._toggle(opt, "Realistic blend (feather+color)", self.v_realistic)
+        self._toggle(opt, "Multi-face (swap tutti i volti)", self.v_multi)
+        self._toggle(opt, "Mirror (specchia)", self.v_mirror)
+        self.enhance_cb = tk.Checkbutton(opt, text="Enhancer GFPGAN (lento, HQ)",
+                                         variable=self.v_enhance, command=self.on_enhance_toggle,
+                                         bg=self.colors['card'], fg='white',
+                                         selectcolor=self.colors['card'],
+                                         activebackground=self.colors['card'],
+                                         activeforeground='white', font=('Arial', 8), anchor='w')
+        self.enhance_cb.pack(anchor='w', padx=10, pady=1)
+        self._toggle(opt, "Show bounding box", self.v_bbox)
+        self._toggle(opt, "Show FPS", self.v_fps)
+        crow = tk.Frame(opt, bg=self.colors['card']); crow.pack(fill=tk.X, padx=10, pady=4)
+        tk.Label(crow, text="Box color:", bg=self.colors['card'], fg='white',
+                 font=('Arial', 8)).pack(side=tk.LEFT)
+        self.color_combo = ttk.Combobox(crow, values=list(self.COLOR_MAP.keys()),
+                                        state='readonly', width=9)
+        self.color_combo.set('green'); self.color_combo.pack(side=tk.RIGHT)
+
+        cons = self._card(self.right_panel, "SYSTEM LOG")
+        self.console = tk.Text(cons, bg='#0a0a0a', fg='#00ffaa', font=('Consolas', 8),
+                               height=10, relief='flat', wrap='word')
         self.console.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
-        scrollbar = tk.Scrollbar(self.console)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.console.config(yscrollcommand=scrollbar.set)
-        scrollbar.config(command=self.console.yview)
 
-        self.bottom_status = tk.Label(self.root,
-                                      text="Deepfake Ultra Pro 5.0 | Initializing...",
+        self.bottom_status = tk.Label(self.root, text="Deepfake Ultra Pro 6.0 | Initializing...",
                                       bg='#1a1a2e', fg='white', font=('Arial', 10),
                                       relief='sunken', anchor='w')
         self.bottom_status.pack(side=tk.BOTTOM, fill=tk.X)
@@ -498,6 +568,26 @@ class DeepfakeUltraPro:
         self.root.bind('<space>', lambda e: self.toggle_swap())
         self.root.bind('f', lambda e: self.toggle_fullscreen())
         self.root.bind('r', lambda e: self.reset_camera())
+        self.root.bind('s', lambda e: self.snapshot())
+        self.root.bind('v', lambda e: self.toggle_record())
+        self.root.bind('m', lambda e: self.v_multi.set(not self.v_multi.get()))
+
+    # ---- param sync (main thread) ------------------------------------------
+    def _sync_params(self):
+        try:
+            self.params.update({
+                'swap_threshold': float(self.v_thresh.get()),
+                'mask_size': float(self.v_mask.get()),
+                'feather': float(self.v_feather.get()),
+                'color_strength': float(self.v_color.get()),
+                'sharpen': float(self.v_sharpen.get()),
+                'smooth': float(self.v_smooth.get()),
+                'multi_face': bool(self.v_multi.get()),
+                'realistic_blend': bool(self.v_realistic.get()),
+                'mirror': bool(self.v_mirror.get()),
+            })
+        except Exception:
+            pass
 
     # ---- startup ------------------------------------------------------------
     def start_system(self):
@@ -507,14 +597,12 @@ class DeepfakeUltraPro:
         self.log("⚡ Initializing AI models...")
         self.status_var.set("⚡ Loading AI models...")
         try:
-            model_path = config['model_path']
-            if not os.path.exists(model_path):
-                self.log(f"❌ Model not found: {model_path}")
-                self.log("📥 Download: github.com/deepinsight/insightface/releases")
+            if not os.path.exists(config['model_path']):
+                self.log(f"❌ Model not found: {config['model_path']}")
+                self.log("📥 github.com/deepinsight/insightface/releases")
                 self.status_var.set("❌ Model missing")
                 return
-
-            self.engine = FaceEngine(model_path)
+            self.engine = FaceEngine(config['model_path'])
             if self.engine.load():
                 self.models_ready = True
                 self.status_var.set(f"✅ Ready · {self.engine.provider_name}")
@@ -525,20 +613,19 @@ class DeepfakeUltraPro:
                 self.status_var.set("❌ Model error")
                 self.log("❌ Model load failed")
         except Exception as e:
-            self.log(f"❌ Initialization error: {e}")
-            self.status_var.set("❌ Initialization failed")
+            self.log(f"❌ Init error: {e}")
+            self.status_var.set("❌ Init failed")
 
     def start_camera_thread(self):
         threading.Thread(target=self.initialize_camera, daemon=True).start()
 
     def initialize_camera(self):
         self.log("📷 Initializing camera...")
+        self.source_mode = 'camera'
         for cam_id in range(3):
             try:
-                if os.name == 'nt':
-                    cap = cv2.VideoCapture(cam_id, cv2.CAP_DSHOW)
-                else:
-                    cap = cv2.VideoCapture(cam_id)
+                cap = cv2.VideoCapture(cam_id, cv2.CAP_DSHOW) if os.name == 'nt' \
+                    else cv2.VideoCapture(cam_id)
                 if cap.isOpened():
                     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
                     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
@@ -547,10 +634,8 @@ class DeepfakeUltraPro:
                     self.cap = cap
                     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                    fps = int(cap.get(cv2.CAP_PROP_FPS))
-                    self.log(f"✅ Camera {cam_id}: {w}x{h} @ {fps}FPS")
+                    self.log(f"✅ Camera {cam_id}: {w}x{h}")
                     self.status_var.set("✅ Camera ready")
-                    self.camera_index = cam_id
                     self.start_processing_threads()
                     return
                 cap.release()
@@ -559,31 +644,41 @@ class DeepfakeUltraPro:
         self.log("❌ No camera found")
         self.status_var.set("❌ No camera")
 
+    _threads_started = False
+
     def start_processing_threads(self):
-        # UN capture thread + UN inference thread. Il display è gestito dal
-        # main thread (Tk) tramite display_pump.
+        if self._threads_started:
+            return
+        self._threads_started = True
         threading.Thread(target=self.capture_loop, daemon=True).start()
         threading.Thread(target=self.process_loop, daemon=True, name="Inference").start()
         self.log("⚡ Pipeline started (1 capture + 1 inference)")
 
-    # ---- threads ------------------------------------------------------------
+    # ---- capture ------------------------------------------------------------
     def capture_loop(self):
-        while self.running and self.cap is not None:
+        while self.running:
+            cap = self.cap
+            if cap is None:
+                time.sleep(0.02); continue
             try:
-                ok, frame = self.cap.read()
+                ok, frame = cap.read()
                 if not ok:
-                    time.sleep(0.002)
-                    continue
-                # tieni solo l'ultimo frame
+                    if self.source_mode == 'video':
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # loop video
+                        continue
+                    time.sleep(0.003); continue
                 if self.capture_queue.full():
                     try:
                         self.capture_queue.get_nowait()
                     except queue.Empty:
                         pass
                 self.capture_queue.put_nowait(frame)
+                if self.source_mode == 'video':
+                    time.sleep(1.0 / 30.0)  # non correre nei file video
             except Exception:
-                time.sleep(0.002)
+                time.sleep(0.005)
 
+    # ---- process ------------------------------------------------------------
     def process_loop(self):
         while self.running:
             try:
@@ -591,37 +686,40 @@ class DeepfakeUltraPro:
             except queue.Empty:
                 continue
             try:
+                p = self.params
                 mode = self.mode_var.get()
-                if mode == 'fast':
-                    frame = cv2.resize(frame, (640, 360))
-                    stride = config['fast_detect_stride']
-                elif mode == 'quality':
-                    frame = cv2.resize(frame, (960, 540))
-                    stride = 1
-                else:  # balanced
-                    frame = cv2.resize(frame, (854, 480))
-                    stride = 1
-
+                frame = cv2.resize(frame, MODE_RES.get(mode, (854, 480)))
+                if p['mirror']:
+                    frame = cv2.flip(frame, 1)
+                stride = config['fast_detect_stride'] if mode == 'fast' else 1
                 result = frame
 
                 if self.swap_active and self.models_ready and self.source_face is not None:
                     faces = self.engine.detect_live(frame, stride=stride)
-                    best = self.engine.best_face(faces)
-                    if best is not None and best.det_score >= config['swap_threshold']:
-                        result = self.engine.swap(frame, best, self.source_face,
-                                                  realistic=self.realistic_var.get())
-                        if self.bbox_var.get():
+                    faces = [f for f in faces if f.det_score >= p['swap_threshold']]
+                    if faces:
+                        if not p['multi_face']:
+                            faces = [max(faces, key=lambda f: f.det_score)]
+                        for face in faces:
+                            result = self.engine.swap_one(result, face, self.source_face, p)
+                        if self.v_enhance.get() and self.engine.enhancer_ready:
+                            result = self.engine.enhance(result)
+                        if self.v_bbox.get():
                             color = self.COLOR_MAP.get(self.color_combo.get(), (0, 255, 0))
-                            b = best.bbox.astype(int)
-                            cv2.rectangle(result, (b[0], b[1]), (b[2], b[3]), color, 2)
-                            cv2.putText(result, f"{best.det_score:.2f}", (b[0], b[1] - 5),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+                            for face in faces:
+                                b = face.bbox.astype(int)
+                                cv2.rectangle(result, (b[0], b[1]), (b[2], b[3]), color, 2)
+                                cv2.putText(result, f"{face.det_score:.2f}", (b[0], b[1] - 5),
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
 
-                if self.fps_var.get():
-                    cv2.putText(result, f"FPS: {self.monitor.current_fps}", (10, 30),
+                if self.v_fps.get():
+                    cv2.putText(result, f"FPS: {self.monitor.current_fps}", (10, 28),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
                 self.monitor.update_fps()
+                self.last_result = result
+                if self.recording:
+                    self._write_frame(result)
 
                 if self.display_queue.full():
                     try:
@@ -632,10 +730,11 @@ class DeepfakeUltraPro:
             except Exception as e:
                 self.log(f"⚠️ Process error: {str(e)[:60]}")
 
-    # ---- UI pumps (main thread) --------------------------------------------
+    # ---- UI pumps -----------------------------------------------------------
     def display_pump(self):
         if not self.running:
             return
+        self._sync_params()
         frame = None
         try:
             while True:
@@ -659,49 +758,44 @@ class DeepfakeUltraPro:
         self.fps_label.config(text=f"FPS: {s['fps']}")
         self.cpu_label.config(text=f"CPU: {s['cpu']:.1f}%")
         self.ram_label.config(text=f"RAM: {s['ram']:.1f}%")
-        mode = self.mode_var.get().upper()
+        rec = " | ⏺REC" if self.recording else ""
         self.bottom_status.config(
-            text=f"Deepfake Ultra Pro 5.0 | FPS: {s['fps']} (avg {s['avg_fps']}) | "
-                 f"Swap: {'ON' if self.swap_active else 'OFF'} | Mode: {mode} | "
-                 f"CPU: {s['cpu']:.0f}% | RAM: {s['ram']:.0f}%")
+            text=f"Deepfake Ultra Pro 6.0 | FPS: {s['fps']} (avg {s['avg_fps']}) | "
+                 f"Swap: {'ON' if self.swap_active else 'OFF'} | "
+                 f"Multi: {'ON' if self.params['multi_face'] else 'OFF'} | "
+                 f"Mode: {self.mode_var.get().upper()} | "
+                 f"CPU {s['cpu']:.0f}% RAM {s['ram']:.0f}%{rec}")
         self.root.after(500, self.stats_pump)
 
-    # ---- actions ------------------------------------------------------------
+    # ---- actions: source ----------------------------------------------------
     def load_face_image(self):
         if not self.models_ready:
             messagebox.showwarning("Wait", "AI models still loading")
             return
-        file_path = filedialog.askopenfilename(
+        fp = filedialog.askopenfilename(
             title="Select face image",
             filetypes=[("Image files", "*.jpg *.jpeg *.png *.bmp"),
-                       ("JPEG files", "*.jpg *.jpeg"), ("PNG files", "*.png"),
                        ("All files", "*.*")])
-        if not file_path:
+        if not fp:
             return
         try:
-            self.log(f"📁 Loading: {os.path.basename(file_path)}")
-            img = cv2.imread(file_path)
+            self.log(f"📁 Loading: {os.path.basename(fp)}")
+            img = cv2.imread(fp)
             if img is None:
-                messagebox.showerror("Error", "Cannot read image file")
-                return
+                messagebox.showerror("Error", "Cannot read image file"); return
             face = self.engine.detect_source(img)
             if face is None:
-                messagebox.showwarning("No face", "No face detected in image")
-                return
-
+                messagebox.showwarning("No face", "No face detected in image"); return
             self.source_face = face
             self.source_image = img
             self.face_loaded = True
-
             preview = img.copy()
             b = face.bbox.astype(int)
             cv2.rectangle(preview, (b[0], b[1]), (b[2], b[3]), (0, 255, 0), 3)
-            pil_img = Image.fromarray(cv2.cvtColor(preview, cv2.COLOR_BGR2RGB))
-            pil_img.thumbnail((250, 250))
-            photo = ImageTk.PhotoImage(image=pil_img)
-            self.face_label.config(image=photo, text="")
-            self.face_label.image = photo
-
+            pil = Image.fromarray(cv2.cvtColor(preview, cv2.COLOR_BGR2RGB))
+            pil.thumbnail((250, 250))
+            photo = ImageTk.PhotoImage(image=pil)
+            self.face_label.config(image=photo, text=""); self.face_label.image = photo
             self.status_var.set("✅ Face loaded")
             self.log(f"✅ Face loaded (score: {face.det_score:.3f})")
             self.swap_btn.config(state='normal')
@@ -709,10 +803,36 @@ class DeepfakeUltraPro:
             messagebox.showerror("Error", f"Failed to load: {e}")
             self.log(f"❌ Load error: {e}")
 
+    def use_camera(self):
+        if self.cap:
+            self.cap.release(); self.cap = None
+        threading.Thread(target=self.initialize_camera, daemon=True).start()
+
+    def load_video_file(self):
+        fp = filedialog.askopenfilename(title="Select video",
+                                        filetypes=[("Video", "*.mp4 *.avi *.mov *.mkv"),
+                                                   ("All files", "*.*")])
+        if not fp:
+            return
+        try:
+            cap = cv2.VideoCapture(fp)
+            if not cap.isOpened():
+                messagebox.showerror("Error", "Cannot open video"); return
+            if self.cap:
+                self.cap.release()
+            self.cap = cap
+            self.source_mode = 'video'
+            self.video_path = fp
+            self.log(f"🎬 Video: {os.path.basename(fp)}")
+            self.status_var.set("✅ Video loaded")
+            self.start_processing_threads()
+        except Exception as e:
+            self.log(f"❌ Video error: {e}")
+
+    # ---- actions: swap ------------------------------------------------------
     def toggle_swap(self):
         if not self.face_loaded:
-            messagebox.showwarning("No face", "Load a face first")
-            return
+            messagebox.showwarning("No face", "Load a face first"); return
         self.swap_active = not self.swap_active
         if self.swap_active:
             self.swap_btn.config(text="✅ SWAP ON", bg='#00aa00')
@@ -721,53 +841,114 @@ class DeepfakeUltraPro:
             self.swap_btn.config(text="🔴 SWAP OFF", bg='#cc0000')
             self.log("⚡ Face swap DEACTIVATED")
 
+    def on_detsize(self, _e=None):
+        if not self.models_ready:
+            return
+        n = int(self.detsize_combo.get())
+        self.log(f"🔧 Detector size → {n}")
+        threading.Thread(target=lambda: self.engine.set_det_size(n), daemon=True).start()
+
+    def on_enhance_toggle(self):
+        if not self.v_enhance.get():
+            return
+        if not self.models_ready:
+            self.v_enhance.set(False); return
+        ok, msg = self.engine.try_load_enhancer()
+        self.log(("✅ " if ok else "⚠️ ") + msg)
+        if not ok:
+            self.v_enhance.set(False)
+
+    # ---- actions: capture ---------------------------------------------------
+    def _ensure_output(self):
+        os.makedirs(config['output_dir'], exist_ok=True)
+
+    def snapshot(self):
+        if self.last_result is None:
+            self.log("⚠️ No frame to save"); return
+        self._ensure_output()
+        path = os.path.join(config['output_dir'],
+                            f"snap_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
+        try:
+            cv2.imwrite(path, self.last_result)
+            self.log(f"📸 Saved: {path}")
+        except Exception as e:
+            self.log(f"❌ Snapshot error: {e}")
+
+    def toggle_record(self):
+        if self.recording:
+            self.recording = False
+            if self.writer:
+                self.writer.release(); self.writer = None
+            self.rec_btn.config(text="⏺ REC", bg='#aa0044')
+            self.log("⏹ Recording stopped")
+        else:
+            if self.last_result is None:
+                self.log("⚠️ No frame to record"); return
+            self._ensure_output()
+            path = os.path.join(config['output_dir'],
+                                f"rec_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4")
+            h, w = self.last_result.shape[:2]
+            self.rec_size = (w, h)
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            self.writer = cv2.VideoWriter(path, fourcc, config['record_fps'], (w, h))
+            if not self.writer.isOpened():
+                self.log("❌ Cannot open video writer"); self.writer = None; return
+            self.recording = True
+            self.rec_btn.config(text="⏹ STOP", bg='#ff2266')
+            self.log(f"⏺ Recording → {path}")
+
+    def _write_frame(self, frame):
+        try:
+            if self.rec_size and (frame.shape[1], frame.shape[0]) != self.rec_size:
+                frame = cv2.resize(frame, self.rec_size)
+            if self.writer:
+                self.writer.write(frame)
+        except Exception:
+            pass
+
+    # ---- misc ---------------------------------------------------------------
     def toggle_fullscreen(self):
         self.root.attributes('-fullscreen', not self.root.attributes('-fullscreen'))
 
     def reset_camera(self):
-        if self.cap:
-            self.cap.release()
-            self.cap = None
-        threading.Thread(target=self.initialize_camera, daemon=True).start()
-        self.log("🔄 Camera reset")
+        self.use_camera(); self.log("🔄 Camera reset")
 
     def log(self, message):
-        timestamp = datetime.now().strftime("%H:%M:%S")
+        ts = datetime.now().strftime("%H:%M:%S")
         try:
-            self.console.insert(tk.END, f"[{timestamp}] {message}\n")
+            self.console.insert(tk.END, f"[{ts}] {message}\n")
             self.console.see(tk.END)
             if int(self.console.index('end-1c').split('.')[0]) > 200:
                 self.console.delete("1.0", "50.0")
         except Exception:
-            print(f"[{timestamp}] {message}")
+            print(f"[{ts}] {message}")
 
     def quit_app(self):
         self.running = False
+        if self.recording and self.writer:
+            self.writer.release()
         if self.cap:
             self.cap.release()
         try:
-            self.root.quit()
-            self.root.destroy()
+            self.root.quit(); self.root.destroy()
         except Exception:
             pass
-        print("\n" + "=" * 80)
-        print("👋 Application closed")
-        print("=" * 80)
+        print("\n" + "=" * 80 + "\n👋 Application closed\n" + "=" * 80)
 
 
 # ============================================================
 # 🚀 MAIN
 # ============================================================
 def main():
-    _sys_banner()
-    print("🚀 DEEPFAKE ULTRA PRO 5.0 - STARTING")
+    print("=" * 80)
+    print("🚀 DEEPFAKE ULTRA PRO 6.0 - STARTING")
+    ram = f"{psutil.virtual_memory().percent}%" if _HAS_PSUTIL else "n/a"
+    print(f"🔥 PID {os.getpid()} | CPU {_cpu_count()} | RAM {ram}")
     print("=" * 80)
 
     if not os.path.exists(config['model_path']):
         print(f"\n⚠️  Modello '{config['model_path']}' non trovato!")
-        print("   Scaricalo da: github.com/deepinsight/insightface/releases")
-        print("   e mettilo nella stessa cartella di questo script.")
-        print("=" * 80)
+        print("   github.com/deepinsight/insightface/releases")
         try:
             if input("\nContinuo comunque? (y/n): ").lower() != 'y':
                 return
@@ -776,12 +957,10 @@ def main():
 
     root = tk.Tk()
     app = DeepfakeUltraPro(root)
-
     root.update_idletasks()
     sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
     ww, wh = root.winfo_width(), root.winfo_height()
-    root.geometry(f"{ww}x{wh}+{(sw - ww) // 2}+{(sh - wh) // 2}")
-
+    root.geometry(f"{ww}x{wh}+{max(0, (sw - ww) // 2)}+{max(0, (sh - wh) // 2)}")
     root.protocol("WM_DELETE_WINDOW", app.quit_app)
     root.mainloop()
 

@@ -1,30 +1,37 @@
-# gioco — Deepfake Ultra Pro 5.0 🎭
+# gioco — Deepfake Ultra Pro 6.0 🎭
 
-Face-swap in tempo reale (webcam) basato su **insightface** + `inswapper_128.onnx`,
-con interfaccia Tkinter. Versione ottimizzata: **più veloce** e **più realistica**.
+Face-swap in tempo reale (webcam **o file video**) basato su **insightface** +
+`inswapper_128.onnx`, con interfaccia Tkinter. Versione ottimizzata: **più
+veloce**, **più realistica** e **più potente**, con pannello di regolazioni live.
 
 > ⚠️ **Uso responsabile.** Usa solo volti per cui hai il consenso. Non creare
 > contenuti ingannevoli, diffamatori o che ledano le persone. Molti paesi
 > regolano l'uso dei deepfake: sei responsabile di come usi questo strumento.
 
-## Cosa è cambiato rispetto alla 4.1
+## Novità della 6.0
 
-**Velocità**
-- **Auto-selezione del provider ONNX**: usa la GPU (CUDA / CoreML / DirectML)
-  quando disponibile, invece del solo CPU. → il guadagno più grande.
-- **Detector "detection-only"** per il flusso live: salta i modelli di
-  recognition/landmark/genderage che il face-swap non usa.
-- **Un solo thread di inferenza** al posto di N thread che condividevano lo
-  stesso lock (di fatto serializzavano tutto e generavano contesa).
-- **Cache di rilevamento corretta**: la 4.1 usava `id(frame)` come chiave —
-  non colpiva mai e poteva restituire dati obsoleti dopo il garbage collector.
-  Ora in modalità FAST si può saltare il detect ogni N frame riusando l'ultimo.
-- **Sessione ONNX** con ottimizzazione del grafo e thread intra-op.
+**Più impostazioni (regolabili dal vivo)**
+- Slider: **soglia swap, dimensione maschera, feather, color-match, sharpen,
+  skin-smooth**.
+- **Det_size** selezionabile (256/320/512/640), applicato a caldo.
+- Toggle: blend realistico, multi-face, mirror, enhancer, bbox, FPS + colore box.
 
-**Realismo**
-- **Blending ellittico con bordi sfumati** (feather) invece del crop quadrato.
-- **Color transfer LAB**: la faccia sostituita adotta luce/tinta della scena.
-- **Faccia sorgente** scelta per dimensione (il soggetto), non solo per score.
+**Più realismo**
+- Blending ellittico con feather regolabile + color transfer LAB regolabile.
+- **Skin-smooth** (bilateral) e **sharpen** (unsharp) sulla faccia sostituita.
+- **Enhancer opzionale GFPGAN** (se installato) per volti ad alta fedeltà.
+
+**Più potenza**
+- **Multi-face**: sostituisce *tutti* i volti sopra soglia, non solo il migliore.
+- Input da **file video** oltre alla webcam (playback in loop).
+- **Snapshot** (PNG) e **registrazione** (MP4) dell'output, in `output/`.
+
+## Base (dalla 5.0)
+- **Auto-selezione provider ONNX** (CUDA/CoreML/DirectML/CPU): usa la GPU quando
+  c'è → il guadagno più grande.
+- **Detector "detection-only"** per il live (salta recognition/landmark/genderage).
+- **Un solo thread di inferenza** (niente più N thread che si contendono il lock).
+- Cache `id(frame)` rotta rimossa; in FAST si rileva 1 frame su N.
 
 ## Requisiti
 
@@ -59,6 +66,9 @@ python deepfake_ultra_pro.py
 | Tasto | Azione |
 |-------|--------|
 | `Spazio` | Attiva/disattiva swap |
+| `m` | Multi-face on/off |
+| `s` | Snapshot (PNG) |
+| `v` | Avvia/ferma registrazione |
 | `f` | Schermo intero |
 | `r` | Reinizializza camera |
 | `Esc` | Esci |
@@ -68,9 +78,15 @@ python deepfake_ultra_pro.py
 - **BALANCED** — compromesso predefinito.
 - **QUALITY** — risoluzione maggiore, detect ogni frame.
 
-## Suggerimenti performance
+### Enhancer GFPGAN (opzionale, alta fedeltà)
+`pip install gfpgan` e metti `GFPGANv1.4.pth` nella cartella dello script, poi
+attiva il toggle **Enhancer GFPGAN**. Migliora molto la qualità dei volti ma è
+**lento**: usalo su GPU o per registrare/esportare, non per il massimo dei FPS.
+
+## Suggerimenti
 - Su GPU installa `onnxruntime-gpu`: è la differenza più grande.
-- Se hai una CPU debole, usa la modalità **FAST** e abbassa `det_size` a `256`
-  in `config`.
-- Per il massimo realismo tieni attivo **Realistic blend** e usa una foto
-  sorgente ben illuminata e frontale.
+- CPU debole → modalità **FAST** e det_size `256`.
+- Realismo: tieni **Realistic blend** attivo, alza un po' **Color match** e
+  **Feather**, aggiungi un filo di **Skin smooth**; foto sorgente frontale e
+  ben illuminata.
+- Più volti nella scena → attiva **Multi-face**.

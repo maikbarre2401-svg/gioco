@@ -1,5 +1,7 @@
 __pycache__/
 *.pyc
 *.onnx
+*.pth
 ~/.insightface/
 .venv/
+output/
