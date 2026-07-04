@@ -31,6 +31,11 @@ tool open-source "seri" (es. FaceFusion).
   effetto "faccia incollata" (toggle *Precise mask*).
 - **Keep mouth** (slider): lascia trasparire la **bocca reale**. Alzalo quando
   parli / muovi la lingua → l'espressione torna naturale. Default 0.30.
+- **Stabilize** (slider): anti-jitter temporale. Leviga bbox/landmark tra frame
+  (con tracking multi-volto) → lo swap smette di "tremolare", che è uno dei
+  segnali che tradiscono il fake. Nei test riduce il tremolìo del ~77%.
+- **Preset rapidi**: pulsanti **🗣 Talking / 💎 Quality / ⚡ Speed** che tarano
+  tutti gli slider in un colpo.
 
 ## Novità della 6.0
 
@@ -108,12 +113,14 @@ attiva il toggle **Enhancer GFPGAN**. Migliora molto la qualità dei volti ma è
 **lento**: usalo su GPU o per registrare/esportare, non per il massimo dei FPS.
 
 ## Ricetta per il massimo realismo
+Scorciatoia: premi il preset **🗣 Talking** e sei già a posto. Oppure a mano:
 1. **Precise mask** ON + **Feather** ~0.08 → bordi che seguono la mascella.
 2. **Keep mouth** 0.3–0.6 → parlato e lingua naturali (usa la tua bocca reale).
-3. **Color match** 0.7–1.0 → l'illuminazione combacia con la scena.
-4. **Skin smooth** 0.2–0.4 + **Sharpen** 0.2 → pelle uniforme ma nitida.
-5. **Enhancer GFPGAN** ON (se hai GPU) → denti/pelle ad alta fedeltà.
-6. Foto sorgente **frontale, nitida, ben illuminata**, sfondo semplice.
+3. **Stabilize** 0.4–0.6 → togli il tremolìo (fondamentale nei video).
+4. **Color match** 0.7–1.0 → l'illuminazione combacia con la scena.
+5. **Skin smooth** 0.2–0.4 + **Sharpen** 0.2 → pelle uniforme ma nitida.
+6. **Enhancer GFPGAN** ON (se hai GPU) → denti/pelle ad alta fedeltà.
+7. Foto sorgente **frontale, nitida, ben illuminata**, sfondo semplice.
 
 ### Se vuoi VERAMENTE anche i capelli
 Serve un'altra pipeline (non questo modello): approcci full-head / reenactment

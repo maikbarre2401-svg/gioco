@@ -83,6 +83,7 @@ config = {
     'fast_detect_stride': 2,
     'precise_mask': True,   # maschera dai landmark (segue la mascella)
     'keep_mouth': 0.30,     # 0=bocca sorgente, 1=bocca reale (lingua/parlato)
+    'stabilize': 0.40,      # anti-jitter temporale (0=off, 0.9=molto fermo)
 }
 
 MODE_RES = {'fast': (640, 360), 'balanced': (854, 480), 'quality': (960, 540)}
@@ -391,6 +392,79 @@ class PerformanceMonitor:
 
 
 # ============================================================
+# 🎯 FACE STABILIZER (anti-jitter temporale)
+# ============================================================
+class FaceStabilizer:
+    """Leviga bbox/keypoint/landmark nel tempo per togliere il tremolìo dello
+    swap. Associa i volti tra frame consecutivi per centroide (greedy)."""
+
+    _KEYS = ('bbox', 'kps', 'landmark_2d_106')
+
+    def __init__(self):
+        self.tracks = {}   # id -> {'c':centroid, 'geo':{key:array}, 'age':int}
+        self._next = 0
+
+    @staticmethod
+    def _centroid(face):
+        b = np.asarray(face.bbox, np.float32)
+        return np.array([(b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0], np.float32)
+
+    @staticmethod
+    def _face_w(face):
+        b = np.asarray(face.bbox, np.float32)
+        return float(b[2] - b[0])
+
+    def update(self, faces, strength):
+        """strength in [0,0.95]: quota del valore precedente da mantenere.
+        0 = nessuna levigatura, 0.9 = molto fermo (più latenza)."""
+        if not faces:
+            self.tracks.clear()
+            return faces
+        s = float(np.clip(strength, 0.0, 0.95))
+
+        cents = [self._centroid(f) for f in faces]
+        used = set()
+        assigned = {}
+        # greedy match: per ogni volto, la traccia più vicina entro soglia
+        for i, f in enumerate(faces):
+            best_id, best_d = None, None
+            thr = max(40.0, 0.6 * self._face_w(f))
+            for tid, t in self.tracks.items():
+                if tid in used:
+                    continue
+                d = float(np.linalg.norm(cents[i] - t['c']))
+                if d <= thr and (best_d is None or d < best_d):
+                    best_id, best_d = tid, d
+            if best_id is not None:
+                used.add(best_id)
+                assigned[i] = best_id
+
+        new_tracks = {}
+        for i, f in enumerate(faces):
+            tid = assigned.get(i)
+            geo = {}
+            for k in self._KEYS:
+                cur = getattr(f, k, None)
+                if cur is None:
+                    continue
+                cur = np.asarray(cur, np.float32)
+                if s > 0 and tid is not None and k in self.tracks[tid]['geo']:
+                    prev = self.tracks[tid]['geo'][k]
+                    if prev.shape == cur.shape:
+                        cur = s * prev + (1.0 - s) * cur
+                        setattr(f, k, cur)
+                geo[k] = cur
+            nid = tid if tid is not None else self._new_id()
+            new_tracks[nid] = {'c': self._centroid(f), 'geo': geo, 'age': 0}
+        self.tracks = new_tracks
+        return faces
+
+    def _new_id(self):
+        self._next += 1
+        return self._next
+
+
+# ============================================================
 # 🎨 APP UI
 # ============================================================
 class DeepfakeUltraPro:
@@ -435,7 +509,8 @@ class DeepfakeUltraPro:
         self.params = {k: config[k] for k in
                        ('swap_threshold', 'mask_size', 'feather', 'color_strength',
                         'sharpen', 'smooth', 'multi_face', 'realistic_blend', 'mirror',
-                        'precise_mask', 'keep_mouth')}
+                        'precise_mask', 'keep_mouth', 'stabilize')}
+        self.stabilizer = FaceStabilizer()
 
         self.capture_queue = queue.Queue(maxsize=2)
         self.display_queue = queue.Queue(maxsize=2)
@@ -571,6 +646,15 @@ class DeepfakeUltraPro:
         self.detsize_combo.pack(side=tk.RIGHT)
         self.detsize_combo.bind('<<ComboboxSelected>>', self.on_detsize)
 
+        pre = self._card(self.right_panel, "PRESETS")
+        prow = tk.Frame(pre, bg=self.colors['card']); prow.pack(fill=tk.X, padx=8, pady=(0, 6))
+        for text, name, bg in [("🗣 Talking", 'talking', '#0a7'),
+                               ("💎 Quality", 'quality', '#07a'),
+                               ("⚡ Speed", 'speed', '#a70')]:
+            tk.Button(prow, text=text, command=lambda n=name: self.apply_preset(n),
+                      bg=bg, fg='white', font=('Arial', 8, 'bold')).pack(
+                          side=tk.LEFT, expand=True, fill=tk.X, padx=2)
+
         adj = self._card(self.right_panel, "ADJUSTMENTS")
         self.v_thresh = tk.DoubleVar(value=config['swap_threshold'])
         self.v_mask = tk.DoubleVar(value=config['mask_size'])
@@ -579,6 +663,7 @@ class DeepfakeUltraPro:
         self.v_sharpen = tk.DoubleVar(value=config['sharpen'])
         self.v_smooth = tk.DoubleVar(value=config['smooth'])
         self.v_keepmouth = tk.DoubleVar(value=config['keep_mouth'])
+        self.v_stabilize = tk.DoubleVar(value=config['stabilize'])
         self._slider(adj, "Swap thresh", self.v_thresh, 0.20, 0.70)
         self._slider(adj, "Mask size", self.v_mask, 0.60, 1.30)
         self._slider(adj, "Feather", self.v_feather, 0.02, 0.15)
@@ -586,6 +671,7 @@ class DeepfakeUltraPro:
         self._slider(adj, "Sharpen", self.v_sharpen, 0.0, 1.0)
         self._slider(adj, "Skin smooth", self.v_smooth, 0.0, 1.0)
         self._slider(adj, "Keep mouth", self.v_keepmouth, 0.0, 1.0)
+        self._slider(adj, "Stabilize", self.v_stabilize, 0.0, 0.90)
 
         opt = self._card(self.right_panel, "OPTIONS")
         self.v_realistic = tk.BooleanVar(value=config['realistic_blend'])
@@ -648,6 +734,7 @@ class DeepfakeUltraPro:
                 'mirror': bool(self.v_mirror.get()),
                 'precise_mask': bool(self.v_precise.get()),
                 'keep_mouth': float(self.v_keepmouth.get()),
+                'stabilize': float(self.v_stabilize.get()),
             })
         except Exception:
             pass
@@ -763,6 +850,8 @@ class DeepfakeUltraPro:
                     if faces:
                         if not p['multi_face']:
                             faces = [max(faces, key=lambda f: f.det_score)]
+                        if p['stabilize'] > 0:
+                            faces = self.stabilizer.update(faces, p['stabilize'])
                         for face in faces:
                             result = self.engine.swap_one(result, face, self.source_face, p)
                         if self.v_enhance.get() and self.engine.enhancer_ready:
@@ -920,6 +1009,36 @@ class DeepfakeUltraPro:
         self.log(("✅ " if ok else "⚠️ ") + msg)
         if not ok:
             self.v_enhance.set(False)
+
+    def apply_preset(self, name):
+        """Imposta gli slider su combinazioni collaudate."""
+        presets = {
+            # realismo del parlato: bocca reale, maschera precisa, bordi morbidi
+            'talking': dict(mode='balanced', det=320, thresh=0.35, mask=1.0,
+                            feather=0.09, color=0.85, sharpen=0.20, smooth=0.30,
+                            keep=0.55, stab=0.55, precise=True, multi=False),
+            # massima fedeltà
+            'quality': dict(mode='quality', det=512, thresh=0.35, mask=1.05,
+                            feather=0.07, color=0.90, sharpen=0.25, smooth=0.35,
+                            keep=0.30, stab=0.45, precise=True, multi=True),
+            # massimi FPS
+            'speed': dict(mode='fast', det=256, thresh=0.40, mask=1.0,
+                          feather=0.05, color=0.70, sharpen=0.10, smooth=0.0,
+                          keep=0.20, stab=0.30, precise=False, multi=False),
+        }
+        p = presets.get(name)
+        if not p:
+            return
+        self.mode_var.set(p['mode'])
+        self.detsize_combo.set(str(p['det']))
+        self.on_detsize()
+        self.v_thresh.set(p['thresh']); self.v_mask.set(p['mask'])
+        self.v_feather.set(p['feather']); self.v_color.set(p['color'])
+        self.v_sharpen.set(p['sharpen']); self.v_smooth.set(p['smooth'])
+        self.v_keepmouth.set(p['keep']); self.v_stabilize.set(p['stab'])
+        self.v_precise.set(p['precise']); self.v_multi.set(p['multi'])
+        self._sync_params()
+        self.log(f"🎚️ Preset '{name}' applicato")
 
     # ---- actions: capture ---------------------------------------------------
     def _ensure_output(self):
