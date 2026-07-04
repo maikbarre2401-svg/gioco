@@ -1,0 +1,14 @@
+# Deepfake Ultra Pro 5.0 - dependencies
+insightface>=0.7.3
+opencv-python>=4.8.0
+numpy>=1.24
+pillow>=10.0
+psutil>=5.9
+
+# --- ONNX Runtime: scegli UNO ---
+# CPU (funziona ovunque):
+onnxruntime>=1.16
+# GPU NVIDIA (CUDA) -> commenta la riga sopra e usa questa:
+# onnxruntime-gpu>=1.16
+# GPU Windows (DirectML):
+# onnxruntime-directml>=1.16
