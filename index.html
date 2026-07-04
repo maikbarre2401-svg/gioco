@@ -1345,8 +1345,12 @@
   var surf={ active:false, group:null, heightFn:null, waterY:-9999, amp:20, grav:20, jump:9.5,
     sunDir:new TH.Vector3(0.45,0.62,0.4).normalize(), returnPos:new TH.Vector3(), wpVis:false,
     pp:new TH.Vector3(), pv:new TH.Vector3(), onGround:false, walkPhase:0, body:null, water:null,
-    time:0.1, hasAtmo:false, dayHor:null, nightFog:new TH.Color(0x070a12), nodes:[], clouds:[], nearNode:null };
+    time:0.1, hasAtmo:false, dayHor:null, nightFog:new TH.Color(0x070a12), nodes:[], clouds:[], nearNode:null,
+    critters:[], beams:[], blasterCd:0, ruin:null };
   var _sunWhite=new TH.Color(0xffffff), _sunWarm=new TH.Color(0xff9a50);
+  var CRIT_CFG={ terran:{col:0x7a9a4a,fl:0}, ocean:{col:0x4a9ab0,fl:0.5}, desert:{col:0xc8a060,fl:0},
+    ice:{col:0xa8d0e8,fl:0.2}, rock:{col:0x8a8078,fl:0.15}, lava:{col:0x9a4a30,fl:0.2},
+    toxic:{col:0x8fd040,fl:0.6}, crystal:{col:0xb070e8,fl:0.5} };
   var plYaw=0, plPitch=0;
   var SURF_CFG={
     terran:{amp:26,water:-2,grav:20,jump:9.5},  ocean:{amp:9,water:2,grav:20,jump:9.5},
@@ -1354,6 +1358,37 @@
     rock:{amp:36,water:-9999,grav:11,jump:12},  lava:{amp:26,water:-5,grav:19,jump:9.5},
     toxic:{amp:20,water:-3,grav:19,jump:10},    crystal:{amp:24,water:-9999,grav:15,jump:11}
   };
+  // ---------- creature aliene procedurali ----------
+  function critterModel(kind,baseCol,rng2){
+    var g=new TH.Group();
+    var skin=new TH.MeshStandardMaterial({color:baseCol,roughness:0.7,metalness:0.05,flatShading:true});
+    if(kind==='float'){
+      // medusa fluttuante: cupola + tentacoli
+      var dome=new TH.Mesh(new TH.SphereGeometry(1.4,12,10,0,6.283,0,1.7),new TH.MeshStandardMaterial({color:baseCol,roughness:0.35,metalness:0.1,transparent:true,opacity:0.82,emissive:baseCol,emissiveIntensity:0.5,flatShading:true}));
+      g.add(dome);
+      var tents=[];
+      for(var t=0;t<6;t++){ var seg=new TH.Mesh(new TH.CylinderGeometry(0.12,0.05,2.4,5),skin); var a=t/6*6.283; seg.position.set(Math.cos(a)*0.7,-1.3,Math.sin(a)*0.7); g.add(seg); tents.push(seg); }
+      var core=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:baseCol,blending:TH.AdditiveBlending,depthWrite:false,transparent:true,opacity:0.7})); core.scale.set(4,4,1); g.add(core);
+      g.userData.tents=tents; g.userData.hover=true;
+    } else {
+      // quadrupede: corpo + testa + zampe animabili
+      var body=new TH.Mesh(new TH.SphereGeometry(1,10,8),skin); body.scale.set(1.5,0.95,1); body.position.y=0.1; g.add(body);
+      var head=new TH.Mesh(new TH.SphereGeometry(0.62,9,7),skin); head.position.set(1.55,0.35,0); g.add(head);
+      if(kind==='predator'){
+        var jaw=new TH.Mesh(new TH.ConeGeometry(0.4,0.9,5),new TH.MeshStandardMaterial({color:baseCol,roughness:0.6,emissive:0x400808,emissiveIntensity:0.5,flatShading:true})); jaw.rotation.z=-Math.PI/2; jaw.position.set(2.25,0.28,0); g.add(jaw);
+        [[0.5,0.35],[0.5,-0.35]].forEach(function(e){ var ey=new TH.Mesh(new TH.SphereGeometry(0.14,7,6),new TH.MeshBasicMaterial({color:0xff3020})); ey.position.set(2.0,0.55,e[1]); g.add(ey); });
+        var fin=new TH.Mesh(new TH.ConeGeometry(0.5,1.6,4),skin); fin.position.set(-0.3,0.9,0); fin.rotation.x=0.2; g.add(fin);
+      } else {
+        [[0.5,0.35],[0.5,-0.35]].forEach(function(e){ var ey=new TH.Mesh(new TH.SphereGeometry(0.12,7,6),new TH.MeshBasicMaterial({color:0x102018})); ey.position.set(2.0,0.5,e[1]); g.add(ey); });
+      }
+      var legs=[];
+      [[-0.8,0.7],[-0.8,-0.7],[0.8,0.7],[0.8,-0.7]].forEach(function(lp){ var leg=new TH.Mesh(new TH.CylinderGeometry(0.16,0.1,1.4,5),skin); leg.position.set(lp[0],-0.6,lp[1]); g.add(leg); legs.push({m:leg,px:lp[0],pz:lp[1]}); });
+      g.userData.legs=legs;
+    }
+    g.traverse(function(c){ if(c.isMesh){ c.castShadow=true; } });
+    return g;
+  }
+
   function buildSurface(body){
     var type=body.type, P=PALS[type]||PALS.rock, cfg=SURF_CFG[type]||SURF_CFG.rock;
     var rng2=mulberry32((body.seed||12345)>>>0);
@@ -1456,6 +1491,55 @@
       }
     }
 
+    // fauna aliena procedurale
+    surf.critters=[]; surf.beams=[]; surf.blasterCd=0;
+    var ccfg=CRIT_CFG[type]||CRIT_CFG.rock;
+    var nCrit=10+Math.floor(rng2()*8);
+    for(var ki=0;ki<nCrit;ki++){
+      var kind;
+      var roll=rng2();
+      if(ccfg.fl>0 && roll<ccfg.fl*0.5) kind='float';
+      else if(roll<0.7) kind='herbivore';
+      else kind='predator';
+      var cx3=(rng2()-0.5)*1500, cz3=(rng2()-0.5)*1500, cy3=surf.heightFn(cx3,cz3);
+      if(cy3<surf.waterY+0.5){ cx3+=140; cz3-=140; cy3=surf.heightFn(cx3,cz3); if(cy3<surf.waterY+0.5) continue; }
+      var tint=new TH.Color(ccfg.col).offsetHSL((rng2()-0.5)*0.08,0,(rng2()-0.5)*0.15);
+      var scl=(kind==='predator'?1.25:kind==='float'?1.1:0.85)+rng2()*0.5;
+      var cg=critterModel(kind,tint,rng2); cg.scale.setScalar(scl);
+      var baseY=(kind==='float')?(cy3+7+rng2()*6):cy3;
+      cg.position.set(cx3,baseY+(kind==='float'?0:1.1*scl),cz3);
+      surf.group.add(cg);
+      surf.critters.push({ g:cg, kind:kind, hostile:kind==='predator', hp:kind==='predator'?60:28,
+        vx:0, vz:0, wander:rng2()*6.28, wt:rng2()*3, baseY:baseY, ph:rng2()*6.28, scl:scl,
+        atkCd:0, state:'idle', floatK:kind==='float' });
+    }
+
+    // rovine aliene con manufatto
+    surf.ruin=null;
+    if(rng2()<0.85){
+      var rx4=0,rz4=0,ry4=-9999;
+      for(var rt=0;rt<6;rt++){ rx4=(rng2()-0.5)*1400; rz4=(rng2()-0.5)*1400; ry4=surf.heightFn(rx4,rz4); if(ry4>surf.waterY+1) break; }
+      if(ry4>surf.waterY+1){
+        var rg=new TH.Group();
+        var stoneMat=new TH.MeshStandardMaterial({color:0x5a5560,roughness:0.9,metalness:0.05,flatShading:true});
+        var nMono=6+Math.floor(rng2()*4);
+        for(var mo=0;mo<nMono;mo++){ var ma=mo/nMono*6.283, mrad=14;
+          var mh=8+rng2()*7;
+          var mon=new TH.Mesh(new TH.BoxGeometry(2.4,mh,2.4),stoneMat);
+          var mmx=rx4+Math.cos(ma)*mrad, mmz=rz4+Math.sin(ma)*mrad;
+          mon.position.set(mmx,surf.heightFn(mmx,mmz)+mh/2,mmz); mon.rotation.y=rng2()*0.4; mon.castShadow=true; mon.receiveShadow=true;
+          rg.add(mon);
+        }
+        var pedestal=new TH.Mesh(new TH.CylinderGeometry(2.2,2.8,1.6,8),stoneMat); pedestal.position.set(rx4,ry4+0.8,rz4); pedestal.castShadow=true; rg.add(pedestal);
+        var relic=new TH.Mesh(new TH.IcosahedronGeometry(1.3,0),new TH.MeshStandardMaterial({color:0xc890ff,emissive:0x8a40d0,emissiveIntensity:1.1,metalness:0.4,roughness:0.2}));
+        relic.position.set(rx4,ry4+3.2,rz4); rg.add(relic);
+        var rglow=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0xc890ff,blending:TH.AdditiveBlending,depthWrite:false,transparent:true,opacity:0.9})); rglow.position.copy(relic.position); rglow.scale.set(10,10,1); rg.add(rglow);
+        var rlight=new TH.PointLight(0xc890ff,1.4,120); rlight.position.copy(relic.position); rg.add(rlight);
+        surf.group.add(rg);
+        surf.ruin={ g:rg, relic:relic, glow:rglow, pos:new TH.Vector3(rx4,ry4+3.2,rz4), taken:false, ph:0 };
+      }
+    }
+
     // vegetazione / formazioni per bioma (instanziate)
     var dum=new TH.Object3D();
     function inst(geo,mat,count){ var m=new TH.InstancedMesh(geo,mat,count); m.castShadow=true; m.receiveShadow=true; m.count=0; surf.group.add(m); return m; }
@@ -1501,6 +1585,7 @@
   }
   function destroySurface(){
     if(surf.group){ scene.remove(surf.group); disposeObj(surf.group); surf.group=null; }
+    surf.critters=[]; surf.beams=[]; surf.ruin=null; surf.nodes=[]; surf.clouds=[]; surf.nearNode=null;
     scene.fog=null; surf.active=false; surf.water=null;
     amb.intensity=0.5; hemi.intensity=0.3; sunLight.intensity=2.6;
     if(bloomPass){ bloomPass.strength=PROPS.bloomStrength; bloomPass.threshold=0.55; }
@@ -1545,8 +1630,8 @@
     camera.rotation.order='YXZ'; camera.fov=70; camera.updateProjectionMatrix();
     camera.position.copy(surf.pp); camera.rotation.set(plPitch,plYaw,0);
     mode='surface';
-    mission('★','Superficie di '+body.name,'Esplora in prima persona — torna alla nave e premi T per decollare');
-    toast('ATTERRATO SU '+body.name.toUpperCase(),'Clicca per guardarti intorno · WASD muovi · SPAZIO salta');
+    mission('★','Superficie di '+body.name,'Esplora, spara alla fauna ostile, raccogli minerali e cerca rovine aliene');
+    toast('ATTERRATO SU '+body.name.toUpperCase(),'CLIC spara/guarda · WASD muovi · SPAZIO salta · F raccogli');
     SND.scan();
   }
   function tryTakeoff(){
@@ -1593,6 +1678,12 @@
     surf.nodes.forEach(function(n){ n.ph+=dt*1.6; n.m.rotation.y+=dt*1.2; n.m.position.y+=Math.sin(n.ph)*dt*0.25; n.g.position.copy(n.m.position);
       var d2=surf.pp.distanceTo(n.m.position); if(d2<bestD){ bestD=d2; surf.nearNode=n; } });
 
+    updateCritters(dt);
+    updateSurfBeams(dt);
+    // manufatto delle rovine
+    if(surf.ruin && !surf.ruin.taken){ surf.ruin.ph+=dt; surf.ruin.relic.rotation.y+=dt*0.9; surf.ruin.relic.position.y=surf.ruin.pos.y+Math.sin(surf.ruin.ph*1.4)*0.4; surf.ruin.glow.position.copy(surf.ruin.relic.position); surf.ruin.glow.material.opacity=0.7+Math.sin(surf.ruin.ph*3)*0.2; }
+    surf.blasterCd=Math.max(0,surf.blasterCd-dt);
+
     var sp=keys['shift']?26:11;
     var fz=(keys['w']?1:0)-(keys['s']?1:0), fx=(keys['d']?1:0)-(keys['a']?1:0);
     var sy=Math.sin(plYaw), cy=Math.cos(plYaw);
@@ -1618,10 +1709,108 @@
     setTxt('rr_spd',Math.round((fz||fx)?sp:0)); setTxt('rr_thrN','—');
     SND.engine(0.03,false);
     if(dActive){ hidePrompt(); return; }
-    if(surf.nearNode) prompt2('F','Raccogli frammento minerale (+5)');
-    else if(surf.pp.distanceTo(ship.position)<24) prompt2('T','Decolla');
+    var nearRelic=surf.ruin && !surf.ruin.taken && surf.pp.distanceTo(surf.ruin.pos)<7;
+    if(nearRelic) prompt2('F','Recupera manufatto alieno (+40 crediti)');
+    else if(surf.nearNode) prompt2('F','Raccogli frammento minerale (+5)');
+    else if(surf.pp.distanceTo(ship.position)<24) prompt2('T','Decolla · CLIC spara');
     else if(document.pointerLockElement!==canvas) prompt2('CLIC','Blocca il mouse per guardarti intorno');
-    else hidePrompt();
+    else prompt2('CLIC','Spara col blaster · F raccogli');
+  }
+
+  // IA fauna aliena
+  var _cwrk=new TH.Vector3();
+  function updateCritters(dt){
+    var toP=surf.pp;
+    surf.critters.forEach(function(cr){
+      var g=cr.g;
+      var dToPlayer=g.position.distanceTo(toP);
+      if(cr.floatK){
+        // medusa: fluttua e deriva lentamente, fugge se colpita
+        cr.ph+=dt;
+        cr.wander+=dt*0.3;
+        g.position.x+=Math.cos(cr.wander)*dt*3;
+        g.position.z+=Math.sin(cr.wander)*dt*3;
+        g.position.y=cr.baseY+Math.sin(cr.ph*0.8)*1.5;
+        g.rotation.y+=dt*0.4;
+        if(g.userData.tents){ var sq=1+Math.sin(cr.ph*2)*0.16; g.userData.tents.forEach(function(t){ t.scale.y=sq; }); }
+        return;
+      }
+      var gy2=surf.heightFn(g.position.x,g.position.z)+1.1*cr.scl;
+      // stato IA
+      if(cr.hostile){
+        if(dToPlayer<95) cr.state='chase'; else if(dToPlayer>240) cr.state='idle';
+      } else {
+        if(dToPlayer<55) cr.state='flee'; else if(dToPlayer>150) cr.state='idle';
+      }
+      var spd=0, dirX=0, dirZ=0;
+      if(cr.state==='chase'){
+        _cwrk.copy(toP).sub(g.position); dirX=_cwrk.x; dirZ=_cwrk.z; spd=15*cr.scl;
+        cr.atkCd-=dt;
+        if(dToPlayer<6 && cr.atkCd<=0){ cr.atkCd=1.4; surfDamage(9); shake=Math.max(shake,1.2); }
+      } else if(cr.state==='flee'){
+        _cwrk.copy(g.position).sub(toP); dirX=_cwrk.x; dirZ=_cwrk.z; spd=18;
+      } else {
+        cr.wt-=dt; if(cr.wt<=0){ cr.wt=1.5+Math.random()*3; cr.wander=Math.random()*6.28; }
+        dirX=Math.cos(cr.wander); dirZ=Math.sin(cr.wander); spd=cr.hostile?4:5;
+      }
+      var dl=Math.hypot(dirX,dirZ)||1;
+      g.position.x+=dirX/dl*spd*dt; g.position.z+=dirZ/dl*spd*dt;
+      g.position.x=Math.max(-1990,Math.min(1990,g.position.x)); g.position.z=Math.max(-1990,Math.min(1990,g.position.z));
+      g.position.y=surf.heightFn(g.position.x,g.position.z)+1.1*cr.scl;
+      if(spd>0.5){ g.rotation.y=Math.atan2(dirX,dirZ); }
+      // animazione zampe
+      if(g.userData.legs){ cr.ph+=dt*spd*0.6; g.userData.legs.forEach(function(l,li){ l.m.rotation.x=Math.sin(cr.ph+li*1.6)*(spd>1?0.6:0.05); }); }
+    });
+  }
+  function surfDamage(d){
+    shield-=d; shielTimer=0; if(shield<0){ hull+=shield; shield=0; }
+    if(hull<=0){ hull=100; shield=maxShield(); toast('SVENUTO','Kit medico d’emergenza attivato'); }
+    setBars(); SND.hit();
+    var dm=$('rr_dmg'); dm.style.boxShadow='inset 0 0 160px 30px rgba(255,60,40,0.5)'; setTimeout(function(){ dm.style.boxShadow='inset 0 0 160px 30px rgba(255,60,40,0)'; },250);
+  }
+  function fireBlaster(){
+    if(mode!=='surface'||dActive||surf.blasterCd>0) return;
+    if(document.pointerLockElement!==canvas) return;
+    surf.blasterCd=0.22;
+    var dir=new TH.Vector3(); camera.getWorldDirection(dir);
+    var from=surf.pp.clone().addScaledVector(dir,1.2); from.y-=0.3;
+    var m=new TH.Mesh(new TH.CylinderGeometry(0.08,0.08,3,6),new TH.MeshBasicMaterial({color:0x7fffc0}));
+    m.position.copy(from); m.quaternion.copy(_qFromDir(dir)); surf.group.add(m);
+    var gl=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0x7fffc0,blending:TH.AdditiveBlending,depthWrite:false,transparent:true,opacity:0.8})); gl.scale.set(2,2,1); m.add(gl);
+    surf.beams.push({m:m,vel:dir.clone().multiplyScalar(220),life:1.4});
+    SND.laser();
+  }
+  function updateSurfBeams(dt){
+    for(var i=surf.beams.length-1;i>=0;i--){
+      var b=surf.beams[i]; b.m.position.addScaledVector(b.vel,dt); b.life-=dt;
+      var hit=false;
+      for(var ci=0;ci<surf.critters.length;ci++){
+        var cr=surf.critters[ci];
+        if(b.m.position.distanceTo(cr.g.position)<(2.2*cr.scl)){
+          hit=true; cr.hp-=34; explode(b.m.position.clone(),1.1,{color:0x9fe8c0});
+          if(cr.hostile) cr.state='chase';
+          if(cr.hp<=0){
+            explode(cr.g.position.clone(),2.4,{color:0xff9a6a});
+            surf.group.remove(cr.g); disposeObj(cr.g); surf.critters.splice(ci,1);
+            credits+=cr.hostile?18:8; updCred();
+            toast(cr.hostile?'PREDATORE ABBATTUTO':'CAMPIONE BIOLOGICO','+'+(cr.hostile?18:8)+' crediti');
+          }
+          break;
+        }
+      }
+      if(hit||b.life<=0){ surf.group.remove(b.m); b.m.geometry.dispose(); b.m.material.dispose(); surf.beams.splice(i,1); }
+    }
+  }
+  function collectRelic(){
+    if(!surf.ruin||surf.ruin.taken) return false;
+    if(surf.pp.distanceTo(surf.ruin.pos)>7) return false;
+    surf.ruin.taken=true;
+    surf.ruin.g.remove(surf.ruin.relic); surf.ruin.g.remove(surf.ruin.glow);
+    explode(surf.ruin.pos.clone(),3,{color:0xc890ff});
+    credits+=40; updCred(); flash();
+    dialog('DR. HALSA — CONTROLLO MISSIONE',['Incredibile… stai leggendo la firma energetica di quel manufatto?','È tecnologia di una civiltà precursore. Il comando ci coprirà di crediti per questo.','Continua a cercare rovine: ogni mondo potrebbe nasconderne.']);
+    SND.warpJump();
+    return true;
   }
 
   // ---------- stato di volo ----------
@@ -1667,10 +1856,11 @@
       rctx.strokeStyle='rgba(95,208,224,0.18)'; rctx.lineWidth=1;
       [0.34,0.67,1].forEach(function(f){ rctx.beginPath(); rctx.arc(cx,cy,R*f,0,7); rctx.stroke(); });
       var range2=600, csS=Math.cos(-plYaw), snS=Math.sin(-plYaw);
-      var dxS=ship.position.x-surf.pp.x, dzS=ship.position.z-surf.pp.z;
-      var dS=Math.hypot(dxS,dzS); if(dS>range2){ dxS*=range2/dS; dzS*=range2/dS; }
-      var rxS=dxS*csS-dzS*snS, rzS=dxS*snS+dzS*csS;
-      rctx.fillStyle='rgba(95,208,224,1)'; rctx.beginPath(); rctx.arc(cx+(rxS/range2)*R,cy+(rzS/range2)*R,3.4,0,7); rctx.fill();
+      function sblip(px,pz,col,sz){ var dx=px-surf.pp.x, dz=pz-surf.pp.z; var d=Math.hypot(dx,dz); if(d>range2){ dx*=range2/d; dz*=range2/d; } var rx=dx*csS-dz*snS, rz=dx*snS+dz*csS; rctx.fillStyle=col; rctx.beginPath(); rctx.arc(cx+(rx/range2)*R,cy+(rz/range2)*R,sz,0,7); rctx.fill(); }
+      surf.nodes.forEach(function(n){ sblip(n.m.position.x,n.m.position.z,'rgba(87,214,160,0.9)',1.8); });
+      surf.critters.forEach(function(cr){ sblip(cr.g.position.x,cr.g.position.z,cr.hostile?'rgba(255,80,70,1)':'rgba(200,190,120,0.85)',cr.hostile?2.4:1.8); });
+      if(surf.ruin) sblip(surf.ruin.pos.x,surf.ruin.pos.z,'rgba(200,140,255,1)',2.6);
+      sblip(ship.position.x,ship.position.z,'rgba(95,208,224,1)',3.4);
       rctx.fillStyle='#eaf6ff'; rctx.beginPath(); rctx.moveTo(cx,cy-4); rctx.lineTo(cx-3,cy+3); rctx.lineTo(cx+3,cy+3); rctx.closePath(); rctx.fill();
       return;
     }
@@ -1701,7 +1891,7 @@
     if(mode==='surface'){
       if(k==='t'){ tryTakeoff(); }
       if(k===' '&&dActive) dNext();
-      if(k==='f'){ if(dActive) dNext(); else collectNode(); }
+      if(k==='f'){ if(dActive) dNext(); else if(!collectRelic()) collectNode(); }
       if(k==='v'){ var en2=SND.toggle(); toast('AUDIO',en2?'Attivato':'Disattivato'); }
       if(k==='m') toast('MAPPA NON DISPONIBILE','Solo in volo spaziale');
       return;
@@ -1728,7 +1918,7 @@
     var r=canvas.getBoundingClientRect(); mx=((e.clientX-r.left)/r.width-0.5)*2; my=((e.clientY-r.top)/r.height-0.5)*2; mx=Math.max(-1,Math.min(1,mx)); my=Math.max(-1,Math.min(1,my)); });
   var firing=false;
   on(canvas,'mousedown',function(e){
-    if(mode==='surface'){ try{ if(document.pointerLockElement!==canvas) canvas.requestPointerLock(); }catch(err){} return; }
+    if(mode==='surface'){ if(document.pointerLockElement!==canvas){ try{ canvas.requestPointerLock(); }catch(err){} } else if(e.button===0){ fireBlaster(); } return; }
     if(e.button===0) firing=true; });
   on(window,'mouseup',function(){ firing=false; });
 
@@ -2135,7 +2325,10 @@
     addCredits:function(n){ credits+=(n||100); updCred(); },
     gotoPlanet:function(i){ var b=bodies[i||0]; if(!b) return; ship.position.copy(b.mesh.position).add(new TH.Vector3(b.radius*2.5,b.radius*0.4,0)); locked=b; refreshTarget(); },
     land:tryLand, takeoff:tryTakeoff,
-    state:function(){ return {mode:mode, pp:[Math.round(surf.pp.x),Math.round(surf.pp.y),Math.round(surf.pp.z)], ship:[Math.round(ship.position.x),Math.round(ship.position.y),Math.round(ship.position.z)], daylight:+surf.sunDir.y.toFixed(2), nodes:surf.nodes.length}; },
+    state:function(){ return {mode:mode, pp:[Math.round(surf.pp.x),Math.round(surf.pp.y),Math.round(surf.pp.z)], ship:[Math.round(ship.position.x),Math.round(ship.position.y),Math.round(ship.position.z)], daylight:+surf.sunDir.y.toFixed(2), nodes:surf.nodes.length, critters:surf.critters.length, hostiles:surf.critters.filter(function(c){return c.hostile;}).length, ruin:surf.ruin?!surf.ruin.taken:false}; },
+    critterNear:function(){ var b=999,bc=null; surf.critters.forEach(function(c){ var d=surf.pp.distanceTo(c.g.position); if(d<b){b=d;bc=c;} }); return bc?{kind:bc.kind,dist:Math.round(b),hp:bc.hp}:null; },
+    tpToCritter:function(){ if(!surf.critters.length) return false; var c=surf.critters[0]; surf.pp.set(c.g.position.x-14,surf.heightFn(c.g.position.x-14,c.g.position.z)+1.75,c.g.position.z); var d=c.g.position.clone().sub(surf.pp); plYaw=Math.atan2(d.x,d.z); plPitch=0; return true; },
+    hurtSelf:function(){ surfDamage(9); },
     net:NET.dbg, netHost:NET.host, netJoin:NET.join,
     look:function(pitch,yaw){ plPitch=pitch||0; plYaw=yaw||0; },
     bodyNames:function(){ return bodies.map(function(b){ return b.name+' ('+b.type+')'; }); } };
