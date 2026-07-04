@@ -1,4 +1,4 @@
-# gioco — Deepfake Ultra Pro 6.0 🎭
+# gioco — Deepfake Ultra Pro 7.0 🎭
 
 Face-swap in tempo reale (webcam **o file video**) basato su **insightface** +
 `inswapper_128.onnx`, con interfaccia Tkinter. Versione ottimizzata: **più
@@ -7,6 +7,30 @@ veloce**, **più realistica** e **più potente**, con pannello di regolazioni li
 > ⚠️ **Uso responsabile.** Usa solo volti per cui hai il consenso. Non creare
 > contenuti ingannevoli, diffamatori o che ledano le persone. Molti paesi
 > regolano l'uso dei deepfake: sei responsabile di come usi questo strumento.
+
+## ⚠️ Cosa questo strumento NON può fare (leggi prima)
+
+`inswapper_128` è un modello con due limiti **fisici**, che nessuna impostazione
+elimina:
+
+1. **Non scambia i capelli / la testa.** Sostituisce solo il **volto interno**
+   (sopracciglia→mento). Capelli, attaccatura, orecchie e forma della testa
+   restano di chi è ripreso. Lo swap di capelli/testa richiede un'altra classe
+   di modelli (full-head / reenactment), molto più pesanti e **non real-time**.
+2. **Lavora a 128×128.** Quando muovi la lingua o parli, la bocca si "impasta"
+   e sembra un'altra faccia. Si mitiga con **Keep mouth** (mostra la tua bocca
+   reale) e con l'**enhancer GFPGAN** (più dettaglio), ma non si azzera.
+
+Ciò che la 7.0 aggiunge lavora *entro* questi limiti — è lo stesso approccio dei
+tool open-source "seri" (es. FaceFusion).
+
+## Novità della 7.0 (realismo del volto)
+
+- **Maschera precisa dai landmark 2D-106**: la maschera segue la vera forma di
+  mascella e mento invece di un'ellisse fissa → bordi più naturali, meno
+  effetto "faccia incollata" (toggle *Precise mask*).
+- **Keep mouth** (slider): lascia trasparire la **bocca reale**. Alzalo quando
+  parli / muovi la lingua → l'espressione torna naturale. Default 0.30.
 
 ## Novità della 6.0
 
@@ -83,10 +107,21 @@ python deepfake_ultra_pro.py
 attiva il toggle **Enhancer GFPGAN**. Migliora molto la qualità dei volti ma è
 **lento**: usalo su GPU o per registrare/esportare, non per il massimo dei FPS.
 
-## Suggerimenti
+## Ricetta per il massimo realismo
+1. **Precise mask** ON + **Feather** ~0.08 → bordi che seguono la mascella.
+2. **Keep mouth** 0.3–0.6 → parlato e lingua naturali (usa la tua bocca reale).
+3. **Color match** 0.7–1.0 → l'illuminazione combacia con la scena.
+4. **Skin smooth** 0.2–0.4 + **Sharpen** 0.2 → pelle uniforme ma nitida.
+5. **Enhancer GFPGAN** ON (se hai GPU) → denti/pelle ad alta fedeltà.
+6. Foto sorgente **frontale, nitida, ben illuminata**, sfondo semplice.
+
+### Se vuoi VERAMENTE anche i capelli
+Serve un'altra pipeline (non questo modello): approcci full-head / reenactment
+o hair-transfer. Sono pesanti, richiedono GPU e in genere non girano in
+real-time. Se ti interessa, dimmelo e ti indico la direzione.
+
+## Suggerimenti performance
 - Su GPU installa `onnxruntime-gpu`: è la differenza più grande.
 - CPU debole → modalità **FAST** e det_size `256`.
-- Realismo: tieni **Realistic blend** attivo, alza un po' **Color match** e
-  **Feather**, aggiungi un filo di **Skin smooth**; foto sorgente frontale e
-  ben illuminata.
+- L'enhancer GFPGAN è **lento**: tienilo per registrazioni/export, non per i FPS.
 - Più volti nella scena → attiva **Multi-face**.

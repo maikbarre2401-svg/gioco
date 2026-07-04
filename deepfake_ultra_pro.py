@@ -1,29 +1,29 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-🎭 DEEPFAKE ULTRA PRO 6.0  ⚡  (real-time face swap)
+🎭 DEEPFAKE ULTRA PRO 7.0  ⚡  (real-time face swap)
 
 Più impostazioni, più realismo, più potenza.
 
-NOVITÀ rispetto alla 5.0
-------------------------
-IMPOSTAZIONI (regolabili dal vivo)
-  * Slider: soglia swap, dimensione maschera, feather (bordi), intensità
-    color-match, sharpen, skin-smooth.
-  * Selettore det_size (256/320/512/640) applicato a caldo.
-  * Toggle: blend realistico, multi-face, mirror, enhancer, bbox, FPS.
+NOVITÀ della 7.0 (realismo del volto)
+  * MASCHERA PRECISA dai landmark 2D-106: segue la reale forma di mascella/
+    mento invece di un'ellisse fissa → meno effetto "faccia incollata".
+  * KEEP MOUTH: lascia trasparire la BOCCA REALE, così quando parli o muovi
+    la lingua l'espressione resta naturale (limite tipico dello swap 128px).
 
-REALISMO
-  * Blending ellittico con feather regolabile + color transfer LAB regolabile.
-  * Skin-smooth (bilateral) e sharpen (unsharp) sulla faccia sostituita.
-  * Enhancer opzionale GFPGAN (se installato) per volti ad alta fedeltà.
+Dalla 6.0
+  * Slider live: soglia, mask size, feather, color-match, sharpen, skin-smooth.
+  * det_size 256/320/512/640 a caldo; multi-face; mirror; input da file video;
+    snapshot PNG e registrazione MP4; enhancer opzionale GFPGAN.
+  * Provider ONNX auto (CUDA/CoreML/DirectML/CPU); un solo thread di inferenza.
 
-POTENZA
-  * MULTI-FACE: sostituisce tutti i volti sopra soglia, non solo il migliore.
-  * Input da FILE VIDEO oltre alla webcam (playback in loop).
-  * SNAPSHOT (PNG) e REGISTRAZIONE video (MP4) dell'output.
-  * Provider ONNX auto (CUDA/CoreML/DirectML/CPU), detector detection-only,
-    un solo thread di inferenza.
+LIMITI DEL MODELLO (inswapper_128) — onestà tecnica
+  * NON scambia i capelli / la testa: sostituisce solo il volto interno.
+    Capelli, attaccatura e forma della testa restano del soggetto ripreso.
+    Uno swap di capelli/testa richiede un'altra classe di modelli, molto più
+    pesanti e non real-time.
+  * Lavora a 128x128: il dettaglio di denti/lingua è limitato. GFPGAN aiuta
+    ma non elimina del tutto il problema; "Keep mouth" è il rimedio pratico.
 
 Uso etico: usa solo volti per cui hai il consenso. Non creare contenuti
 ingannevoli o che ledano le persone.
@@ -81,6 +81,8 @@ config = {
     'realistic_blend': True,
     'mirror': False,
     'fast_detect_stride': 2,
+    'precise_mask': True,   # maschera dai landmark (segue la mascella)
+    'keep_mouth': 0.30,     # 0=bocca sorgente, 1=bocca reale (lingua/parlato)
 }
 
 MODE_RES = {'fast': (640, 360), 'balanced': (854, 480), 'quality': (960, 540)}
@@ -149,8 +151,9 @@ class FaceEngine:
         print(f"⚡ Execution provider: {self.provider_name}")
 
         det = (config['det_size'], config['det_size'])
+        # detection + landmark_2d_106 per la maschera precisa (niente recognition)
         self.detector = FaceAnalysis(name=config['detector_name'],
-                                     allowed_modules=['detection'],
+                                     allowed_modules=['detection', 'landmark_2d_106'],
                                      providers=self.providers)
         self.detector.prepare(ctx_id=self.ctx_id, det_size=det,
                               det_thresh=config['det_thresh'])
@@ -247,7 +250,54 @@ class FaceEngine:
         sm = cv2.bilateralFilter(img, 7, 45, 45)
         return cv2.addWeighted(img, 1.0 - amount, sm, amount, 0)
 
-    def _blend(self, frame, bgr_fake, M, p):
+    @staticmethod
+    def _ellipse_mask_full(M, size, w, h, ms):
+        ax = int(np.clip(size * 0.42 * ms, 4, size // 2))
+        ay = int(np.clip(size * 0.50 * ms, 4, size // 2))
+        mask = np.zeros((size, size), np.float32)
+        cv2.ellipse(mask, (size // 2, size // 2), (ax, ay), 0, 0, 360, 1.0, -1)
+        IM = cv2.invertAffineTransform(M)
+        return cv2.warpAffine(mask, IM, (w, h), borderValue=0)
+
+    @staticmethod
+    def _landmark_mask_full(face, w, h, ms):
+        """Maschera che segue la reale forma del volto (convex hull dei 106
+        landmark), dilatata per includere la fronte."""
+        pts = getattr(face, 'landmark_2d_106', None)
+        if pts is None:
+            return None
+        try:
+            pts = np.asarray(pts, dtype=np.int32)
+            hull = cv2.convexHull(pts)
+            mask = np.zeros((h, w), np.float32)
+            cv2.fillConvexPoly(mask, hull, 1.0)
+            fw = float(face.bbox[2] - face.bbox[0])
+            k = max(1, int(fw * 0.06 * ms))
+            mask = cv2.dilate(mask, np.ones((k, k), np.uint8))
+            return mask
+        except Exception:
+            return None
+
+    @staticmethod
+    def _mouth_mask_full(face, w, h):
+        """Ellisse morbida sulla bocca (dai keypoint) per far trasparire la
+        bocca reale: espressioni e lingua restano naturali."""
+        kps = getattr(face, 'kps', None)
+        if kps is None or len(kps) < 5:
+            return None
+        lm = np.asarray(kps[3], np.float32)
+        rm = np.asarray(kps[4], np.float32)
+        cx, cy = (lm + rm) / 2.0
+        wd = float(np.linalg.norm(rm - lm)) + 1e-6
+        ang = float(np.degrees(np.arctan2(rm[1] - lm[1], rm[0] - lm[0])))
+        m = np.zeros((h, w), np.float32)
+        cv2.ellipse(m, (int(cx), int(cy)),
+                    (int(wd * 0.85), int(wd * 0.60)), ang, 0, 360, 1.0, -1)
+        b = max(3, int(wd * 0.4))
+        b = b + 1 if b % 2 == 0 else b
+        return cv2.GaussianBlur(m, (b, b), 0)
+
+    def _blend(self, frame, bgr_fake, M, face, p):
         h, w = frame.shape[:2]
         size = bgr_fake.shape[0]
 
@@ -261,15 +311,21 @@ class FaceEngine:
         fake = self._smooth(fake, float(p['smooth']))
         fake = self._sharpen(fake, float(p['sharpen']))
 
-        ms = float(p['mask_size'])
-        ax = int(np.clip(size * 0.42 * ms, 4, size // 2))
-        ay = int(np.clip(size * 0.50 * ms, 4, size // 2))
-        mask = np.zeros((size, size), np.float32)
-        cv2.ellipse(mask, (size // 2, size // 2), (ax, ay), 0, 0, 360, 1.0, -1)
-
         IM = cv2.invertAffineTransform(M)
         fake_full = cv2.warpAffine(fake, IM, (w, h), borderValue=0)
-        mask_full = cv2.warpAffine(mask, IM, (w, h), borderValue=0)
+
+        ms = float(p['mask_size'])
+        mask_full = None
+        if p.get('precise_mask'):
+            mask_full = self._landmark_mask_full(face, w, h, ms)
+        if mask_full is None:
+            mask_full = self._ellipse_mask_full(M, size, w, h, ms)
+
+        km = float(p.get('keep_mouth', 0.0))
+        if km > 0:
+            mm = self._mouth_mask_full(face, w, h)
+            if mm is not None:
+                mask_full = mask_full * (1.0 - km * mm)
 
         scale = float(np.sqrt(M[0, 0] ** 2 + M[0, 1] ** 2)) + 1e-6
         face_px = size / scale
@@ -294,7 +350,7 @@ class FaceEngine:
             else:
                 return self.swapper.get(frame, target, source, paste_back=True) or frame
         # blend fuori dal lock (solo numpy/cv2)
-        return self._blend(frame, bgr_fake, M, p)
+        return self._blend(frame, bgr_fake, M, target, p)
 
     @staticmethod
     def best_face(faces):
@@ -345,7 +401,7 @@ class DeepfakeUltraPro:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("🎭 DEEPFAKE ULTRA PRO 6.0")
+        self.root.title("🎭 DEEPFAKE ULTRA PRO 7.0")
         self.root.geometry("1680x940")
         self.root.configure(bg='#0a0a0a')
 
@@ -378,7 +434,8 @@ class DeepfakeUltraPro:
         # parametri sincronizzati dal main thread (thread-safe per l'inferenza)
         self.params = {k: config[k] for k in
                        ('swap_threshold', 'mask_size', 'feather', 'color_strength',
-                        'sharpen', 'smooth', 'multi_face', 'realistic_blend', 'mirror')}
+                        'sharpen', 'smooth', 'multi_face', 'realistic_blend', 'mirror',
+                        'precise_mask', 'keep_mouth')}
 
         self.capture_queue = queue.Queue(maxsize=2)
         self.display_queue = queue.Queue(maxsize=2)
@@ -432,7 +489,7 @@ class DeepfakeUltraPro:
 
         tk.Label(self.left_panel, text="🎭 DEEPFAKE ULTRA", font=('Arial', 15, 'bold'),
                  bg=self.colors['panel'], fg='white').pack(pady=(12, 0))
-        tk.Label(self.left_panel, text="PRO 6.0", font=('Arial', 11),
+        tk.Label(self.left_panel, text="PRO 7.0", font=('Arial', 11),
                  bg=self.colors['panel'], fg=self.colors['primary']).pack(pady=(0, 8))
 
         self.status_var = tk.StringVar(value="⚡ Loading AI...")
@@ -521,21 +578,25 @@ class DeepfakeUltraPro:
         self.v_color = tk.DoubleVar(value=config['color_strength'])
         self.v_sharpen = tk.DoubleVar(value=config['sharpen'])
         self.v_smooth = tk.DoubleVar(value=config['smooth'])
+        self.v_keepmouth = tk.DoubleVar(value=config['keep_mouth'])
         self._slider(adj, "Swap thresh", self.v_thresh, 0.20, 0.70)
         self._slider(adj, "Mask size", self.v_mask, 0.60, 1.30)
         self._slider(adj, "Feather", self.v_feather, 0.02, 0.15)
         self._slider(adj, "Color match", self.v_color, 0.0, 1.0)
         self._slider(adj, "Sharpen", self.v_sharpen, 0.0, 1.0)
         self._slider(adj, "Skin smooth", self.v_smooth, 0.0, 1.0)
+        self._slider(adj, "Keep mouth", self.v_keepmouth, 0.0, 1.0)
 
         opt = self._card(self.right_panel, "OPTIONS")
         self.v_realistic = tk.BooleanVar(value=config['realistic_blend'])
+        self.v_precise = tk.BooleanVar(value=config['precise_mask'])
         self.v_multi = tk.BooleanVar(value=config['multi_face'])
         self.v_mirror = tk.BooleanVar(value=config['mirror'])
         self.v_enhance = tk.BooleanVar(value=False)
         self.v_bbox = tk.BooleanVar(value=True)
         self.v_fps = tk.BooleanVar(value=True)
         self._toggle(opt, "Realistic blend (feather+color)", self.v_realistic)
+        self._toggle(opt, "Precise mask (landmark, segue mascella)", self.v_precise)
         self._toggle(opt, "Multi-face (swap tutti i volti)", self.v_multi)
         self._toggle(opt, "Mirror (specchia)", self.v_mirror)
         self.enhance_cb = tk.Checkbutton(opt, text="Enhancer GFPGAN (lento, HQ)",
@@ -559,7 +620,7 @@ class DeepfakeUltraPro:
                                height=10, relief='flat', wrap='word')
         self.console.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
 
-        self.bottom_status = tk.Label(self.root, text="Deepfake Ultra Pro 6.0 | Initializing...",
+        self.bottom_status = tk.Label(self.root, text="Deepfake Ultra Pro 7.0 | Initializing...",
                                       bg='#1a1a2e', fg='white', font=('Arial', 10),
                                       relief='sunken', anchor='w')
         self.bottom_status.pack(side=tk.BOTTOM, fill=tk.X)
@@ -585,6 +646,8 @@ class DeepfakeUltraPro:
                 'multi_face': bool(self.v_multi.get()),
                 'realistic_blend': bool(self.v_realistic.get()),
                 'mirror': bool(self.v_mirror.get()),
+                'precise_mask': bool(self.v_precise.get()),
+                'keep_mouth': float(self.v_keepmouth.get()),
             })
         except Exception:
             pass
@@ -760,7 +823,7 @@ class DeepfakeUltraPro:
         self.ram_label.config(text=f"RAM: {s['ram']:.1f}%")
         rec = " | ⏺REC" if self.recording else ""
         self.bottom_status.config(
-            text=f"Deepfake Ultra Pro 6.0 | FPS: {s['fps']} (avg {s['avg_fps']}) | "
+            text=f"Deepfake Ultra Pro 7.0 | FPS: {s['fps']} (avg {s['avg_fps']}) | "
                  f"Swap: {'ON' if self.swap_active else 'OFF'} | "
                  f"Multi: {'ON' if self.params['multi_face'] else 'OFF'} | "
                  f"Mode: {self.mode_var.get().upper()} | "
@@ -941,7 +1004,7 @@ class DeepfakeUltraPro:
 # ============================================================
 def main():
     print("=" * 80)
-    print("🚀 DEEPFAKE ULTRA PRO 6.0 - STARTING")
+    print("🚀 DEEPFAKE ULTRA PRO 7.0 - STARTING")
     ram = f"{psutil.virtual_memory().percent}%" if _HAS_PSUTIL else "n/a"
     print(f"🔥 PID {os.getpid()} | CPU {_cpu_count()} | RAM {ram}")
     print("=" * 80)
