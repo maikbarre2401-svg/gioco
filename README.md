@@ -14,11 +14,17 @@ in stile film di spionaggio) scritto in Python + Tkinter.
 
 ## ✨ Funzionalità
 
-**☠ Splash d'avvio (hacker)**
-- All'apertura compare un **teschio al neon** disegnato con Pillow (circuiti,
-  occhi luminosi, glitch, pioggia matrix e boot-log) con scritto
-  **CREATED BY MAIKGOST** e "ORION INTELLIGENCE // CLASSIFIED".
-  Click / **⎵** per entrare. Disattivabile dalle Impostazioni.
+**🎬 Splash d'avvio (video)**
+- All'apertura parte uno **splash a schermo intero**: se imposti un **tuo
+  video** viene riprodotto (a schermo intero, OpenCV) con in sovrimpressione
+  **CREATED BY MAIKGOST**, l'HUD ORION e il banner SIMULAZIONE.
+- Il video si sceglie in **⚙ Impostazioni → VIDEO D'AVVIO** (bottone
+  *Sfoglia…*), oppure basta mettere un file **`intro.mp4`** nella cartella del
+  programma (auto-rilevato). Formati: mp4/mov/avi/mkv/webm/m4v.
+- Se non c'è nessun video (o manca OpenCV) parte un **emblema ORION animato**
+  (matrix + boot-log, niente teschio). Click / **⎵** per entrare.
+- Il video richiede `opencv-python` (in `requirements.txt`). *Nota:* la
+  riproduzione via OpenCV è **senza audio**.
 
 **🌍 Mappa 3D Mapbox REALE**
 - Nella scheda **🗺 MAPPA** il bottone *"APRI MAPPA 3D MAPBOX"* apre nel

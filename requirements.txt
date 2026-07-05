@@ -1,1 +1,5 @@
 Pillow>=10.1
+
+# Opzionale: serve SOLO per lo splash video all'avvio.
+# Se non lo installi, parte lo splash animato (emblema ORION) senza video.
+opencv-python>=4.5

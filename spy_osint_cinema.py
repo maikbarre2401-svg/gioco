@@ -27,13 +27,21 @@ import time
 import tkinter as tk
 import webbrowser
 from datetime import datetime, timedelta
-from tkinter import messagebox, scrolledtext, ttk
+from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 try:
     from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageTk
     PIL_OK = True
 except Exception:  # pragma: no cover
     PIL_OK = False
+
+try:                                    # opzionale: solo per lo splash video
+    import cv2
+    CV2_OK = True
+except Exception:
+    CV2_OK = False
+
+VIDEO_EXTS = (".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v")
 
 
 # ===========================================================================
@@ -62,7 +70,7 @@ SETTINGS_FILE = "orion_settings.json"
 DEFAULT_SETTINGS = {
     "skip_intro": False, "intro_speed": "media", "slideshow_sec": 4.0,
     "bg_anim": True, "redacted": True, "sound": True, "accent": THEME["accent"],
-    "splash": True, "mapbox_token": "",
+    "splash": True, "mapbox_token": "", "splash_video": "",
 }
 INTRO_SCALE = {"corta": 0.6, "media": 1.0, "lunga": 1.55}
 ACCENTS = [("Ciano", "#00e5ff"), ("Verde", "#39ff14"),
@@ -169,127 +177,6 @@ def render_logo(width=560, height=120):
            fill=hex_to_rgb(THEME["magenta"]) + (255,))
     d.line([(16, 96), (width - 20, 96)], fill=hex_to_rgb(THEME["line"]) + (255,), width=1)
     return img
-
-
-def render_skull(size=(380, 480), accent=None):
-    """Teschio 'hacker futuristico' al neon con circuiti + 'created by MAIKGOST'."""
-    if not PIL_OK:
-        return None
-    accent = accent or THEME["accent"]
-    W, H = size
-    s = 3                       # supersampling
-    w, h = W * s, H * s
-    acc = hex_to_rgb(accent)
-    bone = tuple(int(lerp(acc[i], 255, 0.5)) for i in range(3))
-    bone_dark = tuple(int(c * 0.30) for c in bone)
-    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-
-    cx = w // 2
-    cy_head = int(h * 0.26)
-    cr_w, cr_h = int(w * 0.30), int(h * 0.20)
-
-    # --- griglia/anelli tech di sfondo ---
-    bg = ImageDraw.Draw(img, "RGBA")
-    for gx in range(0, w, 34 * s):
-        bg.line([(gx, 0), (gx, int(h * 0.82))], fill=acc + (18,))
-    for gy in range(0, int(h * 0.82), 34 * s):
-        bg.line([(0, gy), (w, gy)], fill=acc + (18,))
-    for rr in (int(w * 0.44), int(w * 0.40)):
-        bg.ellipse([cx - rr, cy_head + int(h * 0.05) - rr, cx + rr,
-                    cy_head + int(h * 0.05) + rr], outline=acc + (40,), width=s)
-
-    # --- silhouette del teschio (unione di forme, poi contorno al neon) ---
-    skull = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    sd = ImageDraw.Draw(skull)
-    sd.ellipse([cx - cr_w, cy_head - cr_h, cx + cr_w, cy_head + cr_h], fill=bone + (255,))
-    sd.ellipse([cx - int(cr_w * 1.04), cy_head - int(cr_h * 0.2),
-                cx + int(cr_w * 1.04), cy_head + int(cr_h * 1.25)], fill=bone + (255,))
-    cheek_y = cy_head + int(cr_h * 0.9)
-    chin_y = int(h * 0.66)
-    ch_half, chin_half = int(cr_w * 0.98), int(cr_w * 0.44)
-    sd.polygon([(cx - ch_half, cheek_y), (cx + ch_half, cheek_y),
-                (cx + int(chin_half * 1.5), int((cheek_y + chin_y) / 2)),
-                (cx + chin_half, chin_y), (cx - chin_half, chin_y),
-                (cx - int(chin_half * 1.5), int((cheek_y + chin_y) / 2))], fill=bone + (255,))
-    img = Image.alpha_composite(img, skull)
-
-    # contorno al neon (dal bordo della silhouette)
-    alpha = skull.split()[3]
-    edge = alpha.filter(ImageFilter.FIND_EDGES).filter(ImageFilter.MaxFilter(3 * s | 1))
-    neon = Image.new("RGBA", (w, h), acc + (0,))
-    neon.putalpha(edge)
-    glow = neon.filter(ImageFilter.GaussianBlur(5 * s))
-    img = Image.alpha_composite(img, glow)
-    img = Image.alpha_composite(img, glow)
-    img = Image.alpha_composite(img, neon)
-
-    d = ImageDraw.Draw(img, "RGBA")
-
-    # --- occhiaie (glow accent) ---
-    eye_w, eye_h = int(cr_w * 0.5), int(cr_h * 0.62)
-    eye_y = cy_head + int(cr_h * 0.15)
-    eye_dx = int(cr_w * 0.46)
-    eyes = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    ed = ImageDraw.Draw(eyes)
-    for sx in (-1, 1):
-        ex = cx + sx * eye_dx
-        ed.ellipse([ex - eye_w, eye_y - eye_h, ex + eye_w, eye_y + eye_h],
-                   fill=(0, 0, 0, 255))
-        ed.ellipse([ex - int(eye_w * 0.55), eye_y - int(eye_h * 0.2),
-                    ex + int(eye_w * 0.55), eye_y + int(eye_h * 0.45)], fill=acc + (255,))
-        # angolo inferiore-interno per l'inclinazione tipica del teschio
-        ed.polygon([(cx + sx * int(cr_w * 0.05), eye_y + int(eye_h * 0.2)),
-                    (cx + sx * int(cr_w * 0.05), eye_y + eye_h + int(eye_h * 0.4)),
-                    (ex - sx * int(eye_w * 0.2), eye_y + int(eye_h * 0.9))],
-                   fill=(0, 0, 0, 255))
-    eyeglow = eyes.filter(ImageFilter.GaussianBlur(4 * s))
-    img = Image.alpha_composite(img, eyeglow)
-    img = Image.alpha_composite(img, eyes)
-    d = ImageDraw.Draw(img, "RGBA")
-
-    # naso a triangolo rovesciato
-    ny = eye_y + int(eye_h * 1.3)
-    nw = int(cr_w * 0.14)
-    d.polygon([(cx, ny), (cx - nw, ny + int(cr_h * 0.5)),
-               (cx + nw, ny + int(cr_h * 0.5))], fill=(0, 0, 0, 255))
-
-    # denti
-    mouth_y = chin_y - int(cr_h * 0.55)
-    mw = int(chin_half * 1.25)
-    d.rectangle([cx - mw, mouth_y, cx + mw, chin_y - int(cr_h * 0.05)], fill=(0, 0, 0, 255))
-    n_teeth = 6
-    tw = (2 * mw) / n_teeth
-    for i in range(n_teeth):
-        tx = cx - mw + i * tw
-        d.rectangle([tx + 2 * s, mouth_y + 2 * s, tx + tw - 2 * s, chin_y - int(cr_h * 0.12)],
-                    fill=bone + (255,))
-    d.line([(cx - mw, int((mouth_y + chin_y) / 2)), (cx + mw, int((mouth_y + chin_y) / 2))],
-           fill=(0, 0, 0, 255), width=2 * s)
-
-    # crepe / suture (linee tech sul cranio)
-    d.line([(cx, cy_head - cr_h), (cx, eye_y - eye_h)], fill=acc + (120,), width=2 * s)
-    d.line([(cx - int(cr_w * 0.4), cy_head - int(cr_h * 0.7)),
-            (cx - int(cr_w * 0.15), cy_head - int(cr_h * 0.2))], fill=acc + (90,), width=s)
-
-    # --- testo 'created by MAIKGOST' ---
-    ty = int(h * 0.80)
-    d.line([(int(w * 0.12), ty), (int(w * 0.88), ty)], fill=acc + (160,), width=s)
-    gl2 = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    g2 = ImageDraw.Draw(gl2)
-    f_cr = load_font(30 * s, bold=True)
-    f_by = load_font(14 * s, bold=True)
-    g2.text((cx, ty + int(h * 0.08)), CREATOR, font=f_cr, fill=acc + (255,), anchor="mm")
-    gl2 = gl2.filter(ImageFilter.GaussianBlur(4 * s))
-    img = Image.alpha_composite(img, gl2)
-    d = ImageDraw.Draw(img, "RGBA")
-    d.text((cx, ty + int(h * 0.035)), "C R E A T E D   B Y", font=f_by,
-           fill=hex_to_rgb(THEME["dim"]) + (255,), anchor="mm")
-    d.text((cx, ty + int(h * 0.08)), CREATOR, font=f_cr,
-           fill=hex_to_rgb(THEME["white"]) + (255,), anchor="mm")
-    d.text((cx, ty + int(h * 0.14)), "ORION INTELLIGENCE // CLASSIFIED", font=f_by,
-           fill=acc + (255,), anchor="mm")
-
-    return img.resize((W, H), Image.LANCZOS)
 
 
 def render_radar_chart(axes, size=260, accent=None):
@@ -889,13 +776,127 @@ class CinematicIntro:
 
 
 # ===========================================================================
-#  BOOT SPLASH  —  teschio hacker all'avvio
+#  SPLASH D'AVVIO  —  video dell'utente (OpenCV) oppure emblema animato
 # ===========================================================================
+class VideoSplash:
+    """Riproduce un video a schermo intero con overlay 'CREATED BY MAIKGOST'."""
+    def __init__(self, root, path, on_done=None, accent=None):
+        self.root = root
+        self.path = path
+        self.on_done = on_done
+        self.accent = accent or THEME["accent"]
+        self.running = True
+        self.after_id = None
+        self.photo = None
+        self.frame = 0
+        self.cap = None
+        self.delay = 40
+        self.win = tk.Toplevel(root)
+        self.win.configure(bg="black")
+        self.win.attributes("-topmost", True)
+        try:
+            self.win.attributes("-fullscreen", True)
+        except Exception:
+            self.win.geometry(f"{root.winfo_screenwidth()}x{root.winfo_screenheight()}+0+0")
+        self.cv = tk.Canvas(self.win, bg="black", highlightthickness=0)
+        self.cv.pack(fill="both", expand=True)
+        for ev in ("<Button-1>", "<Escape>", "<space>", "<Return>"):
+            self.win.bind(ev, lambda e: self.finish())
+        self.win.focus_set()
+        try:
+            self.cap = cv2.VideoCapture(path)
+            fps = self.cap.get(cv2.CAP_PROP_FPS)
+            self.delay = int(1000 / fps) if fps and fps > 1 else 40
+        except Exception:
+            self.cap = None
+        if not self.cap or not self.cap.isOpened():
+            self.finish()
+            return
+        self.win.after(20, self._tick)
+
+    def _dims(self):
+        w, h = self.cv.winfo_width(), self.cv.winfo_height()
+        if w <= 1:
+            w, h = self.win.winfo_screenwidth(), self.win.winfo_screenheight()
+        return w, h
+
+    def _tick(self):
+        if not self.running or not self.win.winfo_exists():
+            return
+        try:
+            ok, frame = self.cap.read()
+        except Exception:
+            ok, frame = False, None
+        if not ok:
+            self.finish()
+            return
+        try:
+            w, h = self._dims()
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            img = Image.fromarray(frame)
+            iw, ih = img.size
+            sc = min(w / iw, h / ih)
+            img = img.resize((max(1, int(iw * sc)), max(1, int(ih * sc))))
+            self.photo = ImageTk.PhotoImage(img)
+            self.cv.delete("all")
+            self.cv.create_rectangle(0, 0, w, h, fill="black", outline="")
+            self.cv.create_image(w // 2, h // 2, image=self.photo)
+            self._overlay(w, h)
+        except tk.TclError:
+            return
+        except Exception:
+            pass
+        self.frame += 1
+        self.after_id = self.win.after(self.delay, self._tick)
+
+    def _overlay(self, w, h):
+        acc = self.accent
+        m, L = 18, 34
+        for (ax, ay, dx, dy) in [(m, m, 1, 1), (w - m, m, -1, 1),
+                                 (m, h - m, 1, -1), (w - m, h - m, -1, -1)]:
+            self.cv.create_line(ax, ay, ax + dx * L, ay, fill=acc, width=2)
+            self.cv.create_line(ax, ay, ax, ay + dy * L, fill=acc, width=2)
+        self.cv.create_text(m + 4, m - 2, anchor="nw", fill=acc, font=(MONO, 11, "bold"),
+                            text=f"◈ ORION//SECURE · operator {CREATOR}")
+        self.cv.create_text(w - m - 4, m - 2, anchor="ne", fill=THEME["amber"], font=(MONO, 10),
+                            text="◦ SIMULAZIONE / GIOCO ◦")
+        by = h - 56
+        for dx, dy in ((2, 0), (-2, 0), (0, 2), (0, -2)):
+            self.cv.create_text(w // 2 + dx, by + dy, text="CREATED BY  MAIKGOST",
+                                fill=acc, font=(MONO, 24, "bold"))
+        self.cv.create_text(w // 2, by, text="CREATED BY  MAIKGOST",
+                            fill=THEME["white"], font=(MONO, 24, "bold"))
+        self.cv.create_text(w // 2, h - 24, fill=THEME["dim"], font=(MONO, 11),
+                            text="ORION INTELLIGENCE // CLASSIFIED   ·   click / ⎵ per entrare")
+
+    def finish(self):
+        if not self.running:
+            return
+        self.running = False
+        if self.after_id:
+            try:
+                self.win.after_cancel(self.after_id)
+            except Exception:
+                pass
+        try:
+            if self.cap:
+                self.cap.release()
+        except Exception:
+            pass
+        try:
+            if self.win.winfo_exists():
+                self.win.destroy()
+        except Exception:
+            pass
+        if callable(self.on_done):
+            self.on_done()
+
+
 class BootSplash:
-    """Schermata d'avvio a tutto schermo: teschio al neon + boot-log hacker."""
+    """Splash animato di riserva (nessun teschio): emblema ORION + boot-log."""
     FPS_MS = 33
 
-    def __init__(self, root, on_done=None, accent=None, duration=96):
+    def __init__(self, root, on_done=None, accent=None, duration=90):
         self.root = root
         self.on_done = on_done
         self.accent = accent or THEME["accent"]
@@ -904,7 +905,6 @@ class BootSplash:
         self.running = True
         self.after_id = None
         self.matrix = []
-        self.skull_tk = None
         self.win = tk.Toplevel(root)
         self.win.configure(bg=THEME["black"])
         self.win.attributes("-topmost", True)
@@ -915,32 +915,18 @@ class BootSplash:
         self.cv = tk.Canvas(self.win, bg=THEME["black"], highlightthickness=0)
         self.cv.pack(fill="both", expand=True)
         self.log = [
-            "ORION INTELLIGENCE TERMINAL  v4.0",
+            "ORION INTELLIGENCE TERMINAL  v5.0",
             "> establishing secure enclave ......... [OK]",
             "> loading operator profile: MAIKGOST . [OK]",
             "> mounting encrypted vault ............ [OK]",
             "> spoofing egress node  CH-07 ......... [OK]",
             "> neural face-match engine ............ [OK]",
-            "> quantum keyring unlocked ............ [OK]",
             "> ACCESS GRANTED — welcome, operator",
         ]
         for ev in ("<Button-1>", "<Escape>", "<space>", "<Return>"):
             self.win.bind(ev, lambda e: self.finish())
         self.win.focus_set()
-        self._prep_skull()
         self._tick()
-
-    def _prep_skull(self):
-        if not PIL_OK:
-            return
-        self.win.update_idletasks()
-        H = self.win.winfo_screenheight()
-        sh = int(H * 0.52)
-        sw = int(sh * 380 / 480)
-        try:
-            self.skull_tk = ImageTk.PhotoImage(render_skull((sw, sh), self.accent))
-        except Exception:
-            self.skull_tk = None
 
     def _dims(self):
         w, h = self.cv.winfo_width(), self.cv.winfo_height()
@@ -960,7 +946,6 @@ class BootSplash:
                                         "len": random.randint(5, 14)})
             self.cv.delete("all")
             self.cv.create_rectangle(0, 0, w, h, fill=THEME["black"], outline="")
-            # matrix rain
             for col in self.matrix:
                 col["y"] += col["speed"]
                 if col["y"] - col["len"] * 15 > h:
@@ -972,28 +957,35 @@ class BootSplash:
                              lerp_color(self.accent, THEME["bg"], k / col["len"]))
                         self.cv.create_text(col["x"], y, text=random.choice(MATRIX_CHARS),
                                             fill=c, font=(MONO, 11))
-            # teschio (con leggero glitch orizzontale)
-            gx = random.randint(-4, 4) if (self.frame // 3) % 7 == 0 else 0
-            if self.skull_tk:
-                self.cv.create_image(w // 2 + gx, int(h * 0.42), image=self.skull_tk)
-            else:
-                self.cv.create_text(w // 2, int(h * 0.4), text="☠", font=(MONO, 120),
+            cx, cy = w // 2, int(h * 0.36)
+            R = int(min(w, h) * 0.2)
+            for rr in range(1, 4):
+                r = R * rr / 3
+                self.cv.create_oval(cx - r, cy - r, cx + r, cy + r,
+                                    outline=lerp_color(self.accent, THEME["bg"], 0.72))
+            ang = self.frame * 0.14
+            self.cv.create_line(cx, cy, cx + R * math.cos(ang), cy + R * math.sin(ang),
+                                fill=self.accent, width=2)
+            if (self.frame // 3) % 6 == 0:
+                self.cv.create_text(cx + 3, cy, text="◈ ORION", font=(MONO, 60, "bold"),
+                                    fill=THEME["red"])
+                self.cv.create_text(cx - 3, cy, text="◈ ORION", font=(MONO, 60, "bold"),
                                     fill=self.accent)
-                self.cv.create_text(w // 2, int(h * 0.6), text=CREATOR,
-                                    font=(MONO, 30, "bold"), fill=THEME["white"])
-            # scanline glitch
-            if (self.frame // 3) % 5 == 0:
-                gy = random.randint(int(h * 0.2), int(h * 0.7))
-                self.cv.create_rectangle(0, gy, w, gy + 3,
-                                         fill=lerp_color(self.accent, THEME["bg"], 0.4),
-                                         outline="")
-            # boot log
+            for off in (2, -2):
+                self.cv.create_text(cx + off, cy, text="◈ ORION", font=(MONO, 60, "bold"),
+                                    fill=lerp_color(self.accent, THEME["bg"], 0.35))
+            self.cv.create_text(cx, cy, text="◈ ORION", font=(MONO, 60, "bold"),
+                                fill=THEME["white"])
+            self.cv.create_text(cx, cy + int(h * 0.12), text="CREATED BY  MAIKGOST",
+                                font=(MONO, 26, "bold"), fill=self.accent)
+            self.cv.create_text(cx, cy + int(h * 0.165),
+                                text="ORION INTELLIGENCE // CLASSIFIED",
+                                font=(MONO, 14, "bold"), fill=THEME["dim"])
             idx = min(len(self.log), self.frame // 7)
             for i, line in enumerate(self.log[:idx]):
                 col = THEME["green"] if "OK" in line or "GRANTED" in line else self.accent
-                self.cv.create_text(40, int(h * 0.7) + i * 18, text=line, anchor="w",
+                self.cv.create_text(40, int(h * 0.72) + i * 18, text=line, anchor="w",
                                     fill=col, font=(MONO, 11))
-            # progress
             pw = int(w * 0.5); px = (w - pw) // 2; py = int(h * 0.9)
             prog = min(1.0, self.frame / self.total)
             self.cv.create_rectangle(px, py, px + pw, py + 10, outline=self.accent)
@@ -1002,14 +994,11 @@ class BootSplash:
             self.cv.create_text(w // 2, py + 28, fill=THEME["dim"], font=(MONO, 10),
                                 text=f"INITIALIZING SECURE TERMINAL … {int(prog*100)}%  ·  "
                                      "click / ⎵ per entrare")
-            # HUD angoli
             m, L = 18, 34
             for (ax, ay, dx, dy) in [(m, m, 1, 1), (w - m, m, -1, 1),
                                      (m, h - m, 1, -1), (w - m, h - m, -1, -1)]:
                 self.cv.create_line(ax, ay, ax + dx * L, ay, fill=self.accent, width=2)
                 self.cv.create_line(ax, ay, ax, ay + dy * L, fill=self.accent, width=2)
-            self.cv.create_text(m + 4, m - 2, anchor="nw", fill=self.accent, font=(MONO, 10),
-                                text=f"ORION//SECURE · operator {CREATOR}")
             self.cv.create_text(w - m - 4, m - 2, anchor="ne", fill=THEME["amber"],
                                 font=(MONO, 9), text="◦ SIMULAZIONE / GIOCO ◦")
         except tk.TclError:
@@ -1259,8 +1248,32 @@ class SpyOSINTApp:
         self._animate_title()
         self._clock()
 
-        if self.settings.get("splash", True) and PIL_OK:
+        if self.settings.get("splash", True):
             self.beep()
+            self._launch_splash()
+
+    def _autodetect_video(self):
+        """Cerca un video 'intro.*' vicino allo script o nella cartella corrente."""
+        names = ("intro", "splash", "logo")
+        dirs = [os.getcwd()]
+        try:
+            dirs.append(os.path.dirname(os.path.abspath(__file__)))
+        except Exception:
+            pass
+        for d in dirs:
+            for base in names:
+                for ext in VIDEO_EXTS:
+                    p = os.path.join(d, base + ext)
+                    if os.path.exists(p):
+                        return p
+        return ""
+
+    def _launch_splash(self):
+        video = (self.settings.get("splash_video", "").strip()
+                 or self._autodetect_video())
+        if video and CV2_OK and PIL_OK and os.path.exists(video):
+            VideoSplash(self.root, video, accent=THEME["accent"])
+        else:
             BootSplash(self.root, accent=THEME["accent"])
 
     # ---- impostazioni ---------------------------------------------------
@@ -2103,7 +2116,7 @@ class SpyOSINTApp:
         win = tk.Toplevel(self.root)
         win.title(f"⚙ Impostazioni — {CREATOR}")
         win.configure(bg=THEME["panel"])
-        win.geometry("500x720")
+        win.geometry("520x820")
         win.transient(self.root)
         s = self.settings
 
@@ -2116,6 +2129,7 @@ class SpyOSINTApp:
         v_acc = tk.StringVar(value=s["accent"])
         v_splash = tk.BooleanVar(value=s.get("splash", True))
         v_token = tk.StringVar(value=s.get("mapbox_token", ""))
+        v_video = tk.StringVar(value=s.get("splash_video", ""))
 
         tk.Label(win, text="⚙  IMPOSTAZIONI", font=(UI, 16, "bold"), bg=THEME["panel"],
                  fg=THEME["accent"]).pack(anchor="w", padx=16, pady=(16, 6))
@@ -2145,10 +2159,32 @@ class SpyOSINTApp:
                  highlightthickness=0, label="Secondi per foto", font=(UI, 9)).pack(fill="x",
                                                                                     padx=24)
         section("AVVIO / GRAFICA")
-        check("Schermata d'avvio col teschio (splash)", v_splash)
+        check("Schermata d'avvio (splash)", v_splash)
         check("Animazioni di sfondo (rete, mappa)", v_bg)
         check("Barra REDACTED sui volti", v_red)
         check("Suono", v_snd)
+
+        section("VIDEO D'AVVIO  (il tuo video con overlay MAIKGOST)")
+        vrow = tk.Frame(win, bg=THEME["panel"])
+        vrow.pack(fill="x", padx=24)
+        tk.Entry(vrow, textvariable=v_video, font=(MONO, 9), bg=THEME["bg2"],
+                 fg=THEME["accent"], insertbackground=THEME["accent"], relief="flat",
+                 highlightbackground=THEME["line"], highlightthickness=1).pack(
+            side="left", fill="x", expand=True, ipady=4)
+
+        def browse_video():
+            p = filedialog.askopenfilename(
+                title="Scegli il video d'avvio",
+                filetypes=[("Video", "*.mp4 *.mov *.avi *.mkv *.webm *.m4v"), ("Tutti", "*.*")])
+            if p:
+                v_video.set(p)
+        tk.Button(vrow, text="Sfoglia…", font=(UI, 9, "bold"), bg=THEME["panel2"],
+                  fg=THEME["accent"], relief="flat", command=browse_video).pack(side="left",
+                                                                                padx=(6, 0))
+        cv2_note = "OpenCV OK" if CV2_OK else "installa opencv-python per il video"
+        tk.Label(win, text=f"vuoto = emblema animato · auto-rileva intro.mp4 · {cv2_note} "
+                          "· (senza audio)",
+                 font=(UI, 8), bg=THEME["panel"], fg=THEME["dim"]).pack(anchor="w", padx=24)
 
         section("COLORE ACCENTO")
         arow = tk.Frame(win, bg=THEME["panel"])
@@ -2172,7 +2208,8 @@ class SpyOSINTApp:
                 "skip_intro": v_skip.get(), "intro_speed": v_speed.get(),
                 "slideshow_sec": round(v_sec.get(), 1), "bg_anim": v_bg.get(),
                 "redacted": v_red.get(), "sound": v_snd.get(), "accent": v_acc.get(),
-                "splash": v_splash.get(), "mapbox_token": v_token.get().strip()})
+                "splash": v_splash.get(), "mapbox_token": v_token.get().strip(),
+                "splash_video": v_video.get().strip()})
             THEME["accent"] = self.settings["accent"]
             self._save_settings()
             self._status("IMPOSTAZIONI SALVATE", THEME["green"])
