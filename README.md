@@ -14,10 +14,26 @@ in stile film di spionaggio) scritto in Python + Tkinter.
 
 ## ✨ Funzionalità
 
+**☠ Splash d'avvio (hacker)**
+- All'apertura compare un **teschio al neon** disegnato con Pillow (circuiti,
+  occhi luminosi, glitch, pioggia matrix e boot-log) con scritto
+  **CREATED BY MAIKGOST** e "ORION INTELLIGENCE // CLASSIFIED".
+  Click / **⎵** per entrare. Disattivabile dalle Impostazioni.
+
+**🌍 Mappa 3D Mapbox REALE**
+- Nella scheda **🗺 MAPPA** il bottone *"APRI MAPPA 3D MAPBOX"* apre nel
+  browser un **globo 3D** (Mapbox GL JS v3) con **terreno**, atmosfera, e i
+  **marker** delle identità su **coordinate reali**, con tour cinematografico
+  automatico e popup.
+- Richiede **il tuo token Mapbox** (`pk.…`): si imposta in ⚙ Impostazioni
+  o nella variabile d'ambiente `MAPBOX_TOKEN`. Il token resta **locale**
+  (non finisce su GitHub). La mappa canvas interna usa comunque le
+  coordinate reali proiettate.
+
 **Cinematic Gallery**
-- **Intro a schermo intero non bloccante e più corta (~2.6 s)**: pioggia
-  "matrix", particelle, radar rotante, titolo con *glitch*, scrittura a
-  macchina, boot-log, chiusura a serranda. **Spazio/Invio** = salta,
+- **Intro a schermo intero non bloccante e regolabile** (Corta/Media/Lunga):
+  pioggia "matrix", particelle, radar rotante, titolo con *glitch*, scrittura
+  a macchina, boot-log, chiusura a serranda. **Spazio/Invio** = salta,
   **Esc** = esci.
 - **Ritratti "da sorveglianza" procedurali** (Pillow): silhouette con capelli
   e *rim light*, grana CRT, *scanline*, vignettatura, cornice HUD, ID camera,

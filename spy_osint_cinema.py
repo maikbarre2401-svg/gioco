@@ -21,9 +21,11 @@ import math
 import os
 import random
 import sqlite3
+import tempfile
 import threading
 import time
 import tkinter as tk
+import webbrowser
 from datetime import datetime, timedelta
 from tkinter import messagebox, scrolledtext, ttk
 
@@ -60,6 +62,7 @@ SETTINGS_FILE = "orion_settings.json"
 DEFAULT_SETTINGS = {
     "skip_intro": False, "intro_speed": "media", "slideshow_sec": 4.0,
     "bg_anim": True, "redacted": True, "sound": True, "accent": THEME["accent"],
+    "splash": True, "mapbox_token": "",
 }
 INTRO_SCALE = {"corta": 0.6, "media": 1.0, "lunga": 1.55}
 ACCENTS = [("Ciano", "#00e5ff"), ("Verde", "#39ff14"),
@@ -166,6 +169,127 @@ def render_logo(width=560, height=120):
            fill=hex_to_rgb(THEME["magenta"]) + (255,))
     d.line([(16, 96), (width - 20, 96)], fill=hex_to_rgb(THEME["line"]) + (255,), width=1)
     return img
+
+
+def render_skull(size=(380, 480), accent=None):
+    """Teschio 'hacker futuristico' al neon con circuiti + 'created by MAIKGOST'."""
+    if not PIL_OK:
+        return None
+    accent = accent or THEME["accent"]
+    W, H = size
+    s = 3                       # supersampling
+    w, h = W * s, H * s
+    acc = hex_to_rgb(accent)
+    bone = tuple(int(lerp(acc[i], 255, 0.5)) for i in range(3))
+    bone_dark = tuple(int(c * 0.30) for c in bone)
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+
+    cx = w // 2
+    cy_head = int(h * 0.26)
+    cr_w, cr_h = int(w * 0.30), int(h * 0.20)
+
+    # --- griglia/anelli tech di sfondo ---
+    bg = ImageDraw.Draw(img, "RGBA")
+    for gx in range(0, w, 34 * s):
+        bg.line([(gx, 0), (gx, int(h * 0.82))], fill=acc + (18,))
+    for gy in range(0, int(h * 0.82), 34 * s):
+        bg.line([(0, gy), (w, gy)], fill=acc + (18,))
+    for rr in (int(w * 0.44), int(w * 0.40)):
+        bg.ellipse([cx - rr, cy_head + int(h * 0.05) - rr, cx + rr,
+                    cy_head + int(h * 0.05) + rr], outline=acc + (40,), width=s)
+
+    # --- silhouette del teschio (unione di forme, poi contorno al neon) ---
+    skull = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    sd = ImageDraw.Draw(skull)
+    sd.ellipse([cx - cr_w, cy_head - cr_h, cx + cr_w, cy_head + cr_h], fill=bone + (255,))
+    sd.ellipse([cx - int(cr_w * 1.04), cy_head - int(cr_h * 0.2),
+                cx + int(cr_w * 1.04), cy_head + int(cr_h * 1.25)], fill=bone + (255,))
+    cheek_y = cy_head + int(cr_h * 0.9)
+    chin_y = int(h * 0.66)
+    ch_half, chin_half = int(cr_w * 0.98), int(cr_w * 0.44)
+    sd.polygon([(cx - ch_half, cheek_y), (cx + ch_half, cheek_y),
+                (cx + int(chin_half * 1.5), int((cheek_y + chin_y) / 2)),
+                (cx + chin_half, chin_y), (cx - chin_half, chin_y),
+                (cx - int(chin_half * 1.5), int((cheek_y + chin_y) / 2))], fill=bone + (255,))
+    img = Image.alpha_composite(img, skull)
+
+    # contorno al neon (dal bordo della silhouette)
+    alpha = skull.split()[3]
+    edge = alpha.filter(ImageFilter.FIND_EDGES).filter(ImageFilter.MaxFilter(3 * s | 1))
+    neon = Image.new("RGBA", (w, h), acc + (0,))
+    neon.putalpha(edge)
+    glow = neon.filter(ImageFilter.GaussianBlur(5 * s))
+    img = Image.alpha_composite(img, glow)
+    img = Image.alpha_composite(img, glow)
+    img = Image.alpha_composite(img, neon)
+
+    d = ImageDraw.Draw(img, "RGBA")
+
+    # --- occhiaie (glow accent) ---
+    eye_w, eye_h = int(cr_w * 0.5), int(cr_h * 0.62)
+    eye_y = cy_head + int(cr_h * 0.15)
+    eye_dx = int(cr_w * 0.46)
+    eyes = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    ed = ImageDraw.Draw(eyes)
+    for sx in (-1, 1):
+        ex = cx + sx * eye_dx
+        ed.ellipse([ex - eye_w, eye_y - eye_h, ex + eye_w, eye_y + eye_h],
+                   fill=(0, 0, 0, 255))
+        ed.ellipse([ex - int(eye_w * 0.55), eye_y - int(eye_h * 0.2),
+                    ex + int(eye_w * 0.55), eye_y + int(eye_h * 0.45)], fill=acc + (255,))
+        # angolo inferiore-interno per l'inclinazione tipica del teschio
+        ed.polygon([(cx + sx * int(cr_w * 0.05), eye_y + int(eye_h * 0.2)),
+                    (cx + sx * int(cr_w * 0.05), eye_y + eye_h + int(eye_h * 0.4)),
+                    (ex - sx * int(eye_w * 0.2), eye_y + int(eye_h * 0.9))],
+                   fill=(0, 0, 0, 255))
+    eyeglow = eyes.filter(ImageFilter.GaussianBlur(4 * s))
+    img = Image.alpha_composite(img, eyeglow)
+    img = Image.alpha_composite(img, eyes)
+    d = ImageDraw.Draw(img, "RGBA")
+
+    # naso a triangolo rovesciato
+    ny = eye_y + int(eye_h * 1.3)
+    nw = int(cr_w * 0.14)
+    d.polygon([(cx, ny), (cx - nw, ny + int(cr_h * 0.5)),
+               (cx + nw, ny + int(cr_h * 0.5))], fill=(0, 0, 0, 255))
+
+    # denti
+    mouth_y = chin_y - int(cr_h * 0.55)
+    mw = int(chin_half * 1.25)
+    d.rectangle([cx - mw, mouth_y, cx + mw, chin_y - int(cr_h * 0.05)], fill=(0, 0, 0, 255))
+    n_teeth = 6
+    tw = (2 * mw) / n_teeth
+    for i in range(n_teeth):
+        tx = cx - mw + i * tw
+        d.rectangle([tx + 2 * s, mouth_y + 2 * s, tx + tw - 2 * s, chin_y - int(cr_h * 0.12)],
+                    fill=bone + (255,))
+    d.line([(cx - mw, int((mouth_y + chin_y) / 2)), (cx + mw, int((mouth_y + chin_y) / 2))],
+           fill=(0, 0, 0, 255), width=2 * s)
+
+    # crepe / suture (linee tech sul cranio)
+    d.line([(cx, cy_head - cr_h), (cx, eye_y - eye_h)], fill=acc + (120,), width=2 * s)
+    d.line([(cx - int(cr_w * 0.4), cy_head - int(cr_h * 0.7)),
+            (cx - int(cr_w * 0.15), cy_head - int(cr_h * 0.2))], fill=acc + (90,), width=s)
+
+    # --- testo 'created by MAIKGOST' ---
+    ty = int(h * 0.80)
+    d.line([(int(w * 0.12), ty), (int(w * 0.88), ty)], fill=acc + (160,), width=s)
+    gl2 = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    g2 = ImageDraw.Draw(gl2)
+    f_cr = load_font(30 * s, bold=True)
+    f_by = load_font(14 * s, bold=True)
+    g2.text((cx, ty + int(h * 0.08)), CREATOR, font=f_cr, fill=acc + (255,), anchor="mm")
+    gl2 = gl2.filter(ImageFilter.GaussianBlur(4 * s))
+    img = Image.alpha_composite(img, gl2)
+    d = ImageDraw.Draw(img, "RGBA")
+    d.text((cx, ty + int(h * 0.035)), "C R E A T E D   B Y", font=f_by,
+           fill=hex_to_rgb(THEME["dim"]) + (255,), anchor="mm")
+    d.text((cx, ty + int(h * 0.08)), CREATOR, font=f_cr,
+           fill=hex_to_rgb(THEME["white"]) + (255,), anchor="mm")
+    d.text((cx, ty + int(h * 0.14)), "ORION INTELLIGENCE // CLASSIFIED", font=f_by,
+           fill=acc + (255,), anchor="mm")
+
+    return img.resize((W, H), Image.LANCZOS)
 
 
 def render_radar_chart(axes, size=260, accent=None):
@@ -360,10 +484,105 @@ FIRST = ["Marco", "Luca", "Andrea", "Giulia", "Sara", "Elena", "Matteo", "Alex",
          "Nina", "Ivan", "Sofia", "Dario", "Karim", "Mila", "Noa", "Leo"]
 LAST = ["Rossi", "Bianchi", "Esposito", "Romano", "Ferrari", "Costa", "Moreau",
         "Keller", "Petrov", "Nakamura", "Vidal", "Okoye", "Haas", "Silva"]
-CITIES = [("Roma, IT", 0.62, 0.66), ("Milano, IT", 0.60, 0.58), ("Napoli, IT", 0.63, 0.70),
-          ("Torino, IT", 0.57, 0.58), ("London, UK", 0.52, 0.46), ("Berlin, DE", 0.60, 0.45),
-          ("Paris, FR", 0.54, 0.50), ("Zürich, CH", 0.58, 0.53), ("Lisboa, PT", 0.46, 0.62),
-          ("Wien, AT", 0.62, 0.51), ("New York, US", 0.28, 0.52), ("Dubai, AE", 0.72, 0.66)]
+# città con coordinate REALI (nome, lat, lon)
+CITIES = [("Roma, IT", 41.902, 12.496), ("Milano, IT", 45.464, 9.190),
+          ("Napoli, IT", 40.852, 14.268), ("Torino, IT", 45.070, 7.687),
+          ("London, UK", 51.507, -0.128), ("Berlin, DE", 52.520, 13.405),
+          ("Paris, FR", 48.857, 2.352), ("Zürich, CH", 47.377, 8.542),
+          ("Lisboa, PT", 38.722, -9.139), ("Wien, AT", 48.209, 16.373),
+          ("New York, US", 40.713, -74.006), ("Dubai, AE", 25.205, 55.271)]
+
+
+def project_equirect(lat, lon):
+    """Proiezione equirettangolare → frazioni (0..1) per la mappa stilizzata."""
+    return (lon + 180.0) / 360.0, (90.0 - lat) / 180.0
+
+
+MAPBOX_HTML = r"""<!DOCTYPE html>
+<html lang="it"><head><meta charset="utf-8"/>
+<title>ORION 3D GEO-INT — by __CREATOR__</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<script src="https://api.mapbox.com/mapbox-gl-js/v3.9.0/mapbox-gl.js"></script>
+<link href="https://api.mapbox.com/mapbox-gl-js/v3.9.0/mapbox-gl.css" rel="stylesheet"/>
+<style>
+  html,body{margin:0;height:100%;background:#05060b;font-family:Consolas,monospace;color:#e2e8ff}
+  #map{position:absolute;inset:0}
+  .hud{position:absolute;left:16px;top:14px;z-index:5;pointer-events:none}
+  .hud h1{margin:0;font-size:20px;color:#00e5ff;text-shadow:0 0 12px #00e5ff}
+  .hud p{margin:2px 0;font-size:12px;color:#8791b8}
+  .badge{position:absolute;right:16px;top:14px;z-index:5;color:#ffb020;font-size:12px;
+         border:1px solid #ffb020;padding:4px 8px;border-radius:4px;background:#20140acc}
+  .cred{position:absolute;right:16px;bottom:14px;z-index:5;color:#ff2bd6;font-size:12px;
+        text-shadow:0 0 8px #ff2bd6}
+  .ping{width:14px;height:14px;border-radius:50%;box-shadow:0 0 0 0 currentColor;
+        animation:pulse 1.6s infinite;cursor:pointer}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 currentColor}70%{box-shadow:0 0 0 16px transparent}
+                   100%{box-shadow:0 0 0 0 transparent}}
+  .mapboxgl-popup-content{background:#0f1320;color:#e2e8ff;border:1px solid #1e2444;
+        font-family:Consolas,monospace;font-size:12px}
+  .mapboxgl-popup-content b{color:#00e5ff}
+  .tour{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);z-index:5;
+        display:flex;gap:8px}
+  .tour button{background:#151a2b;color:#00e5ff;border:1px solid #1e2444;padding:6px 12px;
+        font-family:Consolas,monospace;cursor:pointer;border-radius:4px}
+</style></head><body>
+<div id="map"></div>
+<div class="hud"><h1>◈ ORION // 3D GEO-INT</h1>
+  <p>TARGET: __TARGET__ · operator __CREATOR__</p>
+  <p>◦ SIMULAZIONE — coordinate reali, dati fittizi ◦</p></div>
+<div class="badge">CLASSIFIED // SIM</div>
+<div class="cred">created by __CREATOR__</div>
+<div class="tour"><button id="tourBtn">⏸ ferma tour</button>
+  <button id="topBtn">🌍 globo</button></div>
+<script>
+mapboxgl.accessToken="__TOKEN__";
+const targets=__MARKERS__;
+const first=targets[0]||{lat:41.9,lon:12.5};
+const colorFor=t=>({LOW:"#39ff14",MEDIUM:"#ffb020",HIGH:"#ff3b5c"}[t]||"#00e5ff");
+const map=new mapboxgl.Map({container:"map",style:"mapbox://styles/mapbox/standard",
+  center:[first.lon,first.lat],zoom:4,pitch:62,bearing:-18,projection:"globe",antialias:true});
+map.addControl(new mapboxgl.NavigationControl({visualizePitch:true}),"bottom-right");
+map.on("style.load",()=>{
+  try{map.setConfigProperty("basemap","lightPreset","night");}catch(e){}
+  map.addSource("dem",{type:"raster-dem",url:"mapbox://mapbox.mapbox-terrain-dem-v1",
+    tileSize:512,maxzoom:14});
+  map.setTerrain({source:"dem",exaggeration:1.5});
+  map.setFog({color:"rgb(10,12,20)","high-color":"rgb(20,45,90)","horizon-blend":0.2,
+    "space-color":"rgb(2,3,8)","star-intensity":0.7});
+  targets.forEach(t=>{
+    const el=document.createElement("div");el.className="ping";el.style.color=colorFor(t.threat);
+    el.style.background=colorFor(t.threat);
+    new mapboxgl.Marker({element:el}).setLngLat([t.lon,t.lat])
+      .setPopup(new mapboxgl.Popup({offset:18}).setHTML(
+        "<b>"+t.name+"</b><br>"+t.role+"<br>minaccia: "+t.threat+
+        "<br>"+t.lat.toFixed(4)+", "+t.lon.toFixed(4)+"<br><i>SIM · by __CREATOR__</i>"))
+      .addTo(map);
+  });
+  let i=0,playing=true;
+  function tour(){ if(!playing||!targets.length)return;
+    const t=targets[i%targets.length];i++;
+    map.flyTo({center:[t.lon,t.lat],zoom:6.5,pitch:65,bearing:(i*40)%360,
+      duration:5000,essential:true});}
+  tour();const iv=setInterval(tour,6000);
+  document.getElementById("tourBtn").onclick=e=>{playing=!playing;
+    e.target.textContent=playing?"⏸ ferma tour":"▶ avvia tour";if(playing)tour();};
+  document.getElementById("topBtn").onclick=()=>map.flyTo({center:[10,30],zoom:1.6,pitch:0,
+    bearing:0,duration:3000});
+  map.on("dragstart",()=>{playing=false;
+    document.getElementById("tourBtn").textContent="▶ avvia tour";});
+});
+</script></body></html>"""
+
+
+def build_mapbox_html(data, token):
+    """Costruisce la pagina Mapbox GL JS (globo 3D + terreno + marker identità)."""
+    markers = [{"name": it["name"], "lat": it["geo"][0], "lon": it["geo"][1],
+                "threat": it["threat"], "role": it["role"]} for it in data["identities"]]
+    return (MAPBOX_HTML
+            .replace("__TOKEN__", token)
+            .replace("__MARKERS__", json.dumps(markers))
+            .replace("__TARGET__", str(data["target"]).replace("<", "").replace(">", ""))
+            .replace("__CREATOR__", CREATOR))
 ROLES = ["Consulente", "Sviluppatore", "Analista", "Imprenditore", "Fotografo",
          "Ricercatore", "Broker", "Giornalista", "Ingegnere", "DJ", "Trader"]
 PLATFORMS = [("Instagram", "◎"), ("Facebook", "f"), ("X", "✕"), ("LinkedIn", "in"),
@@ -471,8 +690,10 @@ def build_dossier(target):
                          "sev": rng.choice(["info", "warn", "bad"])})
 
     risk = min(99, int(footprint["exposure"] * 0.6 + (100 - footprint["privacy"]) * 0.4))
+    case_id = f"ORION-{rng.randint(1000,9999)}-{rng.choice('ABCDEFXZ')}{rng.randint(10,99)}"
     return {
         "simulation": True, "creator": CREATOR, "target": target,
+        "case_id": case_id, "classification": rng.choice(["CONFIDENTIAL", "SECRET", "TOP SECRET"]),
         "generated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "summary": {"threat": identities[0]["threat"], "confidence": identities[0]["confidence"],
                     "clearance": f"LEVEL {rng.randint(2,4)}", "risk": risk},
@@ -668,6 +889,156 @@ class CinematicIntro:
 
 
 # ===========================================================================
+#  BOOT SPLASH  —  teschio hacker all'avvio
+# ===========================================================================
+class BootSplash:
+    """Schermata d'avvio a tutto schermo: teschio al neon + boot-log hacker."""
+    FPS_MS = 33
+
+    def __init__(self, root, on_done=None, accent=None, duration=96):
+        self.root = root
+        self.on_done = on_done
+        self.accent = accent or THEME["accent"]
+        self.frame = 0
+        self.total = duration
+        self.running = True
+        self.after_id = None
+        self.matrix = []
+        self.skull_tk = None
+        self.win = tk.Toplevel(root)
+        self.win.configure(bg=THEME["black"])
+        self.win.attributes("-topmost", True)
+        try:
+            self.win.attributes("-fullscreen", True)
+        except Exception:
+            self.win.geometry(f"{root.winfo_screenwidth()}x{root.winfo_screenheight()}+0+0")
+        self.cv = tk.Canvas(self.win, bg=THEME["black"], highlightthickness=0)
+        self.cv.pack(fill="both", expand=True)
+        self.log = [
+            "ORION INTELLIGENCE TERMINAL  v4.0",
+            "> establishing secure enclave ......... [OK]",
+            "> loading operator profile: MAIKGOST . [OK]",
+            "> mounting encrypted vault ............ [OK]",
+            "> spoofing egress node  CH-07 ......... [OK]",
+            "> neural face-match engine ............ [OK]",
+            "> quantum keyring unlocked ............ [OK]",
+            "> ACCESS GRANTED — welcome, operator",
+        ]
+        for ev in ("<Button-1>", "<Escape>", "<space>", "<Return>"):
+            self.win.bind(ev, lambda e: self.finish())
+        self.win.focus_set()
+        self._prep_skull()
+        self._tick()
+
+    def _prep_skull(self):
+        if not PIL_OK:
+            return
+        self.win.update_idletasks()
+        H = self.win.winfo_screenheight()
+        sh = int(H * 0.52)
+        sw = int(sh * 380 / 480)
+        try:
+            self.skull_tk = ImageTk.PhotoImage(render_skull((sw, sh), self.accent))
+        except Exception:
+            self.skull_tk = None
+
+    def _dims(self):
+        w, h = self.cv.winfo_width(), self.cv.winfo_height()
+        if w <= 1:
+            w, h = self.win.winfo_screenwidth(), self.win.winfo_screenheight()
+        return w, h
+
+    def _tick(self):
+        if not self.running or not self.win.winfo_exists():
+            return
+        try:
+            w, h = self._dims()
+            if not self.matrix:
+                for i in range(max(10, w // 26)):
+                    self.matrix.append({"x": i * 26 + 6, "y": random.randint(-h, 0),
+                                        "speed": random.uniform(10, 26),
+                                        "len": random.randint(5, 14)})
+            self.cv.delete("all")
+            self.cv.create_rectangle(0, 0, w, h, fill=THEME["black"], outline="")
+            # matrix rain
+            for col in self.matrix:
+                col["y"] += col["speed"]
+                if col["y"] - col["len"] * 15 > h:
+                    col["y"] = random.randint(-h // 2, 0)
+                for k in range(col["len"]):
+                    y = col["y"] - k * 15
+                    if 0 <= y <= h:
+                        c = (THEME["white"] if k == 0 else
+                             lerp_color(self.accent, THEME["bg"], k / col["len"]))
+                        self.cv.create_text(col["x"], y, text=random.choice(MATRIX_CHARS),
+                                            fill=c, font=(MONO, 11))
+            # teschio (con leggero glitch orizzontale)
+            gx = random.randint(-4, 4) if (self.frame // 3) % 7 == 0 else 0
+            if self.skull_tk:
+                self.cv.create_image(w // 2 + gx, int(h * 0.42), image=self.skull_tk)
+            else:
+                self.cv.create_text(w // 2, int(h * 0.4), text="☠", font=(MONO, 120),
+                                    fill=self.accent)
+                self.cv.create_text(w // 2, int(h * 0.6), text=CREATOR,
+                                    font=(MONO, 30, "bold"), fill=THEME["white"])
+            # scanline glitch
+            if (self.frame // 3) % 5 == 0:
+                gy = random.randint(int(h * 0.2), int(h * 0.7))
+                self.cv.create_rectangle(0, gy, w, gy + 3,
+                                         fill=lerp_color(self.accent, THEME["bg"], 0.4),
+                                         outline="")
+            # boot log
+            idx = min(len(self.log), self.frame // 7)
+            for i, line in enumerate(self.log[:idx]):
+                col = THEME["green"] if "OK" in line or "GRANTED" in line else self.accent
+                self.cv.create_text(40, int(h * 0.7) + i * 18, text=line, anchor="w",
+                                    fill=col, font=(MONO, 11))
+            # progress
+            pw = int(w * 0.5); px = (w - pw) // 2; py = int(h * 0.9)
+            prog = min(1.0, self.frame / self.total)
+            self.cv.create_rectangle(px, py, px + pw, py + 10, outline=self.accent)
+            self.cv.create_rectangle(px, py, px + int(pw * prog), py + 10,
+                                     fill=self.accent, outline="")
+            self.cv.create_text(w // 2, py + 28, fill=THEME["dim"], font=(MONO, 10),
+                                text=f"INITIALIZING SECURE TERMINAL … {int(prog*100)}%  ·  "
+                                     "click / ⎵ per entrare")
+            # HUD angoli
+            m, L = 18, 34
+            for (ax, ay, dx, dy) in [(m, m, 1, 1), (w - m, m, -1, 1),
+                                     (m, h - m, 1, -1), (w - m, h - m, -1, -1)]:
+                self.cv.create_line(ax, ay, ax + dx * L, ay, fill=self.accent, width=2)
+                self.cv.create_line(ax, ay, ax, ay + dy * L, fill=self.accent, width=2)
+            self.cv.create_text(m + 4, m - 2, anchor="nw", fill=self.accent, font=(MONO, 10),
+                                text=f"ORION//SECURE · operator {CREATOR}")
+            self.cv.create_text(w - m - 4, m - 2, anchor="ne", fill=THEME["amber"],
+                                font=(MONO, 9), text="◦ SIMULAZIONE / GIOCO ◦")
+        except tk.TclError:
+            return
+        self.frame += 1
+        if self.frame >= self.total:
+            self.finish()
+            return
+        self.after_id = self.win.after(self.FPS_MS, self._tick)
+
+    def finish(self):
+        if not self.running:
+            return
+        self.running = False
+        if self.after_id:
+            try:
+                self.win.after_cancel(self.after_id)
+            except Exception:
+                pass
+        try:
+            if self.win.winfo_exists():
+                self.win.destroy()
+        except Exception:
+            pass
+        if callable(self.on_done):
+            self.on_done()
+
+
+# ===========================================================================
 #  ANIMATORI CANVAS: NETWORK GRAPH + GEO MAP
 # ===========================================================================
 class NetworkGraph:
@@ -762,22 +1133,36 @@ class NetworkGraph:
 
 
 class GeoMap:
-    """Mappa stilizzata con ping geolocalizzati animati."""
-    BLOBS = [[(0.14, 0.34), (0.30, 0.30), (0.34, 0.52), (0.22, 0.66), (0.10, 0.56)],
-             [(0.44, 0.30), (0.66, 0.28), (0.64, 0.60), (0.50, 0.58), (0.46, 0.44)],
-             [(0.70, 0.34), (0.86, 0.36), (0.88, 0.62), (0.74, 0.64)]]
-
-    def __init__(self, canvas, data, accent=None):
+    """Mappa tattica con ping geolocalizzati (coordinate reali proiettate)."""
+    def __init__(self, canvas, data, accent=None, on_open3d=None):
         self.c = canvas
         self.accent = accent or THEME["accent"]
         self.frame = 0
         self.running = True
         self.after_id = None
-        pts = []
-        for it in data["identities"]:
-            pts.append((it["geo"][0], it["geo"][1], it["name"], it["threat"]))
-        self.points = pts
+        self.on_open3d = on_open3d
+        self.points = [(it["geo"][0], it["geo"][1], it["name"], it["threat"])
+                       for it in data["identities"]]
         self._tick()
+
+    def _project(self, w, h):
+        fps = [project_equirect(lat, lon) for (lat, lon, _, _) in self.points]
+        xs = [p[0] for p in fps] or [0.5]
+        ys = [p[1] for p in fps] or [0.5]
+        minx, maxx = min(xs), max(xs)
+        miny, maxy = min(ys), max(ys)
+        spanx = max(maxx - minx, 0.08)
+        spany = max(maxy - miny, 0.05)
+        cx0, cy0 = (minx + maxx) / 2, (miny + maxy) / 2
+        minx, maxx = cx0 - spanx / 2, cx0 + spanx / 2
+        miny, maxy = cy0 - spany / 2, cy0 + spany / 2
+        px, py = w * 0.14, h * 0.16
+        out = []
+        for (lat, lon, name, threat), (fx, fy) in zip(self.points, fps):
+            x = px + (fx - minx) / (maxx - minx) * (w - 2 * px)
+            y = py + (fy - miny) / (maxy - miny) * (h - 2 * py)
+            out.append((x, y, name, threat, lat, lon))
+        return out
 
     def _tick(self):
         if not self.running or not self.c.winfo_exists():
@@ -788,35 +1173,33 @@ class GeoMap:
                 w, h = 800, 560
             self.c.delete("all")
             self.c.create_rectangle(0, 0, w, h, fill=THEME["bg2"], outline="")
-            # griglia
             for gx in range(0, w, 46):
                 self.c.create_line(gx, 0, gx, h, fill=lerp_color(THEME["bg2"], THEME["line"], 0.5))
             for gy in range(0, h, 46):
                 self.c.create_line(0, gy, w, gy, fill=lerp_color(THEME["bg2"], THEME["line"], 0.5))
-            # continenti
-            for blob in self.BLOBS:
-                self.c.create_polygon([(x * w, y * h) for x, y in blob],
-                                      fill=THEME["panel"],
-                                      outline=lerp_color(self.accent, THEME["bg"], 0.7))
-            # archi tra i punti
-            for i in range(len(self.points) - 1):
-                x1, y1 = self.points[i][0] * w, self.points[i][1] * h
-                x2, y2 = self.points[i + 1][0] * w, self.points[i + 1][1] * h
+            pts = self._project(w, h)
+            for i in range(len(pts) - 1):
+                x1, y1 = pts[i][0], pts[i][1]
+                x2, y2 = pts[i + 1][0], pts[i + 1][1]
                 mx, my = (x1 + x2) / 2, min(y1, y2) - 50
                 self._curve(x1, y1, mx, my, x2, y2)
-            # ping
-            for (fx, fy, name, threat) in self.points:
-                x, y = fx * w, fy * h
+            for (x, y, name, threat, lat, lon) in pts:
                 col = {"LOW": THEME["green"], "MEDIUM": THEME["amber"],
                        "HIGH": THEME["red"]}.get(threat, self.accent)
                 for k in range(3):
                     rad = 6 + ((self.frame * 2 + k * 16) % 48)
                     self.c.create_oval(x - rad, y - rad, x + rad, y + rad,
                                        outline=lerp_color(col, THEME["bg2"], rad / 54))
+                self.c.create_line(x, y - 16, x, y + 16, fill=col)
+                self.c.create_line(x - 16, y, x + 16, y, fill=col)
                 self.c.create_oval(x - 4, y - 4, x + 4, y + 4, fill=col, outline=THEME["white"])
-                self.c.create_text(x, y - 16, text=name, fill=THEME["text"], font=(MONO, 9, "bold"))
+                self.c.create_text(x, y - 22, text=name, fill=THEME["text"], font=(MONO, 9, "bold"))
+                self.c.create_text(x, y + 22, text=f"{lat:.3f}, {lon:.3f}", fill=THEME["dim"],
+                                   font=(MONO, 8))
             self.c.create_text(14, h - 12, anchor="w", fill=THEME["dim"], font=(MONO, 9),
-                               text=f"GEO-INT · posizioni simulate · by {CREATOR}")
+                               text=f"GEO-INT · coordinate reali (dati SIM) · by {CREATOR}")
+            self.c.create_text(w - 14, h - 12, anchor="e", fill=self.accent, font=(MONO, 9),
+                               text="🌍 usa il bottone per la mappa 3D Mapbox")
         except tk.TclError:
             return
         self.frame += 1
@@ -875,6 +1258,10 @@ class SpyOSINTApp:
         self._build_ui()
         self._animate_title()
         self._clock()
+
+        if self.settings.get("splash", True) and PIL_OK:
+            self.beep()
+            BootSplash(self.root, accent=THEME["accent"])
 
     # ---- impostazioni ---------------------------------------------------
     def _load_settings(self):
@@ -1085,6 +1472,13 @@ class SpyOSINTApp:
         self.behav_text = self._console(self.tab_behav, "📈 COMPORTAMENTO — avvia una scansione")
         self.net_canvas = tk.Canvas(self.tab_net, bg=THEME["bg"], highlightthickness=0)
         self.net_canvas.pack(fill="both", expand=True)
+        geo_bar = tk.Frame(self.tab_geo, bg=THEME["panel"])
+        geo_bar.pack(fill="x")
+        tk.Button(geo_bar, text="🌍  APRI MAPPA 3D MAPBOX (browser)", font=(UI, 11, "bold"),
+                  bg=THEME["accent"], fg="black", relief="flat",
+                  command=self._open_mapbox_3d).pack(side="left", padx=8, pady=6)
+        tk.Label(geo_bar, text="globo 3D + terreno · richiede token Mapbox (⚙ Impostazioni)",
+                 font=(UI, 9), bg=THEME["panel"], fg=THEME["dim"]).pack(side="left", padx=6)
         self.geo_canvas = tk.Canvas(self.tab_geo, bg=THEME["bg2"], highlightthickness=0)
         self.geo_canvas.pack(fill="both", expand=True)
         for cv, msg in [(self.net_canvas, "🕸 RELATION MAP"), (self.geo_canvas, "🗺 GEO MAP")]:
@@ -1365,7 +1759,8 @@ class SpyOSINTApp:
             self._radar_img = ImageTk.PhotoImage(radar)
             self.radar_label.config(image=self._radar_img, text="")
         chunks = [(f"DOSSIER OSINT — {data['target']}\n", "h"),
-                  (f"created by {CREATOR}\n", "k"), ("═" * 44 + "\n\n", "k"),
+                  (f"CASO {data.get('case_id','—')}  ·  {data.get('classification','')}  ·  "
+                   f"operator {CREATOR}\n", "k"), ("═" * 44 + "\n\n", "k"),
                   ("IDENTITÀ RILEVATE: ", "k"), (f"{len(idt)}\n", "v"),
                   ("  ▸ PRIMARIA: ", "k"), (f"{idt[0]['name']}\n", "v"),
                   ("  ▸ ALIAS: ", "k"), (", ".join(idt[0]['aliases']) + "\n", "v"),
@@ -1676,12 +2071,39 @@ class SpyOSINTApp:
         self.beep()
         Slideshow(self.root, self.results, self.settings)
 
+    def _open_mapbox_3d(self):
+        if not self.results:
+            messagebox.showinfo("Mapbox 3D", "Prima esegui una scansione.")
+            return
+        token = (self.settings.get("mapbox_token", "").strip()
+                 or os.environ.get("MAPBOX_TOKEN", "").strip())
+        if not token:
+            if messagebox.askyesno(
+                    "Token Mapbox mancante",
+                    "Per la mappa 3D reale serve un token Mapbox (pk.…).\n\n"
+                    "Puoi inserirlo in ⚙ Impostazioni oppure nella variabile\n"
+                    "d'ambiente MAPBOX_TOKEN.\n\n"
+                    "Aprire ora le Impostazioni?"):
+                self.open_settings()
+            return
+        try:
+            html = build_mapbox_html(self.results, token)
+            path = os.path.join(tempfile.gettempdir(),
+                                f"orion_map_{_slug(self.results['target'])}.html")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(html)
+            webbrowser.open("file://" + path)
+            self.beep()
+            self._status("MAPPA 3D MAPBOX APERTA NEL BROWSER", THEME["green"])
+        except Exception as e:
+            messagebox.showerror("Mapbox 3D", str(e))
+
     # ---- IMPOSTAZIONI ---------------------------------------------------
     def open_settings(self):
         win = tk.Toplevel(self.root)
         win.title(f"⚙ Impostazioni — {CREATOR}")
         win.configure(bg=THEME["panel"])
-        win.geometry("470x600")
+        win.geometry("500x720")
         win.transient(self.root)
         s = self.settings
 
@@ -1692,6 +2114,8 @@ class SpyOSINTApp:
         v_red = tk.BooleanVar(value=s["redacted"])
         v_snd = tk.BooleanVar(value=s["sound"])
         v_acc = tk.StringVar(value=s["accent"])
+        v_splash = tk.BooleanVar(value=s.get("splash", True))
+        v_token = tk.StringVar(value=s.get("mapbox_token", ""))
 
         tk.Label(win, text="⚙  IMPOSTAZIONI", font=(UI, 16, "bold"), bg=THEME["panel"],
                  fg=THEME["accent"]).pack(anchor="w", padx=16, pady=(16, 6))
@@ -1720,7 +2144,8 @@ class SpyOSINTApp:
                  bg=THEME["panel"], fg=THEME["text"], troughcolor=THEME["bg2"],
                  highlightthickness=0, label="Secondi per foto", font=(UI, 9)).pack(fill="x",
                                                                                     padx=24)
-        section("GRAFICA / EFFETTI")
+        section("AVVIO / GRAFICA")
+        check("Schermata d'avvio col teschio (splash)", v_splash)
         check("Animazioni di sfondo (rete, mappa)", v_bg)
         check("Barra REDACTED sui volti", v_red)
         check("Suono", v_snd)
@@ -1733,11 +2158,21 @@ class SpyOSINTApp:
                            fg=col, selectcolor=THEME["bg2"], activebackground=THEME["panel"],
                            font=(UI, 10, "bold")).pack(side="left", padx=(0, 8))
 
+        section("MAPPA 3D — TOKEN MAPBOX")
+        tk.Entry(win, textvariable=v_token, font=(MONO, 10), bg=THEME["bg2"],
+                 fg=THEME["accent"], insertbackground=THEME["accent"], relief="flat",
+                 highlightbackground=THEME["line"], highlightthickness=1).pack(
+            fill="x", padx=24, ipady=5)
+        tk.Label(win, text="Incolla il tuo token pk.…  ·  account.mapbox.com  ·  "
+                          "resta locale, non finisce su GitHub",
+                 font=(UI, 8), bg=THEME["panel"], fg=THEME["dim"]).pack(anchor="w", padx=24)
+
         def save():
             self.settings.update({
                 "skip_intro": v_skip.get(), "intro_speed": v_speed.get(),
                 "slideshow_sec": round(v_sec.get(), 1), "bg_anim": v_bg.get(),
-                "redacted": v_red.get(), "sound": v_snd.get(), "accent": v_acc.get()})
+                "redacted": v_red.get(), "sound": v_snd.get(), "accent": v_acc.get(),
+                "splash": v_splash.get(), "mapbox_token": v_token.get().strip()})
             THEME["accent"] = self.settings["accent"]
             self._save_settings()
             self._status("IMPOSTAZIONI SALVATE", THEME["green"])
