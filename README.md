@@ -45,6 +45,12 @@ in stile film di spionaggio) scritto in Python + Tkinter.
   e *rim light*, grana CRT, *scanline*, vignettatura, cornice HUD, ID camera,
   coordinate GPS, mini-barcode, barra **REDACTED**, glitch, timbro `MATCH %` e
   watermark **MAIKGOST**.
+- **Foto realistiche (volti IA)**: con l'opzione *Foto realistiche* attiva, i
+  ritratti usano **volti generati da IA** (`thispersondoesnotexist.com`)
+  incorniciati dall'HUD di sorveglianza. ⚠️ Sono **persone che NON esistono**
+  (nessuna persona reale, nessun personaggio famoso). Richiede internet; se
+  offline o disattivata, si torna automaticamente alle **silhouette**
+  procedurali. I volti sono in cache locale in `orion_faces/` (gitignorata).
 - **Griglia stile Netflix** con *hover* luminoso e schede cliccabili.
 - **Riconoscimento facciale animato** nella vista di dettaglio.
 - **🎞 Slideshow** a schermo intero con **crossfade**, comandi play/pausa

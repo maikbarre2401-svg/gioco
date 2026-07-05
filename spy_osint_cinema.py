@@ -25,8 +25,10 @@ import tempfile
 import threading
 import time
 import tkinter as tk
+import urllib.request
 import webbrowser
 from datetime import datetime, timedelta
+from io import BytesIO
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 try:
@@ -70,11 +72,35 @@ SETTINGS_FILE = "orion_settings.json"
 DEFAULT_SETTINGS = {
     "skip_intro": False, "intro_speed": "media", "slideshow_sec": 4.0,
     "bg_anim": True, "redacted": True, "sound": True, "accent": THEME["accent"],
-    "splash": True, "mapbox_token": "", "splash_video": "",
+    "splash": True, "mapbox_token": "", "splash_video": "", "real_faces": True,
 }
 INTRO_SCALE = {"corta": 0.6, "media": 1.0, "lunga": 1.55}
 ACCENTS = [("Ciano", "#00e5ff"), ("Verde", "#39ff14"),
            ("Magenta", "#ff2bd6"), ("Ambra", "#ffb020")]
+
+# Volti realistici: generati da IA (thispersondoesnotexist) → NON persone reali.
+FACES_DIR = "orion_faces"
+FACE_URL = "https://thispersondoesnotexist.com/"
+
+
+def fetch_ai_face(cache_path, timeout=7):
+    """Scarica un volto generato da IA (persona NON reale). None se non riesce."""
+    try:
+        if os.path.exists(cache_path) and os.path.getsize(cache_path) > 2000:
+            return cache_path
+        if not PIL_OK:
+            return None
+        req = urllib.request.Request(FACE_URL, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            data = r.read()
+        if not data or len(data) < 2000:
+            return None
+        Image.open(BytesIO(data)).verify()          # deve essere un'immagine valida
+        with open(cache_path, "wb") as f:
+            f.write(data)
+        return cache_path
+    except Exception:
+        return None
 
 
 # ===========================================================================
@@ -157,6 +183,17 @@ def _vgrad(size, top, bottom):
     return g.resize((w, h))
 
 
+def _cover_fit(src, size):
+    """Ridimensiona e ritaglia al centro per riempire `size` (cover)."""
+    w, h = size
+    sw, sh = src.size
+    sc = max(w / sw, h / sh)
+    src = src.resize((max(1, int(sw * sc)), max(1, int(sh * sc))))
+    left = (src.width - w) // 2
+    top = (src.height - h) // 2
+    return src.crop((left, top, left + w, top + h))
+
+
 def render_logo(width=560, height=120):
     """Banner logo con glow + tagline 'created by MAIKGOST'."""
     if not PIL_OK:
@@ -220,56 +257,65 @@ def render_radar_chart(axes, size=260, accent=None):
 
 
 def generate_portrait(seed, size=(240, 290), accent=None, caption="", subcaption="",
-                      matched=True, redacted=True):
-    """Ritratto 'da sorveglianza' procedurale (silhouette astratta, NON reale)."""
+                      matched=True, redacted=True, base_image=None):
+    """Ritratto 'da sorveglianza'. Se base_image è dato usa quel volto (IA, NON
+    reale) come sfondo; altrimenti disegna una silhouette astratta procedurale."""
     if not PIL_OK:
         return None
     accent = accent or THEME["accent"]
     w, h = size
     rng = random.Random(int(hashlib.md5(str(seed).encode()).hexdigest(), 16))
-    palettes = [("#0a1424", "#132a44"), ("#0c1a16", "#173a2c"), ("#1a1410", "#3a2c1c"),
-                ("#101024", "#241a3a"), ("#08121a", "#123044"), ("#160a12", "#3a1830")]
-    top, bottom = rng.choice(palettes)
-    img = _vgrad((w, h), top, bottom)
     acc = hex_to_rgb(accent)
 
-    # --- Silhouette busto (layer separato, sfocato) ---
-    cx = w // 2 + rng.randint(-12, 12)
-    head_rx = int(w * rng.uniform(0.16, 0.19))
-    head_ry = int(head_rx * rng.uniform(1.18, 1.32))
-    head_cy = int(h * 0.40)
-    neutral = (150, 158, 182)
-    sil = tuple(int(lerp(hex_to_rgb(bottom)[i], neutral[i], 0.52)) for i in range(3))
-    sil_dark = tuple(int(c * 0.55) for c in sil)
-    rim = tuple(int(lerp(sil[i], 255, 0.6)) for i in range(3))
-    lit_left = rng.random() < 0.5
-
-    layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    sd = ImageDraw.Draw(layer)
-    sw = int(w * rng.uniform(0.66, 0.84))
-    sh_top = head_cy + int(head_ry * 0.7)
-    sd.ellipse([cx - sw // 2, sh_top, cx + sw // 2, h + int(h * 0.4)], fill=sil + (255,))
-    nw = int(head_rx * 0.75)
-    sd.polygon([(cx - nw, sh_top + 4), (cx + nw, sh_top + 4),
-                (cx + nw - 4, head_cy), (cx - nw + 4, head_cy)], fill=sil + (255,))
-    sd.ellipse([cx - head_rx, head_cy - head_ry, cx + head_rx, head_cy + head_ry],
-               fill=sil + (255,))
-    sd.pieslice([cx - head_rx - 2, head_cy - head_ry - 4,
-                 cx + head_rx + 2, head_cy + int(head_ry * 0.35)], 180, 360,
-                fill=sil_dark + (255,))
-    if lit_left:
-        sd.chord([cx, head_cy - head_ry, cx + head_rx, head_cy + head_ry], -90, 90,
-                 fill=sil_dark + (110,))
-        sd.arc([cx - head_rx, head_cy - head_ry, cx + head_rx, head_cy + head_ry],
-               100, 250, fill=rim + (230,), width=3)
+    if base_image is not None:
+        # --- volto (IA / non reale) come sfondo, riquadrato dall'HUD ---
+        cx = w // 2
+        head_rx, head_ry, head_cy = int(w * 0.24), int(h * 0.30), int(h * 0.40)
+        img = _cover_fit(base_image.convert("RGB"), (w, h))
+        draw = ImageDraw.Draw(img, "RGBA")
     else:
-        sd.chord([cx - head_rx, head_cy - head_ry, cx, head_cy + head_ry], 90, 270,
-                 fill=sil_dark + (110,))
-        sd.arc([cx - head_rx, head_cy - head_ry, cx + head_rx, head_cy + head_ry],
-               -70, 80, fill=rim + (230,), width=3)
-    layer = layer.filter(ImageFilter.GaussianBlur(1.4))
-    img = Image.alpha_composite(img.convert("RGBA"), layer).convert("RGB")
-    draw = ImageDraw.Draw(img, "RGBA")
+        palettes = [("#0a1424", "#132a44"), ("#0c1a16", "#173a2c"), ("#1a1410", "#3a2c1c"),
+                    ("#101024", "#241a3a"), ("#08121a", "#123044"), ("#160a12", "#3a1830")]
+        top, bottom = rng.choice(palettes)
+        img = _vgrad((w, h), top, bottom)
+
+        # --- Silhouette busto (layer separato, sfocato) ---
+        cx = w // 2 + rng.randint(-12, 12)
+        head_rx = int(w * rng.uniform(0.16, 0.19))
+        head_ry = int(head_rx * rng.uniform(1.18, 1.32))
+        head_cy = int(h * 0.40)
+        neutral = (150, 158, 182)
+        sil = tuple(int(lerp(hex_to_rgb(bottom)[i], neutral[i], 0.52)) for i in range(3))
+        sil_dark = tuple(int(c * 0.55) for c in sil)
+        rim = tuple(int(lerp(sil[i], 255, 0.6)) for i in range(3))
+        lit_left = rng.random() < 0.5
+
+        layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        sd = ImageDraw.Draw(layer)
+        sw = int(w * rng.uniform(0.66, 0.84))
+        sh_top = head_cy + int(head_ry * 0.7)
+        sd.ellipse([cx - sw // 2, sh_top, cx + sw // 2, h + int(h * 0.4)], fill=sil + (255,))
+        nw = int(head_rx * 0.75)
+        sd.polygon([(cx - nw, sh_top + 4), (cx + nw, sh_top + 4),
+                    (cx + nw - 4, head_cy), (cx - nw + 4, head_cy)], fill=sil + (255,))
+        sd.ellipse([cx - head_rx, head_cy - head_ry, cx + head_rx, head_cy + head_ry],
+                   fill=sil + (255,))
+        sd.pieslice([cx - head_rx - 2, head_cy - head_ry - 4,
+                     cx + head_rx + 2, head_cy + int(head_ry * 0.35)], 180, 360,
+                    fill=sil_dark + (255,))
+        if lit_left:
+            sd.chord([cx, head_cy - head_ry, cx + head_rx, head_cy + head_ry], -90, 90,
+                     fill=sil_dark + (110,))
+            sd.arc([cx - head_rx, head_cy - head_ry, cx + head_rx, head_cy + head_ry],
+                   100, 250, fill=rim + (230,), width=3)
+        else:
+            sd.chord([cx - head_rx, head_cy - head_ry, cx, head_cy + head_ry], 90, 270,
+                     fill=sil_dark + (110,))
+            sd.arc([cx - head_rx, head_cy - head_ry, cx + head_rx, head_cy + head_ry],
+                   -70, 80, fill=rim + (230,), width=3)
+        layer = layer.filter(ImageFilter.GaussianBlur(1.4))
+        img = Image.alpha_composite(img.convert("RGBA"), layer).convert("RGB")
+        draw = ImageDraw.Draw(img, "RGBA")
 
     # grana
     try:
@@ -1235,6 +1281,7 @@ class SpyOSINTApp:
         self.search_active = False
         self.force_fresh = False
         self._img_refs = []
+        self._face_cache = {}
         self._title_phase = 0.0
         self.net_anim = None
         self.geo_anim = None
@@ -1707,10 +1754,60 @@ class SpyOSINTApp:
         if not data:
             data = build_dossier(target)
             self._cache_put(target, data)
+        self._ensure_faces(data, target)     # volti IA (se attivo/online), con fallback
         self.results = data
         self.force_fresh = False
         self.surveillance_level = 1
         self.root.after(0, self._render, data)
+
+    # ---- volti realistici (IA, NON reali) ------------------------------
+    def _ensure_faces(self, data, target):
+        for it in data["identities"]:
+            it.setdefault("face_path", "")
+        if not self.settings.get("real_faces", True):
+            for it in data["identities"]:
+                it["face_path"] = ""
+            return
+        try:
+            os.makedirs(FACES_DIR, exist_ok=True)
+        except Exception:
+            return
+        online = True
+        n = len(data["identities"])
+        for idx, it in enumerate(data["identities"]):
+            cur = it.get("face_path", "")
+            if cur and os.path.exists(cur):
+                continue
+            it["face_path"] = ""
+            if not online:
+                continue
+            self.root.after(0, self._progress, 96, f"Recupero volti IA… ({idx+1}/{n})")
+            cp = os.path.join(FACES_DIR,
+                              hashlib.md5(f"{target}|{idx}".encode()).hexdigest() + ".jpg")
+            p = fetch_ai_face(cp)
+            if p:
+                it["face_path"] = p
+            else:
+                online = False       # probabilmente offline: smetto di riprovare
+        self._cache_put(target, data)
+
+    def _face_for(self, photo):
+        """PIL del volto IA per la foto (in base all'identità), o None."""
+        if not self.settings.get("real_faces", True) or not self.results:
+            return None
+        ids = self.results.get("identities", [])
+        ix = photo.get("identity", 0)
+        path = ids[ix].get("face_path", "") if ix < len(ids) else ""
+        if not path or not os.path.exists(path):
+            return None
+        if path in self._face_cache:
+            return self._face_cache[path]
+        try:
+            im = Image.open(path).convert("RGB")
+            self._face_cache[path] = im
+            return im
+        except Exception:
+            return None
 
     # ---- render ---------------------------------------------------------
     def _set(self, widget, chunks):
@@ -1940,8 +2037,13 @@ class SpyOSINTApp:
         tk.Label(win, text=f"🎯 {len(data['identities'])} identità · 📸 {len(data['photos'])} asset "
                           f"· ⚠ {s['threat']} · conf {s['confidence']}%   ◆  created by {CREATOR}",
                  font=(UI, 12), bg=THEME["bg"], fg=THEME["dim"]).pack(anchor="w", padx=26)
-        tk.Label(win, text="SIMULAZIONE — ritratti generati proceduralmente, non persone reali.",
-                 font=(UI, 9, "italic"), bg=THEME["bg"], fg=THEME["amber"]).pack(anchor="w", padx=26)
+        faces_on = self.settings.get("real_faces", True) and any(
+            it.get("face_path") for it in data["identities"])
+        note = ("SIMULAZIONE — volti generati da IA (thispersondoesnotexist): "
+                "NON sono persone reali." if faces_on else
+                "SIMULAZIONE — ritratti generati proceduralmente, non persone reali.")
+        tk.Label(win, text=note, font=(UI, 9, "italic"), bg=THEME["bg"],
+                 fg=THEME["amber"]).pack(anchor="w", padx=26)
         nb = ttk.Notebook(win, style="Orion.TNotebook")
         nb.pack(fill="both", expand=True, padx=16, pady=12)
         win.bind("<Escape>", lambda e: win.destroy())
@@ -1992,7 +2094,8 @@ class SpyOSINTApp:
         seed = f"{self.results['target']}|{photo['id']}"
         img = generate_portrait(seed, (240, 290), THEME["accent"], photo["identity_name"],
                                 f"{photo['tag']} · {photo['location']}", photo["matched"],
-                                self.settings.get("redacted", True))
+                                self.settings.get("redacted", True),
+                                base_image=self._face_for(photo))
         tkimg = ImageTk.PhotoImage(img)
         self._img_refs.append(tkimg)
         card = tk.Frame(parent, bg=THEME["card"], highlightbackground=THEME["line"],
@@ -2039,7 +2142,8 @@ class SpyOSINTApp:
         seed = f"{self.results['target']}|{photo['id']}"
         big = generate_portrait(seed, (400, 480), THEME["accent"], photo["identity_name"],
                                 f"{photo['tag']} · {photo['location']}", photo["matched"],
-                                self.settings.get("redacted", True))
+                                self.settings.get("redacted", True),
+                                base_image=self._face_for(photo))
         tkbig = ImageTk.PhotoImage(big)
         self._img_refs.append(tkbig)
         cv = tk.Canvas(body, width=400, height=480, bg=THEME["black"], highlightthickness=1,
@@ -2130,6 +2234,7 @@ class SpyOSINTApp:
         v_splash = tk.BooleanVar(value=s.get("splash", True))
         v_token = tk.StringVar(value=s.get("mapbox_token", ""))
         v_video = tk.StringVar(value=s.get("splash_video", ""))
+        v_faces = tk.BooleanVar(value=s.get("real_faces", True))
 
         tk.Label(win, text="⚙  IMPOSTAZIONI", font=(UI, 16, "bold"), bg=THEME["panel"],
                  fg=THEME["accent"]).pack(anchor="w", padx=16, pady=(16, 6))
@@ -2163,6 +2268,7 @@ class SpyOSINTApp:
         check("Animazioni di sfondo (rete, mappa)", v_bg)
         check("Barra REDACTED sui volti", v_red)
         check("Suono", v_snd)
+        check("Foto realistiche (volti IA — persone NON reali, richiede internet)", v_faces)
 
         section("VIDEO D'AVVIO  (il tuo video con overlay MAIKGOST)")
         vrow = tk.Frame(win, bg=THEME["panel"])
@@ -2209,7 +2315,7 @@ class SpyOSINTApp:
                 "slideshow_sec": round(v_sec.get(), 1), "bg_anim": v_bg.get(),
                 "redacted": v_red.get(), "sound": v_snd.get(), "accent": v_acc.get(),
                 "splash": v_splash.get(), "mapbox_token": v_token.get().strip(),
-                "splash_video": v_video.get().strip()})
+                "splash_video": v_video.get().strip(), "real_faces": v_faces.get()})
             THEME["accent"] = self.settings["accent"]
             self._save_settings()
             self._status("IMPOSTAZIONI SALVATE", THEME["green"])
@@ -2286,6 +2392,7 @@ class Slideshow:
         self.fade_id = None
         self.cur_img = None
         self.cache = {}
+        self._facecache = {}
         self.ref = None
         self.W = self.H = 0
         self.interval = max(1000, int(settings.get("slideshow_sec", 4.0) * 1000))
@@ -2330,6 +2437,21 @@ class Slideshow:
             h = self.win.winfo_screenheight() - 60
         return max(400, w), max(400, h)
 
+    def _face_for(self, p):
+        if not self.settings.get("real_faces", True):
+            return None
+        ids = self.data.get("identities", [])
+        ix = p.get("identity", 0)
+        path = ids[ix].get("face_path", "") if ix < len(ids) else ""
+        if not path or not os.path.exists(path):
+            return None
+        if path not in self._facecache:
+            try:
+                self._facecache[path] = Image.open(path).convert("RGB")
+            except Exception:
+                self._facecache[path] = None
+        return self._facecache[path]
+
     def _portrait(self, idx):
         if idx in self.cache:
             return self.cache[idx]
@@ -2339,7 +2461,8 @@ class Slideshow:
         pw = int(ph / 1.2)
         img = generate_portrait(f"{self.data['target']}|{p['id']}", (pw, ph), self.accent,
                                 p["identity_name"], f"{p['tag']} · {p['location']}",
-                                p["matched"], self.settings.get("redacted", True))
+                                p["matched"], self.settings.get("redacted", True),
+                                base_image=self._face_for(p))
         self.cache[idx] = img
         return img
 
