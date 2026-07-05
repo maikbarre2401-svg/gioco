@@ -25,7 +25,16 @@ in stile film di spionaggio) scritto in Python + Tkinter.
   watermark **MAIKGOST**.
 - **Griglia stile Netflix** con *hover* luminoso e schede cliccabili.
 - **Riconoscimento facciale animato** nella vista di dettaglio.
-- **🎞 Slideshow** automatico a schermo intero (← → per navigare).
+- **🎞 Slideshow** a schermo intero con **crossfade**, comandi play/pausa
+  (⎵), avanti/indietro (← →) e velocità regolabile (+/−).
+
+**⚙ Impostazioni** (pannello dedicato, salvate in `orion_settings.json`)
+- **Intro**: salta intro oppure velocità **Corta / Media / Lunga**
+  (~1.9 / 3.2 / 4.8 s).
+- **Slideshow**: secondi per foto (1.5–8 s).
+- **Grafica**: animazioni di sfondo on/off, barra **REDACTED** on/off, suono.
+- **Colore accento**: Ciano / Verde / Magenta / Ambra (cambia HUD, mirini,
+  grafici, ritratti…).
 
 **Strumenti (pannello 🧰)**
 - **📄 Esporta dossier** in `.txt` e `.json`.

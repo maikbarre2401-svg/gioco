@@ -2,5 +2,8 @@ __pycache__/
 *.pyc
 *.db
 preview_*.png
+orion_settings.json
+dossier_*.txt
+dossier_*.json
 .venv/
 venv/

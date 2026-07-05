@@ -55,6 +55,16 @@ MONO = "Consolas"
 UI = "Segoe UI"
 MATRIX_CHARS = "アカサタナハマヤラабвг0123456789ABCDEF$#@%&<>/*ΞΨΛØ§"
 
+# --- impostazioni (persistite in orion_settings.json) ---
+SETTINGS_FILE = "orion_settings.json"
+DEFAULT_SETTINGS = {
+    "skip_intro": False, "intro_speed": "media", "slideshow_sec": 4.0,
+    "bg_anim": True, "redacted": True, "sound": True, "accent": THEME["accent"],
+}
+INTRO_SCALE = {"corta": 0.6, "media": 1.0, "lunga": 1.55}
+ACCENTS = [("Ciano", "#00e5ff"), ("Verde", "#39ff14"),
+           ("Magenta", "#ff2bd6"), ("Ambra", "#ffb020")]
+
 
 # ===========================================================================
 #  COLORE / FONT
@@ -199,7 +209,7 @@ def render_radar_chart(axes, size=260, accent=None):
 
 
 def generate_portrait(seed, size=(240, 290), accent=None, caption="", subcaption="",
-                      matched=True):
+                      matched=True, redacted=True):
     """Ritratto 'da sorveglianza' procedurale (silhouette astratta, NON reale)."""
     if not PIL_OK:
         return None
@@ -274,7 +284,7 @@ def generate_portrait(seed, size=(240, 290), accent=None, caption="", subcaption
         draw.line([(0, y), (w, y)], fill=(0, 0, 0, 60))
 
     # barra REDACTED sugli occhi (rinforza: non è una persona reale)
-    if rng.random() < 0.45:
+    if redacted and rng.random() < 0.45:
         ey = head_cy - int(head_ry * 0.12)
         draw.rectangle([cx - head_rx - 4, ey - 8, cx + head_rx + 4, ey + 8],
                        fill=(0, 0, 0, 235))
@@ -336,10 +346,10 @@ def generate_portrait(seed, size=(240, 290), accent=None, caption="", subcaption
         draw.text((10, h - bar + 4), caption[:20], font=load_font(14, bold=True),
                   fill=hex_to_rgb(THEME["white"]))
         if subcaption:
-            draw.text((10, h - bar + 20), subcaption[:30], font=fmono,
+            draw.text((10, h - bar + 20), subcaption[:23], font=fmono,
                       fill=hex_to_rgb(THEME["dim"]))
-    draw.text((w - 8, h - 6), CREATOR, font=fmono,
-              fill=hex_to_rgb(THEME["white"]) + (150,), anchor="rs")
+    draw.text((w - 8, h - 6), CREATOR, font=load_font(10),
+              fill=hex_to_rgb(THEME["white"]) + (140,), anchor="rs")
     return img
 
 
@@ -475,9 +485,9 @@ def build_dossier(target):
 #  INTRO CINEMATOGRAFICO (breve, non bloccante)
 # ===========================================================================
 class CinematicIntro:
-    FPS_MS = 30
+    FPS_MS = 33
 
-    def __init__(self, canvas, target, on_done, accent=None):
+    def __init__(self, canvas, target, on_done, accent=None, scale=1.0):
         self.c = canvas
         self.target = (target or "UNKNOWN").upper()
         self.on_done = on_done
@@ -494,15 +504,16 @@ class CinematicIntro:
                     "biometric vector match ..... [OK]",
                     "decrypting media cache ..... [OK]",
                     "access token elevated ...... [OK]"]
-        # intro breve: ~2.6s
-        self.timeline = [
-            ("◈ O R I O N", 46, self.accent, 12),
-            (CREATOR_TAG.upper(), 20, THEME["magenta"], 10),
-            (f"TARGET ▸ {self.target}", 30, THEME["white"], 14),
-            ("◎ BIOMETRICS MATCHED", 22, THEME["green"], 12),
-            ("◉ ACCESS GRANTED", 40, THEME["green"], 14),
+        # durata regolabile (scale): media ~3.5s
+        base = [
+            ("◈ O R I O N", 46, self.accent, 18),
+            (CREATOR_TAG.upper(), 20, THEME["magenta"], 14),
+            (f"TARGET ▸ {self.target}", 30, THEME["white"], 22),
+            ("◎ BIOMETRICS MATCHED", 22, THEME["green"], 18),
+            ("◉ ACCESS GRANTED", 40, THEME["green"], 20),
         ]
-        self.total = sum(p[3] for p in self.timeline) + 4
+        self.timeline = [(t, s, c, max(6, int(d * scale))) for (t, s, c, d) in base]
+        self.total = sum(p[3] for p in self.timeline) + 6
         self.shutter = 0
         self._tick()
 
@@ -856,11 +867,38 @@ class SpyOSINTApp:
         self.net_anim = None
         self.geo_anim = None
 
+        self.settings = self._load_settings()
+        THEME["accent"] = self.settings.get("accent", THEME["accent"])
+
         self._setup_db()
         self._style()
         self._build_ui()
         self._animate_title()
         self._clock()
+
+    # ---- impostazioni ---------------------------------------------------
+    def _load_settings(self):
+        s = dict(DEFAULT_SETTINGS)
+        try:
+            with open(SETTINGS_FILE, encoding="utf-8") as f:
+                s.update(json.load(f))
+        except Exception:
+            pass
+        return s
+
+    def _save_settings(self):
+        try:
+            with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+                json.dump(self.settings, f, indent=2)
+        except Exception:
+            pass
+
+    def beep(self):
+        if self.settings.get("sound"):
+            try:
+                self.root.bell()
+            except Exception:
+                pass
 
     @staticmethod
     def _maximize(win):
@@ -934,6 +972,9 @@ class SpyOSINTApp:
                      fg=THEME["accent"]).pack(side="left")
         righth = tk.Frame(header, bg=THEME["bg"])
         righth.pack(side="right")
+        tk.Button(righth, text="⚙ IMPOSTAZIONI", font=(UI, 10, "bold"), bg=THEME["panel2"],
+                  fg=THEME["accent"], relief="flat", command=self.open_settings).pack(
+            anchor="e", pady=(0, 4))
         self.clock_label = tk.Label(righth, text="", font=(MONO, 12), bg=THEME["bg"],
                                     fg=THEME["dim"])
         self.clock_label.pack(anchor="e")
@@ -1280,15 +1321,24 @@ class SpyOSINTApp:
             self._render_timeline(data)
             self._render_footprint(data)
             self._render_behavior(data)
-            # animatori canvas
+            # animatori canvas (disattivabili dalle impostazioni)
             if self.net_anim:
                 self.net_anim.stop()
+                self.net_anim = None
             if self.geo_anim:
                 self.geo_anim.stop()
+                self.geo_anim = None
             self.net_canvas.delete("all")
             self.geo_canvas.delete("all")
-            self.net_anim = NetworkGraph(self.net_canvas, data, THEME["accent"])
-            self.geo_anim = GeoMap(self.geo_canvas, data, THEME["accent"])
+            if self.settings.get("bg_anim", True):
+                self.net_anim = NetworkGraph(self.net_canvas, data, THEME["accent"])
+                self.geo_anim = GeoMap(self.geo_canvas, data, THEME["accent"])
+            else:
+                for cv, msg in [(self.net_canvas, "🕸 RETE"), (self.geo_canvas, "🗺 MAPPA")]:
+                    cv.create_text(cv.winfo_width() // 2 or 400, 220,
+                                   text=f"{msg}\n(animazioni disattivate nelle impostazioni)",
+                                   fill=THEME["dim"], font=(MONO, 13), justify="center")
+            self.beep()
             self._status(f"COMPLETATO: {data['target']} — {len(data['photos'])} foto / "
                          f"{len(data['identities'])} identità · by {CREATOR}", THEME["green"])
         except Exception as e:
@@ -1441,10 +1491,18 @@ class SpyOSINTApp:
             win.attributes("-fullscreen", True)
         except Exception:
             self._maximize(win)
+        self.beep()
         canvas = tk.Canvas(win, bg=THEME["bg"], highlightthickness=0)
         canvas.pack(fill="both", expand=True)
+        if self.settings.get("skip_intro"):
+            self._gallery(win, canvas)
+            win.bind("<Escape>", lambda e: win.destroy())
+            win.focus_set()
+            return
+        scale = INTRO_SCALE.get(self.settings.get("intro_speed", "media"), 1.0)
         intro = CinematicIntro(canvas, self.results["target"],
-                               on_done=lambda: self._gallery(win, canvas), accent=THEME["accent"])
+                               on_done=lambda: self._gallery(win, canvas),
+                               accent=THEME["accent"], scale=scale)
         win.bind("<Escape>", lambda e: (intro.stop(), win.destroy()))
         win.bind("<space>", lambda e: (intro.stop(), self._gallery(win, canvas)))
         win.bind("<Return>", lambda e: (intro.stop(), self._gallery(win, canvas)))
@@ -1525,7 +1583,8 @@ class SpyOSINTApp:
     def _card(self, parent, photo):
         seed = f"{self.results['target']}|{photo['id']}"
         img = generate_portrait(seed, (240, 290), THEME["accent"], photo["identity_name"],
-                                f"{photo['tag']} · {photo['location']}", photo["matched"])
+                                f"{photo['tag']} · {photo['location']}", photo["matched"],
+                                self.settings.get("redacted", True))
         tkimg = ImageTk.PhotoImage(img)
         self._img_refs.append(tkimg)
         card = tk.Frame(parent, bg=THEME["card"], highlightbackground=THEME["line"],
@@ -1571,7 +1630,8 @@ class SpyOSINTApp:
         body.pack(fill="both", expand=True, padx=20, pady=20)
         seed = f"{self.results['target']}|{photo['id']}"
         big = generate_portrait(seed, (400, 480), THEME["accent"], photo["identity_name"],
-                                f"{photo['tag']} · {photo['location']}", photo["matched"])
+                                f"{photo['tag']} · {photo['location']}", photo["matched"],
+                                self.settings.get("redacted", True))
         tkbig = ImageTk.PhotoImage(big)
         self._img_refs.append(tkbig)
         cv = tk.Canvas(body, width=400, height=480, bg=THEME["black"], highlightthickness=1,
@@ -1610,7 +1670,86 @@ class SpyOSINTApp:
         if not self.results or not self.results.get("photos"):
             messagebox.showinfo("Slideshow", "Prima esegui una scansione.")
             return
-        Slideshow(self.root, self.results, self._img_refs)
+        if not PIL_OK:
+            messagebox.showerror("Pillow", "Installa Pillow: pip install Pillow")
+            return
+        self.beep()
+        Slideshow(self.root, self.results, self.settings)
+
+    # ---- IMPOSTAZIONI ---------------------------------------------------
+    def open_settings(self):
+        win = tk.Toplevel(self.root)
+        win.title(f"⚙ Impostazioni — {CREATOR}")
+        win.configure(bg=THEME["panel"])
+        win.geometry("470x600")
+        win.transient(self.root)
+        s = self.settings
+
+        v_skip = tk.BooleanVar(value=s["skip_intro"])
+        v_speed = tk.StringVar(value=s["intro_speed"])
+        v_sec = tk.DoubleVar(value=s["slideshow_sec"])
+        v_bg = tk.BooleanVar(value=s["bg_anim"])
+        v_red = tk.BooleanVar(value=s["redacted"])
+        v_snd = tk.BooleanVar(value=s["sound"])
+        v_acc = tk.StringVar(value=s["accent"])
+
+        tk.Label(win, text="⚙  IMPOSTAZIONI", font=(UI, 16, "bold"), bg=THEME["panel"],
+                 fg=THEME["accent"]).pack(anchor="w", padx=16, pady=(16, 6))
+
+        def section(text):
+            tk.Label(win, text=text, font=(UI, 10, "bold"), bg=THEME["panel"],
+                     fg=THEME["magenta"]).pack(anchor="w", padx=16, pady=(12, 2))
+
+        def check(text, var):
+            tk.Checkbutton(win, text=text, variable=var, bg=THEME["panel"], fg=THEME["text"],
+                           selectcolor=THEME["bg2"], activebackground=THEME["panel"],
+                           activeforeground=THEME["accent"], font=(UI, 10),
+                           anchor="w").pack(fill="x", padx=24)
+
+        section("INTRO CINEMATICA")
+        check("Salta l'intro", v_skip)
+        srow = tk.Frame(win, bg=THEME["panel"])
+        srow.pack(anchor="w", padx=24, pady=(2, 0))
+        for lab, val in [("Corta", "corta"), ("Media", "media"), ("Lunga", "lunga")]:
+            tk.Radiobutton(srow, text=lab, value=val, variable=v_speed, bg=THEME["panel"],
+                           fg=THEME["text"], selectcolor=THEME["bg2"],
+                           activebackground=THEME["panel"], font=(UI, 10)).pack(side="left",
+                                                                                padx=(0, 12))
+        section("SLIDESHOW")
+        tk.Scale(win, from_=1.5, to=8.0, resolution=0.5, orient="horizontal", variable=v_sec,
+                 bg=THEME["panel"], fg=THEME["text"], troughcolor=THEME["bg2"],
+                 highlightthickness=0, label="Secondi per foto", font=(UI, 9)).pack(fill="x",
+                                                                                    padx=24)
+        section("GRAFICA / EFFETTI")
+        check("Animazioni di sfondo (rete, mappa)", v_bg)
+        check("Barra REDACTED sui volti", v_red)
+        check("Suono", v_snd)
+
+        section("COLORE ACCENTO")
+        arow = tk.Frame(win, bg=THEME["panel"])
+        arow.pack(anchor="w", padx=24)
+        for name, col in ACCENTS:
+            tk.Radiobutton(arow, text=name, value=col, variable=v_acc, bg=THEME["panel"],
+                           fg=col, selectcolor=THEME["bg2"], activebackground=THEME["panel"],
+                           font=(UI, 10, "bold")).pack(side="left", padx=(0, 8))
+
+        def save():
+            self.settings.update({
+                "skip_intro": v_skip.get(), "intro_speed": v_speed.get(),
+                "slideshow_sec": round(v_sec.get(), 1), "bg_anim": v_bg.get(),
+                "redacted": v_red.get(), "sound": v_snd.get(), "accent": v_acc.get()})
+            THEME["accent"] = self.settings["accent"]
+            self._save_settings()
+            self._status("IMPOSTAZIONI SALVATE", THEME["green"])
+            self.beep()
+            if self.results:
+                self._render(self.results)   # riapplica accento a radar/grafi
+            win.destroy()
+
+        tk.Button(win, text="💾  SALVA", font=(UI, 12, "bold"), bg=THEME["accent"], fg="black",
+                  relief="flat", command=save).pack(fill="x", padx=16, pady=(20, 6))
+        tk.Label(win, text=f"created by {CREATOR}  ·  alcuni cambi valgono per nuove finestre",
+                 font=(UI, 8), bg=THEME["panel"], fg=THEME["dim"]).pack()
 
 
 class FaceScan:
@@ -1663,60 +1802,163 @@ class FaceScan:
 
 
 class Slideshow:
-    """Presentazione automatica dei ritratti a schermo intero."""
-    def __init__(self, root, data, img_refs):
+    """Presentazione automatica a schermo intero con crossfade e controlli."""
+    def __init__(self, root, data, settings):
         self.data = data
+        self.settings = settings
         self.photos = data["photos"]
+        self.accent = settings.get("accent", THEME["accent"])
         self.i = 0
-        self.refs = img_refs
+        self.paused = False
+        self.after_id = None
+        self.fade_id = None
+        self.cur_img = None
+        self.cache = {}
+        self.ref = None
+        self.W = self.H = 0
+        self.interval = max(1000, int(settings.get("slideshow_sec", 4.0) * 1000))
+
         self.win = tk.Toplevel(root)
         self.win.title(f"🎞 SLIDESHOW — by {CREATOR}")
         self.win.configure(bg=THEME["black"])
         try:
             self.win.attributes("-fullscreen", True)
         except Exception:
-            self.win.geometry("1000x800")
-        self.cv = tk.Canvas(self.win, bg=THEME["black"], highlightthickness=0)
-        self.cv.pack(fill="both", expand=True)
-        self.running = True
-        self.win.bind("<Escape>", lambda e: self.stop())
-        self.win.bind("<Right>", lambda e: self._show(self.i + 1))
-        self.win.bind("<Left>", lambda e: self._show(self.i - 1))
-        self.win.focus_set()
-        self._show(0)
+            self.win.geometry("1100x820")
 
-    def _show(self, idx):
-        if not self.running or not self.win.winfo_exists():
+        bar = tk.Frame(self.win, bg=THEME["panel"])
+        bar.pack(side="bottom", fill="x")
+        self.info = tk.Label(bar, text="", font=(MONO, 11), bg=THEME["panel"], fg=THEME["dim"])
+        self.info.pack(side="left", padx=14)
+        for txt, cmd in [("✕", self.stop), ("⏭", self.next), ("⏯", self.toggle),
+                         ("⏮", self.prev), ("+", self.faster), ("−", self.slower)]:
+            tk.Button(bar, text=txt, font=(UI, 12, "bold"), bg=THEME["panel2"],
+                      fg=self.accent, relief="flat", width=3, command=cmd).pack(
+                side="right", padx=3, pady=6)
+        self.speed_lbl = tk.Label(bar, text="", font=(MONO, 11), bg=THEME["panel"],
+                                  fg=self.accent)
+        self.speed_lbl.pack(side="right", padx=10)
+
+        self.cv = tk.Canvas(self.win, bg=THEME["black"], highlightthickness=0)
+        self.cv.pack(side="top", fill="both", expand=True)
+        self.win.bind("<Escape>", lambda e: self.stop())
+        self.win.bind("<Right>", lambda e: self.next())
+        self.win.bind("<Left>", lambda e: self.prev())
+        self.win.bind("<space>", lambda e: self.toggle())
+        self.win.focus_set()
+        self._update_speed()
+        self.win.after(90, self._start)     # attende il layout della finestra
+
+    def _dims(self):
+        self.win.update_idletasks()
+        w, h = self.cv.winfo_width(), self.cv.winfo_height()
+        if w <= 1:
+            w = self.win.winfo_screenwidth()
+        if h <= 1:
+            h = self.win.winfo_screenheight() - 60
+        return max(400, w), max(400, h)
+
+    def _portrait(self, idx):
+        if idx in self.cache:
+            return self.cache[idx]
+        p = self.photos[idx]
+        ph = min(self.H - 90, int((self.W - 160) * 1.2))
+        ph = max(360, ph)
+        pw = int(ph / 1.2)
+        img = generate_portrait(f"{self.data['target']}|{p['id']}", (pw, ph), self.accent,
+                                p["identity_name"], f"{p['tag']} · {p['location']}",
+                                p["matched"], self.settings.get("redacted", True))
+        self.cache[idx] = img
+        return img
+
+    def _start(self):
+        if not self.win.winfo_exists():
             return
-        self.i = idx % len(self.photos)
-        photo = self.photos[self.i]
-        seed = f"{self.data['target']}|{photo['id']}"
-        w = self.win.winfo_width() or 1000
-        h = self.win.winfo_height() or 800
-        pw = min(560, w - 80)
-        ph = int(pw * 1.2)
-        img = generate_portrait(seed, (pw, ph), THEME["accent"], photo["identity_name"],
-                                f"{photo['tag']} · {photo['location']}", photo["matched"])
-        tkimg = ImageTk.PhotoImage(img)
-        self.refs.append(tkimg)
+        self.W, self.H = self._dims()
+        self.cur_img = self._portrait(self.i)
+        self._blit(self.cur_img)
+        self._schedule()
+
+    def _blit(self, img):
+        if not self.win.winfo_exists():
+            return
+        self.ref = ImageTk.PhotoImage(img)
         self.cv.delete("all")
-        self.cv.create_rectangle(0, 0, w, h, fill=THEME["black"], outline="")
-        self.cv.create_image(w // 2, h // 2 - 20, image=tkimg)
-        self.cv.image = tkimg
-        self.cv.create_text(w // 2, h - 60, fill=THEME["accent"], font=(MONO, 16, "bold"),
-                            text=f"{photo['identity_name']} — {photo['tag']}")
-        self.cv.create_text(w // 2, h - 34, fill=THEME["dim"], font=(MONO, 11),
-                            text=f"[{self.i+1}/{len(self.photos)}]  ·  Esc = esci  ·  ← → naviga  "
-                                 f"·  created by {CREATOR}")
-        self.after_id = self.win.after(2600, lambda: self._show(self.i + 1))
+        self.cv.create_rectangle(0, 0, self.W, self.H, fill=THEME["black"], outline="")
+        self.cv.create_image(self.W // 2, self.H // 2, image=self.ref)
+        p = self.photos[self.i]
+        self.cv.create_text(self.W // 2, 30, fill=self.accent, font=(MONO, 16, "bold"),
+                            text=f"{p['identity_name']} — {p['tag']}")
+        self.info.config(text=f"[{self.i+1}/{len(self.photos)}]  "
+                              f"{'⏸ PAUSA' if self.paused else '▶ PLAY'}  ·  Esc esci · "
+                              f"←→ naviga · ⎵ pausa · by {CREATOR}")
+
+    def _schedule(self):
+        if self.after_id:
+            try:
+                self.win.after_cancel(self.after_id)
+            except Exception:
+                pass
+            self.after_id = None
+        if not self.paused and self.win.winfo_exists():
+            self.after_id = self.win.after(self.interval, self.next)
+
+    def next(self):
+        self._go(self.i + 1)
+
+    def prev(self):
+        self._go(self.i - 1)
+
+    def _go(self, idx):
+        if not self.win.winfo_exists():
+            return
+        idx %= len(self.photos)
+        nxt = self._portrait(idx)
+        prev = self.cur_img
+        self.i = idx
+        self._crossfade(prev, nxt, 1)
+
+    def _crossfade(self, a, b, step, steps=8):
+        if not self.win.winfo_exists():
+            return
+        if a is None or a.size != b.size:
+            self.cur_img = b
+            self._blit(b)
+            self._schedule()
+            return
+        if step <= steps:
+            self._blit(Image.blend(a, b, step / steps))
+            self.fade_id = self.win.after(30, lambda: self._crossfade(a, b, step + 1, steps))
+        else:
+            self.cur_img = b
+            self._blit(b)
+            self._schedule()
+
+    def toggle(self):
+        self.paused = not self.paused
+        self._blit(self.cur_img)
+        self._schedule()
+
+    def slower(self):
+        self.interval = min(12000, self.interval + 500)
+        self._update_speed()
+        self._schedule()
+
+    def faster(self):
+        self.interval = max(1000, self.interval - 500)
+        self._update_speed()
+        self._schedule()
+
+    def _update_speed(self):
+        self.speed_lbl.config(text=f"⏱ {self.interval/1000:.1f}s")
 
     def stop(self):
-        self.running = False
-        try:
-            if hasattr(self, "after_id"):
-                self.win.after_cancel(self.after_id)
-        except Exception:
-            pass
+        for aid in (self.after_id, self.fade_id):
+            try:
+                if aid:
+                    self.win.after_cancel(aid)
+            except Exception:
+                pass
         if self.win.winfo_exists():
             self.win.destroy()
 
