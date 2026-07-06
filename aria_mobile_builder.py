@@ -1,11 +1,27 @@
 #!/usr/bin/env python3
 """
-ARIA Mobile — Builder COMPLETO v2.0 (Android, Kotlin) con build automatica
+ARIA Mobile — Builder COMPLETO v3.0 (Android, Kotlin) con build automatica
 ===========================================================================
 Genera l'intero progetto Android Studio per ARIA Mobile in
 Desktop/AriaMobile e tenta la compilazione (gradlew assembleDebug)
 usando il JDK e l'Android SDK già presenti sul sistema (Android Studio
 installato).
+
+NOVITÀ v3.0:
+- VOCE CHE PARLA DAVVERO: voce attiva di default, pulsante altoparlante
+  nella barra per accenderla/spegnerla al volo, icona 🔊 su ogni
+  risposta per riascoltarla, fallback automatico alla lingua di sistema
+  se manca la voce italiana, pulizia dei simboli markdown prima della
+  lettura.
+- 10 STRUMENTI: il pulsante ✨ accanto alla chat apre un pannello con
+  Traduttore, Riassunto, Correttore, Matematica, Email, Idee, Chef,
+  Coach fitness, Quiz e Barzellette.
+- PERSONALITÀ: scegli come si comporta l'AI (Amichevole, Professionale,
+  Divertente, Sarcastica, Motivazionale).
+- PROVA CONNESSIONE: nelle impostazioni testi la API key con un tocco.
+- SCELTA MODELLO RAPIDA: 3 pulsanti per i modelli Groq più usati.
+- CONDIVIDI CHAT: esporta la conversazione su WhatsApp/Telegram/ecc.
+- Menu ordinato (cronologia, condividi, svuota) e altre rifiniture.
 
 NOVITÀ v2.0:
 - SPLASH SCREEN 3D: all'avvio una sfera di particelle 3D vera (proiezione
@@ -84,8 +100,8 @@ android {
         applicationId "com.aria.mobile"
         minSdk 26
         targetSdk 34
-        versionCode 2
-        versionName "2.0.0"
+        versionCode 3
+        versionName "3.0.0"
         multiDexEnabled true
     }
 
@@ -256,9 +272,10 @@ object AppConfig {
     const val PREF_MEMORY_ENABLED = "memory_enabled"
     const val PREF_ASSISTANT_NAME = "assistant_name"
     const val PREF_USER_NAME = "user_name"
+    const val PREF_PERSONALITY = "personality"
 
     const val CREATOR = "MaikGost"
-    const val VERSION = "2.0.0"
+    const val VERSION = "3.0.0"
 
     const val COLOR_BG = 0xFF0A0E1A.toInt()
     const val COLOR_SURFACE = 0xFF121826.toInt()
@@ -270,6 +287,7 @@ object AppConfig {
     const val COLOR_ERROR = 0xFFFF5252.toInt()
 
     const val DEFAULT_ASSISTANT_NAME = "ARIA"
+    const val DEFAULT_PERSONALITY = "Amichevole"
     const val DEFAULT_MODEL = "llama-3.3-70b-versatile"
     const val GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
 }
@@ -439,9 +457,19 @@ class AriaBrain(private val context: Context) {
         val assistantName = prefs.getString(AppConfig.PREF_ASSISTANT_NAME, AppConfig.DEFAULT_ASSISTANT_NAME)
             ?: AppConfig.DEFAULT_ASSISTANT_NAME
         val userName = prefs.getString(AppConfig.PREF_USER_NAME, "") ?: ""
+        val personality = prefs.getString(AppConfig.PREF_PERSONALITY, AppConfig.DEFAULT_PERSONALITY)
+            ?: AppConfig.DEFAULT_PERSONALITY
+        val personalityDesc = when (personality) {
+            "Professionale" -> "Mantieni un tono professionale, preciso e formale."
+            "Divertente" -> "Sii spiritosa: usa humour e battute quando è appropriato."
+            "Sarcastica" -> "Usa un tono ironico e sarcastico, ma mai offensivo."
+            "Motivazionale" -> "Sii energica e motivazionale, incoraggia sempre l'utente."
+            else -> "Sii calorosa e amichevole."
+        }
         val sb = StringBuilder()
         sb.append("Sei $assistantName, un'assistente AI personale creata da ${AppConfig.CREATOR}. ")
-        sb.append("Sei utile, diretta, amichevole e concisa. Rispondi in italiano salvo richiesta diversa.")
+        sb.append("Sei utile, diretta e concisa. $personalityDesc ")
+        sb.append("Rispondi in italiano salvo richiesta diversa.")
         if (userName.isNotBlank()) {
             sb.append(" L'utente si chiama $userName: chiamalo per nome quando risulta naturale.")
         }
@@ -804,22 +832,32 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
@@ -856,7 +894,9 @@ class MainActivity : ComponentActivity() {
 
     private val viewModel: AriaViewModel by viewModels()
     private var tts: TextToSpeech? = null
+    private var ttsReady = false
     private val assistantName = mutableStateOf(AppConfig.DEFAULT_ASSISTANT_NAME)
+    private val voiceEnabled = mutableStateOf(true)
 
     private val speechLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -873,13 +913,25 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         tts = TextToSpeech(this) { status ->
-            if (status == TextToSpeech.SUCCESS) tts?.language = Locale.ITALIAN
+            if (status == TextToSpeech.SUCCESS) {
+                val res = tts?.setLanguage(Locale.ITALIAN) ?: TextToSpeech.LANG_MISSING_DATA
+                if (res == TextToSpeech.LANG_MISSING_DATA || res == TextToSpeech.LANG_NOT_SUPPORTED) {
+                    // niente voce italiana installata: usa la lingua di sistema
+                    tts?.language = Locale.getDefault()
+                }
+                ttsReady = true
+            } else {
+                runOnUiThread {
+                    Toast.makeText(
+                        this,
+                        "Sintesi vocale non disponibile: installa 'Sintesi vocale Google' dal Play Store",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
         }
         viewModel.onAssistantResponse = { text ->
-            val prefs = getSharedPreferences(AppConfig.PREFS, MODE_PRIVATE)
-            if (prefs.getBoolean(AppConfig.PREF_VOICE_ENABLED, false)) {
-                tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "aria_tts")
-            }
+            if (voiceEnabled.value) speak(text)
         }
 
         setContent {
@@ -887,7 +939,11 @@ class MainActivity : ComponentActivity() {
                 ChatScreen(
                     viewModel = viewModel,
                     assistantName = assistantName.value,
+                    voiceEnabled = voiceEnabled.value,
+                    onToggleVoice = { toggleVoice() },
                     onVoiceInput = { startVoiceInput() },
+                    onSpeak = { speak(it) },
+                    onShareChat = { shareConversation() },
                     onOpenSettings = {
                         startActivity(Intent(this, SettingsActivity::class.java))
                     },
@@ -905,11 +961,54 @@ class MainActivity : ComponentActivity() {
         assistantName.value = prefs.getString(
             AppConfig.PREF_ASSISTANT_NAME, AppConfig.DEFAULT_ASSISTANT_NAME
         ) ?: AppConfig.DEFAULT_ASSISTANT_NAME
+        voiceEnabled.value = prefs.getBoolean(AppConfig.PREF_VOICE_ENABLED, true)
     }
 
     override fun onDestroy() {
+        tts?.stop()
         tts?.shutdown()
         super.onDestroy()
+    }
+
+    private fun speak(text: String) {
+        if (!ttsReady) {
+            Toast.makeText(this, "Voce in preparazione, riprova tra un attimo", Toast.LENGTH_SHORT).show()
+            return
+        }
+        // toglie i simboli markdown per una lettura naturale
+        val clean = text.replace(Regex("[*_#`~\\[\\]>]"), " ")
+        tts?.speak(clean, TextToSpeech.QUEUE_FLUSH, null, "aria_tts")
+    }
+
+    private fun toggleVoice() {
+        val enabled = !voiceEnabled.value
+        voiceEnabled.value = enabled
+        getSharedPreferences(AppConfig.PREFS, MODE_PRIVATE).edit()
+            .putBoolean(AppConfig.PREF_VOICE_ENABLED, enabled)
+            .apply()
+        if (!enabled) tts?.stop()
+        Toast.makeText(
+            this,
+            if (enabled) "Voce attivata" else "Voce disattivata",
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
+    private fun shareConversation() {
+        val msgs = viewModel.messages.value
+        if (msgs.isEmpty()) {
+            Toast.makeText(this, "Nessun messaggio da condividere", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val name = assistantName.value
+        val text = msgs.joinToString("\n\n") {
+            (if (it.isUser()) "Io: " else "$name: ") + it.content
+        }
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, text)
+        }
+        startActivity(Intent.createChooser(intent, "Condividi conversazione"))
     }
 
     private fun startVoiceInput() {
@@ -944,12 +1043,18 @@ fun AriaTheme(content: @Composable () -> Unit) {
 fun ChatScreen(
     viewModel: AriaViewModel,
     assistantName: String,
+    voiceEnabled: Boolean,
+    onToggleVoice: () -> Unit,
     onVoiceInput: () -> Unit,
+    onSpeak: (String) -> Unit,
+    onShareChat: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenHistory: () -> Unit
 ) {
     var input by remember { mutableStateOf("") }
     var showClearDialog by remember { mutableStateOf(false) }
+    var showTools by remember { mutableStateOf(false) }
+    var menuOpen by remember { mutableStateOf(false) }
     val messages = viewModel.messages.value
     val isLoading = viewModel.isLoading.value
     val error = viewModel.errorMessage.value
@@ -987,6 +1092,22 @@ fun ChatScreen(
         )
     }
 
+    if (showTools) {
+        ModalBottomSheet(
+            onDismissRequest = { showTools = false },
+            containerColor = Color(AppConfig.COLOR_SURFACE)
+        ) {
+            ToolsSheetContent(onTool = { tool ->
+                showTools = false
+                if (tool.sendDirectly) {
+                    viewModel.sendMessage(tool.prompt)
+                } else {
+                    input = tool.prompt
+                }
+            })
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -1013,18 +1134,13 @@ fun ChatScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = onOpenHistory) {
+                    IconButton(onClick = onToggleVoice) {
                         Icon(
-                            Icons.Filled.History,
-                            contentDescription = "Cronologia",
-                            tint = Color(AppConfig.COLOR_TEXT_DIM)
-                        )
-                    }
-                    IconButton(onClick = { showClearDialog = true }) {
-                        Icon(
-                            Icons.Filled.DeleteSweep,
-                            contentDescription = "Svuota chat",
-                            tint = Color(AppConfig.COLOR_TEXT_DIM)
+                            if (voiceEnabled) Icons.AutoMirrored.Filled.VolumeUp
+                            else Icons.AutoMirrored.Filled.VolumeOff,
+                            contentDescription = "Voce on/off",
+                            tint = if (voiceEnabled) Color(AppConfig.COLOR_ACCENT)
+                            else Color(AppConfig.COLOR_TEXT_DIM)
                         )
                     }
                     IconButton(onClick = onOpenSettings) {
@@ -1033,6 +1149,62 @@ fun ChatScreen(
                             contentDescription = "Impostazioni",
                             tint = Color(AppConfig.COLOR_ACCENT)
                         )
+                    }
+                    Box {
+                        IconButton(onClick = { menuOpen = true }) {
+                            Icon(
+                                Icons.Filled.MoreVert,
+                                contentDescription = "Menu",
+                                tint = Color(AppConfig.COLOR_TEXT_DIM)
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = menuOpen,
+                            onDismissRequest = { menuOpen = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Cronologia", color = Color(AppConfig.COLOR_TEXT)) },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Filled.History,
+                                        contentDescription = null,
+                                        tint = Color(AppConfig.COLOR_TEXT_DIM)
+                                    )
+                                },
+                                onClick = {
+                                    menuOpen = false
+                                    onOpenHistory()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Condividi chat", color = Color(AppConfig.COLOR_TEXT)) },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Filled.Share,
+                                        contentDescription = null,
+                                        tint = Color(AppConfig.COLOR_TEXT_DIM)
+                                    )
+                                },
+                                onClick = {
+                                    menuOpen = false
+                                    onShareChat()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Svuota chat", color = Color(AppConfig.COLOR_ERROR)) },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Filled.DeleteSweep,
+                                        contentDescription = null,
+                                        tint = Color(AppConfig.COLOR_ERROR)
+                                    )
+                                },
+                                onClick = {
+                                    menuOpen = false
+                                    showClearDialog = true
+                                }
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -1064,7 +1236,7 @@ fun ChatScreen(
                     item { WelcomeCard(assistantName) { viewModel.sendMessage(it) } }
                 }
                 items(messages) { msg ->
-                    MessageBubble(msg, assistantName)
+                    MessageBubble(msg, assistantName, onSpeak)
                 }
                 if (isLoading) {
                     item { TypingIndicator(assistantName) }
@@ -1102,6 +1274,19 @@ fun ChatScreen(
                     .padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                IconButton(
+                    onClick = { showTools = true },
+                    modifier = Modifier
+                        .size(48.dp)
+                        .background(Color(AppConfig.COLOR_SURFACE), CircleShape)
+                ) {
+                    Icon(
+                        Icons.Filled.AutoAwesome,
+                        contentDescription = "Strumenti",
+                        tint = Color(AppConfig.COLOR_PRIMARY_LIGHT)
+                    )
+                }
+                Spacer(modifier = Modifier.width(6.dp))
                 IconButton(
                     onClick = onVoiceInput,
                     modifier = Modifier
@@ -1241,7 +1426,7 @@ fun TypingIndicator(assistantName: String) {
 }
 
 @Composable
-fun MessageBubble(msg: ChatMessage, assistantName: String) {
+fun MessageBubble(msg: ChatMessage, assistantName: String, onSpeak: (String) -> Unit) {
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
     val isUser = msg.isUser()
@@ -1268,12 +1453,27 @@ fun MessageBubble(msg: ChatMessage, assistantName: String) {
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
     ) {
-        Text(
-            text = if (isUser) "Tu • $timeText" else "$assistantName • $timeText",
-            fontSize = 10.sp,
-            color = Color(AppConfig.COLOR_TEXT_DIM),
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-        )
+        ) {
+            Text(
+                text = if (isUser) "Tu • $timeText" else "$assistantName • $timeText",
+                fontSize = 10.sp,
+                color = Color(AppConfig.COLOR_TEXT_DIM)
+            )
+            if (!isUser) {
+                Spacer(modifier = Modifier.width(6.dp))
+                Icon(
+                    Icons.AutoMirrored.Filled.VolumeUp,
+                    contentDescription = "Riascolta",
+                    tint = Color(AppConfig.COLOR_ACCENT),
+                    modifier = Modifier
+                        .size(16.dp)
+                        .clickable { onSpeak(msg.content) }
+                )
+            }
+        }
         Box(
             modifier = Modifier
                 .widthIn(max = 300.dp)
@@ -1294,6 +1494,89 @@ fun MessageBubble(msg: ChatMessage, assistantName: String) {
         }
     }
 }
+
+data class AriaTool(
+    val emoji: String,
+    val title: String,
+    val description: String,
+    val prompt: String,
+    val sendDirectly: Boolean = false
+)
+
+private val ARIA_TOOLS = listOf(
+    AriaTool("🌍", "Traduttore", "Traduci un testo in un'altra lingua",
+        "Traduci in inglese questo testo: "),
+    AriaTool("📝", "Riassunto", "Riassumi un testo lungo in pochi punti",
+        "Riassumi in 3 punti questo testo: "),
+    AriaTool("✍️", "Correttore", "Correggi grammatica e ortografia",
+        "Correggi grammatica e ortografia di questo testo: "),
+    AriaTool("🧮", "Matematica", "Risolvi calcoli ed espressioni passo passo",
+        "Risolvi passo passo: "),
+    AriaTool("📧", "Email", "Scrivi un'email professionale",
+        "Scrivimi un'email professionale per: "),
+    AriaTool("💡", "Idee", "Brainstorming di idee creative",
+        "Dammi 5 idee creative su: "),
+    AriaTool("🍝", "Chef", "Ricetta con gli ingredienti che hai in casa",
+        "Dammi una ricetta usando questi ingredienti: "),
+    AriaTool("💪", "Coach", "Allenamento rapido da fare a casa",
+        "Creami un allenamento di 20 minuti da fare a casa senza attrezzi", true),
+    AriaTool("🎲", "Quiz", "Gioca a un quiz con l'AI",
+        "Facciamo un quiz! Fammi una domanda di cultura generale e aspetta la mia risposta", true),
+    AriaTool("😂", "Barzelletta", "Una risata al volo",
+        "Raccontami una barzelletta divertente", true)
+)
+
+@Composable
+fun ToolsSheetContent(onTool: (AriaTool) -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp)
+            .padding(bottom = 32.dp)
+    ) {
+        Text(
+            "✨ Strumenti",
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color(AppConfig.COLOR_ACCENT),
+            modifier = Modifier.padding(bottom = 4.dp)
+        )
+        Text(
+            "Tocca uno strumento: alcuni partono subito, altri preparano il messaggio da completare.",
+            fontSize = 12.sp,
+            color = Color(AppConfig.COLOR_TEXT_DIM),
+            modifier = Modifier.padding(bottom = 12.dp)
+        )
+        for (tool in ARIA_TOOLS) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp)
+                    .background(Color(AppConfig.COLOR_BG), RoundedCornerShape(14.dp))
+                    .clickable { onTool(tool) }
+                    .padding(12.dp)
+            ) {
+                Text(tool.emoji, fontSize = 24.sp)
+                Spacer(modifier = Modifier.width(12.dp))
+                Column {
+                    Text(
+                        tool.title,
+                        color = Color(AppConfig.COLOR_TEXT),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp
+                    )
+                    Text(
+                        tool.description,
+                        color = Color(AppConfig.COLOR_TEXT_DIM),
+                        fontSize = 12.sp
+                    )
+                }
+            }
+        }
+    }
+}
 """
 
 SETTINGS_ACTIVITY = r"""package com.aria.mobile.ui
@@ -1302,11 +1585,13 @@ import android.content.Context
 import android.os.Bundle
 import android.widget.Button
 import android.widget.EditText
+import android.widget.RadioGroup
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
 import com.aria.mobile.R
 import com.aria.mobile.core.AppConfig
+import com.aria.mobile.net.GroqClient
 
 class SettingsActivity : AppCompatActivity() {
 
@@ -1319,10 +1604,23 @@ class SettingsActivity : AppCompatActivity() {
         val etUserName = findViewById<EditText>(R.id.et_user_name)
         val etKey = findViewById<EditText>(R.id.et_api_key)
         val etModel = findViewById<EditText>(R.id.et_model)
+        val rgPersonality = findViewById<RadioGroup>(R.id.rg_personality)
         val swVoice = findViewById<SwitchCompat>(R.id.sw_voice)
         val swMemory = findViewById<SwitchCompat>(R.id.sw_memory)
         val btnSave = findViewById<Button>(R.id.btn_save_settings)
         val btnBack = findViewById<Button>(R.id.btn_settings_back)
+        val btnTest = findViewById<Button>(R.id.btn_test_api)
+        val btnModel70 = findViewById<Button>(R.id.btn_model_70b)
+        val btnModel8 = findViewById<Button>(R.id.btn_model_8b)
+        val btnModelScout = findViewById<Button>(R.id.btn_model_scout)
+
+        val personalityIds = mapOf(
+            "Amichevole" to R.id.rb_amichevole,
+            "Professionale" to R.id.rb_professionale,
+            "Divertente" to R.id.rb_divertente,
+            "Sarcastica" to R.id.rb_sarcastica,
+            "Motivazionale" to R.id.rb_motivazionale
+        )
 
         etAssistantName.setText(
             prefs.getString(AppConfig.PREF_ASSISTANT_NAME, AppConfig.DEFAULT_ASSISTANT_NAME)
@@ -1330,19 +1628,67 @@ class SettingsActivity : AppCompatActivity() {
         etUserName.setText(prefs.getString(AppConfig.PREF_USER_NAME, ""))
         etKey.setText(prefs.getString(AppConfig.PREF_API_KEY, ""))
         etModel.setText(prefs.getString(AppConfig.PREF_MODEL, AppConfig.DEFAULT_MODEL))
-        swVoice.isChecked = prefs.getBoolean(AppConfig.PREF_VOICE_ENABLED, false)
+        swVoice.isChecked = prefs.getBoolean(AppConfig.PREF_VOICE_ENABLED, true)
         swMemory.isChecked = prefs.getBoolean(AppConfig.PREF_MEMORY_ENABLED, true)
+        val savedPersonality = prefs.getString(
+            AppConfig.PREF_PERSONALITY, AppConfig.DEFAULT_PERSONALITY
+        )
+        rgPersonality.check(personalityIds[savedPersonality] ?: R.id.rb_amichevole)
+
+        btnModel70.setOnClickListener { etModel.setText("llama-3.3-70b-versatile") }
+        btnModel8.setOnClickListener { etModel.setText("llama-3.1-8b-instant") }
+        btnModelScout.setOnClickListener {
+            etModel.setText("meta-llama/llama-4-scout-17b-16e-instruct")
+        }
+
+        btnTest.setOnClickListener {
+            val key = etKey.text.toString().trim()
+            val model = etModel.text.toString().trim().ifBlank { AppConfig.DEFAULT_MODEL }
+            if (key.isBlank()) {
+                Toast.makeText(this, "Inserisci prima la API key", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            Toast.makeText(this, "Test in corso...", Toast.LENGTH_SHORT).show()
+            GroqClient(key, model).sendMessage(
+                listOf("user" to "Rispondi solo: OK"),
+                object : GroqClient.ResultCallback {
+                    override fun onResult(text: String) {
+                        runOnUiThread {
+                            Toast.makeText(
+                                this@SettingsActivity,
+                                "Connessione OK! Modello: $model",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
+                    override fun onError(message: String) {
+                        runOnUiThread {
+                            Toast.makeText(
+                                this@SettingsActivity,
+                                "Errore: ${message.take(200)}",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
+                }
+            )
+        }
 
         btnSave.setOnClickListener {
             val assistantName = etAssistantName.text.toString().trim()
                 .ifBlank { AppConfig.DEFAULT_ASSISTANT_NAME }
             val model = etModel.text.toString().trim()
                 .ifBlank { AppConfig.DEFAULT_MODEL }
+            val checkedId = rgPersonality.checkedRadioButtonId
+            val personality = personalityIds.entries
+                .firstOrNull { it.value == checkedId }?.key
+                ?: AppConfig.DEFAULT_PERSONALITY
             prefs.edit()
                 .putString(AppConfig.PREF_ASSISTANT_NAME, assistantName)
                 .putString(AppConfig.PREF_USER_NAME, etUserName.text.toString().trim())
                 .putString(AppConfig.PREF_API_KEY, etKey.text.toString().trim())
                 .putString(AppConfig.PREF_MODEL, model)
+                .putString(AppConfig.PREF_PERSONALITY, personality)
                 .putBoolean(AppConfig.PREF_VOICE_ENABLED, swVoice.isChecked)
                 .putBoolean(AppConfig.PREF_MEMORY_ENABLED, swMemory.isChecked)
                 .apply()
@@ -1392,7 +1738,7 @@ class HistoryActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val msgs = db.messageDao().getSession(0L)
             tv.text = if (msgs.isEmpty()) "Nessun messaggio salvato."
-                else msgs.joinToString("\n\n") {
+                else "Messaggi salvati: ${msgs.size}\n\n" + msgs.joinToString("\n\n") {
                     val who = if (it.role == "user") "TU" else "AI"
                     "[${fmt.format(Date(it.timestamp))}] $who:\n${it.content}"
                 }
@@ -1466,14 +1812,65 @@ LAYOUT_SETTINGS = """\
     <EditText android:id="@+id/et_api_key"
         android:layout_width="match_parent" android:layout_height="wrap_content"
         android:hint="gsk_..." android:textColor="#E8F0FF" android:textColorHint="#5A7A99"
-        android:backgroundTint="#7C4DFF" android:layout_marginBottom="16dp"/>
+        android:backgroundTint="#7C4DFF" android:layout_marginBottom="8dp"/>
+
+    <Button android:id="@+id/btn_test_api"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Prova connessione" android:backgroundTint="#121826"
+        android:textColor="#00E5FF" android:layout_marginBottom="16dp"/>
 
     <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
         android:text="Modello" android:textColor="#5A7A99" android:textSize="12sp"/>
     <EditText android:id="@+id/et_model"
         android:layout_width="match_parent" android:layout_height="wrap_content"
         android:hint="llama-3.3-70b-versatile" android:textColor="#E8F0FF" android:textColorHint="#5A7A99"
-        android:backgroundTint="#7C4DFF" android:layout_marginBottom="20dp"/>
+        android:backgroundTint="#7C4DFF" android:layout_marginBottom="8dp"/>
+
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:layout_marginBottom="20dp">
+        <Button android:id="@+id/btn_model_70b"
+            android:layout_width="0dp" android:layout_height="wrap_content"
+            android:layout_weight="1" android:layout_marginEnd="6dp"
+            android:text="70B top" android:textSize="11sp"
+            android:backgroundTint="#121826" android:textColor="#00E5FF"/>
+        <Button android:id="@+id/btn_model_8b"
+            android:layout_width="0dp" android:layout_height="wrap_content"
+            android:layout_weight="1" android:layout_marginEnd="6dp"
+            android:text="8B veloce" android:textSize="11sp"
+            android:backgroundTint="#121826" android:textColor="#00E5FF"/>
+        <Button android:id="@+id/btn_model_scout"
+            android:layout_width="0dp" android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Llama 4" android:textSize="11sp"
+            android:backgroundTint="#121826" android:textColor="#00E5FF"/>
+    </LinearLayout>
+
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="Personalità" android:textColor="#5A7A99" android:textSize="12sp"/>
+    <RadioGroup android:id="@+id/rg_personality"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginBottom="20dp">
+        <RadioButton android:id="@+id/rb_amichevole"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="Amichevole" android:textColor="#E8F0FF"
+            android:buttonTint="#7C4DFF" android:checked="true"/>
+        <RadioButton android:id="@+id/rb_professionale"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="Professionale" android:textColor="#E8F0FF"
+            android:buttonTint="#7C4DFF"/>
+        <RadioButton android:id="@+id/rb_divertente"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="Divertente" android:textColor="#E8F0FF"
+            android:buttonTint="#7C4DFF"/>
+        <RadioButton android:id="@+id/rb_sarcastica"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="Sarcastica" android:textColor="#E8F0FF"
+            android:buttonTint="#7C4DFF"/>
+        <RadioButton android:id="@+id/rb_motivazionale"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="Motivazionale" android:textColor="#E8F0FF"
+            android:buttonTint="#7C4DFF"/>
+    </RadioGroup>
 
     <androidx.appcompat.widget.SwitchCompat android:id="@+id/sw_voice"
         android:layout_width="match_parent" android:layout_height="wrap_content"
@@ -1491,7 +1888,7 @@ LAYOUT_SETTINGS = """\
         android:textStyle="bold"/>
 
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="Creator: MaikGost  •  ARIA Mobile v2.0"
+        android:text="Creator: MaikGost  •  ARIA Mobile v3.0"
         android:textColor="#5A7A99" android:textSize="12sp"
         android:gravity="center" android:layout_marginTop="24dp"/>
 </LinearLayout>
@@ -1602,7 +1999,7 @@ def build_kotlin_file_map():
     }
 
 def create_project(java_path):
-    title("STEP 1 - Creazione progetto ARIA Mobile v2.0")
+    title("STEP 1 - Creazione progetto ARIA Mobile v3.0")
     if PROJECT_DIR.exists():
         answer = input(f"\n  Directory {PROJECT_DIR.name} esiste. Sovrascrivere? (y/N): ").strip().lower()
         if answer == "y":
@@ -1719,7 +2116,7 @@ def build_apk(java_path):
 
 def summarise(apk):
     title("STEP 3 - Output")
-    dest = DESKTOP / "ARIA-Mobile-v2.0.apk"
+    dest = DESKTOP / "ARIA-Mobile-v3.0.apk"
     if apk and apk.exists():
         shutil.copy2(apk, dest)
         print(f"\n{C.BOLD}{'='*60}")
@@ -1732,19 +2129,23 @@ def summarise(apk):
         info(str(PROJECT_DIR))
 
     print(f"\n{C.BOLD}SETUP:{C.RESET}")
-    info("1. Installa ARIA-Mobile-v2.0.apk sul telefono")
+    info("1. Installa ARIA-Mobile-v3.0.apk sul telefono")
     info("2. All'avvio vedrai la splash 3D con 'Creator: MaikGost'")
-    info("3. In chat tocca l'INGRANAGGIO in alto a destra -> Impostazioni")
-    info("4. Inserisci la Groq API key, cambia il nome dell'assistente e metti il tuo")
-    info("5. Attiva 'Risposte a voce' se vuoi che l'AI parli")
-    info("6. Scrivi un messaggio o tieni premuto il MICROFONO e detta")
+    info("3. In chat tocca l'INGRANAGGIO in alto -> inserisci la Groq API key")
+    info("   (usa 'Prova connessione' per verificare che funzioni)")
+    info("4. Cambia nome assistente, il tuo nome e la personalita' dell'AI")
+    info("5. LA VOCE E' GIA' ATTIVA: l'altoparlante in alto la accende/spegne,")
+    info("   l'icona 🔊 sotto ogni risposta la fa riascoltare")
+    info("   (se non senti nulla: alza il volume media e controlla che sul")
+    info("   telefono sia installata 'Sintesi vocale Google')")
+    info("6. Il pulsante ✨ apre i 10 STRUMENTI, il microfono detta i messaggi")
     print()
 
 def main():
     if platform.system() == "Windows":
         os.system("color")
     print(f"\n{C.BOLD}{C.CYAN}{'='*60}")
-    print("  ARIA Mobile v2.0 - Builder Android (Kotlin + Compose)")
+    print("  ARIA Mobile v3.0 - Builder Android (Kotlin + Compose)")
     print("  Creator: MaikGost")
     print(f"{'='*60}{C.RESET}\n")
 
@@ -1765,7 +2166,7 @@ def main():
         create_project(java)
         apk = build_apk(java)
         summarise(apk)
-        print(f"{C.OK}{C.BOLD}ARIA Mobile v2.0 - Completato!{C.RESET}\n")
+        print(f"{C.OK}{C.BOLD}ARIA Mobile v3.0 - Completato!{C.RESET}\n")
     except KeyboardInterrupt:
         print(f"\n{C.WARN}Interrotto.{C.RESET}")
         sys.exit(0)
