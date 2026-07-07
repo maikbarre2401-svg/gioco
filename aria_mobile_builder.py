@@ -1,11 +1,23 @@
 #!/usr/bin/env python3
 """
-ARIA Mobile — Builder COMPLETO v3.0 (Android, Kotlin) con build automatica
+ARIA Mobile — Builder COMPLETO v4.0 (Android, Kotlin) con build automatica
 ===========================================================================
 Genera l'intero progetto Android Studio per ARIA Mobile in
 Desktop/AriaMobile e tenta la compilazione (gradlew assembleDebug)
 usando il JDK e l'Android SDK già presenti sul sistema (Android Studio
 installato).
+
+NOVITÀ v4.0:
+- SFERA 3D VIVA NELLA CHAT (stile Jarvis, ma meglio): nucleo luminoso
+  che respira, sfera di 150 particelle in rotazione con prospettiva
+  reale, 3 anelli orbitali inclinati che precedono nello spazio con
+  elettroni luminosi. La sfera FLUTTUA nella chat ed è VIVA: cambia
+  colore e velocità in base a quello che fa l'AI —
+    * azzurra e calma quando ascolta
+    * viola e velocissima quando sta pensando
+    * verde quando parla a voce
+    * rossa se c'è un errore
+- TOCCA LA SFERA per attivare il microfono e parlarle a voce.
 
 NOVITÀ v3.0:
 - VOCE CHE PARLA DAVVERO: voce attiva di default, pulsante altoparlante
@@ -100,8 +112,8 @@ android {
         applicationId "com.aria.mobile"
         minSdk 26
         targetSdk 34
-        versionCode 3
-        versionName "3.0.0"
+        versionCode 4
+        versionName "4.0.0"
         multiDexEnabled true
     }
 
@@ -275,7 +287,7 @@ object AppConfig {
     const val PREF_PERSONALITY = "personality"
 
     const val CREATOR = "MaikGost"
-    const val VERSION = "3.0.0"
+    const val VERSION = "4.0.0"
 
     const val COLOR_BG = 0xFF0A0E1A.toInt()
     const val COLOR_SURFACE = 0xFF121826.toInt()
@@ -609,6 +621,238 @@ class AriaViewModel(app: Application) : AndroidViewModel(app) {
 }
 """
 
+ARIA_ORB = r"""package com.aria.mobile.ui
+
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import com.aria.mobile.core.AppConfig
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.sqrt
+
+/** Stato d'animo della sfera: cambia colori, velocità e intensità. */
+enum class OrbMood { IDLE, THINKING, SPEAKING, ERROR }
+
+private class OrbPoint(val x: Float, val y: Float, val z: Float)
+
+private fun sphericalPoints(n: Int): List<OrbPoint> {
+    val golden = PI * (3.0 - sqrt(5.0))
+    return List(n) { i ->
+        val y = 1f - 2f * (i + 0.5f) / n
+        val r = sqrt(1f - y * y)
+        val theta = (golden * i).toFloat()
+        OrbPoint(r * cos(theta), y, r * sin(theta))
+    }
+}
+
+/**
+ * Sfera 3D "viva": nucleo che respira, particelle in rotazione con
+ * prospettiva reale, anelli orbitali che precedono nello spazio con
+ * elettroni luminosi. Fluttua e reagisce allo stato dell'AI.
+ */
+@Composable
+fun AriaOrb3D(
+    mood: OrbMood,
+    modifier: Modifier = Modifier,
+    onTap: () -> Unit = {}
+) {
+    val particles = remember { sphericalPoints(150) }
+
+    var angle by remember { mutableStateOf(0f) }
+    var time by remember { mutableStateOf(0f) }
+
+    val speed by animateFloatAsState(
+        targetValue = when (mood) {
+            OrbMood.IDLE -> 35f
+            OrbMood.THINKING -> 170f
+            OrbMood.SPEAKING -> 90f
+            OrbMood.ERROR -> 18f
+        },
+        animationSpec = tween(700), label = "orbSpeed"
+    )
+    val glow by animateFloatAsState(
+        targetValue = when (mood) {
+            OrbMood.IDLE -> 0.55f
+            OrbMood.THINKING -> 1f
+            OrbMood.SPEAKING -> 0.95f
+            OrbMood.ERROR -> 0.75f
+        },
+        animationSpec = tween(600), label = "orbGlow"
+    )
+    val mainColor by animateColorAsState(
+        targetValue = when (mood) {
+            OrbMood.IDLE -> Color(AppConfig.COLOR_ACCENT)
+            OrbMood.THINKING -> Color(AppConfig.COLOR_PRIMARY_LIGHT)
+            OrbMood.SPEAKING -> Color(0xFF00FFB3)
+            OrbMood.ERROR -> Color(AppConfig.COLOR_ERROR)
+        },
+        animationSpec = tween(600), label = "orbColor"
+    )
+    val ringColor by animateColorAsState(
+        targetValue = when (mood) {
+            OrbMood.IDLE -> Color(AppConfig.COLOR_PRIMARY)
+            OrbMood.THINKING -> Color(AppConfig.COLOR_ACCENT)
+            OrbMood.SPEAKING -> Color(AppConfig.COLOR_ACCENT)
+            OrbMood.ERROR -> Color(0xFFFF8A80)
+        },
+        animationSpec = tween(600), label = "orbRing"
+    )
+
+    // motore dell'animazione: velocità continua, cambia fluidamente col mood
+    LaunchedEffect(Unit) {
+        var last = 0L
+        while (true) {
+            withFrameNanos { now ->
+                if (last != 0L) {
+                    val dt = (now - last) / 1_000_000_000f
+                    angle = (angle + dt * speed) % 360f
+                    time += dt
+                }
+                last = now
+            }
+        }
+    }
+
+    Canvas(
+        modifier = modifier.pointerInput(Unit) {
+            detectTapGestures(onTap = { onTap() })
+        }
+    ) {
+        val cx = size.width / 2f
+        // fluttua su e giù come sospesa nell'aria
+        val cy = size.height / 2f + sin(time * 1.4f) * size.height * 0.06f
+        // respira
+        val breathe = 1f + 0.05f * sin(time * 2.3f)
+        val r = size.minDimension * 0.30f * breathe
+        val focal = r * 2.8f
+        val aY = angle * PI.toFloat() / 180f
+        val tiltX = 0.42f + 0.12f * sin(time * 0.7f)
+        val ca = cos(aY)
+        val sa = sin(aY)
+        val ct = cos(tiltX)
+        val st = sin(tiltX)
+
+        // aura esterna
+        for (k in 4 downTo 1) {
+            drawCircle(
+                color = mainColor,
+                radius = r * (1f + k * 0.22f),
+                center = Offset(cx, cy),
+                alpha = (glow * 0.14f / k).coerceIn(0f, 1f)
+            )
+        }
+
+        // nucleo luminoso che respira
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(
+                    Color.White.copy(alpha = (0.85f * glow).coerceIn(0f, 1f)),
+                    mainColor.copy(alpha = (0.45f * glow).coerceIn(0f, 1f)),
+                    Color.Transparent
+                ),
+                center = Offset(cx, cy),
+                radius = r * 0.7f
+            ),
+            radius = r * 0.7f,
+            center = Offset(cx, cy)
+        )
+
+        // particelle della sfera: rotazione Y + inclinazione, prospettiva reale
+        for ((i, p) in particles.withIndex()) {
+            val rx = p.x * ca + p.z * sa
+            val rz = -p.x * sa + p.z * ca
+            val ry = p.y * ct - rz * st
+            val rz2 = p.y * st + rz * ct
+            val persp = focal / (focal + rz2 * r)
+            val px = cx + rx * r * persp
+            val py = cy + ry * r * persp
+            val depth = (1f - rz2) / 2f
+            val alpha = (0.1f + depth * 0.9f) * (0.35f + glow * 0.65f)
+            val col = if (i % 4 == 0) ringColor else mainColor
+            drawCircle(
+                color = col,
+                radius = (1.1f + 1.7f * depth) * persp,
+                center = Offset(px, py),
+                alpha = alpha.coerceIn(0f, 1f)
+            )
+        }
+
+        // anelli orbitali 3D che precedono nello spazio, ognuno col suo elettrone
+        val rings = listOf(
+            Triple(1.35f, 0.9f, 1.6f),    // raggio relativo, inclinazione, velocità
+            Triple(1.55f, -0.6f, -1.1f),
+            Triple(1.78f, 0.25f, 0.7f)
+        )
+        for ((ri, ring) in rings.withIndex()) {
+            val (rr, tilt, speedFactor) = ring
+            val ringR = r * rr
+            val rc = cos(tilt)
+            val rs = sin(tilt)
+            val ph = aY * speedFactor
+            val cph = cos(ph)
+            val sph = sin(ph)
+
+            fun ringPoint(aRad: Float): Triple<Float, Float, Float> {
+                val x0 = cos(aRad) * ringR
+                val z0 = sin(aRad) * ringR
+                val y1 = -z0 * rs
+                val z1 = z0 * rc
+                val xr = x0 * cph + z1 * sph
+                val zr = -x0 * sph + z1 * cph
+                val y2 = y1 * ct - zr * st
+                val z2 = y1 * st + zr * ct
+                val persp = focal / (focal + z2)
+                val depth = ((1f - z2 / ringR) / 2f).coerceIn(0f, 1f)
+                return Triple(cx + xr * persp, cy + y2 * persp, depth)
+            }
+
+            val steps = 64
+            for (sIdx in 0 until steps) {
+                val (px, py, depth) = ringPoint(2f * PI.toFloat() * sIdx / steps)
+                drawCircle(
+                    color = ringColor,
+                    radius = 0.8f + 1.6f * depth,
+                    center = Offset(px, py),
+                    alpha = ((0.08f + 0.45f * depth) * glow).coerceIn(0f, 1f)
+                )
+            }
+
+            // elettrone luminoso che sfreccia sull'anello
+            val dir = if (speedFactor < 0f) -1f else 1f
+            val (ex, ey, ed) = ringPoint(time * (1.2f + ri * 0.7f) * dir)
+            drawCircle(
+                color = mainColor,
+                radius = 5f + 3f * ed,
+                center = Offset(ex, ey),
+                alpha = (0.30f * glow).coerceIn(0f, 1f)
+            )
+            drawCircle(
+                color = Color.White,
+                radius = 2.2f + 1.5f * ed,
+                center = Offset(ex, ey),
+                alpha = (0.85f * glow).coerceIn(0f, 1f)
+            )
+        }
+    }
+}
+"""
+
 SPLASH_ACTIVITY = r"""package com.aria.mobile.ui
 
 import android.content.Intent
@@ -802,6 +1046,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.speech.RecognizerIntent
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -897,6 +1142,7 @@ class MainActivity : ComponentActivity() {
     private var ttsReady = false
     private val assistantName = mutableStateOf(AppConfig.DEFAULT_ASSISTANT_NAME)
     private val voiceEnabled = mutableStateOf(true)
+    private val speaking = mutableStateOf(false)
 
     private val speechLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -919,6 +1165,21 @@ class MainActivity : ComponentActivity() {
                     // niente voce italiana installata: usa la lingua di sistema
                     tts?.language = Locale.getDefault()
                 }
+                tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                    override fun onStart(utteranceId: String?) {
+                        runOnUiThread { speaking.value = true }
+                    }
+                    override fun onDone(utteranceId: String?) {
+                        runOnUiThread { speaking.value = false }
+                    }
+                    @Deprecated("deprecated in API level 21")
+                    override fun onError(utteranceId: String?) {
+                        runOnUiThread { speaking.value = false }
+                    }
+                    override fun onError(utteranceId: String?, errorCode: Int) {
+                        runOnUiThread { speaking.value = false }
+                    }
+                })
                 ttsReady = true
             } else {
                 runOnUiThread {
@@ -940,6 +1201,7 @@ class MainActivity : ComponentActivity() {
                     viewModel = viewModel,
                     assistantName = assistantName.value,
                     voiceEnabled = voiceEnabled.value,
+                    speaking = speaking.value,
                     onToggleVoice = { toggleVoice() },
                     onVoiceInput = { startVoiceInput() },
                     onSpeak = { speak(it) },
@@ -986,7 +1248,10 @@ class MainActivity : ComponentActivity() {
         getSharedPreferences(AppConfig.PREFS, MODE_PRIVATE).edit()
             .putBoolean(AppConfig.PREF_VOICE_ENABLED, enabled)
             .apply()
-        if (!enabled) tts?.stop()
+        if (!enabled) {
+            tts?.stop()
+            speaking.value = false
+        }
         Toast.makeText(
             this,
             if (enabled) "Voce attivata" else "Voce disattivata",
@@ -1044,6 +1309,7 @@ fun ChatScreen(
     viewModel: AriaViewModel,
     assistantName: String,
     voiceEnabled: Boolean,
+    speaking: Boolean,
     onToggleVoice: () -> Unit,
     onVoiceInput: () -> Unit,
     onSpeak: (String) -> Unit,
@@ -1060,6 +1326,13 @@ fun ChatScreen(
     val error = viewModel.errorMessage.value
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+
+    val orbMood = when {
+        error != null -> OrbMood.ERROR
+        isLoading -> OrbMood.THINKING
+        speaking -> OrbMood.SPEAKING
+        else -> OrbMood.IDLE
+    }
 
     LaunchedEffect(messages.size, isLoading) {
         if (messages.isNotEmpty()) {
@@ -1224,6 +1497,34 @@ fun ChatScreen(
                     )
                 )
         ) {
+            // Sfera 3D viva che fluttua e reagisce all'AI. Toccala per parlare.
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(150.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                AriaOrb3D(
+                    mood = orbMood,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(150.dp),
+                    onTap = onVoiceInput
+                )
+                Text(
+                    text = when (orbMood) {
+                        OrbMood.THINKING -> "sto pensando..."
+                        OrbMood.SPEAKING -> "sto parlando..."
+                        OrbMood.ERROR -> "qualcosa è andato storto"
+                        OrbMood.IDLE -> "tocca la sfera per parlarmi"
+                    },
+                    fontSize = 11.sp,
+                    color = Color(AppConfig.COLOR_TEXT_DIM),
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 2.dp)
+                )
+            }
             LazyColumn(
                 state = listState,
                 modifier = Modifier
@@ -1888,7 +2189,7 @@ LAYOUT_SETTINGS = """\
         android:textStyle="bold"/>
 
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="Creator: MaikGost  •  ARIA Mobile v3.0"
+        android:text="Creator: MaikGost  •  ARIA Mobile v4.0"
         android:textColor="#5A7A99" android:textSize="12sp"
         android:gravity="center" android:layout_marginTop="24dp"/>
 </LinearLayout>
@@ -1992,6 +2293,7 @@ def build_kotlin_file_map():
         f"{PKG_CORE}/AriaBrain.kt":                    ARIA_BRAIN,
         f"{PKG_UI}/ChatMessage.kt":                    CHAT_MESSAGE_MODEL,
         f"{PKG_UI}/AriaViewModel.kt":                  ARIA_VIEWMODEL,
+        f"{PKG_UI}/AriaOrb.kt":                         ARIA_ORB,
         f"{PKG_UI}/SplashActivity.kt":                 SPLASH_ACTIVITY,
         f"{PKG_UI}/MainActivity.kt":                   MAIN_ACTIVITY,
         f"{PKG_UI}/SettingsActivity.kt":                SETTINGS_ACTIVITY,
@@ -1999,7 +2301,7 @@ def build_kotlin_file_map():
     }
 
 def create_project(java_path):
-    title("STEP 1 - Creazione progetto ARIA Mobile v3.0")
+    title("STEP 1 - Creazione progetto ARIA Mobile v4.0")
     if PROJECT_DIR.exists():
         answer = input(f"\n  Directory {PROJECT_DIR.name} esiste. Sovrascrivere? (y/N): ").strip().lower()
         if answer == "y":
@@ -2116,7 +2418,7 @@ def build_apk(java_path):
 
 def summarise(apk):
     title("STEP 3 - Output")
-    dest = DESKTOP / "ARIA-Mobile-v3.0.apk"
+    dest = DESKTOP / "ARIA-Mobile-v4.0.apk"
     if apk and apk.exists():
         shutil.copy2(apk, dest)
         print(f"\n{C.BOLD}{'='*60}")
@@ -2129,7 +2431,7 @@ def summarise(apk):
         info(str(PROJECT_DIR))
 
     print(f"\n{C.BOLD}SETUP:{C.RESET}")
-    info("1. Installa ARIA-Mobile-v3.0.apk sul telefono")
+    info("1. Installa ARIA-Mobile-v4.0.apk sul telefono")
     info("2. All'avvio vedrai la splash 3D con 'Creator: MaikGost'")
     info("3. In chat tocca l'INGRANAGGIO in alto -> inserisci la Groq API key")
     info("   (usa 'Prova connessione' per verificare che funzioni)")
@@ -2139,13 +2441,15 @@ def summarise(apk):
     info("   (se non senti nulla: alza il volume media e controlla che sul")
     info("   telefono sia installata 'Sintesi vocale Google')")
     info("6. Il pulsante ✨ apre i 10 STRUMENTI, il microfono detta i messaggi")
+    info("7. In alto nella chat c'e' la SFERA 3D VIVA: cambia colore quando")
+    info("   pensa/parla e TOCCANDOLA attivi il microfono per parlarle")
     print()
 
 def main():
     if platform.system() == "Windows":
         os.system("color")
     print(f"\n{C.BOLD}{C.CYAN}{'='*60}")
-    print("  ARIA Mobile v3.0 - Builder Android (Kotlin + Compose)")
+    print("  ARIA Mobile v4.0 - Builder Android (Kotlin + Compose)")
     print("  Creator: MaikGost")
     print(f"{'='*60}{C.RESET}\n")
 
@@ -2166,7 +2470,7 @@ def main():
         create_project(java)
         apk = build_apk(java)
         summarise(apk)
-        print(f"{C.OK}{C.BOLD}ARIA Mobile v3.0 - Completato!{C.RESET}\n")
+        print(f"{C.OK}{C.BOLD}ARIA Mobile v4.0 - Completato!{C.RESET}\n")
     except KeyboardInterrupt:
         print(f"\n{C.WARN}Interrotto.{C.RESET}")
         sys.exit(0)
