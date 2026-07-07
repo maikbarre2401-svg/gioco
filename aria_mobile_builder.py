@@ -7,6 +7,16 @@ Desktop/AriaMobile e tenta la compilazione (gradlew assembleDebug)
 usando il JDK e l'Android SDK già presenti sul sistema (Android Studio
 installato).
 
+NOVITÀ v4.1:
+- SFERA ANCORA PIU' 3D: doppio guscio di particelle (interno +
+  esterno controrotante per un vero effetto parallasse), reticolo
+  olografico a griglia che ruota, fog di profondita' (i punti dietro
+  sfumano nel fondo), onde sonore che si espandono quando parla,
+  scie luminose dietro gli elettroni, wobble su piu' assi e jitter
+  energetico quando pensa.
+- Vibra al tocco; parlando al microfono la voce dell'AI si ferma per
+  non sovrapporsi.
+
 NOVITÀ v4.0:
 - SFERA 3D VIVA NELLA CHAT (stile Jarvis, ma meglio): nucleo luminoso
   che respira, sfera di 150 particelle in rotazione con prospettiva
@@ -112,8 +122,8 @@ android {
         applicationId "com.aria.mobile"
         minSdk 26
         targetSdk 34
-        versionCode 4
-        versionName "4.0.0"
+        versionCode 5
+        versionName "4.1.0"
         multiDexEnabled true
     }
 
@@ -287,7 +297,7 @@ object AppConfig {
     const val PREF_PERSONALITY = "personality"
 
     const val CREATOR = "MaikGost"
-    const val VERSION = "4.0.0"
+    const val VERSION = "4.1.0"
 
     const val COLOR_BG = 0xFF0A0E1A.toInt()
     const val COLOR_SURFACE = 0xFF121826.toInt()
@@ -639,18 +649,24 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalHapticFeedback
 import com.aria.mobile.core.AppConfig
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
 
-/** Stato d'animo della sfera: cambia colori, velocità e intensità. */
+/** Stato d'animo della sfera: cambia colori, velocita', energia e reazioni. */
 enum class OrbMood { IDLE, THINKING, SPEAKING, ERROR }
 
 private class OrbPoint(val x: Float, val y: Float, val z: Float)
 
+/** Punti distribuiti uniformemente su una sfera (spirale aurea). */
 private fun sphericalPoints(n: Int): List<OrbPoint> {
     val golden = PI * (3.0 - sqrt(5.0))
     return List(n) { i ->
@@ -661,10 +677,42 @@ private fun sphericalPoints(n: Int): List<OrbPoint> {
     }
 }
 
+/** Reticolo a griglia (paralleli + meridiani) per il look "globo olografico". */
+private fun wireframePoints(lat: Int, lon: Int, perLine: Int): List<OrbPoint> {
+    val pts = ArrayList<OrbPoint>()
+    // paralleli
+    for (i in 1 until lat) {
+        val phi = (PI * i / lat - PI / 2).toFloat()
+        val cy = sin(phi); val rr = cos(phi)
+        for (j in 0 until perLine) {
+            val t = (2 * PI * j / perLine).toFloat()
+            pts.add(OrbPoint(rr * cos(t), cy, rr * sin(t)))
+        }
+    }
+    // meridiani
+    for (i in 0 until lon) {
+        val lonA = (2 * PI * i / lon).toFloat()
+        val cl = cos(lonA); val sl = sin(lonA)
+        for (j in 0 until perLine) {
+            val t = (PI * j / (perLine - 1) - PI / 2).toFloat()
+            val rr = cos(t)
+            pts.add(OrbPoint(rr * cl, sin(t), rr * sl))
+        }
+    }
+    return pts
+}
+
 /**
- * Sfera 3D "viva": nucleo che respira, particelle in rotazione con
- * prospettiva reale, anelli orbitali che precedono nello spazio con
- * elettroni luminosi. Fluttua e reagisce allo stato dell'AI.
+ * Sfera 3D "viva" iper-tridimensionale (stile Jarvis, ma piu' avanzata):
+ *  - nucleo che respira con bagliore radiale pulsante
+ *  - guscio interno di particelle + guscio esterno controrotante (parallasse)
+ *  - reticolo olografico a griglia che ruota
+ *  - 3 anelli orbitali inclinati con elettroni luminosi e scia
+ *  - onde sonore che si espandono quando parla
+ *  - fog di profondita': i punti dietro sfumano nel fondo, quelli davanti
+ *    sono grandi e brillanti
+ *  - fluttua e ondeggia su piu' assi; reagisce allo stato dell'AI
+ *  - vibra al tocco.
  */
 @Composable
 fun AriaOrb3D(
@@ -672,26 +720,38 @@ fun AriaOrb3D(
     modifier: Modifier = Modifier,
     onTap: () -> Unit = {}
 ) {
-    val particles = remember { sphericalPoints(150) }
+    val haptic = LocalHapticFeedback.current
+    val shellInner = remember { sphericalPoints(190) }
+    val shellOuter = remember { sphericalPoints(90) }
+    val grid = remember { wireframePoints(6, 8, 26) }
 
     var angle by remember { mutableStateOf(0f) }
     var time by remember { mutableStateOf(0f) }
 
     val speed by animateFloatAsState(
         targetValue = when (mood) {
-            OrbMood.IDLE -> 35f
-            OrbMood.THINKING -> 170f
-            OrbMood.SPEAKING -> 90f
-            OrbMood.ERROR -> 18f
+            OrbMood.IDLE -> 34f
+            OrbMood.THINKING -> 175f
+            OrbMood.SPEAKING -> 92f
+            OrbMood.ERROR -> 16f
         },
         animationSpec = tween(700), label = "orbSpeed"
+    )
+    val energy by animateFloatAsState(
+        targetValue = when (mood) {
+            OrbMood.IDLE -> 0.32f
+            OrbMood.THINKING -> 1f
+            OrbMood.SPEAKING -> 0.82f
+            OrbMood.ERROR -> 0.5f
+        },
+        animationSpec = tween(600), label = "orbEnergy"
     )
     val glow by animateFloatAsState(
         targetValue = when (mood) {
             OrbMood.IDLE -> 0.55f
             OrbMood.THINKING -> 1f
             OrbMood.SPEAKING -> 0.95f
-            OrbMood.ERROR -> 0.75f
+            OrbMood.ERROR -> 0.7f
         },
         animationSpec = tween(600), label = "orbGlow"
     )
@@ -713,8 +773,9 @@ fun AriaOrb3D(
         },
         animationSpec = tween(600), label = "orbRing"
     )
+    val fog = Color(0xFF0A0E1A)
 
-    // motore dell'animazione: velocità continua, cambia fluidamente col mood
+    // motore animazione: avanza in base alla velocita' corrente (fluida)
     LaunchedEffect(Unit) {
         var last = 0L
         while (true) {
@@ -731,84 +792,139 @@ fun AriaOrb3D(
 
     Canvas(
         modifier = modifier.pointerInput(Unit) {
-            detectTapGestures(onTap = { onTap() })
+            detectTapGestures(onTap = {
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                onTap()
+            })
         }
     ) {
         val cx = size.width / 2f
-        // fluttua su e giù come sospesa nell'aria
-        val cy = size.height / 2f + sin(time * 1.4f) * size.height * 0.06f
-        // respira
-        val breathe = 1f + 0.05f * sin(time * 2.3f)
+        val cy = size.height / 2f + sin(time * 1.3f) * size.height * 0.05f
+        val breathe = 1f + (0.045f + energy * 0.05f) * sin(time * 2.2f)
         val r = size.minDimension * 0.30f * breathe
-        val focal = r * 2.8f
-        val aY = angle * PI.toFloat() / 180f
-        val tiltX = 0.42f + 0.12f * sin(time * 0.7f)
-        val ca = cos(aY)
-        val sa = sin(aY)
-        val ct = cos(tiltX)
-        val st = sin(tiltX)
+        val focal = r * 2.9f
 
-        // aura esterna
-        for (k in 4 downTo 1) {
+        val aY = angle * PI.toFloat() / 180f
+        val ca = cos(aY); val sa = sin(aY)
+        // guscio esterno: controrotante e piu' lento -> parallasse
+        val aY2 = -aY * 0.55f
+        val ca2 = cos(aY2); val sa2 = sin(aY2)
+        val tiltX = 0.40f + 0.16f * sin(time * 0.6f)
+        val ct = cos(tiltX); val st = sin(tiltX)
+        val wobZ = 0.12f * sin(time * 0.85f)
+        val cw = cos(wobZ); val sw = sin(wobZ)
+
+        // proietta un punto della sfera (raggio rad) con rotazione data
+        fun project(px0: Float, py0: Float, pz0: Float, rad: Float,
+                    cA: Float, sA: Float): FloatArray {
+            val rx = px0 * cA + pz0 * sA
+            val rz = -px0 * sA + pz0 * cA
+            val ry = py0 * ct - rz * st
+            val rz2 = py0 * st + rz * ct
+            val fx = rx * cw - ry * sw
+            val fy = rx * sw + ry * cw
+            val persp = focal / (focal + rz2 * rad)
+            val sx = cx + fx * rad * persp
+            val sy = cy + fy * rad * persp
+            val depth = (1f - rz2) / 2f   // 1 = davanti, 0 = dietro
+            return floatArrayOf(sx, sy, depth, persp)
+        }
+
+        // ---- aura esterna pulsante ----
+        for (k in 5 downTo 1) {
             drawCircle(
                 color = mainColor,
-                radius = r * (1f + k * 0.22f),
+                radius = r * (1f + k * 0.20f) * (1f + energy * 0.08f * sin(time * 3f)),
                 center = Offset(cx, cy),
-                alpha = (glow * 0.14f / k).coerceIn(0f, 1f)
+                alpha = (glow * 0.13f / k).coerceIn(0f, 1f)
             )
         }
 
-        // nucleo luminoso che respira
+        // ---- onde sonore quando parla ----
+        if (mood == OrbMood.SPEAKING) {
+            for (k in 0 until 3) {
+                val phase = ((time * 0.9f) + k / 3f) % 1f
+                drawCircle(
+                    color = mainColor,
+                    radius = r * (1f + phase * 1.4f),
+                    center = Offset(cx, cy),
+                    alpha = ((1f - phase) * 0.35f * glow).coerceIn(0f, 1f),
+                    style = Stroke(width = 2.5f)
+                )
+            }
+        }
+
+        // ---- nucleo luminoso che respira ----
         drawCircle(
             brush = Brush.radialGradient(
                 colors = listOf(
-                    Color.White.copy(alpha = (0.85f * glow).coerceIn(0f, 1f)),
-                    mainColor.copy(alpha = (0.45f * glow).coerceIn(0f, 1f)),
+                    Color.White.copy(alpha = (0.9f * glow).coerceIn(0f, 1f)),
+                    mainColor.copy(alpha = (0.5f * glow).coerceIn(0f, 1f)),
                     Color.Transparent
                 ),
                 center = Offset(cx, cy),
-                radius = r * 0.7f
+                radius = r * (0.75f + energy * 0.12f)
             ),
-            radius = r * 0.7f,
+            radius = r * (0.75f + energy * 0.12f),
             center = Offset(cx, cy)
         )
 
-        // particelle della sfera: rotazione Y + inclinazione, prospettiva reale
-        for ((i, p) in particles.withIndex()) {
-            val rx = p.x * ca + p.z * sa
-            val rz = -p.x * sa + p.z * ca
-            val ry = p.y * ct - rz * st
-            val rz2 = p.y * st + rz * ct
-            val persp = focal / (focal + rz2 * r)
-            val px = cx + rx * r * persp
-            val py = cy + ry * r * persp
-            val depth = (1f - rz2) / 2f
-            val alpha = (0.1f + depth * 0.9f) * (0.35f + glow * 0.65f)
-            val col = if (i % 4 == 0) ringColor else mainColor
+        // ---- reticolo olografico (griglia) ----
+        for (g in grid) {
+            val p = project(g.x, g.y, g.z, r * 1.02f, ca, sa)
+            val depth = p[2]
+            val col = lerp(fog, ringColor, (0.25f + depth * 0.75f))
             drawCircle(
                 color = col,
-                radius = (1.1f + 1.7f * depth) * persp,
-                center = Offset(px, py),
-                alpha = alpha.coerceIn(0f, 1f)
+                radius = (0.6f + 1.1f * depth) * p[3],
+                center = Offset(p[0], p[1]),
+                alpha = ((0.05f + 0.30f * depth) * glow).coerceIn(0f, 1f)
             )
         }
 
-        // anelli orbitali 3D che precedono nello spazio, ognuno col suo elettrone
+        // ---- guscio esterno di particelle (controrotante) ----
+        for ((i, pt) in shellOuter.withIndex()) {
+            val p = project(pt.x, pt.y, pt.z, r * 1.16f, ca2, sa2)
+            val depth = p[2]
+            val col = lerp(fog, ringColor, (0.2f + depth * 0.8f))
+            drawCircle(
+                color = col,
+                radius = (0.8f + 1.4f * depth) * p[3],
+                center = Offset(p[0], p[1]),
+                alpha = ((0.06f + 0.55f * depth) * (0.4f + glow * 0.6f)).coerceIn(0f, 1f)
+            )
+        }
+
+        // ---- guscio interno di particelle ----
+        for ((i, pt) in shellInner.withIndex()) {
+            // jitter energetico: la sfera "vibra" quando pensa/parla
+            val jitter = 1f + energy * 0.06f * sin(time * 6f + i)
+            val p = project(pt.x, pt.y, pt.z, r * jitter, ca, sa)
+            val depth = p[2]
+            val base = if (i % 4 == 0) ringColor else mainColor
+            val col = lerp(fog, base, (0.18f + depth * 0.82f))
+            drawCircle(
+                color = col,
+                radius = (1.0f + 2.0f * depth) * p[3],
+                center = Offset(p[0], p[1]),
+                alpha = ((0.1f + 0.9f * depth) * (0.35f + glow * 0.65f)).coerceIn(0f, 1f)
+            )
+        }
+
+        // ---- anelli orbitali 3D con elettroni e scia ----
         val rings = listOf(
-            Triple(1.35f, 0.9f, 1.6f),    // raggio relativo, inclinazione, velocità
-            Triple(1.55f, -0.6f, -1.1f),
-            Triple(1.78f, 0.25f, 0.7f)
+            Triple(1.34f, 0.95f, 1.7f),
+            Triple(1.55f, -0.6f, -1.15f),
+            Triple(1.80f, 0.28f, 0.72f)
         )
         for ((ri, ring) in rings.withIndex()) {
             val (rr, tilt, speedFactor) = ring
             val ringR = r * rr
-            val rc = cos(tilt)
-            val rs = sin(tilt)
+            val rc = cos(tilt); val rs = sin(tilt)
             val ph = aY * speedFactor
-            val cph = cos(ph)
-            val sph = sin(ph)
+            val cph = cos(ph); val sph = sin(ph)
 
-            fun ringPoint(aRad: Float): Triple<Float, Float, Float> {
+            fun ringPoint(aRad: Float): FloatArray {
                 val x0 = cos(aRad) * ringR
                 val z0 = sin(aRad) * ringR
                 val y1 = -z0 * rs
@@ -817,36 +933,50 @@ fun AriaOrb3D(
                 val zr = -x0 * sph + z1 * cph
                 val y2 = y1 * ct - zr * st
                 val z2 = y1 * st + zr * ct
+                val fx = xr * cw - y2 * sw
+                val fy = xr * sw + y2 * cw
                 val persp = focal / (focal + z2)
                 val depth = ((1f - z2 / ringR) / 2f).coerceIn(0f, 1f)
-                return Triple(cx + xr * persp, cy + y2 * persp, depth)
+                return floatArrayOf(cx + fx * persp, cy + fy * persp, depth)
             }
 
-            val steps = 64
+            val steps = 70
             for (sIdx in 0 until steps) {
-                val (px, py, depth) = ringPoint(2f * PI.toFloat() * sIdx / steps)
+                val p = ringPoint(2f * PI.toFloat() * sIdx / steps)
+                val depth = p[2]
                 drawCircle(
-                    color = ringColor,
-                    radius = 0.8f + 1.6f * depth,
-                    center = Offset(px, py),
-                    alpha = ((0.08f + 0.45f * depth) * glow).coerceIn(0f, 1f)
+                    color = lerp(fog, ringColor, (0.2f + depth * 0.8f)),
+                    radius = 0.7f + 1.6f * depth,
+                    center = Offset(p[0], p[1]),
+                    alpha = ((0.06f + 0.45f * depth) * glow).coerceIn(0f, 1f)
                 )
             }
 
-            // elettrone luminoso che sfreccia sull'anello
+            // scia + elettrone luminoso
             val dir = if (speedFactor < 0f) -1f else 1f
-            val (ex, ey, ed) = ringPoint(time * (1.2f + ri * 0.7f) * dir)
+            val headAng = time * (1.2f + ri * 0.7f) * dir
+            for (t in 0 until 7) {
+                val pe = ringPoint(headAng - t * 0.12f * dir)
+                val fade = (1f - t / 7f)
+                drawCircle(
+                    color = mainColor,
+                    radius = (2.0f + 2.5f * pe[2]) * fade,
+                    center = Offset(pe[0], pe[1]),
+                    alpha = (0.25f * fade * glow).coerceIn(0f, 1f)
+                )
+            }
+            val head = ringPoint(headAng)
             drawCircle(
                 color = mainColor,
-                radius = 5f + 3f * ed,
-                center = Offset(ex, ey),
-                alpha = (0.30f * glow).coerceIn(0f, 1f)
+                radius = 5.5f + 3f * head[2],
+                center = Offset(head[0], head[1]),
+                alpha = (0.3f * glow).coerceIn(0f, 1f)
             )
             drawCircle(
                 color = Color.White,
-                radius = 2.2f + 1.5f * ed,
-                center = Offset(ex, ey),
-                alpha = (0.85f * glow).coerceIn(0f, 1f)
+                radius = 2.4f + 1.6f * head[2],
+                center = Offset(head[0], head[1]),
+                alpha = (0.9f * glow).coerceIn(0f, 1f)
             )
         }
     }
@@ -1277,6 +1407,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startVoiceInput() {
+        // ferma la voce dell'AI cosi' non parla sopra di te
+        tts?.stop()
+        speaking.value = false
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "it-IT")
@@ -2189,7 +2322,7 @@ LAYOUT_SETTINGS = """\
         android:textStyle="bold"/>
 
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="Creator: MaikGost  •  ARIA Mobile v4.0"
+        android:text="Creator: MaikGost  •  ARIA Mobile v4.1"
         android:textColor="#5A7A99" android:textSize="12sp"
         android:gravity="center" android:layout_marginTop="24dp"/>
 </LinearLayout>
@@ -2301,7 +2434,7 @@ def build_kotlin_file_map():
     }
 
 def create_project(java_path):
-    title("STEP 1 - Creazione progetto ARIA Mobile v4.0")
+    title("STEP 1 - Creazione progetto ARIA Mobile v4.1")
     if PROJECT_DIR.exists():
         answer = input(f"\n  Directory {PROJECT_DIR.name} esiste. Sovrascrivere? (y/N): ").strip().lower()
         if answer == "y":
@@ -2418,7 +2551,7 @@ def build_apk(java_path):
 
 def summarise(apk):
     title("STEP 3 - Output")
-    dest = DESKTOP / "ARIA-Mobile-v4.0.apk"
+    dest = DESKTOP / "ARIA-Mobile-v4.1.apk"
     if apk and apk.exists():
         shutil.copy2(apk, dest)
         print(f"\n{C.BOLD}{'='*60}")
@@ -2431,7 +2564,7 @@ def summarise(apk):
         info(str(PROJECT_DIR))
 
     print(f"\n{C.BOLD}SETUP:{C.RESET}")
-    info("1. Installa ARIA-Mobile-v4.0.apk sul telefono")
+    info("1. Installa ARIA-Mobile-v4.1.apk sul telefono")
     info("2. All'avvio vedrai la splash 3D con 'Creator: MaikGost'")
     info("3. In chat tocca l'INGRANAGGIO in alto -> inserisci la Groq API key")
     info("   (usa 'Prova connessione' per verificare che funzioni)")
@@ -2449,7 +2582,7 @@ def main():
     if platform.system() == "Windows":
         os.system("color")
     print(f"\n{C.BOLD}{C.CYAN}{'='*60}")
-    print("  ARIA Mobile v4.0 - Builder Android (Kotlin + Compose)")
+    print("  ARIA Mobile v4.1 - Builder Android (Kotlin + Compose)")
     print("  Creator: MaikGost")
     print(f"{'='*60}{C.RESET}\n")
 
@@ -2470,7 +2603,7 @@ def main():
         create_project(java)
         apk = build_apk(java)
         summarise(apk)
-        print(f"{C.OK}{C.BOLD}ARIA Mobile v4.0 - Completato!{C.RESET}\n")
+        print(f"{C.OK}{C.BOLD}ARIA Mobile v4.1 - Completato!{C.RESET}\n")
     except KeyboardInterrupt:
         print(f"\n{C.WARN}Interrotto.{C.RESET}")
         sys.exit(0)
