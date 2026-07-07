@@ -1346,7 +1346,8 @@
     sunDir:new TH.Vector3(0.45,0.62,0.4).normalize(), returnPos:new TH.Vector3(), wpVis:false,
     pp:new TH.Vector3(), pv:new TH.Vector3(), onGround:false, walkPhase:0, body:null, water:null,
     time:0.1, hasAtmo:false, dayHor:null, nightFog:new TH.Color(0x070a12), nodes:[], clouds:[], nearNode:null,
-    critters:[], beams:[], blasterCd:0, ruin:null };
+    critters:[], beams:[], blasterCd:0, ruin:null,
+    npcs:[], city:null, cityMats:[], cityLights:[], cityVisited:false, nearNPC:null };
   var _sunWhite=new TH.Color(0xffffff), _sunWarm=new TH.Color(0xff9a50);
   var CRIT_CFG={ terran:{col:0x7a9a4a,fl:0}, ocean:{col:0x4a9ab0,fl:0.5}, desert:{col:0xc8a060,fl:0},
     ice:{col:0xa8d0e8,fl:0.2}, rock:{col:0x8a8078,fl:0.15}, lava:{col:0x9a4a30,fl:0.2},
@@ -1389,12 +1390,268 @@
     return g;
   }
 
+  // ---------- personaggio umano (low-poly animabile) ----------
+  var SKIN_COLS=[0xf0c8a0,0xe0b088,0xc89060,0xa87848,0x8a5a38];
+  var CLOTH_COLS=[0x9a3030,0x2a4a7a,0x3a6a4a,0x6a5a2a,0x7a3a6a,0x2a5a6a,0xa06020,0x505860];
+  function humanModel(rng){
+    var g=new TH.Group();
+    var skin=new TH.MeshStandardMaterial({color:SKIN_COLS[Math.floor(rng()*SKIN_COLS.length)],roughness:0.7,metalness:0});
+    var shirt=new TH.MeshStandardMaterial({color:CLOTH_COLS[Math.floor(rng()*CLOTH_COLS.length)],roughness:0.85,metalness:0});
+    var pants=new TH.MeshStandardMaterial({color:CLOTH_COLS[Math.floor(rng()*CLOTH_COLS.length)],roughness:0.9,metalness:0});
+    var hair=new TH.MeshStandardMaterial({color:[0x1a1008,0x3a2410,0x60401a,0x2a2a2a,0x8a8a88][Math.floor(rng()*5)],roughness:0.9});
+    // torso
+    var torso=new TH.Mesh(new TH.CylinderGeometry(0.26,0.22,0.72,10),shirt); torso.position.y=1.28; g.add(torso);
+    var hips=new TH.Mesh(new TH.CylinderGeometry(0.22,0.2,0.28,8),pants); hips.position.y=0.92; g.add(hips);
+    // testa
+    var head=new TH.Mesh(new TH.SphereGeometry(0.2,12,10),skin); head.position.y=1.82; g.add(head);
+    var hcap=new TH.Mesh(new TH.SphereGeometry(0.205,12,8,0,6.283,0,1.5),hair); hcap.position.y=1.85; g.add(hcap);
+    // braccia
+    var arms=[];
+    [[-1,0x0],[1,0x0]].forEach(function(a){
+      var pivot=new TH.Group(); pivot.position.set(a[0]*0.3,1.55,0); g.add(pivot);
+      var arm=new TH.Mesh(new TH.CylinderGeometry(0.075,0.06,0.66,7),shirt); arm.position.y=-0.33; pivot.add(arm);
+      var hand=new TH.Mesh(new TH.SphereGeometry(0.075,7,6),skin); hand.position.y=-0.66; pivot.add(hand);
+      arms.push(pivot);
+    });
+    // gambe
+    var legs=[];
+    [[-1],[1]].forEach(function(a){
+      var pivot=new TH.Group(); pivot.position.set(a[0]*0.12,0.88,0); g.add(pivot);
+      var leg=new TH.Mesh(new TH.CylinderGeometry(0.1,0.08,0.8,7),pants); leg.position.y=-0.4; pivot.add(leg);
+      var foot=new TH.Mesh(new TH.BoxGeometry(0.14,0.1,0.28),hair); foot.position.set(0,-0.82,0.06); pivot.add(foot);
+      legs.push(pivot);
+    });
+    g.traverse(function(c){ if(c.isMesh){ c.castShadow=true; } });
+    g.userData={arms:arms,legs:legs};
+    return g;
+  }
+
+  // ---------- ROMA in 3D ----------
+  function buildRome(rng){
+    var C=surf.city, gy=C.level, grp=new TH.Group(); surf.group.add(grp);
+    var trav=new TH.MeshStandardMaterial({color:0xd8c9a8,roughness:0.85,metalness:0.02}); // travertino
+    var travD=new TH.MeshStandardMaterial({color:0xb8a684,roughness:0.9,metalness:0.02});
+    var marble=new TH.MeshStandardMaterial({color:0xe8e2d2,roughness:0.5,metalness:0.05});
+    marble.envMapIntensity=0.4;
+    var roofR=new TH.MeshStandardMaterial({color:0x9a5030,roughness:0.85}); // tetti coppi
+    var road=new TH.MeshStandardMaterial({color:0x3a3630,roughness:0.95});
+    surf.cityMats=[]; surf.cityLights=[];
+
+    // pavimentazione piazza centrale
+    var plaza=new TH.Mesh(new TH.CircleGeometry(C.r,48),new TH.MeshStandardMaterial({color:0x6a6258,roughness:0.9}));
+    plaza.rotation.x=-Math.PI/2; plaza.position.set(C.x,gy+0.05,C.z); plaza.receiveShadow=true; grp.add(plaza);
+
+    // ---- COLOSSEO ----
+    (function(){
+      var col=new TH.Group(); col.position.set(C.x-95,gy,C.z-70); grp.add(col);
+      var rx=42, rz=34, tiers=[[0,13,3.0],[13,11,2.6],[24,9,2.4]];
+      var arches=40;
+      tiers.forEach(function(ti,idx){
+        var yb=ti[0], hh=ti[1], th=ti[2];
+        // anello esterno con arcate
+        for(var a=0;a<arches;a++){
+          var ang=a/arches*6.283;
+          var px=Math.cos(ang)*rx, pz=Math.sin(ang)*rz;
+          var pil=new TH.Mesh(new TH.BoxGeometry(2.0,hh,th),idx===0?trav:travD);
+          pil.position.set(px,yb+hh/2,pz); pil.rotation.y=-ang; pil.castShadow=true; pil.receiveShadow=true; col.add(pil);
+        }
+        // cornice
+        var ring=new TH.Mesh(new TH.TorusGeometry((rx+rz)/2,1.1,8,48),trav); ring.rotation.x=Math.PI/2; ring.scale.set(rx/((rx+rz)/2),rz/((rx+rz)/2),1); ring.position.y=yb+hh; col.add(ring);
+      });
+      // parete diroccata: mezza cinta più alta (il celebre profilo)
+      var arc=new TH.Mesh(new TH.CylinderGeometry(rx+2,rx+2,40,48,1,true,0,Math.PI*0.9),new TH.MeshStandardMaterial({color:0xcdbd98,roughness:0.88,side:TH.DoubleSide}));
+      arc.scale.z=rz/(rx+2)*1.0; arc.position.y=20; col.add(arc);
+      // interno: gradinate ellittiche
+      for(var g2=0;g2<4;g2++){ var gr=new TH.Mesh(new TH.TorusGeometry(rx-6-g2*7,1.6,6,40),travD); gr.rotation.x=Math.PI/2; gr.scale.set(1,(rz-6-g2*7)/(rx-6-g2*7),1); gr.position.y=2+g2*3; col.add(gr); }
+      col.traverse(function(c){ if(c.isMesh){ c.castShadow=true; c.receiveShadow=true; } });
+      surf.cityColosseo={x:C.x-95,z:C.z-70};
+    })();
+
+    // ---- PANTHEON ----
+    (function(){
+      var pan=new TH.Group(); pan.position.set(C.x+90,gy,C.z+50); grp.add(pan);
+      // rotonda
+      var rot=new TH.Mesh(new TH.CylinderGeometry(20,20,22,40),trav); rot.position.y=11; pan.add(rot);
+      // cupola
+      var dome=new TH.Mesh(new TH.SphereGeometry(20,32,18,0,6.283,0,Math.PI/2),travD); dome.position.y=22; pan.add(dome);
+      var oc=new TH.Mesh(new TH.CylinderGeometry(2.6,2.6,1,16),marble); oc.position.y=40; pan.add(oc);
+      // pronao con colonne
+      var ped=new TH.Mesh(new TH.BoxGeometry(30,2,14),marble); ped.position.set(0,1,24); pan.add(ped);
+      for(var c2=0;c2<8;c2++){ var cx2=-13+c2*3.7; var coln=new TH.Mesh(new TH.CylinderGeometry(1.1,1.2,16,14),marble); coln.position.set(cx2,10,28); pan.add(coln);
+        var cap=new TH.Mesh(new TH.BoxGeometry(2.8,1,2.8),marble); cap.position.set(cx2,18.4,28); pan.add(cap); }
+      var frieze=new TH.Mesh(new TH.BoxGeometry(30,5,4),marble); frieze.position.set(0,21,28); pan.add(frieze);
+      var ped2=new TH.Mesh(new TH.CylinderGeometry(16,16,4,3),marble); ped2.rotation.x=Math.PI/2; ped2.rotation.z=Math.PI/6; ped2.position.set(0,25,29.5); ped2.scale.set(1,0.34,1); pan.add(ped2);
+      pan.traverse(function(c){ if(c.isMesh){ c.castShadow=true; c.receiveShadow=true; } });
+    })();
+
+    // ---- OBELISCO al centro ----
+    (function(){
+      var base=new TH.Mesh(new TH.BoxGeometry(5,3,5),travD); base.position.set(C.x,gy+1.5,C.z); grp.add(base);
+      var ob=new TH.Mesh(new TH.CylinderGeometry(0.1,1.4,26,4),new TH.MeshStandardMaterial({color:0xc0a070,roughness:0.7,metalness:0.1})); ob.position.set(C.x,gy+16,C.z); ob.rotation.y=Math.PI/4; grp.add(ob);
+      var tip=new TH.Mesh(new TH.ConeGeometry(0.6,2,4),new TH.MeshStandardMaterial({color:0xe0c890,metalness:0.5,roughness:0.3})); tip.position.set(C.x,gy+29.5,C.z); tip.rotation.y=Math.PI/4; grp.add(tip);
+      base.castShadow=ob.castShadow=true;
+    })();
+
+    // ---- FONTANA ----
+    (function(){
+      var fb=new TH.Mesh(new TH.CylinderGeometry(8,8,1.4,24),travD); fb.position.set(C.x-40,gy+0.7,C.z+70); grp.add(fb);
+      var water=new TH.Mesh(new TH.CircleGeometry(7.4,24),new TH.MeshStandardMaterial({color:0x2a6a9a,roughness:0.1,metalness:0.1,transparent:true,opacity:0.85})); water.rotation.x=-Math.PI/2; water.position.set(C.x-40,gy+1.35,C.z+70); grp.add(water);
+      var stat=new TH.Mesh(new TH.CylinderGeometry(0.6,1,5,8),marble); stat.position.set(C.x-40,gy+3.5,C.z+70); grp.add(stat);
+    })();
+
+    // ---- PALAZZI ROMANI a griglia con finestre illuminabili ----
+    var rng2=rng;
+    function palazzo(px,pz,w,d,floors,mat){
+      var h=floors*3.2+2;
+      var b=new TH.Mesh(new TH.BoxGeometry(w,h,d),mat); b.position.set(px,gy+h/2,pz); b.castShadow=true; b.receiveShadow=true; grp.add(b);
+      // tetto a coppi
+      var roof=new TH.Mesh(new TH.BoxGeometry(w+0.6,0.6,d+0.6),roofR); roof.position.set(px,gy+h+0.3,pz); roof.castShadow=true; grp.add(roof);
+      // finestre come piani emissivi (istanziati via InstancedMesh sarebbe meglio, ma pochi palazzi → mesh singole)
+      var winMat=new TH.MeshStandardMaterial({color:0x2a2a2a,emissive:0xffd070,emissiveIntensity:0}); surf.cityMats.push(winMat);
+      var wgeo=new TH.PlaneGeometry(0.8,1.1);
+      [[0,0,1,d/2+0.02],[Math.PI,0,-1,-d/2-0.02]].forEach(function(side){
+        var cols=Math.max(2,Math.floor(w/2.2));
+        for(var fl=0;fl<floors;fl++){ for(var cc=0;cc<cols;cc++){
+          var wx=px+(-w/2+1.1+cc*(w-2.2)/(cols-1||1));
+          var wy=gy+2.2+fl*3.2;
+          var win=new TH.Mesh(wgeo,winMat); win.position.set(wx,wy,pz+side[3]); win.rotation.y=side[0]; grp.add(win);
+        }}
+      });
+      return b;
+    }
+    var palMats=[new TH.MeshStandardMaterial({color:0xc99a5a,roughness:0.9}),new TH.MeshStandardMaterial({color:0xd8b070,roughness:0.9}),new TH.MeshStandardMaterial({color:0xb87848,roughness:0.9}),new TH.MeshStandardMaterial({color:0xcaa878,roughness:0.9}),new TH.MeshStandardMaterial({color:0xa86a5a,roughness:0.9})];
+    var blocks=[];
+    for(var bx=-3;bx<=3;bx++){ for(var bz=-3;bz<=3;bz++){
+      var pxx=C.x+bx*46, pzz=C.z+bz*46;
+      var dc=Math.hypot(pxx-C.x,pzz-C.z);
+      if(dc<40||dc>C.r-10) continue; // lascia libero il centro e il bordo
+      // evita Colosseo e Pantheon
+      if(Math.hypot(pxx-(C.x-95),pzz-(C.z-70))<60) continue;
+      if(Math.hypot(pxx-(C.x+90),pzz-(C.z+50))<45) continue;
+      var w=14+rng2()*12, d=14+rng2()*12, floors=3+Math.floor(rng2()*5);
+      palazzo(pxx+(rng2()-0.5)*6,pzz+(rng2()-0.5)*6,w,d,floors,palMats[Math.floor(rng2()*palMats.length)]);
+    }}
+
+    // strade (croci scure)
+    for(var s=-3;s<=3;s++){
+      var rH=new TH.Mesh(new TH.PlaneGeometry(C.r*2,8),road); rH.rotation.x=-Math.PI/2; rH.position.set(C.x,gy+0.08,C.z+s*46); grp.add(rH);
+      var rV=new TH.Mesh(new TH.PlaneGeometry(8,C.r*2),road); rV.rotation.x=-Math.PI/2; rV.position.set(C.x+s*46,gy+0.08,C.z); grp.add(rV);
+    }
+
+    // lampioni + pini romani lungo i viali
+    for(var lp=0;lp<44;lp++){
+      var la=rng2()*6.283, ld=40+rng2()*(C.r-50);
+      var lx=C.x+Math.cos(la)*ld, lz=C.z+Math.sin(la)*ld;
+      if(rng2()<0.5){
+        // lampione
+        var pole=new TH.Mesh(new TH.CylinderGeometry(0.12,0.16,5,6),new TH.MeshStandardMaterial({color:0x2a2a2a,metalness:0.6,roughness:0.5}));
+        pole.position.set(lx,gy+2.5,lz); pole.castShadow=true; grp.add(pole);
+        var lampMat=new TH.MeshStandardMaterial({color:0x3a3020,emissive:0xffd070,emissiveIntensity:0.2}); surf.cityMats.push(lampMat);
+        var lamp=new TH.Mesh(new TH.SphereGeometry(0.4,10,8),lampMat); lamp.position.set(lx,gy+5.2,lz); grp.add(lamp);
+        surf.cityLights.push({mat:lampMat,glow:null});
+      } else {
+        // pino romano (ombrello)
+        var trunk=new TH.Mesh(new TH.CylinderGeometry(0.3,0.5,7,7),new TH.MeshStandardMaterial({color:0x5a4030,roughness:0.9}));
+        trunk.position.set(lx,gy+3.5,lz); trunk.castShadow=true; grp.add(trunk);
+        var canopy=new TH.Mesh(new TH.SphereGeometry(4,10,7),new TH.MeshStandardMaterial({color:0x2a5a30,roughness:0.9,flatShading:true}));
+        canopy.scale.set(1.4,0.55,1.4); canopy.position.set(lx,gy+9,lz); canopy.castShadow=true; grp.add(canopy);
+      }
+    }
+
+    // mura di cinta con torri
+    for(var mw=0;mw<48;mw++){
+      var ma=mw/48*6.283;
+      var mx=C.x+Math.cos(ma)*(C.r+6), mz=C.z+Math.sin(ma)*(C.r+6);
+      var seg=new TH.Mesh(new TH.BoxGeometry(6,7,2.5),new TH.MeshStandardMaterial({color:0xb09070,roughness:0.9}));
+      seg.position.set(mx,gy+3.5,mz); seg.rotation.y=-ma; seg.castShadow=true; seg.receiveShadow=true; grp.add(seg);
+    }
+
+    surf.cityGroup=grp;
+  }
+
+  function buildRomans(rng){
+    var C=surf.city; surf.npcs=[];
+    var LINES={
+      cittadino:['Ao’, bella pilota! Sei atterrata proprio a Roma.','Er Colosseo? Sta di là, non te lo puoi perde.','A Roma se magna bene pure tra le stelle, sappilo.'],
+      centurione:['Salve, viaggiatrice. La Città Eterna ti dà il benvenuto.','Duemila anni e ancora qui. Manco l’ipermotore ci batte.','Custodiamo queste rovine da generazioni.'],
+      mercante:['Souvenir dallo spazio! Minerali rari, prezzo d’amico!','Portami minerali e ne riparliamo, eh.','Se cerchi manufatti, i templi antichi ne son pieni.'],
+      turista:['Che meraviglia ’sta città! Foto su foto.','Ho visto il Pantheon, la cupola è pazzesca!','Tu vieni da un altro sistema? Fortunata!']
+    };
+    var kinds=Object.keys(LINES);
+    var N=24;
+    for(var i=0;i<N;i++){
+      var g=humanModel(rng);
+      var kind=kinds[Math.floor(rng()*kinds.length)];
+      // posizione lungo i viali
+      var a=rng()*6.283, d=30+rng()*(C.r-45);
+      var px=C.x+Math.cos(a)*d, pz=C.z+Math.sin(a)*d;
+      g.position.set(px,surf.heightFn(px,pz),pz);
+      g.scale.setScalar(0.92+rng()*0.16);
+      surf.group.add(g);
+      surf.npcs.push({ g:g, kind:kind, lines:LINES[kind], phase:rng()*6.28,
+        wander:rng()*6.28, wt:rng()*3, spd:1.1+rng()*1.0, talkCd:0,
+        hx:px, hz:pz, home:new TH.Vector3(px,0,pz) });
+    }
+  }
+  function updateRomans(dt){
+    var toP=surf.pp; surf.nearNPC=null; var bestD=4.5;
+    surf.npcs.forEach(function(n){
+      var g=n.g;
+      var dP=g.position.distanceTo(toP);
+      // vaga entro un raggio da casa; si ferma se il giocatore è vicino
+      var moving=false;
+      if(dP>3.2){
+        n.wt-=dt;
+        if(n.wt<=0){ n.wt=2+Math.random()*4; n.wander=Math.random()*6.28; }
+        var tx=Math.cos(n.wander), tz=Math.sin(n.wander);
+        // richiamo verso casa se troppo lontano
+        var dh=Math.hypot(g.position.x-n.home.x,g.position.z-n.home.z);
+        if(dh>45){ tx=(n.home.x-g.position.x); tz=(n.home.z-g.position.z); var l=Math.hypot(tx,tz)||1; tx/=l; tz/=l; }
+        var nx=g.position.x+tx*n.spd*dt, nz=g.position.z+tz*n.spd*dt;
+        var dc=Math.hypot(nx-surf.city.x,nz-surf.city.z);
+        if(dc<surf.city.r-6){ g.position.x=nx; g.position.z=nz; g.rotation.y=Math.atan2(tx,tz); moving=true; }
+      } else {
+        // guarda il giocatore
+        g.rotation.y=Math.atan2(toP.x-g.position.x,toP.z-g.position.z);
+      }
+      g.position.y=surf.heightFn(g.position.x,g.position.z);
+      // animazione cammino
+      if(moving){ n.phase+=dt*7; } else { n.phase*=0.9; }
+      var sw=Math.sin(n.phase)*0.5;
+      if(g.userData.legs){ g.userData.legs[0].rotation.x=sw; g.userData.legs[1].rotation.x=-sw; }
+      if(g.userData.arms){ g.userData.arms[0].rotation.x=-sw*0.7; g.userData.arms[1].rotation.x=sw*0.7; }
+      if(dP<bestD){ bestD=dP; surf.nearNPC=n; }
+    });
+  }
+  function talkToNPC(){
+    if(!surf.nearNPC) return false;
+    var n=surf.nearNPC;
+    var line=n.lines[Math.floor(Math.random()*n.lines.length)];
+    var who={cittadino:'CITTADINO ROMANO',centurione:'CENTURIONE',mercante:'MERCANTE',turista:'TURISTA'}[n.kind];
+    dialog(who,[line]); SND.ui();
+    return true;
+  }
+
   function buildSurface(body){
     var type=body.type, P=PALS[type]||PALS.rock, cfg=SURF_CFG[type]||SURF_CFG.rock;
     var rng2=mulberry32((body.seed||12345)>>>0);
     var noiseS=makeNoise2D(rng2);
     surf.amp=cfg.amp; surf.waterY=cfg.water; surf.grav=cfg.grav; surf.jump=cfg.jump; surf.body=body;
-    surf.heightFn=function(x,z){ return noiseS(x*0.0038+7,z*0.0038+7,4)*surf.amp + noiseS(x*0.021+3,z*0.021+3,3)*surf.amp*0.16; };
+    var baseH=function(x,z){ return noiseS(x*0.0038+7,z*0.0038+7,4)*surf.amp + noiseS(x*0.021+3,z*0.021+3,3)*surf.amp*0.16; };
+    surf.heightFn=baseH;
+    surf.city=null;
+    if(body.name==='Terra'){
+      // Roma sorge su una piana: il terreno si appiattisce dentro il perimetro urbano
+      var cX=330, cZ=-60, cR=230;
+      var cLevel=Math.max(baseH(cX,cZ), surf.waterY+4);
+      surf.city={x:cX,z:cZ,r:cR,level:cLevel};
+      surf.heightFn=function(x,z){
+        var h=baseH(x,z);
+        var d=Math.hypot(x-cX,z-cZ);
+        var t=clamp01((d-cR)/130);
+        return cLevel*(1-t)+h*t;
+      };
+    }
     surf.group=new TH.Group(); scene.add(surf.group);
 
     // terreno con vertex color
@@ -1503,6 +1760,7 @@
       else kind='predator';
       var cx3=(rng2()-0.5)*1500, cz3=(rng2()-0.5)*1500, cy3=surf.heightFn(cx3,cz3);
       if(cy3<surf.waterY+0.5){ cx3+=140; cz3-=140; cy3=surf.heightFn(cx3,cz3); if(cy3<surf.waterY+0.5) continue; }
+      if(surf.city && Math.hypot(cx3-surf.city.x,cz3-surf.city.z)<surf.city.r+40) continue; // niente predatori a Roma
       var tint=new TH.Color(ccfg.col).offsetHSL((rng2()-0.5)*0.08,0,(rng2()-0.5)*0.15);
       var scl=(kind==='predator'?1.25:kind==='float'?1.1:0.85)+rng2()*0.5;
       var cg=critterModel(kind,tint,rng2); cg.scale.setScalar(scl);
@@ -1581,11 +1839,17 @@
     if(bloomPass){ bloomPass.strength=0.22; bloomPass.threshold=0.85; }
     // con atmosfera il cielo copre lo spazio profondo: niente stelle/via lattea in additive
     if(P.atmo){ stars.visible=false; milkyMesh.visible=false; nebulaSprites.forEach(function(sp){ sp.visible=false; }); }
+
+    // ROMA sulla Terra
+    surf.npcs=[]; surf.nearNPC=null; surf.cityMats=[]; surf.cityLights=[];
+    if(surf.city){ buildRome(rng2); buildRomans(rng2); }
+
     surf.active=true;
   }
   function destroySurface(){
     if(surf.group){ scene.remove(surf.group); disposeObj(surf.group); surf.group=null; }
     surf.critters=[]; surf.beams=[]; surf.ruin=null; surf.nodes=[]; surf.clouds=[]; surf.nearNode=null;
+    surf.npcs=[]; surf.nearNPC=null; surf.cityMats=[]; surf.cityLights=[]; surf.city=null;
     scene.fog=null; surf.active=false; surf.water=null;
     amb.intensity=0.5; hemi.intensity=0.3; sunLight.intensity=2.6;
     if(bloomPass){ bloomPass.strength=PROPS.bloomStrength; bloomPass.threshold=0.55; }
@@ -1621,17 +1885,25 @@
     if(outpost) outpost.visible=false;
     surf.wpVis=!!(waypoint&&waypoint.visible); if(waypoint) waypoint.visible=false;
     locked=null; refreshTarget(); hidePrompt();
-    // nave parcheggiata sul terreno
-    var sy=surf.heightFn(12,18);
-    ship.position.set(12,sy+1.7,18);
+    // punto di atterraggio: bordo di Roma sulla Terra, altrimenti origine
+    var lx0=0, lz0=0;
+    if(surf.city){ lx0=surf.city.x; lz0=surf.city.z+surf.city.r-24; }
+    // nave parcheggiata accanto
+    var shx=lx0+12, shz=lz0+18, sy=surf.heightFn(shx,shz);
+    ship.position.set(shx,sy+1.7,shz);
     ship.quaternion.set(0,0,0,1); ship.rotateY(Math.PI*0.7); ship.rotateZ(0.02);
-    plYaw=0; plPitch=-0.04;
-    surf.pp.set(0,surf.heightFn(0,0)+1.75,0); surf.pv.set(0,0,0); surf.onGround=true;
+    plYaw=surf.city?Math.PI:0; plPitch=-0.04;
+    surf.pp.set(lx0,surf.heightFn(lx0,lz0)+1.75,lz0); surf.pv.set(0,0,0); surf.onGround=true;
     camera.rotation.order='YXZ'; camera.fov=70; camera.updateProjectionMatrix();
     camera.position.copy(surf.pp); camera.rotation.set(plPitch,plYaw,0);
     mode='surface';
-    mission('★','Superficie di '+body.name,'Esplora, spara alla fauna ostile, raccogli minerali e cerca rovine aliene');
-    toast('ATTERRATO SU '+body.name.toUpperCase(),'CLIC spara/guarda · WASD muovi · SPAZIO salta · F raccogli');
+    if(surf.city){
+      mission('★','Terra · ROMA','Visita la Città Eterna: Colosseo, Pantheon, obelisco. Parla coi romani (F)');
+      toast('BENVENUTA A ROMA','Segui il blip dorato sul radar · F per parlare con la gente');
+    } else {
+      mission('★','Superficie di '+body.name,'Esplora, spara alla fauna ostile, raccogli minerali e cerca rovine aliene');
+      toast('ATTERRATO SU '+body.name.toUpperCase(),'CLIC spara/guarda · WASD muovi · SPAZIO salta · F raccogli');
+    }
     SND.scan();
   }
   function tryTakeoff(){
@@ -1680,6 +1952,12 @@
 
     updateCritters(dt);
     updateSurfBeams(dt);
+    // Roma: personaggi + luci notturne di finestre e lampioni
+    if(surf.city){
+      updateRomans(dt);
+      var lit=day<0.45?clamp01((0.45-day)/0.35):0;
+      surf.cityMats.forEach(function(m){ if(m._bias===undefined) m._bias=0.55+Math.random()*0.5; m.emissiveIntensity=lit*m._bias; });
+    }
     // manufatto delle rovine
     if(surf.ruin && !surf.ruin.taken){ surf.ruin.ph+=dt; surf.ruin.relic.rotation.y+=dt*0.9; surf.ruin.relic.position.y=surf.ruin.pos.y+Math.sin(surf.ruin.ph*1.4)*0.4; surf.ruin.glow.position.copy(surf.ruin.relic.position); surf.ruin.glow.material.opacity=0.7+Math.sin(surf.ruin.ph*3)*0.2; }
     surf.blasterCd=Math.max(0,surf.blasterCd-dt);
@@ -1710,7 +1988,8 @@
     SND.engine(0.03,false);
     if(dActive){ hidePrompt(); return; }
     var nearRelic=surf.ruin && !surf.ruin.taken && surf.pp.distanceTo(surf.ruin.pos)<7;
-    if(nearRelic) prompt2('F','Recupera manufatto alieno (+40 crediti)');
+    if(surf.nearNPC) prompt2('F','Parla');
+    else if(nearRelic) prompt2('F','Recupera manufatto alieno (+40 crediti)');
     else if(surf.nearNode) prompt2('F','Raccogli frammento minerale (+5)');
     else if(surf.pp.distanceTo(ship.position)<24) prompt2('T','Decolla · CLIC spara');
     else if(document.pointerLockElement!==canvas) prompt2('CLIC','Blocca il mouse per guardarti intorno');
@@ -1859,6 +2138,8 @@
       function sblip(px,pz,col,sz){ var dx=px-surf.pp.x, dz=pz-surf.pp.z; var d=Math.hypot(dx,dz); if(d>range2){ dx*=range2/d; dz*=range2/d; } var rx=dx*csS-dz*snS, rz=dx*snS+dz*csS; rctx.fillStyle=col; rctx.beginPath(); rctx.arc(cx+(rx/range2)*R,cy+(rz/range2)*R,sz,0,7); rctx.fill(); }
       surf.nodes.forEach(function(n){ sblip(n.m.position.x,n.m.position.z,'rgba(87,214,160,0.9)',1.8); });
       surf.critters.forEach(function(cr){ sblip(cr.g.position.x,cr.g.position.z,cr.hostile?'rgba(255,80,70,1)':'rgba(200,190,120,0.85)',cr.hostile?2.4:1.8); });
+      surf.npcs.forEach(function(n){ sblip(n.g.position.x,n.g.position.z,'rgba(120,200,255,0.7)',1.4); });
+      if(surf.city){ sblip(surf.city.x,surf.city.z,'rgba(240,200,120,0.9)',3); }
       if(surf.ruin) sblip(surf.ruin.pos.x,surf.ruin.pos.z,'rgba(200,140,255,1)',2.6);
       sblip(ship.position.x,ship.position.z,'rgba(95,208,224,1)',3.4);
       rctx.fillStyle='#eaf6ff'; rctx.beginPath(); rctx.moveTo(cx,cy-4); rctx.lineTo(cx-3,cy+3); rctx.lineTo(cx+3,cy+3); rctx.closePath(); rctx.fill();
@@ -1891,7 +2172,7 @@
     if(mode==='surface'){
       if(k==='t'){ tryTakeoff(); }
       if(k===' '&&dActive) dNext();
-      if(k==='f'){ if(dActive) dNext(); else if(!collectRelic()) collectNode(); }
+      if(k==='f'){ if(dActive) dNext(); else if(!talkToNPC() && !collectRelic()) collectNode(); }
       if(k==='v'){ var en2=SND.toggle(); toast('AUDIO',en2?'Attivato':'Disattivato'); }
       if(k==='m') toast('MAPPA NON DISPONIBILE','Solo in volo spaziale');
       return;
@@ -2328,6 +2609,8 @@
     state:function(){ return {mode:mode, pp:[Math.round(surf.pp.x),Math.round(surf.pp.y),Math.round(surf.pp.z)], ship:[Math.round(ship.position.x),Math.round(ship.position.y),Math.round(ship.position.z)], daylight:+surf.sunDir.y.toFixed(2), nodes:surf.nodes.length, critters:surf.critters.length, hostiles:surf.critters.filter(function(c){return c.hostile;}).length, ruin:surf.ruin?!surf.ruin.taken:false}; },
     critterNear:function(){ var b=999,bc=null; surf.critters.forEach(function(c){ var d=surf.pp.distanceTo(c.g.position); if(d<b){b=d;bc=c;} }); return bc?{kind:bc.kind,dist:Math.round(b),hp:bc.hp}:null; },
     tpToCritter:function(){ if(!surf.critters.length) return false; var c=surf.critters[0]; surf.pp.set(c.g.position.x-14,surf.heightFn(c.g.position.x-14,c.g.position.z)+1.75,c.g.position.z); var d=c.g.position.clone().sub(surf.pp); plYaw=Math.atan2(d.x,d.z); plPitch=0; return true; },
+    city:function(){ return surf.city?{x:surf.city.x,z:surf.city.z,r:surf.city.r,npcs:surf.npcs.length}:null; },
+    tpCity:function(dx,dz,pitch,yaw){ if(!surf.city) return false; surf.pp.set(surf.city.x+(dx||0),surf.heightFn(surf.city.x+(dx||0),surf.city.z+(dz||0))+1.75,surf.city.z+(dz||0)); plPitch=pitch||0; plYaw=(yaw===undefined?0:yaw); return true; },
     hurtSelf:function(){ surfDamage(9); },
     net:NET.dbg, netHost:NET.host, netJoin:NET.join,
     look:function(pitch,yaw){ plPitch=pitch||0; plYaw=yaw||0; },
