@@ -7,6 +7,18 @@ Desktop/AriaMobile e tenta la compilazione (gradlew assembleDebug)
 usando il JDK e l'Android SDK già presenti sul sistema (Android Studio
 installato).
 
+NOVITÀ v6.2 (GROQ TORNA PRIMARIO):
+- FIX: la 'Modalita' offline' NON blocca piu' Groq. Prima intercettava
+  ogni messaggio col cervello locale: ecco perche' Groq 'non funzionava
+  come prima'. Ora Groq e' SEMPRE il cervello principale quando c'e' la
+  API key.
+- L'offline resta come rete di sicurezza: interviene solo per ora/data
+  (accurate), se manca la key, o se Groq fallisce (niente rete).
+- L'AI ora conosce DATA E ORA correnti (inserite nel system prompt):
+  risposte piu' precise.
+- Memoria di contesto ampliata (24 messaggi). Toggle offline ora vale
+  solo per il riconoscimento vocale offline, non blocca le risposte.
+
 NOVITÀ v6.1 (ASCOLTO MOLTO PIU' AFFIDABILE):
 - FIX IMPORTANTE: il wake NON usa piu' il riconoscimento 'offline'
   (che senza pacchetto lingua non sentiva NULLA). Ora usa il motore
@@ -163,8 +175,8 @@ android {
         applicationId "com.aria.mobile"
         minSdk 26
         targetSdk 34
-        versionCode 8
-        versionName "6.1.0"
+        versionCode 9
+        versionName "6.2.0"
         multiDexEnabled true
     }
 
@@ -347,7 +359,7 @@ object AppConfig {
     const val PREF_OFFLINE_MODE = "offline_mode"
 
     const val CREATOR = "MaikGost"
-    const val VERSION = "6.1.0"
+    const val VERSION = "6.2.0"
 
     const val COLOR_BG = 0xFF0A0E1A.toInt()
     const val COLOR_SURFACE = 0xFF121826.toInt()
@@ -515,12 +527,13 @@ class GroqClient(private val apiKey: String, private val model: String) {
 ARIA_BRAIN = r"""package com.aria.mobile.core
 
 import android.content.Context
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
 import com.aria.mobile.data.AriaDatabase
 import com.aria.mobile.data.MessageEntity
 import com.aria.mobile.net.GroqClient
 import kotlinx.coroutines.*
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class AriaBrain(private val context: Context) {
 
@@ -528,17 +541,6 @@ class AriaBrain(private val context: Context) {
     private val db = AriaDatabase.getInstance(context)
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val offline = OfflineBrain(context)
-
-    private fun isOnline(): Boolean {
-        return try {
-            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-            val net = cm.activeNetwork ?: return false
-            val caps = cm.getNetworkCapabilities(net) ?: return false
-            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-        } catch (e: Exception) {
-            false
-        }
-    }
 
     private fun buildSystemPrompt(): String {
         val assistantName = prefs.getString(AppConfig.PREF_ASSISTANT_NAME, AppConfig.DEFAULT_ASSISTANT_NAME)
@@ -553,55 +555,60 @@ class AriaBrain(private val context: Context) {
             "Motivazionale" -> "Sii energica e motivazionale, incoraggia sempre l'utente."
             else -> "Sii calorosa e amichevole."
         }
+        val nowStr = SimpleDateFormat("EEEE d MMMM yyyy, HH:mm", Locale.ITALIAN).format(Date())
         val sb = StringBuilder()
         sb.append("Sei $assistantName, un'assistente AI personale creata da ${AppConfig.CREATOR}. ")
         sb.append("Sei utile, diretta e concisa. $personalityDesc ")
-        sb.append("Rispondi in italiano salvo richiesta diversa.")
+        sb.append("Rispondi in italiano salvo richiesta diversa. ")
+        sb.append("Per riferimento, data e ora attuali: $nowStr.")
         if (userName.isNotBlank()) {
             sb.append(" L'utente si chiama $userName: chiamalo per nome quando risulta naturale.")
         }
         return sb.toString()
     }
 
+    /**
+     * Groq resta SEMPRE il cervello principale quando c'e' la API key.
+     * L'offline interviene solo: 1) per ora/data (l'AI non le conosce con
+     * precisione); 2) se manca la key; 3) come fallback se Groq fallisce
+     * (es. niente rete). Cosi' funziona sempre come prima, ma piu' robusto.
+     */
     fun sendMessage(text: String, onResult: (String) -> Unit, onError: (String) -> Unit) {
         val apiKey = prefs.getString(AppConfig.PREF_API_KEY, "") ?: ""
         val model = prefs.getString(AppConfig.PREF_MODEL, AppConfig.DEFAULT_MODEL) ?: AppConfig.DEFAULT_MODEL
         val memoryEnabled = prefs.getBoolean(AppConfig.PREF_MEMORY_ENABLED, true)
-        val offlinePref = prefs.getBoolean(AppConfig.PREF_OFFLINE_MODE, false)
-        val online = isOnline()
 
         scope.launch {
             try {
                 db.messageDao().insert(MessageEntity(role = "user", content = text))
 
-                // ---- ROUTING OFFLINE ----
-                // Usa il cervello locale se: modalita' offline attiva, nessuna
-                // connessione, oppure manca la API key. Se il locale non sa
-                // rispondere ma siamo online con la key, si passa all'AI Groq.
-                if (offlinePref || !online || apiKey.isBlank()) {
-                    val local = offline.answer(text)
-                    val reply: String? = when {
-                        local != null -> local
-                        !online || offlinePref -> offline.offlineFallback()
-                        else -> null  // online, senza key e senza risposta locale
-                    }
-                    if (reply != null) {
-                        db.messageDao().insert(MessageEntity(role = "assistant", content = reply))
-                        withContext(Dispatchers.Main) { onResult(reply) }
-                        return@launch
-                    }
-                    if (apiKey.isBlank()) {
-                        withContext(Dispatchers.Main) {
-                            onError("Nessuna API key impostata. Tocca l'ingranaggio in alto per aprire le Impostazioni, oppure attiva la Modalita' offline.")
-                        }
-                        return@launch
-                    }
+                // 1) Ora/data sempre in locale: sono accurate, l'AI no.
+                val realtime = offline.quickLocal(text)
+                if (realtime != null) {
+                    db.messageDao().insert(MessageEntity(role = "assistant", content = realtime))
+                    withContext(Dispatchers.Main) { onResult(realtime) }
+                    return@launch
                 }
 
+                // 2) Nessuna API key: prova il cervello offline.
+                if (apiKey.isBlank()) {
+                    val local = offline.answer(text)
+                    if (local != null) {
+                        db.messageDao().insert(MessageEntity(role = "assistant", content = local))
+                        withContext(Dispatchers.Main) { onResult(local) }
+                    } else {
+                        withContext(Dispatchers.Main) {
+                            onError("Aggiungi una API key Groq nelle Impostazioni (⚙️) per le risposte complete. Ora, data, calcoli e battute funzionano già senza.")
+                        }
+                    }
+                    return@launch
+                }
+
+                // 3) Groq come sempre (cervello principale)
                 val history = mutableListOf("system" to buildSystemPrompt())
                 if (memoryEnabled) {
                     val past = db.messageDao().getSession(0L)
-                    for (m in past.takeLast(20)) history.add(m.role to m.content)
+                    for (m in past.takeLast(24)) history.add(m.role to m.content)
                 }
                 history.add("user" to text)
 
@@ -614,7 +621,17 @@ class AriaBrain(private val context: Context) {
                         }
                     }
                     override fun onError(message: String) {
-                        scope.launch(Dispatchers.Main) { onError(message) }
+                        // fallback: se Groq non risponde (rete assente/errore),
+                        // prova il cervello locale; altrimenti mostra l'errore.
+                        scope.launch {
+                            val local = offline.answer(text)
+                            if (local != null) {
+                                db.messageDao().insert(MessageEntity(role = "assistant", content = local))
+                                withContext(Dispatchers.Main) { onResult(local) }
+                            } else {
+                                withContext(Dispatchers.Main) { onError(message) }
+                            }
+                        }
                     }
                 })
             } catch (e: Exception) {
@@ -756,6 +773,13 @@ class OfflineBrain(private val context: Context) {
     fun offlineFallback(): String =
         "Ora sono offline. Posso risponderti su ora, data, calcoli, testa o " +
         "croce, dadi e qualche battuta. Per il resto mi serve la connessione."
+
+    /** Solo cose che l'AI non puo' sapere con precisione: ora, data, anno. */
+    fun quickLocal(raw: String): String? {
+        val t = raw.lowercase(Locale.getDefault()).trim()
+        if (t.isBlank()) return null
+        return dateTime(t)
+    }
 
     private fun greeting(t: String): String? {
         val g = listOf("ciao", "salve", "buongiorno", "buonasera", "hey", "ehi")
@@ -3203,15 +3227,15 @@ LAYOUT_SETTINGS = """\
         android:background="#1E2A44" android:layout_marginBottom="16dp"/>
 
     <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-        android:text="🔌 MODALITA' OFFLINE" android:textColor="#00E5FF"
+        android:text="🔌 EXTRA OFFLINE" android:textColor="#00E5FF"
         android:textSize="14sp" android:textStyle="bold"/>
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="ARIA risponde a ora, data, calcoli, testa o croce, dadi e battute anche senza internet."
+        android:text="Ora, data, calcoli e battute funzionano SEMPRE anche senza internet. Groq resta il cervello principale quando c'e' connessione (non serve toccare nulla)."
         android:textColor="#5A7A99" android:textSize="11sp" android:layout_marginBottom="8dp"/>
 
     <androidx.appcompat.widget.SwitchCompat android:id="@+id/sw_offline"
         android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="Preferisci risposte offline" android:textColor="#E8F0FF"
+        android:text="Preferisci riconoscimento vocale offline (se scaricato)" android:textColor="#E8F0FF"
         android:layout_marginBottom="10dp"/>
 
     <Button android:id="@+id/btn_download_voice"
@@ -3225,7 +3249,7 @@ LAYOUT_SETTINGS = """\
         android:textStyle="bold"/>
 
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="Creator: MaikGost  •  ARIA Mobile v6.1"
+        android:text="Creator: MaikGost  •  ARIA Mobile v6.2"
         android:textColor="#5A7A99" android:textSize="12sp"
         android:gravity="center" android:layout_marginTop="24dp"/>
 </LinearLayout>
@@ -3339,7 +3363,7 @@ def build_kotlin_file_map():
     }
 
 def create_project(java_path):
-    title("STEP 1 - Creazione progetto ARIA Mobile v6.1")
+    title("STEP 1 - Creazione progetto ARIA Mobile v6.2")
     if PROJECT_DIR.exists():
         answer = input(f"\n  Directory {PROJECT_DIR.name} esiste. Sovrascrivere? (y/N): ").strip().lower()
         if answer == "y":
@@ -3456,7 +3480,7 @@ def build_apk(java_path):
 
 def summarise(apk):
     title("STEP 3 - Output")
-    dest = DESKTOP / "ARIA-Mobile-v6.1.apk"
+    dest = DESKTOP / "ARIA-Mobile-v6.2.apk"
     if apk and apk.exists():
         shutil.copy2(apk, dest)
         print(f"\n{C.BOLD}{'='*60}")
@@ -3469,7 +3493,7 @@ def summarise(apk):
         info(str(PROJECT_DIR))
 
     print(f"\n{C.BOLD}SETUP:{C.RESET}")
-    info("1. Installa ARIA-Mobile-v6.1.apk sul telefono")
+    info("1. Installa ARIA-Mobile-v6.2.apk sul telefono")
     info("2. All'avvio vedrai la splash 3D con 'Creator: MaikGost'")
     info("3. In chat tocca l'INGRANAGGIO in alto -> inserisci la Groq API key")
     info("   (usa 'Prova connessione' per verificare che funzioni)")
@@ -3487,17 +3511,17 @@ def summarise(apk):
     info("   (tienlo escluso dal risparmio batteria per funzionare sempre)")
     info("9. OFFLINE: attiva 'Modalita' offline' e tocca 'Scarica voce offline'.")
     info("   Cosi' ora, data, calcoli e battute funzionano senza internet.")
-    info("10. SE NON TI SENTE: usa '🎤 Prova ascolto' nelle impostazioni per")
-    info("    verificare il microfono. NON tenere 'Modalita' offline' attiva se")
-    info("    non hai scaricato la voce offline. Escludi ARIA dal risparmio")
-    info("    batteria (Impostazioni Android > App > ARIA > Batteria).")
+    info("10. SE NON TI SENTE: usa '🎤 Prova ascolto' nelle impostazioni.")
+    info("    Escludi ARIA dal risparmio batteria (Impostazioni Android > App).")
+    info("11. GROQ: inserisci la API key e usa 'Prova connessione'. Groq e'")
+    info("    sempre il cervello principale; l'offline e' solo rete di sicurezza.")
     print()
 
 def main():
     if platform.system() == "Windows":
         os.system("color")
     print(f"\n{C.BOLD}{C.CYAN}{'='*60}")
-    print("  ARIA Mobile v6.1 - Builder Android (Kotlin + Compose)")
+    print("  ARIA Mobile v6.2 - Builder Android (Kotlin + Compose)")
     print("  Creator: MaikGost")
     print(f"{'='*60}{C.RESET}\n")
 
@@ -3518,7 +3542,7 @@ def main():
         create_project(java)
         apk = build_apk(java)
         summarise(apk)
-        print(f"{C.OK}{C.BOLD}ARIA Mobile v6.1 - Completato!{C.RESET}\n")
+        print(f"{C.OK}{C.BOLD}ARIA Mobile v6.2 - Completato!{C.RESET}\n")
     except KeyboardInterrupt:
         print(f"\n{C.WARN}Interrotto.{C.RESET}")
         sys.exit(0)
