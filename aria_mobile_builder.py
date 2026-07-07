@@ -7,6 +7,17 @@ Desktop/AriaMobile e tenta la compilazione (gradlew assembleDebug)
 usando il JDK e l'Android SDK già presenti sul sistema (Android Studio
 installato).
 
+NOVITÀ v5.0:
+- ASSISTENTE VOCALE SEMPRE ATTIVO ("Hey Maik"): un servizio in
+  background ascolta anche a SCHERMO BLOCCATO. Quando dici "Hey" +
+  la tua parola (default 'maik', cambiabile nelle impostazioni),
+  ARIA risponde "Si'?", ascolta il comando e lo esegue a voce.
+  Puoi anche dire tutto insieme: "Hey Maik che ore sono".
+- COMANDI RAPIDI LOCALI (istantanei, senza internet): ora e data.
+  Tutto il resto va all'AI Groq e viene letto a voce.
+- Notifica persistente con stato, wake-lock per non addormentarsi,
+  richiesta automatica dei permessi microfono/notifiche.
+
 NOVITÀ v4.1:
 - SFERA ANCORA PIU' 3D: doppio guscio di particelle (interno +
   esterno controrotante per un vero effetto parallasse), reticolo
@@ -122,8 +133,8 @@ android {
         applicationId "com.aria.mobile"
         minSdk 26
         targetSdk 34
-        versionCode 5
-        versionName "4.1.0"
+        versionCode 6
+        versionName "5.0.0"
         multiDexEnabled true
     }
 
@@ -225,6 +236,8 @@ MANIFEST = """\
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
 
     <application
         android:name=".AriaApp"
@@ -249,6 +262,10 @@ MANIFEST = """\
 
         <activity android:name=".ui.SettingsActivity" android:exported="false"/>
         <activity android:name=".ui.HistoryActivity" android:exported="false"/>
+
+        <service android:name=".voice.WakeWordService"
+            android:exported="false"
+            android:foregroundServiceType="microphone"/>
 
     </application>
 </manifest>
@@ -295,9 +312,11 @@ object AppConfig {
     const val PREF_ASSISTANT_NAME = "assistant_name"
     const val PREF_USER_NAME = "user_name"
     const val PREF_PERSONALITY = "personality"
+    const val PREF_WAKE_ENABLED = "wake_enabled"
+    const val PREF_WAKE_WORD = "wake_word"
 
     const val CREATOR = "MaikGost"
-    const val VERSION = "4.1.0"
+    const val VERSION = "5.0.0"
 
     const val COLOR_BG = 0xFF0A0E1A.toInt()
     const val COLOR_SURFACE = 0xFF121826.toInt()
@@ -310,6 +329,7 @@ object AppConfig {
 
     const val DEFAULT_ASSISTANT_NAME = "ARIA"
     const val DEFAULT_PERSONALITY = "Amichevole"
+    const val DEFAULT_WAKE_WORD = "maik"
     const val DEFAULT_MODEL = "llama-3.3-70b-versatile"
     const val GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
 }
@@ -2015,19 +2035,67 @@ fun ToolsSheetContent(onTool: (AriaTool) -> Unit) {
 
 SETTINGS_ACTIVITY = r"""package com.aria.mobile.ui
 
+import android.Manifest
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.widget.Button
 import android.widget.EditText
 import android.widget.RadioGroup
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
+import androidx.core.content.ContextCompat
 import com.aria.mobile.R
 import com.aria.mobile.core.AppConfig
 import com.aria.mobile.net.GroqClient
+import com.aria.mobile.voice.WakeWordService
 
 class SettingsActivity : AppCompatActivity() {
+
+    private val permLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { result ->
+        val micOk = result[Manifest.permission.RECORD_AUDIO] == true
+        if (micOk) {
+            restartWakeService()
+            Toast.makeText(this, "Ascolto vocale attivato", Toast.LENGTH_SHORT).show()
+        } else {
+            getSharedPreferences(AppConfig.PREFS, Context.MODE_PRIVATE).edit()
+                .putBoolean(AppConfig.PREF_WAKE_ENABLED, false).apply()
+            Toast.makeText(
+                this,
+                "Serve il permesso microfono per l'ascolto sempre attivo",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+        finish()
+    }
+
+    private fun neededPerms(): Array<String> {
+        val p = mutableListOf(Manifest.permission.RECORD_AUDIO)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            p.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        return p.toTypedArray()
+    }
+
+    private fun hasPerms(): Boolean = neededPerms().all {
+        ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun restartWakeService() {
+        stopWakeService()
+        val i = Intent(this, WakeWordService::class.java)
+        ContextCompat.startForegroundService(this, i)
+    }
+
+    private fun stopWakeService() {
+        stopService(Intent(this, WakeWordService::class.java))
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -2041,6 +2109,8 @@ class SettingsActivity : AppCompatActivity() {
         val rgPersonality = findViewById<RadioGroup>(R.id.rg_personality)
         val swVoice = findViewById<SwitchCompat>(R.id.sw_voice)
         val swMemory = findViewById<SwitchCompat>(R.id.sw_memory)
+        val swWake = findViewById<SwitchCompat>(R.id.sw_wake)
+        val etWakeWord = findViewById<EditText>(R.id.et_wake_word)
         val btnSave = findViewById<Button>(R.id.btn_save_settings)
         val btnBack = findViewById<Button>(R.id.btn_settings_back)
         val btnTest = findViewById<Button>(R.id.btn_test_api)
@@ -2064,6 +2134,10 @@ class SettingsActivity : AppCompatActivity() {
         etModel.setText(prefs.getString(AppConfig.PREF_MODEL, AppConfig.DEFAULT_MODEL))
         swVoice.isChecked = prefs.getBoolean(AppConfig.PREF_VOICE_ENABLED, true)
         swMemory.isChecked = prefs.getBoolean(AppConfig.PREF_MEMORY_ENABLED, true)
+        swWake.isChecked = prefs.getBoolean(AppConfig.PREF_WAKE_ENABLED, false)
+        etWakeWord.setText(
+            prefs.getString(AppConfig.PREF_WAKE_WORD, AppConfig.DEFAULT_WAKE_WORD)
+        )
         val savedPersonality = prefs.getString(
             AppConfig.PREF_PERSONALITY, AppConfig.DEFAULT_PERSONALITY
         )
@@ -2117,17 +2191,35 @@ class SettingsActivity : AppCompatActivity() {
             val personality = personalityIds.entries
                 .firstOrNull { it.value == checkedId }?.key
                 ?: AppConfig.DEFAULT_PERSONALITY
+            val wakeWord = etWakeWord.text.toString().trim()
+                .ifBlank { AppConfig.DEFAULT_WAKE_WORD }
             prefs.edit()
                 .putString(AppConfig.PREF_ASSISTANT_NAME, assistantName)
                 .putString(AppConfig.PREF_USER_NAME, etUserName.text.toString().trim())
                 .putString(AppConfig.PREF_API_KEY, etKey.text.toString().trim())
                 .putString(AppConfig.PREF_MODEL, model)
                 .putString(AppConfig.PREF_PERSONALITY, personality)
+                .putString(AppConfig.PREF_WAKE_WORD, wakeWord)
                 .putBoolean(AppConfig.PREF_VOICE_ENABLED, swVoice.isChecked)
                 .putBoolean(AppConfig.PREF_MEMORY_ENABLED, swMemory.isChecked)
+                .putBoolean(AppConfig.PREF_WAKE_ENABLED, swWake.isChecked)
                 .apply()
+
             Toast.makeText(this, "Impostazioni salvate", Toast.LENGTH_SHORT).show()
-            finish()
+
+            // avvia o ferma l'ascolto sempre attivo
+            if (swWake.isChecked) {
+                if (hasPerms()) {
+                    restartWakeService()
+                    finish()
+                } else {
+                    // chiede i permessi; la chiusura avviene nel callback
+                    permLauncher.launch(neededPerms())
+                }
+            } else {
+                stopWakeService()
+                finish()
+            }
         }
         btnBack.setOnClickListener { finish() }
     }
@@ -2177,6 +2269,294 @@ class HistoryActivity : AppCompatActivity() {
                     "[${fmt.format(Date(it.timestamp))}] $who:\n${it.content}"
                 }
         }
+    }
+}
+"""
+
+WAKE_WORD_SERVICE = r"""package com.aria.mobile.voice
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.os.Build
+import android.os.Bundle
+import android.os.Handler
+import android.os.IBinder
+import android.os.Looper
+import android.os.PowerManager
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
+import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
+import com.aria.mobile.R
+import com.aria.mobile.core.AppConfig
+import com.aria.mobile.core.AriaBrain
+import com.aria.mobile.ui.MainActivity
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
+
+/**
+ * Servizio "sempre in ascolto": gira in foreground (anche a schermo
+ * bloccato) e aspetta la parola di attivazione, es. "Hey Maik".
+ * Quando la sente risponde "Sì?" e ascolta il comando, poi lo esegue
+ * (risposte rapide locali per ora/data, oppure l'AI Groq) e lo legge
+ * a voce. Torna quindi in ascolto della parola di attivazione.
+ */
+class WakeWordService : Service() {
+
+    private enum class Mode { WAKE, COMMAND }
+
+    private val handler = Handler(Looper.getMainLooper())
+    private var recognizer: SpeechRecognizer? = null
+    private var tts: TextToSpeech? = null
+    private var ttsReady = false
+    private var brain: AriaBrain? = null
+    private var wakeLock: PowerManager.WakeLock? = null
+
+    private var mode = Mode.WAKE
+    private var running = false
+    private var speaking = false
+    private var wakeWord = AppConfig.DEFAULT_WAKE_WORD
+
+    private val restartRunnable = Runnable { startWakeListening() }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        brain = AriaBrain(applicationContext)
+
+        val prefs = getSharedPreferences(AppConfig.PREFS, Context.MODE_PRIVATE)
+        wakeWord = (prefs.getString(AppConfig.PREF_WAKE_WORD, AppConfig.DEFAULT_WAKE_WORD)
+            ?: AppConfig.DEFAULT_WAKE_WORD).lowercase(Locale.getDefault()).trim()
+
+        val pm = getSystemService(PowerManager::class.java)
+        wakeLock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "aria:wakeword")
+        wakeLock?.setReferenceCounted(false)
+
+        tts = TextToSpeech(this) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                val r = tts?.setLanguage(Locale.ITALIAN) ?: TextToSpeech.LANG_MISSING_DATA
+                if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
+                    tts?.language = Locale.getDefault()
+                }
+                tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                    override fun onStart(u: String?) { speaking = true }
+                    override fun onDone(u: String?) {
+                        speaking = false
+                        handler.post { onSpeechFinished(u) }
+                    }
+                    @Deprecated("deprecated in API level 21")
+                    override fun onError(u: String?) {
+                        speaking = false
+                        handler.post { onSpeechFinished(u) }
+                    }
+                    override fun onError(u: String?, code: Int) {
+                        speaking = false
+                        handler.post { onSpeechFinished(u) }
+                    }
+                })
+                ttsReady = true
+            }
+        }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        startForegroundNotification()
+        if (wakeLock?.isHeld != true) {
+            try { wakeLock?.acquire() } catch (_: Exception) {}
+        }
+        if (!running) {
+            running = true
+            handler.postDelayed({ startWakeListening() }, 900)
+        }
+        return START_STICKY
+    }
+
+    private fun startForegroundNotification() {
+        val channelId = "aria_wake"
+        val nm = getSystemService(NotificationManager::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val ch = NotificationChannel(
+                channelId, "ARIA ascolto vocale",
+                NotificationManager.IMPORTANCE_LOW
+            )
+            ch.description = "Ascolto della parola di attivazione"
+            nm?.createNotificationChannel(ch)
+        }
+        val pi = PendingIntent.getActivity(
+            this, 0, Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val notif: Notification = NotificationCompat.Builder(this, channelId)
+            .setContentTitle("ARIA in ascolto")
+            .setContentText("Di' \"Hey $wakeWord\" per attivarmi")
+            .setSmallIcon(R.drawable.ic_aria)
+            .setContentIntent(pi)
+            .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .build()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ServiceCompat.startForeground(
+                this, 42, notif,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            )
+        } else {
+            startForeground(42, notif)
+        }
+    }
+
+    private fun ensureRecognizer(): SpeechRecognizer {
+        if (recognizer == null) {
+            recognizer = SpeechRecognizer.createSpeechRecognizer(this)
+            recognizer?.setRecognitionListener(listener)
+        }
+        return recognizer!!
+    }
+
+    private fun recognizerIntent(): Intent =
+        Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(
+                RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+            )
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "it-IT")
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+        }
+
+    private fun startWakeListening() {
+        if (!running || speaking) return
+        mode = Mode.WAKE
+        try {
+            ensureRecognizer().startListening(recognizerIntent())
+        } catch (e: Exception) {
+            scheduleWake(1500)
+        }
+    }
+
+    private fun startCommandListening() {
+        if (!running) return
+        mode = Mode.COMMAND
+        try {
+            ensureRecognizer().startListening(recognizerIntent())
+        } catch (e: Exception) {
+            scheduleWake(1500)
+        }
+    }
+
+    private fun scheduleWake(delay: Long) {
+        handler.removeCallbacks(restartRunnable)
+        if (running && !speaking) handler.postDelayed(restartRunnable, delay)
+    }
+
+    private val listener = object : RecognitionListener {
+        override fun onReadyForSpeech(params: Bundle?) {}
+        override fun onBeginningOfSpeech() {}
+        override fun onRmsChanged(rmsdB: Float) {}
+        override fun onBufferReceived(buffer: ByteArray?) {}
+        override fun onEndOfSpeech() {}
+        override fun onError(error: Int) {
+            if (speaking) return
+            scheduleWake(900)
+        }
+        override fun onResults(results: Bundle?) {
+            val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                ?.firstOrNull()?.lowercase(Locale.getDefault())?.trim() ?: ""
+            handleResult(text)
+        }
+        override fun onPartialResults(partialResults: Bundle?) {}
+        override fun onEvent(eventType: Int, params: Bundle?) {}
+    }
+
+    private fun handleResult(text: String) {
+        handler.removeCallbacks(restartRunnable)
+        if (text.isEmpty()) { scheduleWake(600); return }
+        when (mode) {
+            Mode.WAKE -> {
+                val idx = text.indexOf(wakeWord)
+                if (idx >= 0) {
+                    recognizer?.cancel()
+                    val after = text.substring(idx + wakeWord.length).trim()
+                    if (after.length >= 2) {
+                        processCommand(after)
+                    } else {
+                        speak("Sì?", "ack")
+                    }
+                } else {
+                    scheduleWake(500)
+                }
+            }
+            Mode.COMMAND -> {
+                recognizer?.cancel()
+                processCommand(text)
+            }
+        }
+    }
+
+    private fun onSpeechFinished(utteranceId: String?) {
+        when (utteranceId) {
+            "ack" -> startCommandListening()
+            else -> startWakeListening()
+        }
+    }
+
+    private fun processCommand(command: String) {
+        val quick = quickAnswer(command)
+        if (quick != null) { speak(quick, "answer"); return }
+        val b = brain
+        if (b == null) { speak("Il mio cervello non è pronto.", "answer"); return }
+        b.sendMessage(
+            text = command,
+            onResult = { resp -> speak(resp, "answer") },
+            onError = { errMsg -> speak("Errore: $errMsg", "answer") }
+        )
+    }
+
+    private fun quickAnswer(cmd: String): String? {
+        return when {
+            cmd.contains("che ore") || cmd.contains("che ora") -> {
+                val t = SimpleDateFormat("HH:mm", Locale.getDefault())
+                    .format(Calendar.getInstance().time)
+                "Sono le $t"
+            }
+            cmd.contains("che giorno") || cmd.contains("che data") ||
+                cmd.contains("data di oggi") -> {
+                val d = SimpleDateFormat("EEEE d MMMM yyyy", Locale.ITALIAN)
+                    .format(Calendar.getInstance().time)
+                "Oggi è $d"
+            }
+            else -> null
+        }
+    }
+
+    private fun speak(text: String, id: String) {
+        speaking = true
+        handler.removeCallbacks(restartRunnable)
+        recognizer?.cancel()
+        if (ttsReady) {
+            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, id)
+        } else {
+            speaking = false
+            handler.postDelayed({ onSpeechFinished(id) }, 500)
+        }
+    }
+
+    override fun onDestroy() {
+        running = false
+        handler.removeCallbacksAndMessages(null)
+        try { recognizer?.destroy() } catch (_: Exception) {}
+        try { tts?.stop(); tts?.shutdown() } catch (_: Exception) {}
+        try { if (wakeLock?.isHeld == true) wakeLock?.release() } catch (_: Exception) {}
+        super.onDestroy()
     }
 }
 """
@@ -2314,7 +2694,30 @@ LAYOUT_SETTINGS = """\
     <androidx.appcompat.widget.SwitchCompat android:id="@+id/sw_memory"
         android:layout_width="match_parent" android:layout_height="wrap_content"
         android:text="Memoria conversazione" android:textColor="#E8F0FF"
-        android:layout_marginBottom="24dp"/>
+        android:layout_marginBottom="20dp"/>
+
+    <View android:layout_width="match_parent" android:layout_height="1dp"
+        android:background="#1E2A44" android:layout_marginBottom="16dp"/>
+
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="🎙️ ASCOLTO SEMPRE ATTIVO" android:textColor="#00E5FF"
+        android:textSize="14sp" android:textStyle="bold"/>
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Rispondi anche a schermo bloccato quando dici 'Hey' + la parola qui sotto. Consuma piu' batteria."
+        android:textColor="#5A7A99" android:textSize="11sp" android:layout_marginBottom="8dp"/>
+
+    <androidx.appcompat.widget.SwitchCompat android:id="@+id/sw_wake"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Attiva ascolto sempre attivo" android:textColor="#E8F0FF"
+        android:layout_marginBottom="8dp"/>
+
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="Parola di attivazione (dopo 'Hey')" android:textColor="#5A7A99"
+        android:textSize="12sp"/>
+    <EditText android:id="@+id/et_wake_word"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:hint="maik" android:textColor="#E8F0FF" android:textColorHint="#5A7A99"
+        android:backgroundTint="#00E5FF" android:layout_marginBottom="24dp"/>
 
     <Button android:id="@+id/btn_save_settings"
         android:layout_width="match_parent" android:layout_height="52dp"
@@ -2322,7 +2725,7 @@ LAYOUT_SETTINGS = """\
         android:textStyle="bold"/>
 
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="Creator: MaikGost  •  ARIA Mobile v4.1"
+        android:text="Creator: MaikGost  •  ARIA Mobile v5.0"
         android:textColor="#5A7A99" android:textSize="12sp"
         android:gravity="center" android:layout_marginTop="24dp"/>
 </LinearLayout>
@@ -2431,10 +2834,11 @@ def build_kotlin_file_map():
         f"{PKG_UI}/MainActivity.kt":                   MAIN_ACTIVITY,
         f"{PKG_UI}/SettingsActivity.kt":                SETTINGS_ACTIVITY,
         f"{PKG_UI}/HistoryActivity.kt":                 HISTORY_ACTIVITY,
+        f"{PKG_VOICE}/WakeWordService.kt":              WAKE_WORD_SERVICE,
     }
 
 def create_project(java_path):
-    title("STEP 1 - Creazione progetto ARIA Mobile v4.1")
+    title("STEP 1 - Creazione progetto ARIA Mobile v5.0")
     if PROJECT_DIR.exists():
         answer = input(f"\n  Directory {PROJECT_DIR.name} esiste. Sovrascrivere? (y/N): ").strip().lower()
         if answer == "y":
@@ -2551,7 +2955,7 @@ def build_apk(java_path):
 
 def summarise(apk):
     title("STEP 3 - Output")
-    dest = DESKTOP / "ARIA-Mobile-v4.1.apk"
+    dest = DESKTOP / "ARIA-Mobile-v5.0.apk"
     if apk and apk.exists():
         shutil.copy2(apk, dest)
         print(f"\n{C.BOLD}{'='*60}")
@@ -2564,7 +2968,7 @@ def summarise(apk):
         info(str(PROJECT_DIR))
 
     print(f"\n{C.BOLD}SETUP:{C.RESET}")
-    info("1. Installa ARIA-Mobile-v4.1.apk sul telefono")
+    info("1. Installa ARIA-Mobile-v5.0.apk sul telefono")
     info("2. All'avvio vedrai la splash 3D con 'Creator: MaikGost'")
     info("3. In chat tocca l'INGRANAGGIO in alto -> inserisci la Groq API key")
     info("   (usa 'Prova connessione' per verificare che funzioni)")
@@ -2576,13 +2980,17 @@ def summarise(apk):
     info("6. Il pulsante ✨ apre i 10 STRUMENTI, il microfono detta i messaggi")
     info("7. In alto nella chat c'e' la SFERA 3D VIVA: cambia colore quando")
     info("   pensa/parla e TOCCANDOLA attivi il microfono per parlarle")
+    info("8. ASCOLTO SEMPRE ATTIVO: nelle impostazioni attiva l'interruttore")
+    info("   e imposta la parola (es. maik). Concedi microfono e notifiche.")
+    info("   Poi anche a schermo bloccato di' \"Hey Maik\" e ti risponde!")
+    info("   (tienlo escluso dal risparmio batteria per funzionare sempre)")
     print()
 
 def main():
     if platform.system() == "Windows":
         os.system("color")
     print(f"\n{C.BOLD}{C.CYAN}{'='*60}")
-    print("  ARIA Mobile v4.1 - Builder Android (Kotlin + Compose)")
+    print("  ARIA Mobile v5.0 - Builder Android (Kotlin + Compose)")
     print("  Creator: MaikGost")
     print(f"{'='*60}{C.RESET}\n")
 
@@ -2603,7 +3011,7 @@ def main():
         create_project(java)
         apk = build_apk(java)
         summarise(apk)
-        print(f"{C.OK}{C.BOLD}ARIA Mobile v4.1 - Completato!{C.RESET}\n")
+        print(f"{C.OK}{C.BOLD}ARIA Mobile v5.0 - Completato!{C.RESET}\n")
     except KeyboardInterrupt:
         print(f"\n{C.WARN}Interrotto.{C.RESET}")
         sys.exit(0)
