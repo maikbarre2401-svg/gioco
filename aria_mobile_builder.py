@@ -7,6 +7,21 @@ Desktop/AriaMobile e tenta la compilazione (gradlew assembleDebug)
 usando il JDK e l'Android SDK già presenti sul sistema (Android Studio
 installato).
 
+NOVITÀ v6.0:
+- CERVELLO OFFLINE (funziona SENZA internet): risponde a saluti,
+  identita', ora, data, calcoli matematici (con valutatore vero),
+  testa o croce, dadi, numeri casuali e battute. Se sei offline o
+  attivi la 'Modalita' offline' usa questo; online senza key funziona
+  lo stesso per queste cose.
+- PULSANTE 'SCARICA VOCE OFFLINE' nelle impostazioni: scarica la voce
+  Italiano del telefono, che poi resta installata; il riconoscimento
+  vocale usa EXTRA_PREFER_OFFLINE quando la modalita' offline e' attiva.
+- WAKE PIU' PERSONALE: dicendo 'Hey <parola>' ARIA risponde
+  'Si', dimmi <il tuo nome>' usando il nome impostato.
+- SFERA piu' bella e MOLTO piu' calma: si muove meno e piu' lenta,
+  soprattutto quando parla (niente piu' rotazione troppo veloce),
+  elettroni piu' brillanti, onde sonore piu' morbide.
+
 NOVITÀ v5.0:
 - ASSISTENTE VOCALE SEMPRE ATTIVO ("Hey Maik"): un servizio in
   background ascolta anche a SCHERMO BLOCCATO. Quando dici "Hey" +
@@ -133,8 +148,8 @@ android {
         applicationId "com.aria.mobile"
         minSdk 26
         targetSdk 34
-        versionCode 6
-        versionName "5.0.0"
+        versionCode 7
+        versionName "6.0.0"
         multiDexEnabled true
     }
 
@@ -314,9 +329,10 @@ object AppConfig {
     const val PREF_PERSONALITY = "personality"
     const val PREF_WAKE_ENABLED = "wake_enabled"
     const val PREF_WAKE_WORD = "wake_word"
+    const val PREF_OFFLINE_MODE = "offline_mode"
 
     const val CREATOR = "MaikGost"
-    const val VERSION = "5.0.0"
+    const val VERSION = "6.0.0"
 
     const val COLOR_BG = 0xFF0A0E1A.toInt()
     const val COLOR_SURFACE = 0xFF121826.toInt()
@@ -484,6 +500,8 @@ class GroqClient(private val apiKey: String, private val model: String) {
 ARIA_BRAIN = r"""package com.aria.mobile.core
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import com.aria.mobile.data.AriaDatabase
 import com.aria.mobile.data.MessageEntity
 import com.aria.mobile.net.GroqClient
@@ -494,6 +512,18 @@ class AriaBrain(private val context: Context) {
     private val prefs = context.getSharedPreferences(AppConfig.PREFS, Context.MODE_PRIVATE)
     private val db = AriaDatabase.getInstance(context)
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val offline = OfflineBrain(context)
+
+    private fun isOnline(): Boolean {
+        return try {
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val net = cm.activeNetwork ?: return false
+            val caps = cm.getNetworkCapabilities(net) ?: return false
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        } catch (e: Exception) {
+            false
+        }
+    }
 
     private fun buildSystemPrompt(): String {
         val assistantName = prefs.getString(AppConfig.PREF_ASSISTANT_NAME, AppConfig.DEFAULT_ASSISTANT_NAME)
@@ -522,15 +552,36 @@ class AriaBrain(private val context: Context) {
         val apiKey = prefs.getString(AppConfig.PREF_API_KEY, "") ?: ""
         val model = prefs.getString(AppConfig.PREF_MODEL, AppConfig.DEFAULT_MODEL) ?: AppConfig.DEFAULT_MODEL
         val memoryEnabled = prefs.getBoolean(AppConfig.PREF_MEMORY_ENABLED, true)
-
-        if (apiKey.isBlank()) {
-            onError("Nessuna API key impostata. Tocca l'ingranaggio in alto per aprire le Impostazioni.")
-            return
-        }
+        val offlinePref = prefs.getBoolean(AppConfig.PREF_OFFLINE_MODE, false)
+        val online = isOnline()
 
         scope.launch {
             try {
                 db.messageDao().insert(MessageEntity(role = "user", content = text))
+
+                // ---- ROUTING OFFLINE ----
+                // Usa il cervello locale se: modalita' offline attiva, nessuna
+                // connessione, oppure manca la API key. Se il locale non sa
+                // rispondere ma siamo online con la key, si passa all'AI Groq.
+                if (offlinePref || !online || apiKey.isBlank()) {
+                    val local = offline.answer(text)
+                    val reply: String? = when {
+                        local != null -> local
+                        !online || offlinePref -> offline.offlineFallback()
+                        else -> null  // online, senza key e senza risposta locale
+                    }
+                    if (reply != null) {
+                        db.messageDao().insert(MessageEntity(role = "assistant", content = reply))
+                        withContext(Dispatchers.Main) { onResult(reply) }
+                        return@launch
+                    }
+                    if (apiKey.isBlank()) {
+                        withContext(Dispatchers.Main) {
+                            onError("Nessuna API key impostata. Tocca l'ingranaggio in alto per aprire le Impostazioni, oppure attiva la Modalita' offline.")
+                        }
+                        return@launch
+                    }
+                }
 
                 val history = mutableListOf("system" to buildSystemPrompt())
                 if (memoryEnabled) {
@@ -651,6 +702,186 @@ class AriaViewModel(app: Application) : AndroidViewModel(app) {
 }
 """
 
+OFFLINE_BRAIN = r"""package com.aria.mobile.core
+
+import android.content.Context
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
+import kotlin.random.Random
+
+/**
+ * Cervello OFFLINE: risponde senza internet a saluti, identita', ora,
+ * data, calcoli matematici, testa o croce, dadi, numeri casuali e
+ * battute. Se non sa rispondere restituisce null (cosi' AriaBrain puo'
+ * decidere di usare l'AI online oppure il messaggio di fallback).
+ */
+class OfflineBrain(private val context: Context) {
+
+    private val prefs = context.getSharedPreferences(AppConfig.PREFS, Context.MODE_PRIVATE)
+
+    private fun assistantName() =
+        prefs.getString(AppConfig.PREF_ASSISTANT_NAME, AppConfig.DEFAULT_ASSISTANT_NAME)
+            ?: AppConfig.DEFAULT_ASSISTANT_NAME
+
+    private val jokes = listOf(
+        "Perche' gli scienziati non si fidano degli atomi? Perche' compongono tutto!",
+        "Come si chiama un boomerang che non torna? Un bastone.",
+        "Ho detto a mia moglie che era troppo tesa. Ora e' una molla.",
+        "Qual e' il colmo per un elettricista? Non avere corrente... di pensiero!",
+        "Cosa fa un pesce quando pensa? Sguazza tra le idee."
+    )
+
+    fun answer(raw: String): String? {
+        val t = raw.lowercase(Locale.getDefault()).trim()
+        if (t.isBlank()) return null
+        return greeting(t) ?: identity(t) ?: dateTime(t) ?: games(t) ?: joke(t) ?: math(t)
+    }
+
+    fun offlineFallback(): String =
+        "Ora sono offline. Posso risponderti su ora, data, calcoli, testa o " +
+        "croce, dadi e qualche battuta. Per il resto mi serve la connessione."
+
+    private fun greeting(t: String): String? {
+        val g = listOf("ciao", "salve", "buongiorno", "buonasera", "hey", "ehi")
+        if (g.any { t == it || t.startsWith("$it ") } && t.length < 25) {
+            return "Ciao! Come posso aiutarti?"
+        }
+        if (t.contains("come stai") || t.contains("come va")) {
+            return "Alla grande, grazie! E tu come stai?"
+        }
+        if (t.contains("grazie")) return "Figurati, sempre qui per te!"
+        return null
+    }
+
+    private fun identity(t: String): String? {
+        if (t.contains("come ti chiami") || t.contains("chi sei") || t.contains("il tuo nome")) {
+            return "Sono ${assistantName()}, il tuo assistente personale."
+        }
+        if (t.contains("chi ti ha creato") || t.contains("chi ti ha fatto") ||
+            t.contains("tuo creatore") || t.contains("chi e' il tuo creatore")) {
+            return "Mi ha creato ${AppConfig.CREATOR}."
+        }
+        return null
+    }
+
+    private fun dateTime(t: String): String? {
+        val now = Calendar.getInstance().time
+        if (t.contains("che ore") || t.contains("che ora")) {
+            return "Sono le " + SimpleDateFormat("HH:mm", Locale.getDefault()).format(now)
+        }
+        if (t.contains("che giorno") || t.contains("che data") || t.contains("data di oggi")) {
+            return "Oggi e' " + SimpleDateFormat("EEEE d MMMM yyyy", Locale.ITALIAN).format(now)
+        }
+        if (t.contains("che anno")) {
+            return "Siamo nel " + SimpleDateFormat("yyyy", Locale.getDefault()).format(now)
+        }
+        return null
+    }
+
+    private fun games(t: String): String? {
+        if (t.contains("testa o croce") || t.contains("lancia la moneta") ||
+            t.contains("lancia una moneta") || t.contains("moneta")) {
+            return if (Random.nextBoolean()) "E' uscito Testa!" else "E' uscito Croce!"
+        }
+        if (t.contains("tira un dado") || t.contains("lancia il dado") ||
+            t.contains("un dado") || t.contains("il dado")) {
+            return "Il dado dice: ${Random.nextInt(1, 7)}"
+        }
+        if (t.contains("numero casuale") || t.contains("numero a caso")) {
+            return "Ecco: ${Random.nextInt(1, 101)}"
+        }
+        return null
+    }
+
+    private fun joke(t: String): String? {
+        if (t.contains("barzelletta") || t.contains("battuta") ||
+            t.contains("fammi ridere") || t.contains("una storiella")) {
+            return jokes[Random.nextInt(jokes.size)]
+        }
+        return null
+    }
+
+    private fun math(t: String): String? {
+        var expr = t
+        for (k in listOf("quanto fa", "quanto e'", "quanto e", "calcolami", "calcola")) {
+            val i = expr.indexOf(k)
+            if (i >= 0) expr = expr.substring(i + k.length)
+        }
+        expr = expr.replace(",", ".")
+            .replace(" per ", "*")
+            .replace(" diviso ", "/")
+            .replace(" piu' ", "+").replace(" piu ", "+").replace(" più ", "+")
+            .replace(" meno ", "-")
+            .replace("×", "*").replace("÷", "/")
+        val sb = StringBuilder()
+        for (c in expr) if (c.isDigit() || c in "+-*/().% ") sb.append(c)
+        val clean = sb.toString().trim()
+        if (clean.isEmpty() || !clean.any { it.isDigit() } || !clean.any { it in "+-*/%" }) return null
+        val res = try { Evaluator(clean).parse() } catch (e: Exception) { null } ?: return null
+        if (res.isNaN() || res.isInfinite()) return "Non posso dividere per zero."
+        val out = if (res == res.toLong().toDouble()) res.toLong().toString()
+        else String.format(Locale.ITALIAN, "%.2f", res)
+        return "Fa $out"
+    }
+
+    /** Valutatore matematico ricorsivo: + - * / % parentesi, meno unario. */
+    private class Evaluator(val s: String) {
+        var pos = 0
+        fun parse(): Double {
+            val v = expr(); skipWs()
+            if (pos < s.length) throw RuntimeException("resto non valido")
+            return v
+        }
+        private fun skipWs() { while (pos < s.length && s[pos] == ' ') pos++ }
+        private fun expr(): Double {
+            var v = term()
+            while (true) {
+                skipWs()
+                if (pos < s.length && (s[pos] == '+' || s[pos] == '-')) {
+                    val op = s[pos]; pos++
+                    val r = term()
+                    v = if (op == '+') v + r else v - r
+                } else break
+            }
+            return v
+        }
+        private fun term(): Double {
+            var v = factor()
+            while (true) {
+                skipWs()
+                if (pos < s.length && (s[pos] == '*' || s[pos] == '/' || s[pos] == '%')) {
+                    val op = s[pos]; pos++
+                    val r = factor()
+                    v = when (op) { '*' -> v * r; '/' -> v / r; else -> v % r }
+                } else break
+            }
+            return v
+        }
+        private fun factor(): Double {
+            skipWs()
+            if (pos < s.length && s[pos] == '+') { pos++; return factor() }
+            if (pos < s.length && s[pos] == '-') { pos++; return -factor() }
+            if (pos < s.length && s[pos] == '(') {
+                pos++
+                val v = expr()
+                skipWs()
+                if (pos < s.length && s[pos] == ')') pos++
+                return v
+            }
+            return number()
+        }
+        private fun number(): Double {
+            skipWs()
+            val start = pos
+            while (pos < s.length && (s[pos].isDigit() || s[pos] == '.')) pos++
+            if (pos == start) throw RuntimeException("numero mancante")
+            return s.substring(start, pos).toDouble()
+        }
+    }
+}
+"""
+
 ARIA_ORB = r"""package com.aria.mobile.ui
 
 import androidx.compose.animation.animateColorAsState
@@ -750,10 +981,10 @@ fun AriaOrb3D(
 
     val speed by animateFloatAsState(
         targetValue = when (mood) {
-            OrbMood.IDLE -> 34f
-            OrbMood.THINKING -> 175f
-            OrbMood.SPEAKING -> 92f
-            OrbMood.ERROR -> 16f
+            OrbMood.IDLE -> 22f
+            OrbMood.THINKING -> 120f
+            OrbMood.SPEAKING -> 34f
+            OrbMood.ERROR -> 12f
         },
         animationSpec = tween(700), label = "orbSpeed"
     )
@@ -819,8 +1050,8 @@ fun AriaOrb3D(
         }
     ) {
         val cx = size.width / 2f
-        val cy = size.height / 2f + sin(time * 1.3f) * size.height * 0.05f
-        val breathe = 1f + (0.045f + energy * 0.05f) * sin(time * 2.2f)
+        val cy = size.height / 2f + sin(time * 0.9f) * size.height * 0.028f
+        val breathe = 1f + (0.028f + energy * 0.03f) * sin(time * 1.6f)
         val r = size.minDimension * 0.30f * breathe
         val focal = r * 2.9f
 
@@ -829,9 +1060,9 @@ fun AriaOrb3D(
         // guscio esterno: controrotante e piu' lento -> parallasse
         val aY2 = -aY * 0.55f
         val ca2 = cos(aY2); val sa2 = sin(aY2)
-        val tiltX = 0.40f + 0.16f * sin(time * 0.6f)
+        val tiltX = 0.42f + 0.08f * sin(time * 0.4f)
         val ct = cos(tiltX); val st = sin(tiltX)
-        val wobZ = 0.12f * sin(time * 0.85f)
+        val wobZ = 0.06f * sin(time * 0.5f)
         val cw = cos(wobZ); val sw = sin(wobZ)
 
         // proietta un punto della sfera (raggio rad) con rotazione data
@@ -854,7 +1085,7 @@ fun AriaOrb3D(
         for (k in 5 downTo 1) {
             drawCircle(
                 color = mainColor,
-                radius = r * (1f + k * 0.20f) * (1f + energy * 0.08f * sin(time * 3f)),
+                radius = r * (1f + k * 0.20f) * (1f + energy * 0.05f * sin(time * 1.8f)),
                 center = Offset(cx, cy),
                 alpha = (glow * 0.13f / k).coerceIn(0f, 1f)
             )
@@ -863,7 +1094,7 @@ fun AriaOrb3D(
         // ---- onde sonore quando parla ----
         if (mood == OrbMood.SPEAKING) {
             for (k in 0 until 3) {
-                val phase = ((time * 0.9f) + k / 3f) % 1f
+                val phase = ((time * 0.55f) + k / 3f) % 1f
                 drawCircle(
                     color = mainColor,
                     radius = r * (1f + phase * 1.4f),
@@ -918,7 +1149,7 @@ fun AriaOrb3D(
         // ---- guscio interno di particelle ----
         for ((i, pt) in shellInner.withIndex()) {
             // jitter energetico: la sfera "vibra" quando pensa/parla
-            val jitter = 1f + energy * 0.06f * sin(time * 6f + i)
+            val jitter = 1f + energy * 0.03f * sin(time * 3.2f + i)
             val p = project(pt.x, pt.y, pt.z, r * jitter, ca, sa)
             val depth = p[2]
             val base = if (i % 4 == 0) ringColor else mainColor
@@ -994,9 +1225,9 @@ fun AriaOrb3D(
             )
             drawCircle(
                 color = Color.White,
-                radius = 2.4f + 1.6f * head[2],
+                radius = 2.9f + 1.9f * head[2],
                 center = Offset(head[0], head[1]),
-                alpha = (0.9f * glow).coerceIn(0f, 1f)
+                alpha = (0.95f * glow).coerceIn(0f, 1f)
             )
         }
     }
@@ -1434,6 +1665,9 @@ class MainActivity : ComponentActivity() {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "it-IT")
             putExtra(RecognizerIntent.EXTRA_PROMPT, "Parla ora...")
+            val preferOffline = getSharedPreferences(AppConfig.PREFS, MODE_PRIVATE)
+                .getBoolean(AppConfig.PREF_OFFLINE_MODE, false)
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, preferOffline)
         }
         try {
             speechLauncher.launch(intent)
@@ -2041,6 +2275,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.speech.tts.TextToSpeech
 import android.widget.Button
 import android.widget.EditText
 import android.widget.RadioGroup
@@ -2111,6 +2346,8 @@ class SettingsActivity : AppCompatActivity() {
         val swMemory = findViewById<SwitchCompat>(R.id.sw_memory)
         val swWake = findViewById<SwitchCompat>(R.id.sw_wake)
         val etWakeWord = findViewById<EditText>(R.id.et_wake_word)
+        val swOffline = findViewById<SwitchCompat>(R.id.sw_offline)
+        val btnDownloadVoice = findViewById<Button>(R.id.btn_download_voice)
         val btnSave = findViewById<Button>(R.id.btn_save_settings)
         val btnBack = findViewById<Button>(R.id.btn_settings_back)
         val btnTest = findViewById<Button>(R.id.btn_test_api)
@@ -2138,6 +2375,26 @@ class SettingsActivity : AppCompatActivity() {
         etWakeWord.setText(
             prefs.getString(AppConfig.PREF_WAKE_WORD, AppConfig.DEFAULT_WAKE_WORD)
         )
+        swOffline.isChecked = prefs.getBoolean(AppConfig.PREF_OFFLINE_MODE, false)
+
+        btnDownloadVoice.setOnClickListener {
+            // apre il download dei dati vocali offline (voce TTS): resta installato
+            try {
+                val i = Intent(TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA)
+                startActivity(i)
+                Toast.makeText(
+                    this,
+                    "Scarica la voce Italiano offline, poi resta salvata sul telefono",
+                    Toast.LENGTH_LONG
+                ).show()
+            } catch (e: Exception) {
+                Toast.makeText(
+                    this,
+                    "Apri: Impostazioni Android > Sistema > Lingue > Sintesi vocale per scaricare la voce offline",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
         val savedPersonality = prefs.getString(
             AppConfig.PREF_PERSONALITY, AppConfig.DEFAULT_PERSONALITY
         )
@@ -2203,6 +2460,7 @@ class SettingsActivity : AppCompatActivity() {
                 .putBoolean(AppConfig.PREF_VOICE_ENABLED, swVoice.isChecked)
                 .putBoolean(AppConfig.PREF_MEMORY_ENABLED, swMemory.isChecked)
                 .putBoolean(AppConfig.PREF_WAKE_ENABLED, swWake.isChecked)
+                .putBoolean(AppConfig.PREF_OFFLINE_MODE, swOffline.isChecked)
                 .apply()
 
             Toast.makeText(this, "Impostazioni salvate", Toast.LENGTH_SHORT).show()
@@ -2431,6 +2689,9 @@ class WakeWordService : Service() {
             )
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "it-IT")
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            val preferOffline = getSharedPreferences(AppConfig.PREFS, Context.MODE_PRIVATE)
+                .getBoolean(AppConfig.PREF_OFFLINE_MODE, false)
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, preferOffline)
         }
 
     private fun startWakeListening() {
@@ -2489,7 +2750,10 @@ class WakeWordService : Service() {
                     if (after.length >= 2) {
                         processCommand(after)
                     } else {
-                        speak("Sì?", "ack")
+                        val userName = getSharedPreferences(AppConfig.PREFS, Context.MODE_PRIVATE)
+                            .getString(AppConfig.PREF_USER_NAME, "")?.trim() ?: ""
+                        val ack = if (userName.isNotBlank()) "Sì, dimmi $userName" else "Sì, dimmi?"
+                        speak(ack, "ack")
                     }
                 } else {
                     scheduleWake(500)
@@ -2717,7 +2981,27 @@ LAYOUT_SETTINGS = """\
     <EditText android:id="@+id/et_wake_word"
         android:layout_width="match_parent" android:layout_height="wrap_content"
         android:hint="maik" android:textColor="#E8F0FF" android:textColorHint="#5A7A99"
-        android:backgroundTint="#00E5FF" android:layout_marginBottom="24dp"/>
+        android:backgroundTint="#00E5FF" android:layout_marginBottom="20dp"/>
+
+    <View android:layout_width="match_parent" android:layout_height="1dp"
+        android:background="#1E2A44" android:layout_marginBottom="16dp"/>
+
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="🔌 MODALITA' OFFLINE" android:textColor="#00E5FF"
+        android:textSize="14sp" android:textStyle="bold"/>
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="ARIA risponde a ora, data, calcoli, testa o croce, dadi e battute anche senza internet."
+        android:textColor="#5A7A99" android:textSize="11sp" android:layout_marginBottom="8dp"/>
+
+    <androidx.appcompat.widget.SwitchCompat android:id="@+id/sw_offline"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Preferisci risposte offline" android:textColor="#E8F0FF"
+        android:layout_marginBottom="10dp"/>
+
+    <Button android:id="@+id/btn_download_voice"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="⬇  Scarica voce offline" android:backgroundTint="#121826"
+        android:textColor="#00E5FF" android:layout_marginBottom="24dp"/>
 
     <Button android:id="@+id/btn_save_settings"
         android:layout_width="match_parent" android:layout_height="52dp"
@@ -2725,7 +3009,7 @@ LAYOUT_SETTINGS = """\
         android:textStyle="bold"/>
 
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="Creator: MaikGost  •  ARIA Mobile v5.0"
+        android:text="Creator: MaikGost  •  ARIA Mobile v6.0"
         android:textColor="#5A7A99" android:textSize="12sp"
         android:gravity="center" android:layout_marginTop="24dp"/>
 </LinearLayout>
@@ -2826,6 +3110,7 @@ def build_kotlin_file_map():
         f"{PKG_DATA}/MessageDao.kt":                   MESSAGE_DAO,
         f"{PKG_DATA}/AriaDatabase.kt":                 ARIA_DATABASE,
         f"{PKG_NET}/GroqClient.kt":                    GROQ_CLIENT,
+        f"{PKG_CORE}/OfflineBrain.kt":                 OFFLINE_BRAIN,
         f"{PKG_CORE}/AriaBrain.kt":                    ARIA_BRAIN,
         f"{PKG_UI}/ChatMessage.kt":                    CHAT_MESSAGE_MODEL,
         f"{PKG_UI}/AriaViewModel.kt":                  ARIA_VIEWMODEL,
@@ -2838,7 +3123,7 @@ def build_kotlin_file_map():
     }
 
 def create_project(java_path):
-    title("STEP 1 - Creazione progetto ARIA Mobile v5.0")
+    title("STEP 1 - Creazione progetto ARIA Mobile v6.0")
     if PROJECT_DIR.exists():
         answer = input(f"\n  Directory {PROJECT_DIR.name} esiste. Sovrascrivere? (y/N): ").strip().lower()
         if answer == "y":
@@ -2955,7 +3240,7 @@ def build_apk(java_path):
 
 def summarise(apk):
     title("STEP 3 - Output")
-    dest = DESKTOP / "ARIA-Mobile-v5.0.apk"
+    dest = DESKTOP / "ARIA-Mobile-v6.0.apk"
     if apk and apk.exists():
         shutil.copy2(apk, dest)
         print(f"\n{C.BOLD}{'='*60}")
@@ -2968,7 +3253,7 @@ def summarise(apk):
         info(str(PROJECT_DIR))
 
     print(f"\n{C.BOLD}SETUP:{C.RESET}")
-    info("1. Installa ARIA-Mobile-v5.0.apk sul telefono")
+    info("1. Installa ARIA-Mobile-v6.0.apk sul telefono")
     info("2. All'avvio vedrai la splash 3D con 'Creator: MaikGost'")
     info("3. In chat tocca l'INGRANAGGIO in alto -> inserisci la Groq API key")
     info("   (usa 'Prova connessione' per verificare che funzioni)")
@@ -2984,13 +3269,15 @@ def summarise(apk):
     info("   e imposta la parola (es. maik). Concedi microfono e notifiche.")
     info("   Poi anche a schermo bloccato di' \"Hey Maik\" e ti risponde!")
     info("   (tienlo escluso dal risparmio batteria per funzionare sempre)")
+    info("9. OFFLINE: attiva 'Modalita' offline' e tocca 'Scarica voce offline'.")
+    info("   Cosi' ora, data, calcoli e battute funzionano senza internet.")
     print()
 
 def main():
     if platform.system() == "Windows":
         os.system("color")
     print(f"\n{C.BOLD}{C.CYAN}{'='*60}")
-    print("  ARIA Mobile v5.0 - Builder Android (Kotlin + Compose)")
+    print("  ARIA Mobile v6.0 - Builder Android (Kotlin + Compose)")
     print("  Creator: MaikGost")
     print(f"{'='*60}{C.RESET}\n")
 
@@ -3011,7 +3298,7 @@ def main():
         create_project(java)
         apk = build_apk(java)
         summarise(apk)
-        print(f"{C.OK}{C.BOLD}ARIA Mobile v5.0 - Completato!{C.RESET}\n")
+        print(f"{C.OK}{C.BOLD}ARIA Mobile v6.0 - Completato!{C.RESET}\n")
     except KeyboardInterrupt:
         print(f"\n{C.WARN}Interrotto.{C.RESET}")
         sys.exit(0)
