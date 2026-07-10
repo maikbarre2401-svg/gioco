@@ -1347,7 +1347,8 @@
     pp:new TH.Vector3(), pv:new TH.Vector3(), onGround:false, walkPhase:0, body:null, water:null,
     time:0.1, hasAtmo:false, dayHor:null, nightFog:new TH.Color(0x070a12), nodes:[], clouds:[], nearNode:null,
     critters:[], beams:[], blasterCd:0, ruin:null,
-    npcs:[], city:null, cityMats:[], cityLights:[], cityVisited:false, nearNPC:null };
+    npcs:[], city:null, cityMats:[], cityLights:[], cityVisited:false, nearNPC:null,
+    traffic:[], birds:null, birdData:[] };
   var _sunWhite=new TH.Color(0xffffff), _sunWarm=new TH.Color(0xff9a50);
   var CRIT_CFG={ terran:{col:0x7a9a4a,fl:0}, ocean:{col:0x4a9ab0,fl:0.5}, desert:{col:0xc8a060,fl:0},
     ice:{col:0xa8d0e8,fl:0.2}, rock:{col:0x8a8078,fl:0.15}, lava:{col:0x9a4a30,fl:0.2},
@@ -1626,10 +1627,93 @@
   function talkToNPC(){
     if(!surf.nearNPC) return false;
     var n=surf.nearNPC;
-    var line=n.lines[Math.floor(Math.random()*n.lines.length)];
     var who={cittadino:'CITTADINO ROMANO',centurione:'CENTURIONE',mercante:'MERCANTE',turista:'TURISTA'}[n.kind];
+    // il mercante compra i minerali sul posto
+    if(n.kind==='mercante' && minerals>=1){
+      var m=Math.floor(minerals), gain=m*2;
+      dialog(who,['Minerali! Fammi vedere… sì, sì, roba buona.','Te li pago '+gain+' crediti. Affare fatto, a bella!'],function(){
+        credits+=gain; minerals-=m; setTxt('rr_min',Math.floor(minerals)); updCred(); SND.scan(); toast('MINERALI VENDUTI','+'+gain+' crediti');
+      });
+      return true;
+    }
+    var line=n.lines[Math.floor(Math.random()*n.lines.length)];
     dialog(who,[line]); SND.ui();
     return true;
+  }
+
+  // ---------- traffico a volo radente su Roma ----------
+  function vehicleModel(rng){
+    var g=new TH.Group();
+    var col=CLOTH_COLS[Math.floor(rng()*CLOTH_COLS.length)];
+    var body=new TH.Mesh(new TH.BoxGeometry(2.2,0.9,4.6),new TH.MeshStandardMaterial({color:col,metalness:0.6,roughness:0.35}));
+    body.position.y=0.2; g.add(body);
+    var cabin=new TH.Mesh(new TH.BoxGeometry(1.8,0.7,2.2),new TH.MeshStandardMaterial({color:0x203040,metalness:0.4,roughness:0.15,transparent:true,opacity:0.75}));
+    cabin.position.set(0,0.85,0.2); g.add(cabin);
+    // fari e stop
+    var head=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0xffffcc,blending:TH.AdditiveBlending,depthWrite:false,transparent:true})); head.position.set(0,0.2,2.4); head.scale.set(2.4,1.2,1); g.add(head);
+    var tail=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0xff3020,blending:TH.AdditiveBlending,depthWrite:false,transparent:true,opacity:0.8})); tail.position.set(0,0.2,-2.4); tail.scale.set(2,1,1); g.add(tail);
+    // scia motore
+    var thr=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0x6fd6ff,blending:TH.AdditiveBlending,depthWrite:false,transparent:true,opacity:0.7})); thr.position.set(0,-0.1,-2.6); thr.scale.set(1.6,1.6,1); g.add(thr);
+    g.traverse(function(c){ if(c.isMesh){ c.castShadow=true; } });
+    return g;
+  }
+  function buildTraffic(rng){
+    var C=surf.city; surf.traffic=[];
+    var lanes=[]; // s in -3..3 su entrambi gli assi
+    for(var s=-3;s<=3;s++){ lanes.push({axis:'h',lane:s}); lanes.push({axis:'v',lane:s}); }
+    var N=26;
+    for(var i=0;i<N;i++){
+      var L=lanes[Math.floor(rng()*lanes.length)];
+      var dir=rng()<0.5?1:-1;
+      var g=vehicleModel(rng); surf.group.add(g);
+      var offset=dir*2.0; // lato della carreggiata
+      surf.traffic.push({ g:g, axis:L.axis, lane:L.lane, dir:dir, off:offset,
+        pos:(rng()-0.5)*C.r*2, speed:14+rng()*16, hover:2.2+rng()*1.4, bob:rng()*6.28 });
+    }
+  }
+  function updateTraffic(dt){
+    var C=surf.city, lim=C.r-6;
+    surf.traffic.forEach(function(v){
+      v.pos+=v.dir*v.speed*dt;
+      if(v.pos>lim) v.pos=-lim; else if(v.pos<-lim) v.pos=lim;
+      var x,z,ry;
+      if(v.axis==='h'){ x=C.x+v.pos; z=C.z+v.lane*46+v.off; ry=v.dir>0?Math.PI/2:-Math.PI/2; }
+      else { x=C.x+v.lane*46+v.off; z=C.z+v.pos; ry=v.dir>0?0:Math.PI; }
+      v.bob+=dt*2;
+      var gy=surf.heightFn(x,z)+v.hover+Math.sin(v.bob)*0.12;
+      v.g.position.set(x,gy,z); v.g.rotation.y=ry;
+    });
+  }
+  // ---------- stormi di uccelli ----------
+  function buildBirds(rng){
+    var C=surf.city, N=80;
+    var geo=new TH.BufferGeometry();
+    var verts=new Float32Array(N*3*3); // N triangoli
+    geo.setAttribute('position',new TH.BufferAttribute(verts,3));
+    var mat=new TH.MeshBasicMaterial({color:0x20242c,side:TH.DoubleSide});
+    surf.birds=new TH.Mesh(geo,mat); surf.birds.frustumCulled=false; surf.group.add(surf.birds);
+    surf.birdData=[];
+    for(var i=0;i<N;i++){
+      surf.birdData.push({ ang:rng()*6.28, r:60+rng()*260, cx:C.x+(rng()-0.5)*200, cz:C.z+(rng()-0.5)*200,
+        y:C.level+50+rng()*90, spd:0.15+rng()*0.25, wing:rng()*6.28, size:1.4+rng()*1.2 });
+    }
+  }
+  function updateBirds(dt){
+    if(!surf.birds) return;
+    var arr=surf.birds.geometry.attributes.position.array;
+    surf.birdData.forEach(function(b,i){
+      b.ang+=b.spd*dt; b.wing+=dt*10;
+      var x=b.cx+Math.cos(b.ang)*b.r, z=b.cz+Math.sin(b.ang)*b.r, y=b.y+Math.sin(b.ang*2)*6;
+      // triangolo a "V" orientato lungo la tangente
+      var tx=-Math.sin(b.ang), tz=Math.cos(b.ang);
+      var px=-tz, pz=tx; // perpendicolare
+      var flap=Math.abs(Math.sin(b.wing))*b.size;
+      var o=i*9;
+      arr[o]=x+tx*b.size; arr[o+1]=y; arr[o+2]=z+tz*b.size;
+      arr[o+3]=x-px*b.size; arr[o+4]=y+flap; arr[o+5]=z-pz*b.size;
+      arr[o+6]=x+px*b.size; arr[o+7]=y+flap; arr[o+8]=z+pz*b.size;
+    });
+    surf.birds.geometry.attributes.position.needsUpdate=true;
   }
 
   function buildSurface(body){
@@ -1841,8 +1925,8 @@
     if(P.atmo){ stars.visible=false; milkyMesh.visible=false; nebulaSprites.forEach(function(sp){ sp.visible=false; }); }
 
     // ROMA sulla Terra
-    surf.npcs=[]; surf.nearNPC=null; surf.cityMats=[]; surf.cityLights=[];
-    if(surf.city){ buildRome(rng2); buildRomans(rng2); }
+    surf.npcs=[]; surf.nearNPC=null; surf.cityMats=[]; surf.cityLights=[]; surf.traffic=[]; surf.birds=null; surf.birdData=[];
+    if(surf.city){ buildRome(rng2); buildRomans(rng2); buildTraffic(rng2); buildBirds(rng2); }
 
     surf.active=true;
   }
@@ -1850,6 +1934,7 @@
     if(surf.group){ scene.remove(surf.group); disposeObj(surf.group); surf.group=null; }
     surf.critters=[]; surf.beams=[]; surf.ruin=null; surf.nodes=[]; surf.clouds=[]; surf.nearNode=null;
     surf.npcs=[]; surf.nearNPC=null; surf.cityMats=[]; surf.cityLights=[]; surf.city=null;
+    surf.traffic=[]; surf.birds=null; surf.birdData=[];
     scene.fog=null; surf.active=false; surf.water=null;
     amb.intensity=0.5; hemi.intensity=0.3; sunLight.intensity=2.6;
     if(bloomPass){ bloomPass.strength=PROPS.bloomStrength; bloomPass.threshold=0.55; }
@@ -1954,7 +2039,7 @@
     updateSurfBeams(dt);
     // Roma: personaggi + luci notturne di finestre e lampioni
     if(surf.city){
-      updateRomans(dt);
+      updateRomans(dt); updateTraffic(dt); updateBirds(dt);
       var lit=day<0.45?clamp01((0.45-day)/0.35):0;
       surf.cityMats.forEach(function(m){ if(m._bias===undefined) m._bias=0.55+Math.random()*0.5; m.emissiveIntensity=lit*m._bias; });
     }
