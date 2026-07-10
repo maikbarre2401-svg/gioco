@@ -1427,6 +1427,44 @@
     return g;
   }
 
+  // ---------- texture procedurali per Roma ----------
+  function facadeTex(rng){
+    var S=128;
+    var walls=[[201,154,90],[216,176,112],[184,120,72],[202,168,120],[168,106,90],[196,150,96]];
+    var wall=walls[Math.floor(rng()*walls.length)];
+    function mk(){ var c=document.createElement('canvas'); c.width=c.height=S; return c; }
+    var dc=mk(), dx=dc.getContext('2d'), ec=mk(), ex=ec.getContext('2d');
+    dx.fillStyle='rgb('+wall[0]+','+wall[1]+','+wall[2]+')'; dx.fillRect(0,0,S,S);
+    for(var i=0;i<1600;i++){ var b=(rng()-0.5); var v=b>0?255:0; dx.fillStyle='rgba('+v+','+v+','+v+','+(Math.abs(b)*0.13).toFixed(3)+')'; dx.fillRect(rng()*S,rng()*S,1.4,1.4); }
+    // fascia marcapiano
+    dx.fillStyle='rgba(0,0,0,0.12)'; dx.fillRect(0,S-3,S,3);
+    ex.fillStyle='#000'; ex.fillRect(0,0,S,S);
+    var cols=3, rows=3, cellX=S/cols, cellY=S/rows, ww=cellX*0.5, wh=cellY*0.62;
+    for(var r=0;r<rows;r++){ for(var cc=0;cc<cols;cc++){
+      var wx=cc*cellX+(cellX-ww)/2, wy=r*cellY+(cellY-wh)/2;
+      dx.fillStyle='rgba(70,52,34,0.95)'; dx.fillRect(wx-2.5,wy-2.5,ww+5,wh+5);       // cornice
+      dx.fillStyle='#243038'; dx.fillRect(wx,wy,ww,wh);                                  // vetro
+      dx.fillStyle='rgba(255,255,255,0.10)'; dx.fillRect(wx,wy,ww,wh*0.4);              // riflesso
+      dx.fillStyle='rgba(255,255,255,0.18)'; dx.fillRect(wx-3,wy+wh,ww+6,2);            // davanzale
+      dx.strokeStyle='rgba(30,22,14,0.6)'; dx.lineWidth=1; dx.beginPath(); dx.moveTo(wx+ww/2,wy); dx.lineTo(wx+ww/2,wy+wh); dx.moveTo(wx,wy+wh/2); dx.lineTo(wx+ww,wy+wh/2); dx.stroke();
+      if(rng()<0.5){ ex.fillStyle='rgb(255,'+(198+Math.floor(rng()*44))+','+(104+Math.floor(rng()*70))+')'; ex.fillRect(wx,wy,ww,wh); }
+    }}
+    var m=new TH.CanvasTexture(dc); m.wrapS=m.wrapT=TH.RepeatWrapping; m.anisotropy=8;
+    var e=new TH.CanvasTexture(ec); e.wrapS=e.wrapT=TH.RepeatWrapping; e.anisotropy=4;
+    return {map:m,emis:e};
+  }
+  function cobbleTex(rng){
+    var S=128, c=document.createElement('canvas'); c.width=c.height=S; var x=c.getContext('2d');
+    x.fillStyle='#5b544a'; x.fillRect(0,0,S,S);
+    for(var gy=0;gy<S;gy+=11){ for(var gx=0;gx<S;gx+=11){
+      var off=(Math.floor(gy/11)%2)*5.5;
+      var b=90+Math.floor(rng()*70);
+      x.fillStyle='rgb('+b+','+(b-8)+','+(b-16)+')';
+      x.beginPath(); x.arc((gx+off)%S+5,gy+5,4.4,0,7); x.fill();
+    }}
+    var t=new TH.CanvasTexture(c); t.wrapS=t.wrapT=TH.RepeatWrapping; t.anisotropy=8; return t;
+  }
+
   // ---------- ROMA in 3D ----------
   function buildRome(rng){
     var C=surf.city, gy=C.level, grp=new TH.Group(); surf.group.add(grp);
@@ -1437,9 +1475,11 @@
     var roofR=new TH.MeshStandardMaterial({color:0x9a5030,roughness:0.85}); // tetti coppi
     var road=new TH.MeshStandardMaterial({color:0x3a3630,roughness:0.95});
     surf.cityMats=[]; surf.cityLights=[];
+    surf.tiber=95; // offset X del Tevere rispetto al centro
 
-    // pavimentazione piazza centrale
-    var plaza=new TH.Mesh(new TH.CircleGeometry(C.r,48),new TH.MeshStandardMaterial({color:0x6a6258,roughness:0.9}));
+    // pavimentazione piazza centrale in sampietrini
+    var plazaTex=cobbleTex(rng); plazaTex.repeat.set(C.r/5,C.r/5);
+    var plaza=new TH.Mesh(new TH.CircleGeometry(C.r,64),new TH.MeshStandardMaterial({map:plazaTex,roughness:0.95}));
     plaza.rotation.x=-Math.PI/2; plaza.position.set(C.x,gy+0.05,C.z); plaza.receiveShadow=true; grp.add(plaza);
 
     // ---- COLOSSEO ----
@@ -1500,43 +1540,43 @@
       var stat=new TH.Mesh(new TH.CylinderGeometry(0.6,1,5,8),marble); stat.position.set(C.x-40,gy+3.5,C.z+70); grp.add(stat);
     })();
 
-    // ---- PALAZZI ROMANI a griglia con finestre illuminabili ----
+    // ---- PALAZZI ROMANI a facciata texturizzata (finestre disegnate, illuminabili) ----
     var rng2=rng;
-    function palazzo(px,pz,w,d,floors,mat){
+    function palazzo(px,pz,w,d,floors){
       var h=floors*3.2+2;
+      var ft=facadeTex(rng2);
+      var rX=Math.max(1,Math.round(w/6.5)), rY=Math.max(1,Math.round(h/9));
+      ft.map.repeat.set(rX,rY); ft.emis.repeat.set(rX,rY);
+      var mat=new TH.MeshStandardMaterial({map:ft.map,emissiveMap:ft.emis,emissive:0xffffff,emissiveIntensity:0,roughness:0.92,metalness:0.02});
+      surf.cityMats.push(mat);
       var b=new TH.Mesh(new TH.BoxGeometry(w,h,d),mat); b.position.set(px,gy+h/2,pz); b.castShadow=true; b.receiveShadow=true; grp.add(b);
-      // tetto a coppi
-      var roof=new TH.Mesh(new TH.BoxGeometry(w+0.6,0.6,d+0.6),roofR); roof.position.set(px,gy+h+0.3,pz); roof.castShadow=true; grp.add(roof);
-      // finestre come piani emissivi (istanziati via InstancedMesh sarebbe meglio, ma pochi palazzi → mesh singole)
-      var winMat=new TH.MeshStandardMaterial({color:0x2a2a2a,emissive:0xffd070,emissiveIntensity:0}); surf.cityMats.push(winMat);
-      var wgeo=new TH.PlaneGeometry(0.8,1.1);
-      [[0,0,1,d/2+0.02],[Math.PI,0,-1,-d/2-0.02]].forEach(function(side){
-        var cols=Math.max(2,Math.floor(w/2.2));
-        for(var fl=0;fl<floors;fl++){ for(var cc=0;cc<cols;cc++){
-          var wx=px+(-w/2+1.1+cc*(w-2.2)/(cols-1||1));
-          var wy=gy+2.2+fl*3.2;
-          var win=new TH.Mesh(wgeo,winMat); win.position.set(wx,wy,pz+side[3]); win.rotation.y=side[0]; grp.add(win);
-        }}
-      });
+      // cornicione + tetto a coppi
+      var corn=new TH.Mesh(new TH.BoxGeometry(w+1.2,0.8,d+1.2),travD); corn.position.set(px,gy+h,pz); corn.castShadow=true; grp.add(corn);
+      var roof=new TH.Mesh(new TH.BoxGeometry(w,1.6,d),roofR); roof.position.set(px,gy+h+1.1,pz); roof.castShadow=true; grp.add(roof);
       return b;
     }
-    var palMats=[new TH.MeshStandardMaterial({color:0xc99a5a,roughness:0.9}),new TH.MeshStandardMaterial({color:0xd8b070,roughness:0.9}),new TH.MeshStandardMaterial({color:0xb87848,roughness:0.9}),new TH.MeshStandardMaterial({color:0xcaa878,roughness:0.9}),new TH.MeshStandardMaterial({color:0xa86a5a,roughness:0.9})];
-    var blocks=[];
-    for(var bx=-3;bx<=3;bx++){ for(var bz=-3;bz<=3;bz++){
-      var pxx=C.x+bx*46, pzz=C.z+bz*46;
+    var STEP=52;
+    var span=Math.floor(C.r/STEP);
+    for(var bx=-span;bx<=span;bx++){ for(var bz=-span;bz<=span;bz++){
+      var pxx=C.x+bx*STEP, pzz=C.z+bz*STEP;
       var dc=Math.hypot(pxx-C.x,pzz-C.z);
-      if(dc<40||dc>C.r-10) continue; // lascia libero il centro e il bordo
-      // evita Colosseo e Pantheon
-      if(Math.hypot(pxx-(C.x-95),pzz-(C.z-70))<60) continue;
-      if(Math.hypot(pxx-(C.x+90),pzz-(C.z+50))<45) continue;
-      var w=14+rng2()*12, d=14+rng2()*12, floors=3+Math.floor(rng2()*5);
-      palazzo(pxx+(rng2()-0.5)*6,pzz+(rng2()-0.5)*6,w,d,floors,palMats[Math.floor(rng2()*palMats.length)]);
+      if(dc<40||dc>C.r-12) continue; // lascia libero il centro e il bordo
+      if(Math.hypot(pxx-(C.x-95),pzz-(C.z-70))<62) continue; // Colosseo
+      if(Math.hypot(pxx-(C.x+90),pzz-(C.z+50))<46) continue;  // Pantheon
+      if(surf.tiber && Math.abs(pxx-(C.x+surf.tiber))<16) continue; // Tevere
+      var w=15+rng2()*13, d=15+rng2()*13, floors=3+Math.floor(rng2()*6);
+      palazzo(pxx+(rng2()-0.5)*5,pzz+(rng2()-0.5)*5,w,d,floors);
     }}
 
-    // strade (croci scure)
-    for(var s=-3;s<=3;s++){
-      var rH=new TH.Mesh(new TH.PlaneGeometry(C.r*2,8),road); rH.rotation.x=-Math.PI/2; rH.position.set(C.x,gy+0.08,C.z+s*46); grp.add(rH);
-      var rV=new TH.Mesh(new TH.PlaneGeometry(8,C.r*2),road); rV.rotation.x=-Math.PI/2; rV.position.set(C.x+s*46,gy+0.08,C.z); grp.add(rV);
+    // strade lastricate (sampietrini)
+    var cob=cobbleTex(rng2);
+    for(var s=-span;s<=span;s++){
+      var ch=cob.clone(); ch.needsUpdate=true; ch.repeat.set(C.r*2/6,1.4);
+      var rmH=new TH.MeshStandardMaterial({map:ch,roughness:0.95});
+      var rH=new TH.Mesh(new TH.PlaneGeometry(C.r*2,9),rmH); rH.rotation.x=-Math.PI/2; rH.position.set(C.x,gy+0.08,C.z+s*STEP); rH.receiveShadow=true; grp.add(rH);
+      var cv=cob.clone(); cv.needsUpdate=true; cv.repeat.set(1.4,C.r*2/6);
+      var rmV=new TH.MeshStandardMaterial({map:cv,roughness:0.95});
+      var rV=new TH.Mesh(new TH.PlaneGeometry(9,C.r*2),rmV); rV.rotation.x=-Math.PI/2; rV.position.set(C.x+s*STEP,gy+0.09,C.z); rV.receiveShadow=true; grp.add(rV);
     }
 
     // lampioni + pini romani lungo i viali
@@ -1631,12 +1671,66 @@
 
     // ---- CIPRESSI slanciati ----
     (function(){
-      for(var i=0;i<20;i++){
+      for(var i=0;i<28;i++){
         var a=rng2()*6.283, d=60+rng2()*(C.r-70);
         var cx2=C.x+Math.cos(a)*d, cz2=C.z+Math.sin(a)*d, cy2=surf.heightFn(cx2,cz2);
         var cyp=new TH.Mesh(new TH.ConeGeometry(1.4,10+rng2()*5,8),new TH.MeshStandardMaterial({color:0x1e4a26,roughness:0.9,flatShading:true}));
         cyp.position.set(cx2,cy2+6,cz2); cyp.castShadow=true; grp.add(cyp);
       }
+    })();
+
+    // ---- TEVERE con argini e ponti ----
+    (function(){
+      var rxc=C.x+surf.tiber;
+      var water=new TH.Mesh(new TH.PlaneGeometry(22,C.r*2),new TH.MeshStandardMaterial({color:0x2f5a4a,roughness:0.12,metalness:0.1,transparent:true,opacity:0.9}));
+      water.envMapIntensity=1.2; water.rotation.x=-Math.PI/2; water.position.set(rxc,gy+0.3,C.z); grp.add(water);
+      surf.river=water;
+      // argini
+      [[-12],[12]].forEach(function(o){ var bank=new TH.Mesh(new TH.BoxGeometry(3,2.4,C.r*2),travD); bank.position.set(rxc+o[0],gy+1,C.z); bank.receiveShadow=true; bank.castShadow=true; grp.add(bank); });
+      // ponti ad arcate
+      for(var bp=-2;bp<=2;bp++){ var bz=C.z+bp*90;
+        var deck=new TH.Mesh(new TH.BoxGeometry(30,1.6,7),trav); deck.position.set(rxc,gy+3.2,bz); deck.castShadow=true; deck.receiveShadow=true; grp.add(deck);
+        [[-7],[0],[7]].forEach(function(a){ var arch=new TH.Mesh(new TH.CylinderGeometry(3.4,3.4,7,16,1,true,0,Math.PI),new TH.MeshStandardMaterial({color:0xc9b591,roughness:0.9,side:TH.DoubleSide})); arch.rotation.z=Math.PI/2; arch.rotation.y=Math.PI/2; arch.position.set(rxc+a[0],gy+0.6,bz); grp.add(arch); });
+        // statue sui parapetti (stile Ponte Sant'Angelo)
+        [[-13,-3],[13,-3],[-13,3],[13,3]].forEach(function(p){ var st=new TH.Mesh(new TH.CylinderGeometry(0.35,0.5,2.4,7),marble); st.position.set(rxc+p[0],gy+5.2,bz+p[1]); st.castShadow=true; grp.add(st); });
+      }
+    })();
+
+    // ---- BASILICA DI SAN PIETRO (grande cupola michelangiolesca) ----
+    (function(){
+      var sx=C.x+150, sz=C.z-150, sg=new TH.Group(); sg.position.set(sx,gy,sz); grp.add(sg);
+      var body=new TH.Mesh(new TH.BoxGeometry(70,34,46),travD); body.position.y=17; sg.add(body);
+      // tamburo
+      var drum=new TH.Mesh(new TH.CylinderGeometry(17,17,14,32),trav); drum.position.set(0,41,-4); sg.add(drum);
+      // colonne del tamburo
+      for(var cd=0;cd<20;cd++){ var ca=cd/20*6.283; var pc=new TH.Mesh(new TH.CylinderGeometry(1,1,14,8),marble); pc.position.set(Math.cos(ca)*17,41,-4+Math.sin(ca)*17); sg.add(pc); }
+      // cupola
+      var dome=new TH.Mesh(new TH.SphereGeometry(17,32,20,0,6.283,0,Math.PI/2),new TH.MeshStandardMaterial({color:0x8a9aa0,roughness:0.5,metalness:0.2})); dome.position.set(0,48,-4); sg.add(dome);
+      // costoloni
+      for(var rb=0;rb<16;rb++){ var ra=rb/16*6.283; var rib=new TH.Mesh(new TH.BoxGeometry(0.6,18,1.2),marble); rib.position.set(Math.cos(ra)*13,56,-4+Math.sin(ra)*13); rib.rotation.y=-ra; rib.rotation.z=0.5; sg.add(rib); }
+      var lantern=new TH.Mesh(new TH.CylinderGeometry(3,3.6,8,12),marble); lantern.position.set(0,66,-4); sg.add(lantern);
+      var cross=new TH.Mesh(new TH.BoxGeometry(0.5,4,0.5),new TH.MeshStandardMaterial({color:0xe0c890,metalness:0.6,roughness:0.3})); cross.position.set(0,72,-4); sg.add(cross);
+      // facciata con colonne + frontone
+      var fac=new TH.Mesh(new TH.BoxGeometry(74,30,6),marble); fac.position.set(0,15,23); sg.add(fac);
+      for(var fc=0;fc<10;fc++){ var fx=-31+fc*6.9; var fcol=new TH.Mesh(new TH.CylinderGeometry(1.6,1.7,26,12),marble); fcol.position.set(fx,13,27); sg.add(fcol); }
+      var pediment=new TH.Mesh(new TH.CylinderGeometry(38,38,6,3),marble); pediment.rotation.x=Math.PI/2; pediment.rotation.z=Math.PI/6; pediment.position.set(0,32,26); pediment.scale.set(1,0.28,1); sg.add(pediment);
+      // colonnato ellittico (piazza San Pietro)
+      for(var co=0;co<44;co++){ var coa=(co/44)*6.283; var er=52+Math.cos(coa*2)*4;
+        var ex2=Math.cos(coa)*er, ez2=42+Math.sin(coa)*er*0.7;
+        if(ez2<20) continue;
+        var pcl=new TH.Mesh(new TH.CylinderGeometry(1.3,1.4,12,10),travD); pcl.position.set(ex2,6,ez2); sg.add(pcl); }
+      sg.traverse(function(c){ if(c.isMesh){ c.castShadow=true; c.receiveShadow=true; } });
+      surf.cityStPeter={x:sx,z:sz};
+    })();
+
+    // ---- CASTEL SANT'ANGELO (mole cilindrica sul Tevere) ----
+    (function(){
+      var cx3=C.x+surf.tiber, cz3=C.z-150, cg=new TH.Group(); cg.position.set(cx3,gy,cz3); grp.add(cg);
+      var base=new TH.Mesh(new TH.BoxGeometry(46,10,46),travD); base.position.y=5; cg.add(base);
+      var drum=new TH.Mesh(new TH.CylinderGeometry(22,22,20,32),trav); drum.position.y=20; cg.add(drum);
+      var top=new TH.Mesh(new TH.CylinderGeometry(12,12,10,24),travD); top.position.y=35; cg.add(top);
+      var ang=new TH.Mesh(new TH.SphereGeometry(3,12,10),new TH.MeshStandardMaterial({color:0xb0902a,metalness:0.7,roughness:0.3})); ang.position.y=44; cg.add(ang);
+      cg.traverse(function(c){ if(c.isMesh){ c.castShadow=true; c.receiveShadow=true; } });
     })();
 
     surf.cityGroup=grp;
@@ -1798,7 +1892,7 @@
     surf.city=null;
     if(body.name==='Terra'){
       // Roma sorge su una piana: il terreno si appiattisce dentro il perimetro urbano
-      var cX=330, cZ=-60, cR=230;
+      var cX=330, cZ=-60, cR=300;
       var cLevel=Math.max(baseH(cX,cZ), surf.waterY+4);
       surf.city={x:cX,z:cZ,r:cR,level:cLevel};
       surf.heightFn=function(x,z){
