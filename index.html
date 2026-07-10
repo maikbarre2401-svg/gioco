@@ -1567,6 +1567,78 @@
       seg.position.set(mx,gy+3.5,mz); seg.rotation.y=-ma; seg.castShadow=true; seg.receiveShadow=true; grp.add(seg);
     }
 
+    // ---- ARCO DI TRIONFO (vicino al Colosseo) ----
+    (function(){
+      var ax=C.x-58, az=C.z-58, ag=new TH.Group(); ag.position.set(ax,gy,az); grp.add(ag);
+      var mat=marble;
+      // due piloni
+      [[-6],[6]].forEach(function(p){ var pil=new TH.Mesh(new TH.BoxGeometry(4,13,5),mat); pil.position.set(p[0],6.5,0); ag.add(pil); });
+      // arco centrale (volta) come serie di blocchi
+      for(var av=0;av<9;av++){ var aa=Math.PI*(0.1+0.8*av/8); var arx=Math.cos(aa)*4.2, ary=9+Math.sin(aa)*4.2;
+        var vb=new TH.Mesh(new TH.BoxGeometry(1.4,1.4,5),mat); vb.position.set(arx,ary,0); vb.rotation.z=aa-Math.PI/2; ag.add(vb); }
+      // attico
+      var att=new TH.Mesh(new TH.BoxGeometry(18,4,5.4),mat); att.position.set(0,15,0); ag.add(att);
+      // quadriga stilizzata sopra
+      var qb=new TH.Mesh(new TH.BoxGeometry(4,1.4,2),new TH.MeshStandardMaterial({color:0xc9a24a,metalness:0.7,roughness:0.3})); qb.position.set(0,17.7,0); ag.add(qb);
+      ag.traverse(function(c){ if(c.isMesh){ c.castShadow=true; c.receiveShadow=true; } });
+    })();
+
+    // ---- ACQUEDOTTO (fila di archi che entra in città) ----
+    (function(){
+      var arches=9, span=11, ax0=C.x-C.r+20, az0=C.z+C.r-30;
+      var mat=new TH.MeshStandardMaterial({color:0xc9b591,roughness:0.9});
+      for(var i=0;i<arches;i++){
+        var px=ax0+i*span, pz=az0, py=surf.heightFn(px,pz);
+        [[-span*0.35],[span*0.35]].forEach(function(p){ var pi=new TH.Mesh(new TH.BoxGeometry(2.2,14,2.6),mat); pi.position.set(px+p[0],py+7,pz); pi.castShadow=true; grp.add(pi); });
+        // arco
+        for(var av=0;av<7;av++){ var aa=Math.PI*(0.12+0.76*av/6); var arx=Math.cos(aa)*span*0.35, ary=13+Math.sin(aa)*span*0.35;
+          var vb=new TH.Mesh(new TH.BoxGeometry(1.3,1.3,2.6),mat); vb.position.set(px+arx,py+ary,pz); vb.rotation.z=aa-Math.PI/2; grp.add(vb); }
+        // canaletta sopra
+        var top=new TH.Mesh(new TH.BoxGeometry(span+2,2,3.4),mat); top.position.set(px,py+18,pz); top.castShadow=true; grp.add(top);
+      }
+    })();
+
+    // ---- STATUE sui piedistalli lungo il viale centrale ----
+    (function(){
+      for(var i=0;i<8;i++){
+        var sx=C.x-70+i*20, sz=C.z+30;
+        var sy2=surf.heightFn(sx,sz);
+        var ped=new TH.Mesh(new TH.BoxGeometry(2.2,3,2.2),travD); ped.position.set(sx,sy2+1.5,sz); ped.castShadow=true; grp.add(ped);
+        var fig=new TH.Group(); fig.position.set(sx,sy2+3,sz);
+        var torso=new TH.Mesh(new TH.CylinderGeometry(0.5,0.42,1.6,8),marble); torso.position.y=0.9; fig.add(torso);
+        var head=new TH.Mesh(new TH.SphereGeometry(0.32,10,8),marble); head.position.y=2.0; fig.add(head);
+        var armR=new TH.Mesh(new TH.CylinderGeometry(0.13,0.11,1.2,6),marble); armR.position.set(0.5,1.3,0); armR.rotation.z=-0.6; fig.add(armR);
+        fig.traverse(function(c){ if(c.isMesh) c.castShadow=true; }); grp.add(fig);
+      }
+    })();
+
+    // ---- BANCARELLE del mercato (tende colorate) ----
+    (function(){
+      var mkColors=[0x9a3030,0x2a6a4a,0x3a5a8a,0xa06020,0x7a3a6a];
+      for(var i=0;i<12;i++){
+        var a=rng2()*6.283, d=50+rng2()*60;
+        var sx=C.x+Math.cos(a)*d, sz=C.z+Math.sin(a)*d;
+        // evita centro esatto
+        if(Math.hypot(sx-C.x,sz-C.z)<20) continue;
+        var sy2=surf.heightFn(sx,sz);
+        var st=new TH.Group(); st.position.set(sx,sy2,sz); st.rotation.y=rng2()*6.28; grp.add(st);
+        var counter=new TH.Mesh(new TH.BoxGeometry(3,1.2,1.6),new TH.MeshStandardMaterial({color:0x6a4a2a,roughness:0.9})); counter.position.y=0.6; st.add(counter);
+        [[-1.4,-0.7],[1.4,-0.7],[-1.4,0.7],[1.4,0.7]].forEach(function(p){ var pole=new TH.Mesh(new TH.CylinderGeometry(0.06,0.06,2.4,5),new TH.MeshStandardMaterial({color:0x3a2a1a})); pole.position.set(p[0],1.2,p[1]); st.add(pole); });
+        var tent=new TH.Mesh(new TH.BoxGeometry(3.4,0.2,2),new TH.MeshStandardMaterial({color:mkColors[Math.floor(rng2()*mkColors.length)],roughness:0.85,side:TH.DoubleSide})); tent.position.y=2.4; tent.rotation.x=0.12; st.add(tent);
+        st.traverse(function(c){ if(c.isMesh) c.castShadow=true; });
+      }
+    })();
+
+    // ---- CIPRESSI slanciati ----
+    (function(){
+      for(var i=0;i<20;i++){
+        var a=rng2()*6.283, d=60+rng2()*(C.r-70);
+        var cx2=C.x+Math.cos(a)*d, cz2=C.z+Math.sin(a)*d, cy2=surf.heightFn(cx2,cz2);
+        var cyp=new TH.Mesh(new TH.ConeGeometry(1.4,10+rng2()*5,8),new TH.MeshStandardMaterial({color:0x1e4a26,roughness:0.9,flatShading:true}));
+        cyp.position.set(cx2,cy2+6,cz2); cyp.castShadow=true; grp.add(cyp);
+      }
+    })();
+
     surf.cityGroup=grp;
   }
 
@@ -1991,18 +2063,83 @@
     }
     SND.scan();
   }
-  function tryTakeoff(){
-    if(mode!=='surface') return;
-    if(surf.pp.distanceTo(ship.position)>24){ toast('TROPPO LONTANO DALLA NAVE','Torna alla nave per decollare'); return; }
+  function leaveSurface(){
     destroySurface();
     if(document.exitPointerLock) document.exitPointerLock();
     sysGroup.visible=true; dust.visible=true;
     if(outpost) outpost.visible=true;
     if(waypoint) waypoint.visible=surf.wpVis;
-    ship.position.copy(surf.returnPos);
+    ship.position.copy(surf.returnPos); ship.quaternion.set(0,0,0,1);
     mode='space'; camera.fov=62; camera.updateProjectionMatrix();
     mission(mState<6?mState:'6','Rotta libera','Riprendi le direttive di volo');
     flash(); SND.warpJump(); toast('IN ORBITA','Sistemi di volo riattivati');
+  }
+  function tryTakeoff(){
+    if(mode==='surfship'){ leaveSurface(); return; }
+    if(mode!=='surface') return;
+    if(surf.pp.distanceTo(ship.position)>24){ toast('TROPPO LONTANO DALLA NAVE','Torna alla nave per decollare'); return; }
+    leaveSurface();
+  }
+  // ---- volo atmosferico: pilota la nave sul pianeta ----
+  function boardShip(){
+    if(mode!=='surface') return;
+    if(surf.pp.distanceTo(ship.position)>28){ toast('TROPPO LONTANO','Avvicinati alla nave e premi E'); return; }
+    if(document.exitPointerLock) document.exitPointerLock();
+    mode='surfship'; shipYaw=plYaw; shipPitch=0.06; throttle=0.35; boosting=false;
+    var gy=surf.heightFn(ship.position.x,ship.position.z);
+    ship.position.y=Math.max(ship.position.y,gy+10);
+    camera.fov=62; camera.updateProjectionMatrix();
+    toast('AI COMANDI','Vola sul pianeta · MOUSE rotta · W/S spinta · L atterra · T orbita'); SND.warpCharge();
+  }
+  function disembarkShip(){
+    if(mode!=='surfship') return;
+    var gy=surf.heightFn(ship.position.x,ship.position.z);
+    if(ship.position.y>gy+34){ toast('TROPPO IN ALTO','Scendi di quota per atterrare'); return; }
+    // posa la nave a terra e livellala
+    ship.position.y=gy+1.7; shipPitch=0;
+    var fq=new TH.Quaternion().setFromUnitVectors(new TH.Vector3(0,0,1),new TH.Vector3(Math.sin(shipYaw),0,Math.cos(shipYaw)));
+    ship.quaternion.copy(fq);
+    // scendi accanto alla nave
+    var side=new TH.Vector3(Math.cos(shipYaw),0,-Math.sin(shipYaw)).multiplyScalar(4);
+    var px=ship.position.x+side.x, pz=ship.position.z+side.z;
+    surf.pp.set(px,surf.heightFn(px,pz)+1.75,pz); surf.pv.set(0,0,0); surf.onGround=true;
+    plYaw=shipYaw; plPitch=-0.05;
+    camera.fov=70; camera.updateProjectionMatrix();
+    mode='surface'; SND.warpJump(); toast('ATTERRATO','Sei sceso dalla nave · E per risalire');
+  }
+  function updateSurfShip(dt){
+    var dz=0.06, ix=Math.abs(mx)>dz?mx:0, iy=Math.abs(my)>dz?my:0;
+    shipYaw-=ix*1.0*dt; shipPitch-=iy*0.9*dt; shipPitch=Math.max(-0.7,Math.min(0.7,shipPitch));
+    if(keys['w']) throttle=Math.min(1,throttle+dt*0.6); if(keys['s']) throttle=Math.max(0,throttle-dt*0.7);
+    boosting=!!keys['shift'];
+    var fwd=shipForward();
+    var maxv=58*(boosting?2.1:1), speed=throttle*maxv;
+    ship.position.addScaledVector(fwd,speed*dt);
+    ship.position.x=Math.max(-1990,Math.min(1990,ship.position.x));
+    ship.position.z=Math.max(-1990,Math.min(1990,ship.position.z));
+    var gy=surf.heightFn(ship.position.x,ship.position.z);
+    var minY=gy+7;
+    if(ship.position.y<minY){ ship.position.y=minY; if(shipPitch<0) shipPitch*=0.4; shake=Math.max(shake,0.5); }
+    var ceil=(surf.city?surf.city.level:gy)+360;
+    if(ship.position.y>ceil){ ship.position.y=ceil; if(shipPitch>0) shipPitch*=0.4; }
+    var q=new TH.Quaternion().setFromUnitVectors(new TH.Vector3(0,0,1),fwd);
+    var bank=new TH.Quaternion().setFromAxisAngle(fwd,-ix*0.7);
+    q.premultiply(bank); ship.quaternion.slerp(q,Math.min(1,dt*6));
+    var eg=0.6+throttle*0.5+(boosting?0.9:0); shipEngines.forEach(function(s){ s.scale.setScalar(2.2*eg); });
+    if(engineLight) engineLight.intensity=0.5+throttle*1.2+(boosting?1.4:0);
+    trailTimer-=dt; if(speed>4&&trailTimer<=0){ trailTimer=boosting?0.02:0.05;
+      var back=fwd.clone().multiplyScalar(-3.3);
+      spawnTrail(ship.position.clone().add(back).add(new TH.Vector3(-1.05,0,0).applyQuaternion(ship.quaternion)),boosting);
+      spawnTrail(ship.position.clone().add(back).add(new TH.Vector3(1.05,0,0).applyQuaternion(ship.quaternion)),boosting);
+    }
+    setTxt('rr_coords','X '+pad(ship.position.x)+'  Y '+pad(ship.position.y)+'  Z '+pad(ship.position.z));
+    setTxt('rr_thrN',Math.round(throttle*100)+'%'); $('rr_thr').style.width=(throttle*100)+'%'; setTxt('rr_spd',Math.round(speed));
+    $('rr_boost').style.color=boosting?curAccent():'#445566';
+    SND.engine(throttle,boosting);
+    if(surf.city){ updateRomans(dt); updateTraffic(dt); updateBirds(dt); }
+    surf.clouds.forEach(function(c){ c.position.x+=c.userData.v*dt; if(c.position.x>2600) c.position.x=-2600; });
+    var lowSlow=(ship.position.y<gy+34);
+    prompt2(lowSlow?'L':'T', lowSlow?'Atterra qui · T per orbita':'Sali in orbita · scendi per atterrare (L)');
   }
   function collectNode(){
     if(!surf.nearNode) return;
@@ -2076,7 +2213,7 @@
     if(surf.nearNPC) prompt2('F','Parla');
     else if(nearRelic) prompt2('F','Recupera manufatto alieno (+40 crediti)');
     else if(surf.nearNode) prompt2('F','Raccogli frammento minerale (+5)');
-    else if(surf.pp.distanceTo(ship.position)<24) prompt2('T','Decolla · CLIC spara');
+    else if(surf.pp.distanceTo(ship.position)<26) prompt2('E','Pilota la nave · T per orbita');
     else if(document.pointerLockElement!==canvas) prompt2('CLIC','Blocca il mouse per guardarti intorno');
     else prompt2('CLIC','Spara col blaster · F raccogli');
   }
@@ -2219,14 +2356,17 @@
       rctx.clearRect(0,0,w,h);
       rctx.strokeStyle='rgba(95,208,224,0.18)'; rctx.lineWidth=1;
       [0.34,0.67,1].forEach(function(f){ rctx.beginPath(); rctx.arc(cx,cy,R*f,0,7); rctx.stroke(); });
-      var range2=600, csS=Math.cos(-plYaw), snS=Math.sin(-plYaw);
-      function sblip(px,pz,col,sz){ var dx=px-surf.pp.x, dz=pz-surf.pp.z; var d=Math.hypot(dx,dz); if(d>range2){ dx*=range2/d; dz*=range2/d; } var rx=dx*csS-dz*snS, rz=dx*snS+dz*csS; rctx.fillStyle=col; rctx.beginPath(); rctx.arc(cx+(rx/range2)*R,cy+(rz/range2)*R,sz,0,7); rctx.fill(); }
+      var inShip=(mode==='surfship');
+      var ctrX=inShip?ship.position.x:surf.pp.x, ctrZ=inShip?ship.position.z:surf.pp.z, ctrYaw=inShip?shipYaw:plYaw;
+      var range2=inShip?1400:600, csS=Math.cos(-ctrYaw), snS=Math.sin(-ctrYaw);
+      function sblip(px,pz,col,sz){ var dx=px-ctrX, dz=pz-ctrZ; var d=Math.hypot(dx,dz); if(d>range2){ dx*=range2/d; dz*=range2/d; } var rx=dx*csS-dz*snS, rz=dx*snS+dz*csS; rctx.fillStyle=col; rctx.beginPath(); rctx.arc(cx+(rx/range2)*R,cy+(rz/range2)*R,sz,0,7); rctx.fill(); }
+      if(inShip) sblip(surf.pp.x,surf.pp.z,'rgba(120,255,180,0.5)',1.4);
       surf.nodes.forEach(function(n){ sblip(n.m.position.x,n.m.position.z,'rgba(87,214,160,0.9)',1.8); });
       surf.critters.forEach(function(cr){ sblip(cr.g.position.x,cr.g.position.z,cr.hostile?'rgba(255,80,70,1)':'rgba(200,190,120,0.85)',cr.hostile?2.4:1.8); });
       surf.npcs.forEach(function(n){ sblip(n.g.position.x,n.g.position.z,'rgba(120,200,255,0.7)',1.4); });
       if(surf.city){ sblip(surf.city.x,surf.city.z,'rgba(240,200,120,0.9)',3); }
       if(surf.ruin) sblip(surf.ruin.pos.x,surf.ruin.pos.z,'rgba(200,140,255,1)',2.6);
-      sblip(ship.position.x,ship.position.z,'rgba(95,208,224,1)',3.4);
+      if(!inShip) sblip(ship.position.x,ship.position.z,'rgba(95,208,224,1)',3.4);
       rctx.fillStyle='#eaf6ff'; rctx.beginPath(); rctx.moveTo(cx,cy-4); rctx.lineTo(cx-3,cy+3); rctx.lineTo(cx+3,cy+3); rctx.closePath(); rctx.fill();
       return;
     }
@@ -2256,10 +2396,17 @@
     if(docked){ if(k==='escape'||k==='f') closeHangar(); return; }
     if(mode==='surface'){
       if(k==='t'){ tryTakeoff(); }
+      if(k==='e'){ boardShip(); }
       if(k===' '&&dActive) dNext();
       if(k==='f'){ if(dActive) dNext(); else if(!talkToNPC() && !collectRelic()) collectNode(); }
       if(k==='v'){ var en2=SND.toggle(); toast('AUDIO',en2?'Attivato':'Disattivato'); }
       if(k==='m') toast('MAPPA NON DISPONIBILE','Solo in volo spaziale');
+      return;
+    }
+    if(mode==='surfship'){
+      if(k==='l'){ disembarkShip(); }
+      if(k==='t'){ tryTakeoff(); }
+      if(k==='v'){ var en3=SND.toggle(); toast('AUDIO',en3?'Attivato':'Disattivato'); }
       return;
     }
     if(k==='tab'){ cycleLock(); }
@@ -2558,6 +2705,7 @@
       if(warp){ updateWarp(dt); updateCamera(dt); }
       else if(mode==='landing'){ updateLanding(dt); if(mode==='landing') updateCamera(dt); }
       else if(mode==='surface'){ updateSurface(dt); }
+      else if(mode==='surfship'){ updateSurfShip(dt); updateCamera(dt); }
       else if(!docked){
         updateFlight(dt); autoLock(); refreshTarget(); fire(dt); updateMining(dt); updateDrones(dt);
         updateCorvettes(dt); updateMissiles(dt); updateCollisions(dt);
