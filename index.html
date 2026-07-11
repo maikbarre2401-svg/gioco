@@ -1032,6 +1032,7 @@
       var dist=560+i*360+rng()*190;
       var ang=rng()*Math.PI*2;
       if(ensureStation && i===0){ type='terran'; rad=62; dist=620; }
+      if(ensureStation && i===2){ type='crystal'; rad=58; }
       var px=Math.cos(ang)*dist, pz=Math.sin(ang)*dist, py=(rng()-0.5)*260;
       var P=PALS[type];
       var texset=planetTex(type,rng);
@@ -1056,8 +1057,12 @@
       }
       var resN=2+Math.floor(rng()*2); var res=[]; for(var r2=0;r2<resN;r2++){ var xr=RES[Math.floor(rng()*RES.length)]; if(res.indexOf(xr)<0) res.push(xr); }
       var names=['Kepler','Gliese','Ross','Wolf','Tau','Lalande','Procyon','Eridani','Hydrae'];
-      var pname=(ensureStation&&i===0)?'Terra':(names[Math.floor(rng()*names.length)]+'-'+(100+Math.floor(rng()*899)));
-      bodies.push({mesh:pl, cloudMesh:cloudMesh, name:pname, type:type, radius:rad, scanned:false, res:res, spin:0.04+rng()*0.08, isBody:true, seed:(rng()*1e9)>>>0});
+      var pname=(ensureStation&&i===0)?'Terra':((ensureStation&&i===2)?'Nyx Prime':(names[Math.floor(rng()*names.length)]+'-'+(100+Math.floor(rng()*899))));
+      var bseed=(rng()*1e9)>>>0;
+      // metropoli aliena: pianeti crystal/toxic con superficie solida (nel Sol: forzata su un pianeta)
+      var alien=(!P.bands && (type==='crystal'||type==='toxic') && (bseed%1000)/1000<0.55);
+      if(ensureStation && i===2 && !P.bands){ alien=true; }
+      bodies.push({mesh:pl, cloudMesh:cloudMesh, name:pname, type:type, radius:rad, scanned:false, res:res, spin:0.04+rng()*0.08, isBody:true, seed:bseed, alienCity:alien});
 
       if((!P.bands && rng()<0.5) || (ensureStation&&i===0)){
         var mCount=1+(rng()<0.28?1:0);
@@ -1356,7 +1361,7 @@
     critters:[], beams:[], blasterCd:0, ruin:null,
     npcs:[], city:null, cityMats:[], cityLights:[], cityVisited:false, nearNPC:null,
     traffic:[], birds:null, birdData:[],
-    nightGlows:[], nightLights:[], moon:null };
+    nightGlows:[], nightLights:[], moon:null, neonMats:[] };
   var _sunWhite=new TH.Color(0xffffff), _sunWarm=new TH.Color(0xff9a50);
   var CRIT_CFG={ terran:{col:0x7a9a4a,fl:0}, ocean:{col:0x4a9ab0,fl:0.5}, desert:{col:0xc8a060,fl:0},
     ice:{col:0xa8d0e8,fl:0.2}, rock:{col:0x8a8078,fl:0.15}, lava:{col:0x9a4a30,fl:0.2},
@@ -1471,6 +1476,132 @@
       x.beginPath(); x.arc((gx+off)%S+5,gy+5,4.4,0,7); x.fill();
     }}
     var t=new TH.CanvasTexture(c); t.wrapS=t.wrapT=TH.RepeatWrapping; t.anisotropy=8; return t;
+  }
+
+  // ---------- METROPOLI ALIENA (Nyx Prime) ----------
+  var NEON=[0x37e0ff,0xff4fd8,0x7cff5a,0xffb03a,0xa060ff,0x40ffd0];
+  function buildAlienCity(rng){
+    var C=surf.city, gy=C.level, grp=new TH.Group(); surf.group.add(grp);
+    surf.cityMats=[]; surf.neonMats=[]; surf.nightGlows=[]; surf.nightLights=[]; surf.cityLights=[];
+    surf.tiber=null;
+    var metal=new TH.MeshStandardMaterial({color:0x2a2f3a,metalness:0.85,roughness:0.3}); metal.envMapIntensity=0.8;
+    var dark=new TH.MeshStandardMaterial({color:0x14171f,metalness:0.7,roughness:0.45});
+    // pavimentazione con griglia luminosa
+    var gcv=document.createElement('canvas'); gcv.width=gcv.height=128; var gx=gcv.getContext('2d');
+    gx.fillStyle='#0a0d14'; gx.fillRect(0,0,128,128); gx.strokeStyle='#1c3a44'; gx.lineWidth=3;
+    for(var gi=0;gi<=128;gi+=32){ gx.beginPath(); gx.moveTo(gi,0); gx.lineTo(gi,128); gx.moveTo(0,gi); gx.lineTo(128,gi); gx.stroke(); }
+    var gtex=new TH.CanvasTexture(gcv); gtex.wrapS=gtex.wrapT=TH.RepeatWrapping; gtex.repeat.set(C.r/6,C.r/6);
+    var gemi=new TH.CanvasTexture((function(){ var e=document.createElement('canvas'); e.width=e.height=128; var ex=e.getContext('2d'); ex.fillStyle='#000'; ex.fillRect(0,0,128,128); ex.strokeStyle='#0affff'; ex.lineWidth=2; for(var i=0;i<=128;i+=32){ ex.beginPath(); ex.moveTo(i,0); ex.lineTo(i,128); ex.moveTo(0,i); ex.lineTo(128,i); ex.stroke(); } return e; })());
+    gemi.wrapS=gemi.wrapT=TH.RepeatWrapping; gemi.repeat.set(C.r/6,C.r/6);
+    var plazaMat=new TH.MeshStandardMaterial({map:gtex,emissiveMap:gemi,emissive:0x1fd8ff,emissiveIntensity:0.6,roughness:0.35,metalness:0.6});
+    surf.neonMats.push(plazaMat);
+    var plaza=new TH.Mesh(new TH.CircleGeometry(C.r,64),plazaMat); plaza.rotation.x=-Math.PI/2; plaza.position.set(C.x,gy+0.05,C.z); plaza.receiveShadow=true; grp.add(plaza);
+
+    // torri al neon
+    function tower(px,pz,w,h){
+      var col=NEON[Math.floor(rng()*NEON.length)];
+      var t=new TH.Mesh(new TH.BoxGeometry(w,h,w),(rng()<0.5?metal:dark)); t.position.set(px,gy+h/2,pz); t.castShadow=true; t.receiveShadow=true; grp.add(t);
+      // strisce neon verticali
+      var nmat=new TH.MeshStandardMaterial({color:0x101318,emissive:col,emissiveIntensity:1.2,metalness:0.5,roughness:0.3}); surf.neonMats.push(nmat);
+      [[w/2+0.06,0],[-w/2-0.06,0],[0,w/2+0.06],[0,-w/2-0.06]].forEach(function(o){
+        var strip=new TH.Mesh(new TH.BoxGeometry(o[0]!==0?0.12:w*0.5,h*0.9,o[1]!==0?0.12:w*0.5),nmat); strip.position.set(px+o[0],gy+h/2,pz+o[1]); grp.add(strip);
+      });
+      // corona luminosa in cima
+      var capMat=new TH.MeshStandardMaterial({color:0x101318,emissive:col,emissiveIntensity:1.4,metalness:0.6,roughness:0.2}); surf.neonMats.push(capMat);
+      var cap=new TH.Mesh(new TH.BoxGeometry(w*1.1,1.2,w*1.1),capMat); cap.position.set(px,gy+h+0.6,pz); grp.add(cap);
+      var beacon=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:col,blending:TH.AdditiveBlending,depthWrite:false,transparent:true,opacity:0.9})); beacon.position.set(px,gy+h+2,pz); beacon.scale.set(10,10,1); grp.add(beacon);
+      return h;
+    }
+    var STEP=46, span=Math.floor(C.r/STEP);
+    for(var bx=-span;bx<=span;bx++){ for(var bz=-span;bz<=span;bz++){
+      var pxx=C.x+bx*STEP, pzz=C.z+bz*STEP, dc=Math.hypot(pxx-C.x,pzz-C.z);
+      if(dc<44||dc>C.r-14) continue;
+      var w=12+rng()*14, h=30+rng()*90*(1-dc/C.r*0.5);
+      tower(pxx+(rng()-0.5)*6,pzz+(rng()-0.5)*6,w,h);
+    }}
+
+    // guglia centrale gigante
+    (function(){
+      var h=170;
+      var spire=new TH.Mesh(new TH.CylinderGeometry(2,14,h,6),metal); spire.position.set(C.x,gy+h/2,C.z); spire.castShadow=true; grp.add(spire);
+      var col=0x37e0ff;
+      var sm=new TH.MeshStandardMaterial({color:0x0c1016,emissive:col,emissiveIntensity:1.4,metalness:0.6,roughness:0.2}); surf.neonMats.push(sm);
+      for(var r=0;r<6;r++){ var ring=new TH.Mesh(new TH.TorusGeometry(10-r*1.2,0.5,6,24),sm); ring.rotation.x=Math.PI/2; ring.position.set(C.x,gy+20+r*26,C.z); grp.add(ring); }
+      var tip=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:col,blending:TH.AdditiveBlending,depthWrite:false,transparent:true})); tip.position.set(C.x,gy+h+4,C.z); tip.scale.set(30,30,1); grp.add(tip);
+      var pl=new TH.PointLight(col,1.5,400); pl.position.set(C.x,gy+h*0.6,C.z); grp.add(pl); surf.nightLights.push(pl);
+    })();
+
+    // piattaforme fluttuanti (anelli hover)
+    surf.platforms=[];
+    for(var pf=0;pf<10;pf++){
+      var pa=rng()*6.283, pd=60+rng()*(C.r-90);
+      var col2=NEON[Math.floor(rng()*NEON.length)];
+      var plat=new TH.Group(); plat.position.set(C.x+Math.cos(pa)*pd,gy+30+rng()*70,C.z+Math.sin(pa)*pd);
+      var disc=new TH.Mesh(new TH.CylinderGeometry(7,7,1,20),dark); plat.add(disc);
+      var rmat=new TH.MeshStandardMaterial({color:0x101318,emissive:col2,emissiveIntensity:1.3,metalness:0.5,roughness:0.3}); surf.neonMats.push(rmat);
+      var rim=new TH.Mesh(new TH.TorusGeometry(7,0.35,6,24),rmat); rim.rotation.x=Math.PI/2; rim.position.y=0.2; plat.add(rim);
+      grp.add(plat); surf.platforms.push({g:plat,ph:rng()*6.28,baseY:plat.position.y});
+    }
+
+    // ologrammi pubblicitari (piani emissivi verticali)
+    for(var hg=0;hg<14;hg++){
+      var ha=rng()*6.283, hd=50+rng()*(C.r-80);
+      var col3=NEON[Math.floor(rng()*NEON.length)];
+      var hm=new TH.MeshBasicMaterial({color:col3,transparent:true,opacity:0.5,side:TH.DoubleSide,blending:TH.AdditiveBlending,depthWrite:false});
+      var holo=new TH.Mesh(new TH.PlaneGeometry(6,10),hm); holo.position.set(C.x+Math.cos(ha)*hd,gy+14+rng()*20,C.z+Math.sin(ha)*hd); holo.rotation.y=rng()*6.28; grp.add(holo);
+    }
+
+    // fog/atmosfera già gestita; luce ambiente più fredda
+    surf.cityGroup=grp;
+  }
+  function buildAliens(rng){
+    var C=surf.city; surf.npcs=[]; surf.nearNPC=null;
+    var LINES={
+      alieno:['√≈∆ … [traduttore] … "Benvenuta su Nyx Prime, terrestre."','"La tua specie viaggia ancora con motori a fusione? Adorabile."','"Le torri cantano all’alba. Resta e ascolta."'],
+      drone:['[UNITÀ SINTETICA] Scansione biometrica… ospite autorizzato.','[UNITÀ SINTETICA] La Guglia registra il tuo passaggio.','[UNITÀ SINTETICA] Traffico aereo nominale. Buona permanenza.'],
+      mercante:['"Cristalli di vuoto! Baratto con i tuoi minerali, terrestre."','"Dammi minerali e avrai crediti stellari, affare equo."','"Le rovine dei Precursori? Ne parlano anche qui tra le stelle."']
+    };
+    var kinds=['alieno','alieno','drone','mercante'];
+    var N=22;
+    for(var i=0;i<N;i++){
+      var kind=kinds[Math.floor(rng()*kinds.length)];
+      var g=alienModel(rng,kind);
+      var a=rng()*6.283, d=40+rng()*(C.r-60);
+      var px=C.x+Math.cos(a)*d, pz=C.z+Math.sin(a)*d;
+      g.position.set(px,surf.heightFn(px,pz),pz); g.scale.setScalar(0.95+rng()*0.3);
+      surf.group.add(g);
+      surf.npcs.push({ g:g, kind:kind==='mercante'?'mercante':kind, lines:LINES[kind], phase:rng()*6.28,
+        wander:rng()*6.28, wt:rng()*3, spd:1.0+rng()*1.2, talkCd:0, hx:px, hz:pz, home:new TH.Vector3(px,0,pz), floatK:(kind==='drone') });
+    }
+  }
+  function alienModel(rng,kind){
+    var g=new TH.Group();
+    var col=NEON[Math.floor(rng()*NEON.length)];
+    if(kind==='drone'){
+      var b=new TH.Mesh(new TH.OctahedronGeometry(0.7,0),new TH.MeshStandardMaterial({color:0x20242c,metalness:0.8,roughness:0.3})); b.position.y=1.6; g.add(b);
+      var eye=new TH.Mesh(new TH.SphereGeometry(0.22,10,8),new TH.MeshStandardMaterial({color:0x101318,emissive:col,emissiveIntensity:1.4})); eye.position.set(0,1.6,0.6); g.add(eye);
+      var hs=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:col,blending:TH.AdditiveBlending,depthWrite:false,transparent:true,opacity:0.8})); hs.position.y=1.6; hs.scale.set(3,3,1); g.add(hs);
+      g.userData={legs:[],arms:[],drone:true};
+    } else {
+      var skinC=new TH.Color().setHSL(rng(),0.5,0.5);
+      var skin=new TH.MeshStandardMaterial({color:skinC,roughness:0.55,metalness:0.1});
+      var suit=new TH.MeshStandardMaterial({color:0x1a1e26,roughness:0.5,metalness:0.3,emissive:col,emissiveIntensity:0.25});
+      var torso=new TH.Mesh(new TH.CylinderGeometry(0.24,0.2,0.8,8),suit); torso.position.y=1.25; g.add(torso);
+      var head=new TH.Mesh(new TH.SphereGeometry(0.22,12,10),skin); head.scale.set(1,1.3,1); head.position.y=1.85; g.add(head);
+      var visor=new TH.Mesh(new TH.BoxGeometry(0.3,0.08,0.05),new TH.MeshStandardMaterial({color:0x101318,emissive:col,emissiveIntensity:1.2})); visor.position.set(0,1.88,0.2); g.add(visor);
+      // antenne
+      [[-0.08],[0.08]].forEach(function(a){ var an=new TH.Mesh(new TH.CylinderGeometry(0.02,0.02,0.4,4),skin); an.position.set(a[0],2.15,0); g.add(an); var tip=new TH.Mesh(new TH.SphereGeometry(0.05,6,6),new TH.MeshStandardMaterial({color:0x101318,emissive:col,emissiveIntensity:1.4})); tip.position.set(a[0],2.36,0); g.add(tip); });
+      var legs=[],arms=[];
+      [[-1],[1]].forEach(function(a){ var pv=new TH.Group(); pv.position.set(a[0]*0.11,0.85,0); g.add(pv); var leg=new TH.Mesh(new TH.CylinderGeometry(0.08,0.06,0.85,6),suit); leg.position.y=-0.42; pv.add(leg); legs.push(pv);
+        var ap=new TH.Group(); ap.position.set(a[0]*0.27,1.55,0); g.add(ap); var arm=new TH.Mesh(new TH.CylinderGeometry(0.06,0.05,0.7,6),suit); arm.position.y=-0.35; ap.add(arm); arms.push(ap); });
+      g.userData={legs:legs,arms:arms};
+    }
+    g.traverse(function(c){ if(c.isMesh) c.castShadow=true; });
+    return g;
+  }
+  function updatePlatforms(dt){
+    if(!surf.platforms) return;
+    surf.platforms.forEach(function(p){ p.ph+=dt*0.6; p.g.position.y=p.baseY+Math.sin(p.ph)*3; p.g.rotation.y+=dt*0.3; });
   }
 
   // ---------- ROMA in 3D ----------
@@ -1809,19 +1940,22 @@
         // guarda il giocatore
         g.rotation.y=Math.atan2(toP.x-g.position.x,toP.z-g.position.z);
       }
-      g.position.y=surf.heightFn(g.position.x,g.position.z);
-      // animazione cammino
-      if(moving){ n.phase+=dt*7; } else { n.phase*=0.9; }
-      var sw=Math.sin(n.phase)*0.5;
-      if(g.userData.legs){ g.userData.legs[0].rotation.x=sw; g.userData.legs[1].rotation.x=-sw; }
-      if(g.userData.arms){ g.userData.arms[0].rotation.x=-sw*0.7; g.userData.arms[1].rotation.x=sw*0.7; }
+      if(n.floatK){ n.phase+=dt*1.5; g.position.y=surf.heightFn(g.position.x,g.position.z)+2.2+Math.sin(n.phase)*0.4; }
+      else {
+        g.position.y=surf.heightFn(g.position.x,g.position.z);
+        if(moving){ n.phase+=dt*7; } else { n.phase*=0.9; }
+        var sw=Math.sin(n.phase)*0.5;
+        var lg=g.userData.legs, ar=g.userData.arms;
+        if(lg&&lg.length>=2){ lg[0].rotation.x=sw; lg[1].rotation.x=-sw; }
+        if(ar&&ar.length>=2){ ar[0].rotation.x=-sw*0.7; ar[1].rotation.x=sw*0.7; }
+      }
       if(dP<bestD){ bestD=dP; surf.nearNPC=n; }
     });
   }
   function talkToNPC(){
     if(!surf.nearNPC) return false;
     var n=surf.nearNPC;
-    var who={cittadino:'CITTADINO ROMANO',centurione:'CENTURIONE',mercante:'MERCANTE',turista:'TURISTA'}[n.kind];
+    var who={cittadino:'CITTADINO ROMANO',centurione:'CENTURIONE',mercante:'MERCANTE',turista:'TURISTA',alieno:'ABITANTE DI NYX',drone:'UNITÀ SINTETICA'}[n.kind]||'ABITANTE';
     // il mercante compra i minerali sul posto
     if(n.kind==='mercante' && minerals>=1){
       var m=Math.floor(minerals), gain=m*2;
@@ -1918,11 +2052,12 @@
     var baseH=function(x,z){ return noiseS(x*0.0038+7,z*0.0038+7,4)*surf.amp + noiseS(x*0.021+3,z*0.021+3,3)*surf.amp*0.16; };
     surf.heightFn=baseH;
     surf.city=null;
-    if(body.name==='Terra'){
-      // Roma sorge su una piana: il terreno si appiattisce dentro il perimetro urbano
-      var cX=330, cZ=-60, cR=300;
+    var cityKind=(body.name==='Terra')?'roma':(body.alienCity?'alien':null);
+    if(cityKind){
+      // la città sorge su una piana: il terreno si appiattisce dentro il perimetro urbano
+      var cX=(cityKind==='roma')?330:280, cZ=(cityKind==='roma')?-60:-40, cR=(cityKind==='roma')?300:270;
       var cLevel=Math.max(baseH(cX,cZ), surf.waterY+4);
-      surf.city={x:cX,z:cZ,r:cR,level:cLevel};
+      surf.city={x:cX,z:cZ,r:cR,level:cLevel,kind:cityKind};
       surf.heightFn=function(x,z){
         var h=baseH(x,z);
         var d=Math.hypot(x-cX,z-cZ);
@@ -2119,8 +2254,11 @@
     if(P.atmo){ stars.visible=false; milkyMesh.visible=false; nebulaSprites.forEach(function(sp){ sp.visible=false; }); }
 
     // ROMA sulla Terra
-    surf.npcs=[]; surf.nearNPC=null; surf.cityMats=[]; surf.cityLights=[]; surf.traffic=[]; surf.birds=null; surf.birdData=[];
-    if(surf.city){ buildRome(rng2); buildRomans(rng2); buildTraffic(rng2); buildBirds(rng2); }
+    surf.npcs=[]; surf.nearNPC=null; surf.cityMats=[]; surf.cityLights=[]; surf.traffic=[]; surf.birds=null; surf.birdData=[]; surf.neonMats=[]; surf.platforms=[];
+    if(surf.city){
+      if(surf.city.kind==='alien'){ buildAlienCity(rng2); buildAliens(rng2); buildTraffic(rng2); }
+      else { buildRome(rng2); buildRomans(rng2); buildTraffic(rng2); buildBirds(rng2); }
+    }
 
     surf.active=true;
   }
@@ -2129,7 +2267,7 @@
     surf.critters=[]; surf.beams=[]; surf.ruin=null; surf.nodes=[]; surf.clouds=[]; surf.nearNode=null;
     surf.npcs=[]; surf.nearNPC=null; surf.cityMats=[]; surf.cityLights=[]; surf.city=null;
     surf.traffic=[]; surf.birds=null; surf.birdData=[];
-    surf.nightGlows=[]; surf.nightLights=[]; surf.moon=null;
+    surf.nightGlows=[]; surf.nightLights=[]; surf.moon=null; surf.neonMats=[]; surf.platforms=[];
     scene.fog=null; surf.active=false; surf.water=null;
     amb.intensity=0.5; hemi.intensity=0.3; sunLight.intensity=2.6;
     if(bloomPass){ bloomPass.strength=PROPS.bloomStrength; bloomPass.threshold=0.55; }
@@ -2177,7 +2315,10 @@
     camera.rotation.order='YXZ'; camera.fov=70; camera.updateProjectionMatrix();
     camera.position.copy(surf.pp); camera.rotation.set(plPitch,plYaw,0);
     mode='surface';
-    if(surf.city){
+    if(surf.city && surf.city.kind==='alien'){
+      mission('★','Nyx Prime · METROPOLI','Esplora la città aliena al neon. Parla con gli abitanti (F), sorvolala (E)');
+      toast('BENVENUTA A NYX PRIME','Metropoli aliena · torri al neon e piattaforme fluttuanti');
+    } else if(surf.city){
       mission('★','Terra · ROMA','Visita la Città Eterna: Colosseo, Pantheon, obelisco. Parla coi romani (F)');
       toast('BENVENUTA A ROMA','Segui il blip dorato sul radar · F per parlare con la gente');
     } else {
@@ -2291,11 +2432,13 @@
     if(surf.city) cityNight(dt,day);
   }
   function cityNight(dt,day){
-    updateRomans(dt); updateTraffic(dt); updateBirds(dt);
+    updateRomans(dt); updateTraffic(dt); updateBirds(dt); updatePlatforms(dt);
     var lit=day<0.45?clamp01((0.45-day)/0.35):0;
     surf.cityMats.forEach(function(m){ if(m._bias===undefined) m._bias=0.55+Math.random()*0.5; m.emissiveIntensity=lit*m._bias; });
+    // il neon alieno è sempre acceso, più intenso di notte
+    surf.neonMats.forEach(function(m){ if(m._base===undefined) m._base=m.emissiveIntensity; m.emissiveIntensity=m._base*(0.55+lit*0.9); });
     surf.nightGlows.forEach(function(o){ o.s.material.opacity=lit*o.i; });
-    surf.nightLights.forEach(function(l){ l.intensity=lit*2.4; });
+    surf.nightLights.forEach(function(l){ l.intensity=(surf.city&&surf.city.kind==='alien')?(0.8+lit*1.8):(lit*2.4); });
     if(surf.moon){
       var mc=(mode==='surfship')?ship.position:surf.pp;
       surf.moon.position.copy(mc).addScaledVector(surf.sunDir,-2600).add(new TH.Vector3(0,600,0));
