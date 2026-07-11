@@ -192,6 +192,23 @@
     </div>
   </div>
 
+  <!-- ===================== PAUSA / IMPOSTAZIONI ===================== -->
+  <div id="rr_pause" style="position:absolute;inset:0;z-index:42;display:none;align-items:center;justify-content:center;background:rgba(3,6,10,.72);backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px);pointer-events:auto;">
+    <div style="width:min(420px,92vw);background:rgba(9,15,23,.97);border:1px solid rgba(120,160,190,.28);border-radius:9px;padding:26px 28px;box-shadow:0 30px 90px rgba(0,0,0,.6);">
+      <div data-acc-fg="1" style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.3em;color:#5fd0e0;text-align:center;">DEEP FIELD</div>
+      <div style="font-size:24px;font-weight:700;color:#eef4fa;text-align:center;margin:4px 0 20px;">PAUSA</div>
+      <div id="rr_resume" data-acc-bg="1" style="cursor:pointer;text-align:center;background:#5fd0e0;color:#04141a;font-weight:700;letter-spacing:.08em;font-size:14px;border-radius:6px;padding:13px;margin-bottom:16px;">▶ RIPRENDI</div>
+      <div style="display:flex;flex-direction:column;gap:11px;font-family:'IBM Plex Mono',monospace;font-size:12px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;color:#aab8c8;"><span>QUALITÀ GRAFICA</span><span id="rr_setQual" style="cursor:pointer;color:#8fe0f0;border:1px solid rgba(95,208,224,.4);border-radius:5px;padding:5px 12px;">ALTA</span></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;color:#aab8c8;"><span>AUDIO</span><span id="rr_setAudio" style="cursor:pointer;color:#8fe0f0;border:1px solid rgba(95,208,224,.4);border-radius:5px;padding:5px 12px;">ON</span></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;color:#aab8c8;"><span>MODALITÀ FOTO (P)</span><span id="rr_setPhoto" style="cursor:pointer;color:#8fe0f0;border:1px solid rgba(95,208,224,.4);border-radius:5px;padding:5px 12px;">HUD ON</span></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;color:#aab8c8;"><span>PROGRESSI</span><span id="rr_saveInfo" style="color:#7e90a4;">salvataggio automatico</span></div>
+      </div>
+      <div id="rr_wipe" style="cursor:pointer;text-align:center;color:#c88;border:1px solid rgba(200,120,120,.35);border-radius:6px;padding:10px;margin-top:18px;font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.08em;">RICOMINCIA DA ZERO (cancella salvataggio)</div>
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:#6f7f92;text-align:center;margin-top:12px;">ESC per riprendere</div>
+    </div>
+  </div>
+
   <!-- ===================== START OVERLAY ===================== -->
   <div id="rr_overlay" style="position:absolute;inset:0;z-index:40;display:flex;flex-direction:column;align-items:center;justify-content:center;background:radial-gradient(125% 125% at 50% 32%,#0b1426 0%,#050810 55%,#020306 100%);cursor:pointer;transition:opacity .7s;">
     <div data-acc-fg="1" style="font-family:'IBM Plex Mono',monospace;color:#5fd0e0;letter-spacing:.5em;font-size:11px;margin-bottom:16px;">PROGRAMMA DI RILEVAMENTO GALATTICO · MK-V</div>
@@ -1361,7 +1378,7 @@
     critters:[], beams:[], blasterCd:0, ruin:null,
     npcs:[], city:null, cityMats:[], cityLights:[], cityVisited:false, nearNPC:null,
     traffic:[], birds:null, birdData:[],
-    nightGlows:[], nightLights:[], moon:null, neonMats:[], quest:null };
+    nightGlows:[], nightLights:[], moon:null, neonMats:[], quest:null, rain:null, rainOff:null, rainN:0 };
   var _sunWhite=new TH.Color(0xffffff), _sunWarm=new TH.Color(0xff9a50);
   var CRIT_CFG={ terran:{col:0x7a9a4a,fl:0}, ocean:{col:0x4a9ab0,fl:0.5}, desert:{col:0xc8a060,fl:0},
     ice:{col:0xa8d0e8,fl:0.2}, rock:{col:0x8a8078,fl:0.15}, lava:{col:0x9a4a30,fl:0.2},
@@ -2093,6 +2110,28 @@
     surf.birds.geometry.attributes.position.needsUpdate=true;
   }
 
+  // ---------- pioggia (mondi con acqua) ----------
+  function buildRain(){
+    var N=460; surf.rainN=N;
+    var pos=new Float32Array(N*2*3); surf.rainOff=[];
+    for(var i=0;i<N;i++){ surf.rainOff.push({x:(Math.random()-0.5)*260,y:Math.random()*160,z:(Math.random()-0.5)*260}); }
+    var geo=new TH.BufferGeometry(); geo.setAttribute('position',new TH.BufferAttribute(pos,3));
+    var mat=new TH.LineBasicMaterial({color:0xaac8e0,transparent:true,opacity:0.35});
+    surf.rain=new TH.LineSegments(geo,mat); surf.rain.frustumCulled=false; surf.group.add(surf.rain);
+  }
+  function updateRain(dt){
+    if(!surf.rain) return;
+    var arr=surf.rain.geometry.attributes.position.array;
+    var cam=(mode==='surfship')?ship.position:surf.pp;
+    for(var i=0;i<surf.rainN;i++){
+      var o=surf.rainOff[i];
+      o.y-=120*dt; if(o.y<0){ o.y+=160; o.x=(Math.random()-0.5)*260; o.z=(Math.random()-0.5)*260; }
+      var x=cam.x+o.x, y=cam.y+o.y-40, z=cam.z+o.z;
+      var b=i*6; arr[b]=x; arr[b+1]=y; arr[b+2]=z; arr[b+3]=x; arr[b+4]=y-2.4; arr[b+5]=z;
+    }
+    surf.rain.geometry.attributes.position.needsUpdate=true;
+  }
+
   function buildSurface(body){
     var type=body.type, P=PALS[type]||PALS.rock, cfg=SURF_CFG[type]||SURF_CFG.rock;
     var rng2=mulberry32((body.seed||12345)>>>0);
@@ -2198,6 +2237,10 @@
       gl2.position.copy(nm.position); gl2.scale.set(4.5,4.5,1); surf.group.add(gl2);
       surf.nodes.push({m:nm,g:gl2,ph:rng2()*6.28});
     }
+
+    // pioggia sui mondi con acqua/atmosfera (non in citta)
+    surf.rain=null;
+    if(P.atmo && (type==='terran'||type==='ocean'||type==='toxic') && !surf.city && rng2()<0.4){ buildRain(); }
 
     // nuvole alla deriva
     surf.clouds=[];
@@ -2316,7 +2359,7 @@
     surf.critters=[]; surf.beams=[]; surf.ruin=null; surf.nodes=[]; surf.clouds=[]; surf.nearNode=null;
     surf.npcs=[]; surf.nearNPC=null; surf.cityMats=[]; surf.cityLights=[]; surf.city=null;
     surf.traffic=[]; surf.birds=null; surf.birdData=[];
-    surf.nightGlows=[]; surf.nightLights=[]; surf.moon=null; surf.neonMats=[]; surf.platforms=[]; surf.quest=null;
+    surf.nightGlows=[]; surf.nightLights=[]; surf.moon=null; surf.neonMats=[]; surf.platforms=[]; surf.quest=null; surf.rain=null; surf.rainOff=null;
     scene.fog=null; surf.active=false; surf.water=null;
     amb.intensity=0.5; hemi.intensity=0.3; sunLight.intensity=2.6;
     if(bloomPass){ bloomPass.strength=PROPS.bloomStrength; bloomPass.threshold=0.55; }
@@ -2479,6 +2522,7 @@
       stars.visible=nightSky; milkyMesh.visible=nightSky;
     }
     surf.clouds.forEach(function(c){ c.position.x+=c.userData.v*dt; if(c.position.x>2600) c.position.x=-2600; c.material.opacity=0.05+0.11*day; });
+    updateRain(dt);
     if(surf.city) cityNight(dt,day);
   }
   function cityNight(dt,day){
@@ -2720,7 +2764,16 @@
   on(window,'keydown',function(e){ if(e.target&&e.target.tagName==='INPUT') return; var k=e.key.toLowerCase(); keys[k]=true;
     if([' ','arrowup','arrowdown','arrowleft','arrowright','tab'].indexOf(k)>=0) e.preventDefault();
     if(!started) return;
-    if(docked){ if(k==='escape'||k==='f') closeHangar(); return; }
+    // globali: foto (P) e pausa (ESC)
+    if(k==='p'){ setPhoto(!photoMode); return; }
+    if(k==='escape'){
+      if(paused){ closePause(); return; }
+      if($('rr_map').style.display==='flex'){ closeMap(); return; }
+      if(docked){ closeHangar(); return; }
+      togglePause(); return;
+    }
+    if(paused) return;
+    if(docked){ if(k==='f') closeHangar(); return; }
     if(mode==='surface'){
       if(k==='t'){ tryTakeoff(); }
       if(k==='e'){ boardShip(); }
@@ -2743,7 +2796,6 @@
     if(k==='l'){ tryLand(); }
     if(k==='v'){ var en=SND.toggle(); toast('AUDIO',en?'Attivato':'Disattivato'); }
     if(k==='m'){ if(mState>=6||freeMode) toggleMap(); else toast('IPERMOTORE OFFLINE','Completa le direttive precedenti'); }
-    if(k==='escape'){ if($('rr_map').style.display==='flex') closeMap(); }
     if(k==='enter'){ if($('rr_map').style.display==='flex' && galSel>=0 && galSel!==galCur) doWarp(galaxy[galSel]); }
   });
   on(window,'keyup',function(e){ keys[e.key.toLowerCase()]=false; });
@@ -2884,7 +2936,7 @@
     mState=1; mission(1,'Calibrazione di volo','Attraversa il marcatore di rotta — segui l’anello verde');
     applyAccent();
   }
-  function startGame(){ if(started) return; SND.init(); SND.resume(); var o=$('rr_overlay'); o.style.opacity='0'; setTimeout(function(){ o.style.display='none'; },700); $('rr_end').style.display='none'; hud.style.opacity='1'; started=true; resetGame(); }
+  function startGame(){ if(started) return; SND.init(); SND.resume(); var o=$('rr_overlay'); o.style.opacity='0'; setTimeout(function(){ o.style.display='none'; },700); $('rr_end').style.display='none'; $('rr_pause').style.display='none'; paused=false; hud.style.opacity='1'; started=true; resetGame(); loadGame(); applyQuality(); if(hasSave()) toast('PROGRESSI RIPRISTINATI','Crediti e potenziamenti caricati'); }
   $('rr_start').addEventListener('click',startGame);
   $('rr_overlay').addEventListener('click',startGame);
   $('rr_endCont').addEventListener('click',function(){ $('rr_end').style.display='none'; });
@@ -3028,7 +3080,7 @@
     sunLight.position.copy(focus).addScaledVector(sdir,600);
     sunLight.target.position.copy(focus);
 
-    if(started){
+    if(started && !paused){
       if(warp){ updateWarp(dt); updateCamera(dt); }
       else if(mode==='landing'){ updateLanding(dt); if(mode==='landing') updateCamera(dt); }
       else if(mode==='surface'){ updateSurface(dt); }
@@ -3042,7 +3094,8 @@
       if(!docked && mode==='space') updateBolts(dt);
       updateTrail(dt); updateExplosions(dt); drawRadar(dt);
       if(mode==='space') updateDust();
-    } else {
+      autoSaveT+=dt; if(autoSaveT>20){ autoSaveT=0; saveGame(); }
+    } else if(!started){
       camera.position.set(Math.sin(et*0.12)*60,18,Math.cos(et*0.12)*60); camera.lookAt(0,0,40); camera.fov=58; camera.updateProjectionMatrix();
       updateExplosions(dt);
     }
@@ -3160,6 +3213,59 @@
     return { tick:tick, sendFire:sendFire, host:host, join:join,
       dbg:function(){ return {connected:connected, host:isHost, room:room, players:Object.keys(players).length, id:peer?peer.id:null}; } };
   })();
+
+  // ================== SALVATAGGIO PROGRESSI (localStorage) ==================
+  var SAVE_KEY='deepfield_save_v1';
+  function saveGame(){
+    try{ localStorage.setItem(SAVE_KEY, JSON.stringify({
+      credits:Math.floor(credits), missiles:missiles, upgrades:upgrades, kills:kills,
+      mState:mState, freeMode:freeMode, minerals:Math.floor(minerals)
+    })); }catch(e){}
+  }
+  function hasSave(){ try{ return !!localStorage.getItem(SAVE_KEY); }catch(e){ return false; } }
+  function loadGame(){
+    try{
+      var s=localStorage.getItem(SAVE_KEY); if(!s) return false;
+      var d=JSON.parse(s);
+      credits=d.credits||0; missiles=(d.missiles!=null?d.missiles:2); minerals=d.minerals||0;
+      if(d.upgrades){ upgrades.cannon=d.upgrades.cannon||0; upgrades.shield=d.upgrades.shield||0; upgrades.engine=d.upgrades.engine||0; }
+      kills=d.kills||0;
+      if(d.freeMode){ freeMode=true; mState=6; if(waypoint) waypoint.visible=false; mission('6','Rotta libera','Esplora la galassia · progressi ripristinati'); }
+      else if(d.mState){ mState=d.mState; }
+      shield=maxShield();
+      setTxt('rr_min',Math.floor(minerals)); setTxt('rr_kills',kills); setBars(); updMsl(); updCred();
+      return true;
+    }catch(e){ return false; }
+  }
+  function wipeSave(){ try{ localStorage.removeItem(SAVE_KEY); }catch(e){} }
+  var autoSaveT=0;
+
+  // ================== PAUSA / IMPOSTAZIONI / QUALITÀ / FOTO ==================
+  var paused=false, photoMode=false, qualityHigh=true;
+  function openPause(){ if(!started) return; paused=true; saveGame(); if(document.exitPointerLock) document.exitPointerLock(); firing=false; $('rr_pause').style.display='flex'; setTxt('rr_saveInfo','salvato ✓'); }
+  function closePause(){ paused=false; $('rr_pause').style.display='none'; }
+  function togglePause(){ if(paused) closePause(); else openPause(); }
+  function setPhoto(on){ photoMode=on; hud.style.opacity=on?'0':'1'; $('rr_cross').style.display=on?'none':'block'; $('rr_vig').style.opacity=on?'0.4':'1'; setTxt('rr_setPhoto',on?'HUD OFF':'HUD ON'); }
+  function applyQuality(){
+    if(qualityHigh){
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+      renderer.shadowMap.enabled=true;
+      if(bloomPass) bloomPass.strength=surf.active?0.22:PROPS.bloomStrength;
+    } else {
+      renderer.setPixelRatio(1);
+      renderer.shadowMap.enabled=false;
+      if(bloomPass) bloomPass.strength=surf.active?0.12:PROPS.bloomStrength*0.5;
+    }
+    scene.traverse(function(o){ if(o.material){ var m=Array.isArray(o.material)?o.material:[o.material]; m.forEach(function(mm){ mm.needsUpdate=true; }); } });
+    setTxt('rr_setQual',qualityHigh?'ALTA':'BASSA');
+    onResize();
+  }
+  $('rr_resume').addEventListener('click',closePause);
+  $('rr_setQual').addEventListener('click',function(){ qualityHigh=!qualityHigh; applyQuality(); });
+  $('rr_setAudio').addEventListener('click',function(){ var en=SND.toggle(); setTxt('rr_setAudio',en?'ON':'OFF'); });
+  $('rr_setPhoto').addEventListener('click',function(){ setPhoto(!photoMode); });
+  $('rr_wipe').addEventListener('click',function(){ wipeSave(); closePause(); started=false; startGame(); });
+  window.addEventListener('beforeunload',function(){ if(started) saveGame(); });
 
   // console di debug: DF.spawnCorvette(), DF.spawnDrones(3), DF.addCredits(100), DF.openHangar(), DF.gotoPlanet(0), DF.land()
   window.DF={ openHangar:openHangar, spawnCorvette:spawnCorvette, spawnDrones:spawnDrones,

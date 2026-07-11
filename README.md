@@ -27,6 +27,8 @@ Gioco spaziale 3D completo in un singolo file HTML. Niente da installare: apri `
 | L | **atterra sul pianeta agganciato** |
 | M | mappa galattica (ENTER per saltare) |
 | V | audio on/off |
+| ESC | pausa / impostazioni (qualità, audio, salvataggio) |
+| P | modalità foto (nasconde l'HUD) |
 
 ### A piedi sulla superficie (prima persona)
 | Tasto | Azione |
@@ -59,6 +61,9 @@ Gioco spaziale 3D completo in un singolo file HTML. Niente da installare: apri `
 - **Nemici**: droni pirata, corvette miniboss, imboscate casuali
 - **Grafica**: PBR con riflessi, ombre dinamiche, normal map, raggi solari volumetrici, lens flare, tunnel iperspaziale, luna, illuminazione notturna, FXAA, aberrazione cromatica
 - **Audio 100% procedurale** (WebAudio): motore, laser, esplosioni, warp, ambiente
+- **Salvataggio automatico** dei progressi (crediti, potenziamenti, missili, missioni) nel browser: riprendi da dove avevi lasciato
+- **Menu di pausa** (ESC) con qualità grafica regolabile (per PC meno potenti), audio e modalità foto
+- **Meteo**: pioggia atmosferica su alcuni mondi con acqua
 
 ## 👥 Multiplayer co-op (P2P)
 
