@@ -1361,7 +1361,7 @@
     critters:[], beams:[], blasterCd:0, ruin:null,
     npcs:[], city:null, cityMats:[], cityLights:[], cityVisited:false, nearNPC:null,
     traffic:[], birds:null, birdData:[],
-    nightGlows:[], nightLights:[], moon:null, neonMats:[] };
+    nightGlows:[], nightLights:[], moon:null, neonMats:[], quest:null };
   var _sunWhite=new TH.Color(0xffffff), _sunWarm=new TH.Color(0xff9a50);
   var CRIT_CFG={ terran:{col:0x7a9a4a,fl:0}, ocean:{col:0x4a9ab0,fl:0.5}, desert:{col:0xc8a060,fl:0},
     ice:{col:0xa8d0e8,fl:0.2}, rock:{col:0x8a8078,fl:0.15}, lava:{col:0x9a4a30,fl:0.2},
@@ -1573,6 +1573,7 @@
       surf.npcs.push({ g:g, kind:kind==='mercante'?'mercante':kind, lines:LINES[kind], phase:rng()*6.28,
         wander:rng()*6.28, wt:rng()*3, spd:1.0+rng()*1.2, talkCd:0, hx:px, hz:pz, home:new TH.Vector3(px,0,pz), floatK:(kind==='drone') });
     }
+    markQuestGiver('drone','UNITÀ SINTETICA');
   }
   function alienModel(rng,kind){
     var g=new TH.Group();
@@ -1918,6 +1919,16 @@
         wander:rng()*6.28, wt:rng()*3, spd:1.1+rng()*1.0, talkCd:0,
         hx:px, hz:pz, home:new TH.Vector3(px,0,pz) });
     }
+    markQuestGiver('centurione','CENTURIONE');
+  }
+  function markQuestGiver(preferKind,label){
+    if(!surf.npcs.length) return;
+    var g=null;
+    for(var i=0;i<surf.npcs.length;i++){ if(surf.npcs[i].kind===preferKind){ g=surf.npcs[i]; break; } }
+    if(!g) g=surf.npcs[0];
+    g.giver=true; g.giverLabel=label;
+    var mk=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0xffd24a,blending:TH.AdditiveBlending,depthWrite:false,transparent:true,opacity:0.9}));
+    mk.position.y=3.1; mk.scale.set(2.4,2.4,1); g.g.add(mk); g.marker=mk;
   }
   function updateRomans(dt){
     var toP=surf.pp; surf.nearNPC=null; var bestD=4.5;
@@ -1955,7 +1966,9 @@
   function talkToNPC(){
     if(!surf.nearNPC) return false;
     var n=surf.nearNPC;
-    var who={cittadino:'CITTADINO ROMANO',centurione:'CENTURIONE',mercante:'MERCANTE',turista:'TURISTA',alieno:'ABITANTE DI NYX',drone:'UNITÀ SINTETICA'}[n.kind]||'ABITANTE';
+    var who=(n.giver?n.giverLabel:null)||{cittadino:'CITTADINO ROMANO',centurione:'CENTURIONE',mercante:'MERCANTE',turista:'TURISTA',alieno:'ABITANTE DI NYX',drone:'UNITÀ SINTETICA'}[n.kind]||'ABITANTE';
+    // committente di missioni (taglia)
+    if(n.giver){ handleQuest(n,who); return true; }
     // il mercante compra i minerali sul posto
     if(n.kind==='mercante' && minerals>=1){
       var m=Math.floor(minerals), gain=m*2;
@@ -1967,6 +1980,42 @@
     var line=n.lines[Math.floor(Math.random()*n.lines.length)];
     dialog(who,[line]); SND.ui();
     return true;
+  }
+  var QUESTS=[
+    {t:'raccolta', need:3, txt:'Raccogli 3 frammenti minerali (verdi) sparsi qui intorno', rew:60,
+     brief:['Ci serve una mano, pilota.','Raccogli 3 frammenti minerali qui attorno — sono quelli verdi che brillano.','Torna da me e ti ricompenso: 60 crediti.'],
+     done:['Li hai presi tutti! Sapevo di poter contare su di te.','Ecco i tuoi 60 crediti. Buona fortuna là fuori.']},
+    {t:'caccia', need:2, txt:'Abbatti 2 predatori ostili fuori città (col blaster)', rew:90,
+     brief:['C’è un problema, pilota.','Predatori ostili si aggirano fuori dalle mura. Abbattine 2 col blaster.','Fallo e avrai 90 crediti.'],
+     done:['La zona è più sicura ora. Grazie di cuore.','Prendi: 90 crediti ben meritati.']}
+  ];
+  function handleQuest(n,who){
+    var q=surf.quest;
+    if(!q){
+      var def=QUESTS[Math.floor(Math.random()*QUESTS.length)];
+      surf.quest={def:def, have:0, turnedIn:false};
+      dialog(who,def.brief,function(){ toast('MISSIONE ACCETTATA',def.txt); mission('★',(surf.city.kind==='alien'?'Nyx Prime':'Roma')+' · TAGLIA',def.txt+'  ['+0+'/'+def.need+']'); });
+      return;
+    }
+    if(q.have>=q.def.need && !q.turnedIn){
+      q.turnedIn=true;
+      dialog(who,q.def.done,function(){ credits+=q.def.rew; updCred(); SND.warpJump(); toast('MISSIONE COMPLETATA','+'+q.def.rew+' crediti');
+        if(n.marker){ n.g.remove(n.marker); }
+        mission('★',(surf.city.kind==='alien'?'Nyx Prime · METROPOLI':'Terra · ROMA'),'Esplora la città · E per volare · T per orbita');
+        surf.quest=null;
+      });
+      return;
+    }
+    dialog(who,['Come procede? '+q.have+' su '+q.def.need+'.','Torna quando hai finito.']); SND.ui();
+  }
+  function questProgress(kind){
+    var q=surf.quest; if(!q||q.turnedIn) return;
+    if(q.def.t!==kind) return;
+    q.have++;
+    var left=Math.max(0,q.def.need-q.have);
+    mission('★',(surf.city.kind==='alien'?'Nyx Prime':'Roma')+' · TAGLIA',q.def.txt+'  ['+Math.min(q.have,q.def.need)+'/'+q.def.need+']');
+    if(q.have>=q.def.need) toast('OBIETTIVO RAGGIUNTO','Torna dal committente (blip dorato)');
+    else toast('PROGRESSO TAGLIA',left+' rimasti');
   }
 
   // ---------- traffico a volo radente su Roma ----------
@@ -2267,7 +2316,7 @@
     surf.critters=[]; surf.beams=[]; surf.ruin=null; surf.nodes=[]; surf.clouds=[]; surf.nearNode=null;
     surf.npcs=[]; surf.nearNPC=null; surf.cityMats=[]; surf.cityLights=[]; surf.city=null;
     surf.traffic=[]; surf.birds=null; surf.birdData=[];
-    surf.nightGlows=[]; surf.nightLights=[]; surf.moon=null; surf.neonMats=[]; surf.platforms=[];
+    surf.nightGlows=[]; surf.nightLights=[]; surf.moon=null; surf.neonMats=[]; surf.platforms=[]; surf.quest=null;
     scene.fog=null; surf.active=false; surf.water=null;
     amb.intensity=0.5; hemi.intensity=0.3; sunLight.intensity=2.6;
     if(bloomPass){ bloomPass.strength=PROPS.bloomStrength; bloomPass.threshold=0.55; }
@@ -2413,6 +2462,7 @@
     surf.nodes.splice(surf.nodes.indexOf(n),1); surf.nearNode=null;
     minerals+=5; setTxt('rr_min',Math.floor(minerals));
     SND.scan(); toast('MINERALE RACCOLTO','+5 unità · totale '+Math.floor(minerals));
+    questProgress('raccolta');
   }
   function advanceDayNight(dt){
     surf.time=(surf.time+dt/300)%1;
@@ -2486,7 +2536,7 @@
     SND.engine(0.03,false);
     if(dActive){ hidePrompt(); return; }
     var nearRelic=surf.ruin && !surf.ruin.taken && surf.pp.distanceTo(surf.ruin.pos)<7;
-    if(surf.nearNPC) prompt2('F','Parla');
+    if(surf.nearNPC) prompt2('F', surf.nearNPC.giver?(surf.quest?(surf.quest.have>=surf.quest.def.need?'Consegna la taglia':'Parla col committente'):'Accetta una taglia'):(surf.nearNPC.kind==='mercante'?'Parla · vendi minerali':'Parla'));
     else if(nearRelic) prompt2('F','Recupera manufatto alieno (+40 crediti)');
     else if(surf.nearNode) prompt2('F','Raccogli frammento minerale (+5)');
     else if(surf.pp.distanceTo(ship.position)<26) prompt2('E','Pilota la nave · T per orbita');
@@ -2571,6 +2621,7 @@
             surf.group.remove(cr.g); disposeObj(cr.g); surf.critters.splice(ci,1);
             credits+=cr.hostile?18:8; updCred();
             toast(cr.hostile?'PREDATORE ABBATTUTO':'CAMPIONE BIOLOGICO','+'+(cr.hostile?18:8)+' crediti');
+            if(cr.hostile) questProgress('caccia');
           }
           break;
         }
@@ -3121,6 +3172,9 @@
     city:function(){ return surf.city?{x:surf.city.x,z:surf.city.z,r:surf.city.r,npcs:surf.npcs.length}:null; },
     setTime:function(t){ surf.time=t; return surf.time; },
     dayval:function(){ return surf._day; },
+    talkGiver:function(){ var g=null; surf.npcs.forEach(function(n){ if(n.giver) g=n; }); if(!g) return null; surf.nearNPC=g; talkToNPC(); if(dActive){ while(dActive) dNext(); } return surf.quest?{have:surf.quest.have,need:surf.quest.def.need,turnedIn:surf.quest.turnedIn}:'completata/nulla'; },
+    questState:function(){ return surf.quest?{t:surf.quest.def.t,have:surf.quest.have,need:surf.quest.def.need,turnedIn:surf.quest.turnedIn}:null; },
+    forceProgress:function(k){ questProgress(k||'raccolta'); return surf.quest?surf.quest.have:null; },
     tpCity:function(dx,dz,pitch,yaw){ if(!surf.city) return false; surf.pp.set(surf.city.x+(dx||0),surf.heightFn(surf.city.x+(dx||0),surf.city.z+(dz||0))+1.75,surf.city.z+(dz||0)); plPitch=pitch||0; plYaw=(yaw===undefined?0:yaw); return true; },
     hurtSelf:function(){ surfDamage(9); },
     net:NET.dbg, netHost:NET.host, netJoin:NET.join,
