@@ -45,6 +45,7 @@ Gioco spaziale 3D completo in un singolo file HTML. Niente da installare: apri `
 | Tasto | Azione |
 |---|---|
 | MOUSE | rotta · W/S spinta · SHIFT turbo |
+| CLIC / SPAZIO | **cannone** (sui mondi ostili) |
 | L | atterra qui e scendi dalla nave |
 | T | risali in orbita |
 
@@ -55,6 +56,7 @@ Gioco spaziale 3D completo in un singolo file HTML. Niente da installare: apri `
 - **🏛️ ROMA in 3D** sulla Terra: Colosseo, Pantheon, Basilica di San Pietro, Castel Sant'Angelo, obelisco, arco di trionfo, acquedotto, Tevere coi ponti, palazzi con facciate texturizzate e finestre che si accendono di notte, sampietrini, traffico, uccelli e cittadini romani con cui parlare
 - **🛸 NYX PRIME**, metropoli aliena al neon su un mondo di cristallo: torri luminose, pavimento a griglia cyberpunk, guglia centrale, piattaforme fluttuanti, ologrammi, abitanti alieni e droni sintetici
 - **📜 Missioni (taglie)**: gli NPC segnati dal marcatore dorato affidano incarichi — raccogli minerali o abbatti predatori — in cambio di crediti
+- **Mondi ostili**: alcuni pianeti hanno difese nemiche — torrette di terra e droni volanti che ti sparano; distruggile a piedi (blaster) o sorvolandole col cannone della nave, per crediti
 - **Fauna aliena**: erbivori, predatori che ti cacciano e meduse fluttuanti — difenditi col blaster
 - **Rovine precursori**: monoliti con manufatti da recuperare
 - **Economia**: mina/raccogli → vendi alla stazione o ai mercanti di città → potenzia cannoni, scudi, motori, missili

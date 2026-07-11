@@ -1079,7 +1079,8 @@
       // metropoli aliena: pianeti crystal/toxic con superficie solida (nel Sol: forzata su un pianeta)
       var alien=(!P.bands && (type==='crystal'||type==='toxic') && (bseed%1000)/1000<0.55);
       if(ensureStation && i===2 && !P.bands){ alien=true; }
-      bodies.push({mesh:pl, cloudMesh:cloudMesh, name:pname, type:type, radius:rad, scanned:false, res:res, spin:0.04+rng()*0.08, isBody:true, seed:bseed, alienCity:alien});
+      var hostile=(!P.bands && !alien && (type==='lava'||type==='toxic'||type==='rock'||type==='desert') && (bseed%997)/997<0.5);
+      bodies.push({mesh:pl, cloudMesh:cloudMesh, name:pname, type:type, radius:rad, scanned:false, res:res, spin:0.04+rng()*0.08, isBody:true, seed:bseed, alienCity:alien, hostile:hostile});
 
       if((!P.bands && rng()<0.5) || (ensureStation&&i===0)){
         var mCount=1+(rng()<0.28?1:0);
@@ -1379,7 +1380,8 @@
     npcs:[], city:null, cityMats:[], cityLights:[], cityVisited:false, nearNPC:null,
     traffic:[], birds:null, birdData:[],
     nightGlows:[], nightLights:[], moon:null, neonMats:[], quest:null,
-    weather:null, weatherOff:null, weatherN:0, weatherKind:null, pois:[], aurora:null, emitters:[] };
+    weather:null, weatherOff:null, weatherN:0, weatherKind:null, pois:[], aurora:null, emitters:[],
+    shots:[], eshots:[], turrets:[], flyers:[], hostile:false };
   var _sunWhite=new TH.Color(0xffffff), _sunWarm=new TH.Color(0xff9a50);
   var CRIT_CFG={ terran:{col:0x7a9a4a,fl:0}, ocean:{col:0x4a9ab0,fl:0.5}, desert:{col:0xc8a060,fl:0},
     ice:{col:0xa8d0e8,fl:0.2}, rock:{col:0x8a8078,fl:0.15}, lava:{col:0x9a4a30,fl:0.2},
@@ -2235,6 +2237,96 @@
     m.position.y=surf.city?surf.city.level+400:600; surf.group.add(m); surf.aurora={mesh:m,mat:mat};
   }
 
+  // ---------- MINACCE PLANETARIE (mondi ostili): torrette + droni volanti ----------
+  function turretModel(){
+    var g=new TH.Group();
+    var base=new TH.Mesh(new TH.CylinderGeometry(2.4,3,2,8),new TH.MeshStandardMaterial({color:0x3a2228,metalness:0.7,roughness:0.45})); base.position.y=1; g.add(base);
+    var dome=new TH.Mesh(new TH.SphereGeometry(1.8,12,10,0,6.28,0,1.6),new TH.MeshStandardMaterial({color:0x241318,metalness:0.7,roughness:0.4})); dome.position.y=2; g.add(dome);
+    var barrel=new TH.Mesh(new TH.CylinderGeometry(0.3,0.3,3.4,6),new TH.MeshStandardMaterial({color:0x14100e,metalness:0.8,roughness:0.3})); barrel.rotation.x=Math.PI/2; barrel.position.set(0,2.4,1.6); g.add(barrel);
+    var eye=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0xff3a2a,blending:TH.AdditiveBlending,depthWrite:false,transparent:true})); eye.position.set(0,2.4,1.9); eye.scale.set(1.8,1.8,1); g.add(eye);
+    g.traverse(function(c){ if(c.isMesh){ c.castShadow=true; c.receiveShadow=true; } });
+    return g;
+  }
+  function flyerModel(){
+    var g=new TH.Group();
+    var body=new TH.Mesh(new TH.OctahedronGeometry(2,0),new TH.MeshStandardMaterial({color:0x2a1a30,metalness:0.6,roughness:0.4,emissive:0x400820,emissiveIntensity:0.4})); g.add(body);
+    var wingM=new TH.MeshStandardMaterial({color:0x3a1a44,metalness:0.5,roughness:0.4,side:TH.DoubleSide});
+    [[-1],[1]].forEach(function(a){ var w=new TH.Mesh(new TH.ConeGeometry(1.6,4,4),wingM); w.rotation.z=a[0]*Math.PI/2; w.position.x=a[0]*2.6; g.add(w); });
+    var eye=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0xd040ff,blending:TH.AdditiveBlending,depthWrite:false,transparent:true})); eye.position.z=1.6; eye.scale.set(2.4,2.4,1); g.add(eye);
+    g.add(new TH.PointLight(0xd040ff,0.7,40));
+    g.traverse(function(c){ if(c.isMesh){ c.castShadow=true; } });
+    return g;
+  }
+  function buildThreats(rng){
+    surf.turrets=[]; surf.flyers=[]; surf.shots=[]; surf.eshots=[];
+    var nT=6+Math.floor(rng()*6);
+    for(var i=0;i<nT;i++){
+      var a=rng()*6.283, d=120+rng()*1000;
+      var tx=Math.cos(a)*d, tz=Math.sin(a)*d, ty=surf.heightFn(tx,tz);
+      if(surf.waterY>-9000 && ty<surf.waterY+1) continue;
+      var g=turretModel(); g.position.set(tx,ty,tz); surf.group.add(g);
+      surf.turrets.push({g:g, hp:60, fire:1+rng()*2.5, x:tx,z:tz});
+    }
+    var nF=3+Math.floor(rng()*3);
+    for(i=0;i<nF;i++){
+      var g2=flyerModel(); var fa=rng()*6.28, fd=200+rng()*400;
+      g2.position.set(Math.cos(fa)*fd,surf.heightFn(0,0)+60+rng()*60,Math.sin(fa)*fd); surf.group.add(g2);
+      surf.flyers.push({g:g2, hp:90, orbit:rng()*6.28, fire:2+rng()*2, baseY:g2.position.y});
+    }
+    if(nT||nF) poi(surf.turrets.length?surf.turrets[0].x:0,surf.turrets.length?surf.turrets[0].z:0,'⚠ Difese ostili','rgba(255,80,70,0.95)');
+  }
+  var _pl=new TH.Vector3();
+  function surfPlayerPos(){ return (mode==='surfship')?ship.position:surf.pp; }
+  function spawnSurfShot(from,dir,friendly){
+    var col=friendly?0x8fe8ff:0xff5a4a;
+    var m=new TH.Mesh(new TH.CylinderGeometry(0.22,0.22,4,6),new TH.MeshBasicMaterial({color:col}));
+    m.position.copy(from); m.quaternion.copy(_qFromDir(dir)); surf.group.add(m);
+    var gl=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:col,blending:TH.AdditiveBlending,depthWrite:false,transparent:true,opacity:0.8})); gl.scale.set(2.6,2.6,1); m.add(gl);
+    var arr=friendly?surf.shots:surf.eshots;
+    arr.push({m:m,vel:dir.clone().multiplyScalar(friendly?420:230),life:3});
+    if(arr.length>90){ var o=arr.shift(); surf.group.remove(o.m); o.m.geometry.dispose(); }
+    if(friendly) SND.laser();
+  }
+  function shipFireSurf(){
+    if(mode!=='surfship') return;
+    var fwd=shipForward(); spawnSurfShot(ship.position.clone().add(fwd.clone().multiplyScalar(4)),fwd,true);
+  }
+  function damagePlayerSurf(dmg){
+    if(mode==='surfship'){ shield-=dmg; shielTimer=0; if(shield<0){ hull+=shield; shield=0; } if(hull<=0){ hull=100; shield=maxShield(); toast('SCAFO RIPRISTINATO','Sistemi di emergenza'); } setBars(); shake=Math.max(shake,1.4); SND.hit(); var dm=$('rr_dmg'); dm.style.boxShadow='inset 0 0 160px 30px rgba(255,60,40,0.5)'; setTimeout(function(){ dm.style.boxShadow='inset 0 0 160px 30px rgba(255,60,40,0)'; },250); }
+    else surfDamage(dmg);
+  }
+  function killTurret(i){ var t=surf.turrets[i]; explode(t.g.position.clone(),5,{color:0xffb060}); surf.group.remove(t.g); disposeObj(t.g); surf.turrets.splice(i,1); credits+=25; kills++; setTxt('rr_kills',kills); updCred(); toast('TORRETTA DISTRUTTA','+25 crediti'); }
+  function killFlyer(i){ var f=surf.flyers[i]; explode(f.g.position.clone(),5,{color:0xd040ff}); surf.group.remove(f.g); disposeObj(f.g); surf.flyers.splice(i,1); credits+=35; kills++; setTxt('rr_kills',kills); updCred(); toast('DRONE ABBATTUTO','+35 crediti'); }
+  function updateSurfCombat(dt){
+    if(!surf.turrets.length && !surf.flyers.length && !surf.shots.length && !surf.eshots.length) return;
+    var pp=surfPlayerPos();
+    // torrette: mirano e sparano al giocatore
+    surf.turrets.forEach(function(t){
+      var to=pp.clone().sub(t.g.position); var d=to.length();
+      t.g.rotation.y=Math.atan2(to.x,to.z);
+      if(d<900){ t.fire-=dt; if(t.fire<=0){ t.fire=1.6+Math.random()*1.6; var dir=to.normalize(); spawnSurfShot(t.g.position.clone().add(new TH.Vector3(0,2.4,0)).add(dir.clone().multiplyScalar(3)),dir,false); } }
+    });
+    // droni: orbitano il giocatore e sparano
+    surf.flyers.forEach(function(f){
+      f.orbit+=dt*0.5;
+      var des=pp.clone().add(new TH.Vector3(Math.cos(f.orbit)*160,50+Math.sin(f.orbit)*20,Math.sin(f.orbit)*160));
+      f.g.position.lerp(des,Math.min(1,dt*0.8)); f.g.lookAt(pp);
+      f.fire-=dt; if(f.fire<=0){ f.fire=1.8+Math.random()*1.6; var dir=pp.clone().sub(f.g.position).normalize(); spawnSurfShot(f.g.position.clone().add(dir.clone().multiplyScalar(3)),dir,false); }
+    });
+    // colpi amici → torrette/droni
+    for(var i=surf.shots.length-1;i>=0;i--){ var s=surf.shots[i]; s.m.position.addScaledVector(s.vel,dt); s.life-=dt; var hit=false;
+      for(var ti=0;ti<surf.turrets.length;ti++){ if(s.m.position.distanceTo(surf.turrets[ti].g.position)<5){ surf.turrets[ti].hp-=40; hit=true; flashAt(s.m.position); if(surf.turrets[ti].hp<=0) killTurret(ti); break; } }
+      if(!hit) for(var fi=0;fi<surf.flyers.length;fi++){ if(s.m.position.distanceTo(surf.flyers[fi].g.position)<5){ surf.flyers[fi].hp-=40; hit=true; flashAt(s.m.position); if(surf.flyers[fi].hp<=0) killFlyer(fi); break; } }
+      if(hit||s.life<=0){ surf.group.remove(s.m); s.m.geometry.dispose(); surf.shots.splice(i,1); }
+    }
+    // colpi nemici → giocatore
+    for(i=surf.eshots.length-1;i>=0;i--){ var e=surf.eshots[i]; e.m.position.addScaledVector(e.vel,dt); e.life-=dt; var eh=false;
+      var hitR=(mode==='surfship')?6:3;
+      if(e.m.position.distanceTo(pp)<hitR){ eh=true; damagePlayerSurf(mode==='surfship'?14:9); }
+      if(eh||e.life<=0){ surf.group.remove(e.m); e.m.geometry.dispose(); surf.eshots.splice(i,1); }
+    }
+  }
+
   function buildSurface(body){
     var type=body.type, P=PALS[type]||PALS.rock, cfg=SURF_CFG[type]||SURF_CFG.rock;
     var rng2=mulberry32((body.seed||12345)>>>0);
@@ -2351,7 +2443,9 @@
       else if(type==='toxic' && rng2()<0.5) buildWeather('rain');
     }
     // contenuti/punti d'interesse specifici del bioma
+    surf.turrets=[]; surf.flyers=[]; surf.shots=[]; surf.eshots=[]; surf.hostile=!!body.hostile;
     if(!surf.city) buildBiome(type,rng2);
+    if(!surf.city && body.hostile) buildThreats(rng2);
 
     // nuvole alla deriva
     surf.clouds=[];
@@ -2472,6 +2566,7 @@
     surf.traffic=[]; surf.birds=null; surf.birdData=[];
     surf.nightGlows=[]; surf.nightLights=[]; surf.moon=null; surf.neonMats=[]; surf.platforms=[]; surf.quest=null;
     surf.weather=null; surf.weatherOff=null; surf.aurora=null; surf.pois=[]; surf.emitters=[];
+    surf.turrets=[]; surf.flyers=[]; surf.shots=[]; surf.eshots=[]; surf.hostile=false;
     scene.fog=null; surf.active=false; surf.water=null;
     amb.intensity=0.5; hemi.intensity=0.3; sunLight.intensity=2.6;
     if(bloomPass){ bloomPass.strength=PROPS.bloomStrength; bloomPass.threshold=0.55; }
@@ -2525,6 +2620,9 @@
     } else if(surf.city){
       mission('★','Terra · ROMA','Visita la Città Eterna: Colosseo, Pantheon, obelisco. Parla coi romani (F)');
       toast('BENVENUTA A ROMA','Segui il blip dorato sul radar · F per parlare con la gente');
+    } else if(body.hostile){
+      mission('★','⚠ '+body.name+' · OSTILE','Difese nemiche attive: torrette e droni. Distruggile (blaster o cannone in volo)');
+      toast('MONDO OSTILE · '+body.name.toUpperCase(),'Difese attive! Sali sulla nave (E) e apri il fuoco (CLIC)');
     } else {
       mission('★','Superficie di '+body.name,'Esplora, spara alla fauna ostile, raccogli minerali e cerca rovine aliene');
       toast('ATTERRATO SU '+body.name.toUpperCase(),'CLIC spara/guarda · WASD muovi · SPAZIO salta · F raccogli');
@@ -2605,6 +2703,10 @@
     $('rr_boost').style.color=boosting?curAccent():'#445566';
     SND.engine(throttle,boosting);
     advanceDayNight(dt);
+    updateSurfCombat(dt);
+    // fuoco cannone in volo atmosferico
+    surfFireCd=Math.max(0,surfFireCd-dt);
+    if((firing||keys[' ']) && surfFireCd<=0){ surfFireCd=0.14; shipFireSurf(); }
     var lowSlow=(ship.position.y<gy+34);
     prompt2(lowSlow?'L':'T', lowSlow?'Atterra qui · T per orbita':'Sali in orbita · scendi per atterrare (L)');
   }
@@ -2663,6 +2765,7 @@
 
     updateCritters(dt);
     updateSurfBeams(dt);
+    updateSurfCombat(dt);
     // manufatto delle rovine
     if(surf.ruin && !surf.ruin.taken){ surf.ruin.ph+=dt; surf.ruin.relic.rotation.y+=dt*0.9; surf.ruin.relic.position.y=surf.ruin.pos.y+Math.sin(surf.ruin.ph*1.4)*0.4; surf.ruin.glow.position.copy(surf.ruin.relic.position); surf.ruin.glow.material.opacity=0.7+Math.sin(surf.ruin.ph*3)*0.2; }
     surf.blasterCd=Math.max(0,surf.blasterCd-dt);
@@ -2783,6 +2886,8 @@
           break;
         }
       }
+      if(!hit) for(var ti=0;ti<surf.turrets.length;ti++){ if(b.m.position.distanceTo(surf.turrets[ti].g.position)<5){ hit=true; surf.turrets[ti].hp-=34; flashAt(b.m.position); if(surf.turrets[ti].hp<=0) killTurret(ti); break; } }
+      if(!hit) for(var fi=0;fi<surf.flyers.length;fi++){ if(b.m.position.distanceTo(surf.flyers[fi].g.position)<5){ hit=true; surf.flyers[fi].hp-=34; flashAt(b.m.position); if(surf.flyers[fi].hp<=0) killFlyer(fi); break; } }
       if(hit||b.life<=0){ surf.group.remove(b.m); b.m.geometry.dispose(); b.m.material.dispose(); surf.beams.splice(i,1); }
     }
   }
@@ -2808,7 +2913,7 @@
   var upgrades={cannon:0,shield:0,engine:0};
   var docked=false, nearStation=null;
   var missilesArr=[], corvettes=[];
-  var mode='space', landingBody=null, landT=0;
+  var mode='space', landingBody=null, landT=0, surfFireCd=0;
   function maxShield(){ return 100+upgrades.shield*40; }
   function fireCd(){ return [0.16,0.11,0.08][upgrades.cannon]; }
   function boltDmg(){ return [36,52,72][upgrades.cannon]; }
@@ -2850,6 +2955,8 @@
       surf.npcs.forEach(function(n){ sblip(n.g.position.x,n.g.position.z,'rgba(120,200,255,0.7)',1.4); });
       if(surf.city){ sblip(surf.city.x,surf.city.z,'rgba(240,200,120,0.9)',3); }
       surf.pois.forEach(function(pt){ sblip(pt.x,pt.z,pt.col,2.4); });
+      surf.turrets.forEach(function(t){ sblip(t.g.position.x,t.g.position.z,'rgba(255,80,70,1)',2.2); });
+      surf.flyers.forEach(function(f){ sblip(f.g.position.x,f.g.position.z,'rgba(230,80,255,1)',2.2); });
       if(surf.ruin) sblip(surf.ruin.pos.x,surf.ruin.pos.z,'rgba(200,140,255,1)',2.6);
       if(!inShip) sblip(ship.position.x,ship.position.z,'rgba(95,208,224,1)',3.4);
       rctx.fillStyle='#eaf6ff'; rctx.beginPath(); rctx.moveTo(cx,cy-4); rctx.lineTo(cx-3,cy+3); rctx.lineTo(cx+3,cy+3); rctx.closePath(); rctx.fill();
@@ -3398,6 +3505,9 @@
     warpTo:function(id){ finishWarp(galaxy[id]); return bodies.map(function(b){return b.name+'('+b.type+')';}); },
     landType:function(t){ for(var i=0;i<bodies.length;i++){ if(bodies[i].type===t){ ship.position.copy(bodies[i].mesh.position).add(new TH.Vector3(bodies[i].radius*2.5,0,0)); locked=bodies[i]; tryLand(); return bodies[i].name; } } return null; },
     poiList:function(){ return surf.pois.map(function(p){return p.label;}); },
+    threats:function(){ return {hostile:surf.hostile,turrets:surf.turrets.length,flyers:surf.flyers.length,eshots:surf.eshots.length,shots:surf.shots.length}; },
+    aimTurret:function(){ if(mode!=='surfship'||!surf.turrets.length) return false; var t=surf.turrets[0]; var tp=t.g.position.clone().add(new TH.Vector3(0,2.4,0)); ship.position.copy(tp).add(new TH.Vector3(0,10,-70)); var d=tp.clone().sub(ship.position); shipYaw=Math.atan2(d.x,d.z); shipPitch=Math.asin(d.clone().normalize().y); return true; },
+    fireSurf:function(){ shipFireSurf(); },
     tpCity:function(dx,dz,pitch,yaw){ if(!surf.city) return false; surf.pp.set(surf.city.x+(dx||0),surf.heightFn(surf.city.x+(dx||0),surf.city.z+(dz||0))+1.75,surf.city.z+(dz||0)); plPitch=pitch||0; plYaw=(yaw===undefined?0:yaw); return true; },
     hurtSelf:function(){ surfDamage(9); },
     net:NET.dbg, netHost:NET.host, netJoin:NET.join,
