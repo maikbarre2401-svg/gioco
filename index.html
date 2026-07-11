@@ -1381,7 +1381,9 @@
     traffic:[], birds:null, birdData:[],
     nightGlows:[], nightLights:[], moon:null, neonMats:[], quest:null,
     weather:null, weatherOff:null, weatherN:0, weatherKind:null, pois:[], aurora:null, emitters:[],
-    shots:[], eshots:[], turrets:[], flyers:[], hostile:false };
+    shots:[], eshots:[], turrets:[], flyers:[], hostile:false,
+    portals:[], portalCd:0 };
+  var portalGun=false; // sbloccata parlando con lo scienziato
   var _sunWhite=new TH.Color(0xffffff), _sunWarm=new TH.Color(0xff9a50);
   var CRIT_CFG={ terran:{col:0x7a9a4a,fl:0}, ocean:{col:0x4a9ab0,fl:0.5}, desert:{col:0xc8a060,fl:0},
     ice:{col:0xa8d0e8,fl:0.2}, rock:{col:0x8a8078,fl:0.15}, lava:{col:0x9a4a30,fl:0.2},
@@ -1498,6 +1500,119 @@
     var t=new TH.CanvasTexture(c); t.wrapS=t.wrapT=TH.RepeatWrapping; t.anisotropy=8; return t;
   }
 
+  // ================== PORTAL GUN (omaggio parodia) ==================
+  var portalMat=new TH.ShaderMaterial({
+    uniforms:{ uTime:{value:0} },
+    vertexShader:'varying vec2 vUv;void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
+    fragmentShader:[
+      'uniform float uTime;varying vec2 vUv;',
+      'void main(){ vec2 c=vUv-0.5; float r=length(c); if(r>0.5) discard;',
+      ' float ang=atan(c.y,c.x); float swirl=sin(ang*5.0+uTime*4.0-r*22.0)*0.5+0.5;',
+      ' float ring=smoothstep(0.5,0.4,r);',
+      ' vec3 col=mix(vec3(0.15,0.9,0.35),vec3(0.7,1.0,0.6),swirl);',
+      ' float glow=smoothstep(0.5,0.2,r);',
+      ' gl_FragColor=vec4(col,(0.55+0.45*swirl)*ring);}'
+    ].join('\n'),
+    transparent:true, depthWrite:false, side:TH.DoubleSide, blending:TH.AdditiveBlending
+  });
+  var portalMats=[];
+  function makePortal(pos,normal){
+    var g=new TH.Group(); g.position.copy(pos);
+    var m=portalMat.clone(); m.uniforms=TH.UniformsUtils.clone(portalMat.uniforms); portalMats.push(m);
+    var disc=new TH.Mesh(new TH.CircleGeometry(2.2,40),m); g.add(disc);
+    var ring=new TH.Mesh(new TH.TorusGeometry(2.2,0.28,10,40),new TH.MeshStandardMaterial({color:0x0c1a10,emissive:0x2ee050,emissiveIntensity:1.6,metalness:0.4,roughness:0.3})); g.add(ring);
+    var glow=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0x3aff5a,blending:TH.AdditiveBlending,depthWrite:false,transparent:true,opacity:0.8})); glow.scale.set(9,9,1); g.add(glow);
+    g.add(new TH.PointLight(0x3aff5a,1.4,60));
+    // orienta verso il giocatore (verticale)
+    if(normal){ g.lookAt(pos.clone().add(normal)); }
+    surf.group.add(g);
+    return {g:g, pos:pos.clone(), mat:m};
+  }
+  function throwPortal(){
+    if(mode!=='surface') return;
+    if(!portalGun){ toast('PORTAL GUN ASSENTE','Trova lo scienziato a Roma (segui il marcatore verde)'); return; }
+    var dir=new TH.Vector3(); camera.getWorldDirection(dir); dir.y=0; dir.normalize();
+    var pos=surf.pp.clone().addScaledVector(dir,6); pos.y=surf.heightFn(pos.x,pos.z)+2.3;
+    var norm=dir.clone().negate();
+    var p=makePortal(pos,norm);
+    surf.portals.push(p); SND.warpJump();
+    toast('PORTALE APERTO', surf.portals.length===1?'Apri un secondo portale (Q) per collegarli':'Portali collegati! Attraversali');
+    if(surf.portals.length>2){ var old=surf.portals.shift(); surf.group.remove(old.g); disposeObj(old.g); }
+  }
+  function homePortal(){
+    if(mode!=='surface'||!portalGun) { if(mode==='surface'&&!portalGun) throwPortal(); return; }
+    // portale diretto verso la nave
+    surf.pp.set(ship.position.x+3,surf.heightFn(ship.position.x+3,ship.position.z)+1.75,ship.position.z);
+    surf.pv.set(0,0,0); flash(); SND.warpJump(); toast('SALTO AL GARAGE','Teletrasportato alla nave');
+  }
+  function updatePortals(dt){
+    surf.portalCd=Math.max(0,surf.portalCd-dt);
+    surf.portals.forEach(function(p){ p.mat.uniforms.uTime.value+=dt; p.g.rotation.z+=dt*0.6; });
+    if(surf.portals.length>=2 && surf.portalCd<=0){
+      for(var i=0;i<surf.portals.length;i++){
+        if(surf.pp.distanceTo(surf.portals[i].pos)<2.4){
+          var dest=surf.portals[(i+1)%surf.portals.length];
+          surf.pp.set(dest.pos.x,surf.heightFn(dest.pos.x,dest.pos.z)+1.75,dest.pos.z);
+          surf.pv.set(0,0,0); surf.portalCd=1.2; flash(); SND.warpJump();
+          break;
+        }
+      }
+    }
+  }
+  function duoModel(kind){
+    var g=new TH.Group();
+    if(kind==='scienziato'){
+      var coat=new TH.MeshStandardMaterial({color:0x9fd8e0,roughness:0.7});
+      var skin=new TH.MeshStandardMaterial({color:0xe8c8a0,roughness:0.7});
+      var torso=new TH.Mesh(new TH.CylinderGeometry(0.3,0.26,0.95,10),coat); torso.position.y=1.32; g.add(torso);
+      var head=new TH.Mesh(new TH.SphereGeometry(0.23,12,10),skin); head.position.y=1.95; g.add(head);
+      // capelli grigi a punte
+      var hairM=new TH.MeshStandardMaterial({color:0xbfc4c8,roughness:0.9});
+      for(var i=0;i<7;i++){ var sp=new TH.Mesh(new TH.ConeGeometry(0.07,0.28,5),hairM); var a=(i/7-0.5)*2.4; sp.position.set(Math.sin(a)*0.18,2.12,Math.cos(a)*0.05-0.02); sp.rotation.z=-a*0.6; g.add(sp); }
+      // unibrow + portal gun in mano
+      var brow=new TH.Mesh(new TH.BoxGeometry(0.24,0.03,0.04),hairM); brow.position.set(0,2.0,0.2); g.add(brow);
+      var gun=new TH.Mesh(new TH.BoxGeometry(0.14,0.14,0.3),new TH.MeshStandardMaterial({color:0x2a2a30,metalness:0.6,roughness:0.4})); gun.position.set(0.34,1.4,0.15); g.add(gun);
+      var gt=new TH.Mesh(new TH.SphereGeometry(0.09,10,8),new TH.MeshStandardMaterial({color:0x0c1a10,emissive:0x2ee050,emissiveIntensity:1.6})); gt.position.set(0.34,1.4,0.32); g.add(gt);
+      var legsM=new TH.MeshStandardMaterial({color:0x6a6a72,roughness:0.9});
+      var legs=[],arms=[];
+      [[-1],[1]].forEach(function(a){ var pv=new TH.Group(); pv.position.set(a[0]*0.12,0.9,0); g.add(pv); var leg=new TH.Mesh(new TH.CylinderGeometry(0.09,0.07,0.85,6),legsM); leg.position.y=-0.42; pv.add(leg); legs.push(pv);
+        var ap=new TH.Group(); ap.position.set(a[0]*0.3,1.6,0); g.add(ap); var arm=new TH.Mesh(new TH.CylinderGeometry(0.07,0.06,0.7,6),coat); arm.position.y=-0.35; ap.add(arm); arms.push(ap); });
+      g.userData={legs:legs,arms:arms};
+    } else {
+      var shirt=new TH.MeshStandardMaterial({color:0xf0d840,roughness:0.85});
+      var skin2=new TH.MeshStandardMaterial({color:0xe8c8a0,roughness:0.7});
+      var pants=new TH.MeshStandardMaterial({color:0x5a6a9a,roughness:0.9});
+      var torso2=new TH.Mesh(new TH.CylinderGeometry(0.24,0.2,0.7,10),shirt); torso2.position.y=1.15; g.add(torso2);
+      var head2=new TH.Mesh(new TH.SphereGeometry(0.2,12,10),skin2); head2.position.y=1.62; g.add(head2);
+      var hair2=new TH.Mesh(new TH.SphereGeometry(0.205,12,8,0,6.28,0,1.4),new TH.MeshStandardMaterial({color:0x6a3a1a,roughness:0.9})); hair2.position.y=1.66; g.add(hair2);
+      var legs2=[],arms2=[];
+      [[-1],[1]].forEach(function(a){ var pv=new TH.Group(); pv.position.set(a[0]*0.1,0.82,0); g.add(pv); var leg=new TH.Mesh(new TH.CylinderGeometry(0.08,0.06,0.75,6),pants); leg.position.y=-0.37; pv.add(leg); legs2.push(pv);
+        var ap=new TH.Group(); ap.position.set(a[0]*0.24,1.4,0); g.add(ap); var arm=new TH.Mesh(new TH.CylinderGeometry(0.06,0.05,0.6,6),shirt); arm.position.y=-0.3; ap.add(arm); arms2.push(ap); });
+      g.userData={legs:legs2,arms:arms2};
+    }
+    g.traverse(function(c){ if(c.isMesh) c.castShadow=true; });
+    return g;
+  }
+  function spawnDuo(rng){
+    var C=surf.city; if(!C) return;
+    var a=rng()*6.283, d=C.r*0.4;
+    var sx=C.x+Math.cos(a)*d, sz=C.z+Math.sin(a)*d;
+    var sci=duoModel('scienziato'); sci.position.set(sx,surf.heightFn(sx,sz),sz); sci.scale.setScalar(1.08); surf.group.add(sci);
+    var kid=duoModel('nipote'); kid.position.set(sx+2,surf.heightFn(sx+2,sz),sz); kid.scale.setScalar(0.9); surf.group.add(kid);
+    // marcatore verde portale sopra lo scienziato
+    var mk=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0x3aff5a,blending:TH.AdditiveBlending,depthWrite:false,transparent:true,opacity:0.95})); mk.position.y=3.2; mk.scale.set(2.6,2.6,1); sci.add(mk);
+    surf.npcs.push({ g:sci, kind:'scienziato', special:true, lines:[
+      'Ascolta bene, perché lo dico una volta sola *burp*. Questa è una portal gun.',
+      'Punti, spari, ci passi attraverso. Fisica interdimensionale, roba che il tuo cervello nemmeno.',
+      'Tieni, te ne do una. Non farti ammazzare, mi rovineresti le statistiche.'
+    ], gaveGun:false, marker:mk, phase:rng()*6.28, wander:rng()*6.28, wt:rng()*3, spd:0.6, home:new TH.Vector3(sx,0,sz) });
+    surf.npcs.push({ g:kid, kind:'nipote', special:true, lines:[
+      'Ah-ehm… c-ciao. Lui è mio nonno. È… un genio, credo?',
+      'N-non toccare niente di verde, l’ultima volta è finita male.',
+      'Se ti dà la portal gun… oh cavolo, stai attenta, ok?'
+    ], phase:rng()*6.28, wander:rng()*6.28, wt:rng()*3, spd:1.0, home:new TH.Vector3(sx+2,0,sz) });
+  }
+
   // ---------- METROPOLI ALIENA (Nyx Prime) ----------
   var NEON=[0x37e0ff,0xff4fd8,0x7cff5a,0xffb03a,0xa060ff,0x40ffd0];
   function buildAlienCity(rng){
@@ -1594,6 +1709,7 @@
         wander:rng()*6.28, wt:rng()*3, spd:1.0+rng()*1.2, talkCd:0, hx:px, hz:pz, home:new TH.Vector3(px,0,pz), floatK:(kind==='drone') });
     }
     markQuestGiver('drone','UNITÀ SINTETICA');
+    if(!portalGun) spawnDuo(rng);
   }
   function alienModel(rng,kind){
     var g=new TH.Group();
@@ -1940,6 +2056,7 @@
         hx:px, hz:pz, home:new TH.Vector3(px,0,pz) });
     }
     markQuestGiver('centurione','CENTURIONE');
+    if(!portalGun) spawnDuo(rng);
   }
   function markQuestGiver(preferKind,label){
     if(!surf.npcs.length) return;
@@ -1986,7 +2103,14 @@
   function talkToNPC(){
     if(!surf.nearNPC) return false;
     var n=surf.nearNPC;
-    var who=(n.giver?n.giverLabel:null)||{cittadino:'CITTADINO ROMANO',centurione:'CENTURIONE',mercante:'MERCANTE',turista:'TURISTA',alieno:'ABITANTE DI NYX',drone:'UNITÀ SINTETICA'}[n.kind]||'ABITANTE';
+    var who=(n.giver?n.giverLabel:null)||{cittadino:'CITTADINO ROMANO',centurione:'CENTURIONE',mercante:'MERCANTE',turista:'TURISTA',alieno:'ABITANTE DI NYX',drone:'UNITÀ SINTETICA',scienziato:'LO SCIENZIATO',nipote:'IL NIPOTE'}[n.kind]||'ABITANTE';
+    // scienziato: consegna la portal gun
+    if(n.kind==='scienziato'){
+      if(!portalGun){ dialog(who,n.lines,function(){ portalGun=true; if(n.marker){ n.g.remove(n.marker); } saveGame(); SND.warpJump(); toast('PORTAL GUN OTTENUTA!','Premi Q per aprire un portale · B per tornare alla nave'); mission('★',(surf.city&&surf.city.kind==='alien'?'Nyx Prime':'Roma'),'Hai la portal gun! Q apri portale · B garage · esplora'); }); }
+      else dialog(who,['Ce l’hai già la portal gun. Non rompere *burp*.','Vai a squarciare il tessuto dello spaziotempo, forza.']);
+      return true;
+    }
+    if(n.kind==='nipote'){ dialog(who,n.lines); SND.ui(); return true; }
     // committente di missioni (taglia)
     if(n.giver){ handleQuest(n,who); return true; }
     // il mercante compra i minerali sul posto
@@ -2443,7 +2567,7 @@
       else if(type==='toxic' && rng2()<0.5) buildWeather('rain');
     }
     // contenuti/punti d'interesse specifici del bioma
-    surf.turrets=[]; surf.flyers=[]; surf.shots=[]; surf.eshots=[]; surf.hostile=!!body.hostile;
+    surf.turrets=[]; surf.flyers=[]; surf.shots=[]; surf.eshots=[]; surf.hostile=!!body.hostile; surf.portals=[]; surf.portalCd=0;
     if(!surf.city) buildBiome(type,rng2);
     if(!surf.city && body.hostile) buildThreats(rng2);
 
@@ -2567,6 +2691,7 @@
     surf.nightGlows=[]; surf.nightLights=[]; surf.moon=null; surf.neonMats=[]; surf.platforms=[]; surf.quest=null;
     surf.weather=null; surf.weatherOff=null; surf.aurora=null; surf.pois=[]; surf.emitters=[];
     surf.turrets=[]; surf.flyers=[]; surf.shots=[]; surf.eshots=[]; surf.hostile=false;
+    surf.portals=[]; surf.portalCd=0;
     scene.fog=null; surf.active=false; surf.water=null;
     amb.intensity=0.5; hemi.intensity=0.3; sunLight.intensity=2.6;
     if(bloomPass){ bloomPass.strength=PROPS.bloomStrength; bloomPass.threshold=0.55; }
@@ -2766,6 +2891,7 @@
     updateCritters(dt);
     updateSurfBeams(dt);
     updateSurfCombat(dt);
+    updatePortals(dt);
     // manufatto delle rovine
     if(surf.ruin && !surf.ruin.taken){ surf.ruin.ph+=dt; surf.ruin.relic.rotation.y+=dt*0.9; surf.ruin.relic.position.y=surf.ruin.pos.y+Math.sin(surf.ruin.ph*1.4)*0.4; surf.ruin.glow.position.copy(surf.ruin.relic.position); surf.ruin.glow.material.opacity=0.7+Math.sin(surf.ruin.ph*3)*0.2; }
     surf.blasterCd=Math.max(0,surf.blasterCd-dt);
@@ -2801,6 +2927,7 @@
     else if(surf.nearNode) prompt2('F','Raccogli frammento minerale (+5)');
     else if(surf.pp.distanceTo(ship.position)<26) prompt2('E','Pilota la nave · T per orbita');
     else if(document.pointerLockElement!==canvas) prompt2('CLIC','Blocca il mouse per guardarti intorno');
+    else if(portalGun) prompt2('CLIC','Blaster · Q portale · B garage · F raccogli');
     else prompt2('CLIC','Spara col blaster · F raccogli');
   }
 
@@ -2998,6 +3125,8 @@
     if(mode==='surface'){
       if(k==='t'){ tryTakeoff(); }
       if(k==='e'){ boardShip(); }
+      if(k==='q'){ throwPortal(); }
+      if(k==='b'){ homePortal(); }
       if(k===' '&&dActive) dNext();
       if(k==='f'){ if(dActive) dNext(); else if(!talkToNPC() && !collectRelic()) collectNode(); }
       if(k==='v'){ var en2=SND.toggle(); toast('AUDIO',en2?'Attivato':'Disattivato'); }
@@ -3440,7 +3569,7 @@
   function saveGame(){
     try{ localStorage.setItem(SAVE_KEY, JSON.stringify({
       credits:Math.floor(credits), missiles:missiles, upgrades:upgrades, kills:kills,
-      mState:mState, freeMode:freeMode, minerals:Math.floor(minerals)
+      mState:mState, freeMode:freeMode, minerals:Math.floor(minerals), portalGun:portalGun
     })); }catch(e){}
   }
   function hasSave(){ try{ return !!localStorage.getItem(SAVE_KEY); }catch(e){ return false; } }
@@ -3450,7 +3579,7 @@
       var d=JSON.parse(s);
       credits=d.credits||0; missiles=(d.missiles!=null?d.missiles:2); minerals=d.minerals||0;
       if(d.upgrades){ upgrades.cannon=d.upgrades.cannon||0; upgrades.shield=d.upgrades.shield||0; upgrades.engine=d.upgrades.engine||0; }
-      kills=d.kills||0;
+      kills=d.kills||0; portalGun=!!d.portalGun;
       if(d.freeMode){ freeMode=true; mState=6; if(waypoint) waypoint.visible=false; mission('6','Rotta libera','Esplora la galassia · progressi ripristinati'); }
       else if(d.mState){ mState=d.mState; }
       shield=maxShield();
@@ -3508,6 +3637,10 @@
     threats:function(){ return {hostile:surf.hostile,turrets:surf.turrets.length,flyers:surf.flyers.length,eshots:surf.eshots.length,shots:surf.shots.length}; },
     aimTurret:function(){ if(mode!=='surfship'||!surf.turrets.length) return false; var t=surf.turrets[0]; var tp=t.g.position.clone().add(new TH.Vector3(0,2.4,0)); ship.position.copy(tp).add(new TH.Vector3(0,10,-70)); var d=tp.clone().sub(ship.position); shipYaw=Math.atan2(d.x,d.z); shipPitch=Math.asin(d.clone().normalize().y); return true; },
     fireSurf:function(){ shipFireSurf(); },
+    duoInfo:function(){ return surf.npcs.filter(function(n){return n.special;}).map(function(n){return n.kind;}); },
+    talkSci:function(){ var s=null; surf.npcs.forEach(function(n){ if(n.kind==='scienziato') s=n; }); if(!s) return null; surf.nearNPC=s; talkToNPC(); if(dActive){ while(dActive) dNext(); } return portalGun; },
+    portalInfo:function(){ return {gun:portalGun,portals:surf.portals.length}; },
+    throwPortal:function(){ throwPortal(); return surf.portals.length; },
     tpCity:function(dx,dz,pitch,yaw){ if(!surf.city) return false; surf.pp.set(surf.city.x+(dx||0),surf.heightFn(surf.city.x+(dx||0),surf.city.z+(dz||0))+1.75,surf.city.z+(dz||0)); plPitch=pitch||0; plYaw=(yaw===undefined?0:yaw); return true; },
     hurtSelf:function(){ surfDamage(9); },
     net:NET.dbg, netHost:NET.host, netJoin:NET.join,
