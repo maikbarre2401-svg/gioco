@@ -1378,7 +1378,8 @@
     critters:[], beams:[], blasterCd:0, ruin:null,
     npcs:[], city:null, cityMats:[], cityLights:[], cityVisited:false, nearNPC:null,
     traffic:[], birds:null, birdData:[],
-    nightGlows:[], nightLights:[], moon:null, neonMats:[], quest:null, rain:null, rainOff:null, rainN:0 };
+    nightGlows:[], nightLights:[], moon:null, neonMats:[], quest:null,
+    weather:null, weatherOff:null, weatherN:0, weatherKind:null, pois:[], aurora:null, emitters:[] };
   var _sunWhite=new TH.Color(0xffffff), _sunWarm=new TH.Color(0xff9a50);
   var CRIT_CFG={ terran:{col:0x7a9a4a,fl:0}, ocean:{col:0x4a9ab0,fl:0.5}, desert:{col:0xc8a060,fl:0},
     ice:{col:0xa8d0e8,fl:0.2}, rock:{col:0x8a8078,fl:0.15}, lava:{col:0x9a4a30,fl:0.2},
@@ -2110,26 +2111,128 @@
     surf.birds.geometry.attributes.position.needsUpdate=true;
   }
 
-  // ---------- pioggia (mondi con acqua) ----------
-  function buildRain(){
-    var N=460; surf.rainN=N;
-    var pos=new Float32Array(N*2*3); surf.rainOff=[];
-    for(var i=0;i<N;i++){ surf.rainOff.push({x:(Math.random()-0.5)*260,y:Math.random()*160,z:(Math.random()-0.5)*260}); }
-    var geo=new TH.BufferGeometry(); geo.setAttribute('position',new TH.BufferAttribute(pos,3));
-    var mat=new TH.LineBasicMaterial({color:0xaac8e0,transparent:true,opacity:0.35});
-    surf.rain=new TH.LineSegments(geo,mat); surf.rain.frustumCulled=false; surf.group.add(surf.rain);
-  }
-  function updateRain(dt){
-    if(!surf.rain) return;
-    var arr=surf.rain.geometry.attributes.position.array;
-    var cam=(mode==='surfship')?ship.position:surf.pp;
-    for(var i=0;i<surf.rainN;i++){
-      var o=surf.rainOff[i];
-      o.y-=120*dt; if(o.y<0){ o.y+=160; o.x=(Math.random()-0.5)*260; o.z=(Math.random()-0.5)*260; }
-      var x=cam.x+o.x, y=cam.y+o.y-40, z=cam.z+o.z;
-      var b=i*6; arr[b]=x; arr[b+1]=y; arr[b+2]=z; arr[b+3]=x; arr[b+4]=y-2.4; arr[b+5]=z;
+  // ---------- meteo per bioma (pioggia / neve / sabbia / brace) ----------
+  var WEATHER={
+    rain:{n:520,col:0xaac8e0,op:0.4,line:true,fall:130,drift:2,len:2.6,rad:260,h:170,size:0},
+    snow:{n:520,col:0xffffff,op:0.85,line:false,fall:16,drift:6,len:0,rad:280,h:150,size:1.6},
+    dust:{n:420,col:0xd8b884,op:0.5,line:false,fall:2,drift:60,len:0,rad:300,h:120,size:2.2,add:true},
+    ember:{n:300,col:0xff7a30,op:0.9,line:false,fall:-14,drift:5,len:0,rad:220,h:90,size:2.4,add:true}
+  };
+  function buildWeather(kind){
+    var W=WEATHER[kind]; if(!W) return; surf.weatherKind=kind; surf.weatherN=W.n; surf.weatherW=W;
+    surf.weatherOff=[]; for(var i=0;i<W.n;i++) surf.weatherOff.push({x:(Math.random()-0.5)*W.rad,y:Math.random()*W.h,z:(Math.random()-0.5)*W.rad,r:Math.random()*6.28});
+    if(W.line){
+      var pos=new Float32Array(W.n*2*3); var geo=new TH.BufferGeometry(); geo.setAttribute('position',new TH.BufferAttribute(pos,3));
+      surf.weather=new TH.LineSegments(geo,new TH.LineBasicMaterial({color:W.col,transparent:true,opacity:W.op}));
+    } else {
+      var p2=new Float32Array(W.n*3); var g2=new TH.BufferGeometry(); g2.setAttribute('position',new TH.BufferAttribute(p2,3));
+      surf.weather=new TH.Points(g2,new TH.PointsMaterial({color:W.col,size:W.size,transparent:true,opacity:W.op,depthWrite:false,sizeAttenuation:true,blending:W.add?TH.AdditiveBlending:TH.NormalBlending}));
     }
-    surf.rain.geometry.attributes.position.needsUpdate=true;
+    surf.weather.frustumCulled=false; surf.group.add(surf.weather);
+  }
+  function updateWeather(dt){
+    if(!surf.weather) return; var W=surf.weatherW;
+    var cam=(mode==='surfship')?ship.position:surf.pp;
+    var arr=surf.weather.geometry.attributes.position.array;
+    for(var i=0;i<surf.weatherN;i++){
+      var o=surf.weatherOff[i]; o.r+=dt*2;
+      o.y-=W.fall*dt;
+      if(W.fall>0 && o.y<0){ o.y+=W.h; o.x=(Math.random()-0.5)*W.rad; o.z=(Math.random()-0.5)*W.rad; }
+      else if(W.fall<0 && o.y>W.h){ o.y-=W.h; o.x=(Math.random()-0.5)*W.rad; o.z=(Math.random()-0.5)*W.rad; }
+      var dx=Math.sin(o.r)*W.drift*dt; o.x+=(W.drift>10?W.drift*dt:dx);
+      if(o.x>W.rad/2) o.x-=W.rad; else if(o.x<-W.rad/2) o.x+=W.rad;
+      var x=cam.x+o.x, y=cam.y+o.y-40, z=cam.z+o.z;
+      if(W.line){ var b=i*6; arr[b]=x; arr[b+1]=y; arr[b+2]=z; arr[b+3]=x; arr[b+4]=y-W.len; arr[b+5]=z; }
+      else { var c=i*3; arr[c]=x; arr[c+1]=y; arr[c+2]=z; }
+    }
+    surf.weather.geometry.attributes.position.needsUpdate=true;
+  }
+
+  // ---------- contenuti per bioma: ogni mondo ha i suoi punti d'interesse ----------
+  function poi(x,z,label,col){ surf.pois.push({x:x,z:z,label:label,col:col||'rgba(240,200,120,0.95)'}); }
+  function buildBiome(type,rng){
+    surf.pois=[]; surf.emitters=[];
+    var grp=new TH.Group(); surf.group.add(grp);
+    function place(mesh,x,z,yoff){ mesh.position.set(x,surf.heightFn(x,z)+(yoff||0),z); mesh.castShadow=true; mesh.receiveShadow=true; grp.add(mesh); return mesh; }
+    function grpAt(x,z){ var g=new TH.Group(); g.position.set(x,surf.heightFn(x,z),z); grp.add(g); return g; }
+    var i;
+    if(type==='desert'){
+      // accampamento nomade + scheletro gigante + archi di roccia
+      var camp=grpAt(120,60);
+      for(i=0;i<5;i++){ var ta=i/5*6.283; var tent=new TH.Mesh(new TH.ConeGeometry(3,3.2,4),new TH.MeshStandardMaterial({color:[0x9a6a3a,0xb08050,0x8a5a30][i%3],roughness:0.9})); tent.position.set(Math.cos(ta)*9,1.6,Math.sin(ta)*9); tent.rotation.y=0.78; camp.add(tent); }
+      var fire=new TH.Mesh(new TH.ConeGeometry(1,2,7),new TH.MeshStandardMaterial({color:0xff7a2a,emissive:0xff5a1a,emissiveIntensity:1.4})); fire.position.y=1; camp.add(fire); camp.add(new TH.PointLight(0xff7a2a,1.2,40));
+      poi(120,60,'Accampamento');
+      var sk=grpAt(-140,-100); var spine=new TH.Mesh(new TH.CylinderGeometry(1.5,1.5,40,8),new TH.MeshStandardMaterial({color:0xe8e0cc,roughness:0.8})); spine.rotation.z=Math.PI/2; spine.position.y=6; sk.add(spine);
+      for(i=0;i<9;i++){ var rib=new TH.Mesh(new TH.TorusGeometry(9-Math.abs(i-4)*0.9,0.7,6,16,Math.PI),new TH.MeshStandardMaterial({color:0xe8e0cc,roughness:0.8})); rib.position.set(-16+i*4,6,0); rib.rotation.y=Math.PI/2; sk.add(rib); }
+      var skull=new TH.Mesh(new TH.SphereGeometry(5,10,8),new TH.MeshStandardMaterial({color:0xe8e0cc,roughness:0.8})); skull.position.set(24,7,0); skull.scale.set(1.2,1,1.4); sk.add(skull);
+      sk.traverse(function(c){ if(c.isMesh){ c.castShadow=true; } }); poi(-140,-100,'Scheletro colossale','rgba(230,224,200,0.9)');
+      for(i=0;i<4;i++){ var ax=(rng()-0.5)*900, az=(rng()-0.5)*900; var arch=new TH.Mesh(new TH.TorusGeometry(10+rng()*8,3,6,14,Math.PI),new TH.MeshStandardMaterial({color:0xc08a54,roughness:0.95,flatShading:true})); place(arch,ax,az,10); arch.rotation.y=rng()*6.28; }
+    } else if(type==='ice'){
+      // relitto schiantato + guglie di ghiaccio
+      var wreck=grpAt(100,-80);
+      var hull=new TH.Mesh(new TH.CylinderGeometry(6,9,44,10),new TH.MeshStandardMaterial({color:0x5a6470,metalness:0.7,roughness:0.5})); hull.rotation.z=Math.PI/2.4; hull.rotation.y=0.5; hull.position.y=5; wreck.add(hull);
+      var wing=new TH.Mesh(new TH.BoxGeometry(20,1,8),new TH.MeshStandardMaterial({color:0x4a5460,metalness:0.6,roughness:0.6})); wing.position.set(-6,3,4); wing.rotation.z=0.3; wreck.add(wing);
+      wreck.add(new TH.PointLight(0x88bbff,0.8,60)); var bcn=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0xff5a4a,blending:TH.AdditiveBlending,depthWrite:false,transparent:true})); bcn.position.set(0,10,0); bcn.scale.set(5,5,1); wreck.add(bcn);
+      wreck.traverse(function(c){ if(c.isMesh){ c.castShadow=true; } }); poi(100,-80,'Relitto schiantato','rgba(255,90,74,0.9)');
+      for(i=0;i<40;i++){ var sx=(rng()-0.5)*1400, sz=(rng()-0.5)*1400; var spire=new TH.Mesh(new TH.ConeGeometry(1+rng()*2,8+rng()*16,5),new TH.MeshStandardMaterial({color:0xcfe8ff,roughness:0.15,metalness:0.1,transparent:true,opacity:0.85,emissive:0x6fa8cc,emissiveIntensity:0.2})); place(spire,sx,sz,(4+rng()*8)); }
+    } else if(type==='lava'){
+      // guglie di ossidiana + geyser di lava
+      for(i=0;i<24;i++){ var ox=(rng()-0.5)*1300, oz=(rng()-0.5)*1300; var ob=new TH.Mesh(new TH.ConeGeometry(2+rng()*3,10+rng()*22,5),new TH.MeshStandardMaterial({color:0x120a0a,roughness:0.5,metalness:0.2,emissive:0xff3a10,emissiveIntensity:0.25,flatShading:true})); place(ob,ox,oz,(5+rng()*10)); }
+      for(i=0;i<6;i++){ var gx=(rng()-0.5)*900, gz=(rng()-0.5)*900; var gy2=surf.heightFn(gx,gz);
+        var geyser=new TH.Points(new TH.BufferGeometry(),new TH.PointsMaterial({color:0xff7a2a,size:2.6,transparent:true,opacity:0.9,depthWrite:false,blending:TH.AdditiveBlending}));
+        var GN=40, gp=new Float32Array(GN*3); geyser.geometry.setAttribute('position',new TH.BufferAttribute(gp,3)); geyser.frustumCulled=false; grp.add(geyser);
+        var parts=[]; for(var k=0;k<GN;k++) parts.push({y:rng()*20,vy:8+rng()*16,vx:(rng()-0.5)*5,vz:(rng()-0.5)*5,x:(rng()-0.5)*4,z:(rng()-0.5)*4});
+        surf.emitters.push({mesh:geyser,x:gx,z:gz,gy:gy2,parts:parts}); grp.add(new TH.PointLight(0xff5a1a,1,50).translateX(gx).translateZ(gz)); }
+      poi(surf.emitters.length?surf.emitters[0].x:0,surf.emitters.length?surf.emitters[0].z:0,'Geyser di lava','rgba(255,120,50,0.95)');
+    } else if(type==='toxic'){
+      // bosco di funghi bioluminescenti giganti
+      var grove=grpAt(-90,70);
+      for(i=0;i<12;i++){ var ma=rng()*6.28, md=6+rng()*40; var h=6+rng()*10;
+        var stem=new TH.Mesh(new TH.CylinderGeometry(0.6,1,h,7),new TH.MeshStandardMaterial({color:0xc8d0a8,roughness:0.8})); stem.position.set(Math.cos(ma)*md,h/2,Math.sin(ma)*md); grove.add(stem);
+        var cap=new TH.Mesh(new TH.SphereGeometry(2.5+rng()*2,10,7,0,6.28,0,1.7),new TH.MeshStandardMaterial({color:0x8fd040,emissive:0x6fae20,emissiveIntensity:0.9,roughness:0.5})); cap.position.set(Math.cos(ma)*md,h,Math.sin(ma)*md); cap.scale.y=0.6; grove.add(cap); }
+      grove.add(new TH.PointLight(0x8fd040,1.1,80)); grove.traverse(function(c){ if(c.isMesh) c.castShadow=true; }); poi(-90,70,'Bosco luminescente','rgba(143,208,64,0.95)');
+    } else if(type==='crystal'){
+      // enormi geodi di cristallo
+      for(i=0;i<7;i++){ var cx2=(rng()-0.5)*1100, cz2=(rng()-0.5)*1100; var geode=grpAt(cx2,cz2);
+        var col=[0xa850e0,0x50a0e0,0xe050a0,0x50e0a0][Math.floor(rng()*4)];
+        for(var c2=0;c2<9;c2++){ var cr=new TH.Mesh(new TH.ConeGeometry(1+rng()*2,6+rng()*14,5),new TH.MeshStandardMaterial({color:col,emissive:col,emissiveIntensity:0.6,metalness:0.3,roughness:0.2,transparent:true,opacity:0.9})); cr.position.set((rng()-0.5)*8,3+rng()*4,(rng()-0.5)*8); cr.rotation.set(rng()*0.6,rng()*6,rng()*0.6); geode.add(cr); }
+        geode.add(new TH.PointLight(col,1,70)); }
+      poi(0,0,'Formazioni di cristallo','rgba(200,120,255,0.95)');
+    } else if(type==='rock'){
+      // rig minerario abbandonato + cratere
+      var rig=grpAt(110,90);
+      var tower=new TH.Mesh(new TH.CylinderGeometry(1,2,20,6),new TH.MeshStandardMaterial({color:0x6a6058,metalness:0.6,roughness:0.6})); tower.position.y=10; rig.add(tower);
+      var drill=new TH.Mesh(new TH.ConeGeometry(2,6,6),new TH.MeshStandardMaterial({color:0x8a7a60,metalness:0.7,roughness:0.5})); drill.position.y=3; rig.add(drill);
+      var tank=new TH.Mesh(new TH.CylinderGeometry(3,3,6,10),new TH.MeshStandardMaterial({color:0x7a8088,metalness:0.6,roughness:0.5})); tank.position.set(8,3,4); rig.add(tank);
+      rig.add(new TH.PointLight(0xffcf70,1,60)); rig.traverse(function(c){ if(c.isMesh) c.castShadow=true; }); poi(110,90,'Rig minerario','rgba(255,207,112,0.9)');
+    } else { // terran / ocean non-Roma: villaggio
+      var vil=grpAt(90,-70);
+      for(i=0;i<7;i++){ var va=i/7*6.28, vd=8+rng()*10; var hut=new TH.Mesh(new TH.BoxGeometry(4,3.4,4),new TH.MeshStandardMaterial({color:[0xc9a06a,0xb08858,0xa87848][i%3],roughness:0.9})); hut.position.set(Math.cos(va)*vd,1.7,Math.sin(va)*vd); vil.add(hut);
+        var roof=new TH.Mesh(new TH.ConeGeometry(3.4,2.4,4),new TH.MeshStandardMaterial({color:0x7a4a2a,roughness:0.9})); roof.position.set(Math.cos(va)*vd,4.4,Math.sin(va)*vd); roof.rotation.y=0.78; vil.add(roof); }
+      var well=new TH.Mesh(new TH.CylinderGeometry(2,2,1.5,10),new TH.MeshStandardMaterial({color:0x8a8078,roughness:0.9})); well.position.y=0.75; vil.add(well);
+      vil.add(new TH.PointLight(0xffd090,0.9,50)); vil.traverse(function(c){ if(c.isMesh) c.castShadow=true; }); poi(90,-70,'Villaggio','rgba(255,208,144,0.9)');
+    }
+  }
+  function updateEmitters(dt){
+    surf.emitters.forEach(function(em){
+      var arr=em.mesh.geometry.attributes.position.array;
+      em.parts.forEach(function(p,i){ p.vy-=26*dt; p.y+=p.vy*dt; p.x+=p.vx*dt; p.z+=p.vz*dt;
+        if(p.y<0){ p.y=0; p.vy=8+Math.random()*16; p.x=(Math.random()-0.5)*4; p.z=(Math.random()-0.5)*4; }
+        var b=i*3; arr[b]=em.x+p.x; arr[b+1]=em.gy+p.y; arr[b+2]=em.z+p.z; });
+      em.mesh.geometry.attributes.position.needsUpdate=true;
+    });
+  }
+  // aurora boreale (mondi ghiacciati, di notte)
+  function buildAurora(){
+    var mat=new TH.ShaderMaterial({ uniforms:{ uTime:{value:0}, uOp:{value:0} },
+      vertexShader:'varying vec2 vUv;void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
+      fragmentShader:['uniform float uTime;uniform float uOp;varying vec2 vUv;',
+        'void main(){ float w=sin(vUv.x*12.0+uTime*0.6)*0.5+0.5; float band=smoothstep(0.0,0.5,vUv.y)*smoothstep(1.0,0.5,vUv.y);',
+        ' float curtain=smoothstep(0.3,0.9,w)*band; vec3 col=mix(vec3(0.2,0.9,0.5),vec3(0.4,0.6,1.0),vUv.y);',
+        ' gl_FragColor=vec4(col,curtain*uOp*0.6);}'].join('\n'),
+      transparent:true, depthWrite:false, blending:TH.AdditiveBlending, side:TH.DoubleSide });
+    var m=new TH.Mesh(new TH.CylinderGeometry(2200,2200,900,40,1,true,0,Math.PI*1.4),mat);
+    m.position.y=surf.city?surf.city.level+400:600; surf.group.add(m); surf.aurora={mesh:m,mat:mat};
   }
 
   function buildSurface(body){
@@ -2238,9 +2341,17 @@
       surf.nodes.push({m:nm,g:gl2,ph:rng2()*6.28});
     }
 
-    // pioggia sui mondi con acqua/atmosfera (non in citta)
-    surf.rain=null;
-    if(P.atmo && (type==='terran'||type==='ocean'||type==='toxic') && !surf.city && rng2()<0.4){ buildRain(); }
+    // meteo per bioma (non in citta)
+    surf.weather=null; surf.weatherKind=null; surf.aurora=null; surf.pois=[]; surf.emitters=[];
+    if(!surf.city){
+      if((type==='terran'||type==='ocean') && rng2()<0.45) buildWeather('rain');
+      else if(type==='ice') { buildWeather('snow'); buildAurora(); }
+      else if(type==='desert' && rng2()<0.6) buildWeather('dust');
+      else if(type==='lava') buildWeather('ember');
+      else if(type==='toxic' && rng2()<0.5) buildWeather('rain');
+    }
+    // contenuti/punti d'interesse specifici del bioma
+    if(!surf.city) buildBiome(type,rng2);
 
     // nuvole alla deriva
     surf.clouds=[];
@@ -2359,7 +2470,8 @@
     surf.critters=[]; surf.beams=[]; surf.ruin=null; surf.nodes=[]; surf.clouds=[]; surf.nearNode=null;
     surf.npcs=[]; surf.nearNPC=null; surf.cityMats=[]; surf.cityLights=[]; surf.city=null;
     surf.traffic=[]; surf.birds=null; surf.birdData=[];
-    surf.nightGlows=[]; surf.nightLights=[]; surf.moon=null; surf.neonMats=[]; surf.platforms=[]; surf.quest=null; surf.rain=null; surf.rainOff=null;
+    surf.nightGlows=[]; surf.nightLights=[]; surf.moon=null; surf.neonMats=[]; surf.platforms=[]; surf.quest=null;
+    surf.weather=null; surf.weatherOff=null; surf.aurora=null; surf.pois=[]; surf.emitters=[];
     scene.fog=null; surf.active=false; surf.water=null;
     amb.intensity=0.5; hemi.intensity=0.3; sunLight.intensity=2.6;
     if(bloomPass){ bloomPass.strength=PROPS.bloomStrength; bloomPass.threshold=0.55; }
@@ -2522,7 +2634,8 @@
       stars.visible=nightSky; milkyMesh.visible=nightSky;
     }
     surf.clouds.forEach(function(c){ c.position.x+=c.userData.v*dt; if(c.position.x>2600) c.position.x=-2600; c.material.opacity=0.05+0.11*day; });
-    updateRain(dt);
+    updateWeather(dt); updateEmitters(dt);
+    if(surf.aurora){ surf.aurora.mat.uniforms.uTime.value+=dt; surf.aurora.mat.uniforms.uOp.value=clamp01((0.4-day)/0.4); }
     if(surf.city) cityNight(dt,day);
   }
   function cityNight(dt,day){
@@ -2736,6 +2849,7 @@
       surf.critters.forEach(function(cr){ sblip(cr.g.position.x,cr.g.position.z,cr.hostile?'rgba(255,80,70,1)':'rgba(200,190,120,0.85)',cr.hostile?2.4:1.8); });
       surf.npcs.forEach(function(n){ sblip(n.g.position.x,n.g.position.z,'rgba(120,200,255,0.7)',1.4); });
       if(surf.city){ sblip(surf.city.x,surf.city.z,'rgba(240,200,120,0.9)',3); }
+      surf.pois.forEach(function(pt){ sblip(pt.x,pt.z,pt.col,2.4); });
       if(surf.ruin) sblip(surf.ruin.pos.x,surf.ruin.pos.z,'rgba(200,140,255,1)',2.6);
       if(!inShip) sblip(ship.position.x,ship.position.z,'rgba(95,208,224,1)',3.4);
       rctx.fillStyle='#eaf6ff'; rctx.beginPath(); rctx.moveTo(cx,cy-4); rctx.lineTo(cx-3,cy+3); rctx.lineTo(cx+3,cy+3); rctx.closePath(); rctx.fill();
@@ -3281,6 +3395,9 @@
     talkGiver:function(){ var g=null; surf.npcs.forEach(function(n){ if(n.giver) g=n; }); if(!g) return null; surf.nearNPC=g; talkToNPC(); if(dActive){ while(dActive) dNext(); } return surf.quest?{have:surf.quest.have,need:surf.quest.def.need,turnedIn:surf.quest.turnedIn}:'completata/nulla'; },
     questState:function(){ return surf.quest?{t:surf.quest.def.t,have:surf.quest.have,need:surf.quest.def.need,turnedIn:surf.quest.turnedIn}:null; },
     forceProgress:function(k){ questProgress(k||'raccolta'); return surf.quest?surf.quest.have:null; },
+    warpTo:function(id){ finishWarp(galaxy[id]); return bodies.map(function(b){return b.name+'('+b.type+')';}); },
+    landType:function(t){ for(var i=0;i<bodies.length;i++){ if(bodies[i].type===t){ ship.position.copy(bodies[i].mesh.position).add(new TH.Vector3(bodies[i].radius*2.5,0,0)); locked=bodies[i]; tryLand(); return bodies[i].name; } } return null; },
+    poiList:function(){ return surf.pois.map(function(p){return p.label;}); },
     tpCity:function(dx,dz,pitch,yaw){ if(!surf.city) return false; surf.pp.set(surf.city.x+(dx||0),surf.heightFn(surf.city.x+(dx||0),surf.city.z+(dz||0))+1.75,surf.city.z+(dz||0)); plPitch=pitch||0; plYaw=(yaw===undefined?0:yaw); return true; },
     hurtSelf:function(){ surfDamage(9); },
     net:NET.dbg, netHost:NET.host, netJoin:NET.join,
