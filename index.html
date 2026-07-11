@@ -355,6 +355,13 @@
     var g=x.createRadialGradient(s/2,s/2,0,s/2,s/2,s/2); g.addColorStop(0,c); g.addColorStop(0.35,c.replace('1)','0.5)')); g.addColorStop(1,'rgba(0,0,0,0)');
     x.fillStyle=g; x.fillRect(0,0,s,s); return new TH.CanvasTexture(cv); }
   var GLOW_W=glowTex('rgba(255,255,255,1)');
+  function moonTex(){ var s=128,cv=document.createElement('canvas');cv.width=cv.height=s;var x=cv.getContext('2d');
+    var g=x.createRadialGradient(s*0.42,s*0.42,2,s/2,s/2,s/2); g.addColorStop(0,'#fbfbf0'); g.addColorStop(0.7,'#d8dae0'); g.addColorStop(1,'rgba(180,190,205,0)');
+    x.fillStyle=g; x.beginPath(); x.arc(s/2,s/2,s/2-6,0,7); x.fill();
+    x.globalCompositeOperation='source-atop'; x.fillStyle='rgba(150,160,175,0.5)';
+    [[46,52,9],[78,44,7],[62,78,11],[40,84,6],[86,74,5]].forEach(function(c){ x.beginPath(); x.arc(c[0],c[1],c[2],0,7); x.fill(); });
+    return new TH.CanvasTexture(cv); }
+  var MOON_TEX=moonTex();
   function ringSpriteTex(){ var s=128,cv=document.createElement('canvas');cv.width=cv.height=s;var x=cv.getContext('2d');
     x.strokeStyle='rgba(255,255,255,1)'; x.lineWidth=5; x.shadowColor='rgba(160,220,255,1)'; x.shadowBlur=10;
     x.beginPath(); x.arc(s/2,s/2,s/2-10,0,7); x.stroke(); return new TH.CanvasTexture(cv); }
@@ -1348,7 +1355,8 @@
     time:0.1, hasAtmo:false, dayHor:null, nightFog:new TH.Color(0x070a12), nodes:[], clouds:[], nearNode:null,
     critters:[], beams:[], blasterCd:0, ruin:null,
     npcs:[], city:null, cityMats:[], cityLights:[], cityVisited:false, nearNPC:null,
-    traffic:[], birds:null, birdData:[] };
+    traffic:[], birds:null, birdData:[],
+    nightGlows:[], nightLights:[], moon:null };
   var _sunWhite=new TH.Color(0xffffff), _sunWarm=new TH.Color(0xff9a50);
   var CRIT_CFG={ terran:{col:0x7a9a4a,fl:0}, ocean:{col:0x4a9ab0,fl:0.5}, desert:{col:0xc8a060,fl:0},
     ice:{col:0xa8d0e8,fl:0.2}, rock:{col:0x8a8078,fl:0.15}, lava:{col:0x9a4a30,fl:0.2},
@@ -1589,7 +1597,8 @@
         pole.position.set(lx,gy+2.5,lz); pole.castShadow=true; grp.add(pole);
         var lampMat=new TH.MeshStandardMaterial({color:0x3a3020,emissive:0xffd070,emissiveIntensity:0.2}); surf.cityMats.push(lampMat);
         var lamp=new TH.Mesh(new TH.SphereGeometry(0.4,10,8),lampMat); lamp.position.set(lx,gy+5.2,lz); grp.add(lamp);
-        surf.cityLights.push({mat:lampMat,glow:null});
+        var lglow=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0xffdd90,blending:TH.AdditiveBlending,depthWrite:false,transparent:true,opacity:0})); lglow.position.set(lx,gy+5.2,lz); lglow.scale.set(7,7,1); grp.add(lglow);
+        surf.nightGlows.push({s:lglow,i:0.85});
       } else {
         // pino romano (ombrello)
         var trunk=new TH.Mesh(new TH.CylinderGeometry(0.3,0.5,7,7),new TH.MeshStandardMaterial({color:0x5a4030,roughness:0.9}));
@@ -1731,6 +1740,25 @@
       var top=new TH.Mesh(new TH.CylinderGeometry(12,12,10,24),travD); top.position.y=35; cg.add(top);
       var ang=new TH.Mesh(new TH.SphereGeometry(3,12,10),new TH.MeshStandardMaterial({color:0xb0902a,metalness:0.7,roughness:0.3})); ang.position.y=44; cg.add(ang);
       cg.traverse(function(c){ if(c.isMesh){ c.castShadow=true; c.receiveShadow=true; } });
+    })();
+
+    // ---- ILLUMINAZIONE NOTTURNA: luna, monumenti, riflettori ----
+    (function(){
+      // luna
+      var moon=new TH.Sprite(new TH.SpriteMaterial({map:MOON_TEX,transparent:true,depthWrite:false,opacity:0,blending:TH.AdditiveBlending}));
+      moon.scale.set(180,180,1); grp.add(moon); surf.moon=moon;
+      // bagliori di uplighting sui monumenti (fade a notte)
+      function up(x,z,y,color,scale,inten){ var s=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:color,blending:TH.AdditiveBlending,depthWrite:false,transparent:true,opacity:0})); s.position.set(x,gy+y,z); s.scale.set(scale,scale,1); grp.add(s); surf.nightGlows.push({s:s,i:inten}); }
+      up(C.x-95,C.z-70,22,0xffb060,120,0.7);         // Colosseo
+      up(C.x+90,C.z+50,26,0xffd090,90,0.65);          // Pantheon
+      up(C.x+150,C.z-150,52,0xdfe8ff,150,0.7);        // San Pietro
+      up(C.x,C.z,20,0xfff0c0,70,0.6);                 // Obelisco/piazza
+      up(C.x+surf.tiber,C.z-150,30,0xffcf90,90,0.6);  // Castel Sant'Angelo
+      up(C.x-58,C.z-58,14,0xffc070,60,0.55);          // Arco
+      // pochi PointLight veri sui monumenti chiave (perf: max 3)
+      [[C.x-95,C.z-70,26,0xffb060],[C.x+150,C.z-150,60,0xdfe8ff],[C.x,C.z,18,0xfff0c0]].forEach(function(p){
+        var pl=new TH.PointLight(p[3],0,260); pl.position.set(p[0],gy+p[2],p[1]); grp.add(pl); surf.nightLights.push(pl);
+      });
     })();
 
     surf.cityGroup=grp;
@@ -2101,6 +2129,7 @@
     surf.critters=[]; surf.beams=[]; surf.ruin=null; surf.nodes=[]; surf.clouds=[]; surf.nearNode=null;
     surf.npcs=[]; surf.nearNPC=null; surf.cityMats=[]; surf.cityLights=[]; surf.city=null;
     surf.traffic=[]; surf.birds=null; surf.birdData=[];
+    surf.nightGlows=[]; surf.nightLights=[]; surf.moon=null;
     scene.fog=null; surf.active=false; surf.water=null;
     amb.intensity=0.5; hemi.intensity=0.3; sunLight.intensity=2.6;
     if(bloomPass){ bloomPass.strength=PROPS.bloomStrength; bloomPass.threshold=0.55; }
@@ -2230,8 +2259,7 @@
     setTxt('rr_thrN',Math.round(throttle*100)+'%'); $('rr_thr').style.width=(throttle*100)+'%'; setTxt('rr_spd',Math.round(speed));
     $('rr_boost').style.color=boosting?curAccent():'#445566';
     SND.engine(throttle,boosting);
-    if(surf.city){ updateRomans(dt); updateTraffic(dt); updateBirds(dt); }
-    surf.clouds.forEach(function(c){ c.position.x+=c.userData.v*dt; if(c.position.x>2600) c.position.x=-2600; });
+    advanceDayNight(dt);
     var lowSlow=(ship.position.y<gy+34);
     prompt2(lowSlow?'L':'T', lowSlow?'Atterra qui · T per orbita':'Sali in orbita · scendi per atterrare (L)');
   }
@@ -2245,13 +2273,12 @@
     minerals+=5; setTxt('rr_min',Math.floor(minerals));
     SND.scan(); toast('MINERALE RACCOLTO','+5 unità · totale '+Math.floor(minerals));
   }
-  function updateSurface(dt){
-    // ciclo giorno/notte
+  function advanceDayNight(dt){
     surf.time=(surf.time+dt/300)%1;
     var sunAng=surf.time*Math.PI*2;
     surf.sunDir.set(Math.cos(sunAng)*0.75,Math.sin(sunAng),0.38).normalize();
     var el=surf.sunDir.y;
-    var day=clamp01((el+0.12)/0.34);
+    var day=clamp01((el+0.12)/0.34); surf._day=day;
     sunLight.intensity=0.06+1.3*Math.max(0,el);
     sunLight.color.copy(_sunWhite).lerp(_sunWarm,clamp01(1-el*2.2)*0.85);
     if(surf.hasAtmo){
@@ -2261,6 +2288,24 @@
       stars.visible=nightSky; milkyMesh.visible=nightSky;
     }
     surf.clouds.forEach(function(c){ c.position.x+=c.userData.v*dt; if(c.position.x>2600) c.position.x=-2600; c.material.opacity=0.05+0.11*day; });
+    if(surf.city) cityNight(dt,day);
+  }
+  function cityNight(dt,day){
+    updateRomans(dt); updateTraffic(dt); updateBirds(dt);
+    var lit=day<0.45?clamp01((0.45-day)/0.35):0;
+    surf.cityMats.forEach(function(m){ if(m._bias===undefined) m._bias=0.55+Math.random()*0.5; m.emissiveIntensity=lit*m._bias; });
+    surf.nightGlows.forEach(function(o){ o.s.material.opacity=lit*o.i; });
+    surf.nightLights.forEach(function(l){ l.intensity=lit*2.4; });
+    if(surf.moon){
+      var mc=(mode==='surfship')?ship.position:surf.pp;
+      surf.moon.position.copy(mc).addScaledVector(surf.sunDir,-2600).add(new TH.Vector3(0,600,0));
+      surf.moon.material.opacity=clamp01(-surf.sunDir.y*2+0.3);
+    }
+    if(bloomPass) bloomPass.strength=0.22+lit*0.28;
+  }
+  function updateSurface(dt){
+    advanceDayNight(dt);
+    var day=surf._day;
     surf.nearNode=null;
     var bestD=7;
     surf.nodes.forEach(function(n){ n.ph+=dt*1.6; n.m.rotation.y+=dt*1.2; n.m.position.y+=Math.sin(n.ph)*dt*0.25; n.g.position.copy(n.m.position);
@@ -2268,12 +2313,6 @@
 
     updateCritters(dt);
     updateSurfBeams(dt);
-    // Roma: personaggi + luci notturne di finestre e lampioni
-    if(surf.city){
-      updateRomans(dt); updateTraffic(dt); updateBirds(dt);
-      var lit=day<0.45?clamp01((0.45-day)/0.35):0;
-      surf.cityMats.forEach(function(m){ if(m._bias===undefined) m._bias=0.55+Math.random()*0.5; m.emissiveIntensity=lit*m._bias; });
-    }
     // manufatto delle rovine
     if(surf.ruin && !surf.ruin.taken){ surf.ruin.ph+=dt; surf.ruin.relic.rotation.y+=dt*0.9; surf.ruin.relic.position.y=surf.ruin.pos.y+Math.sin(surf.ruin.ph*1.4)*0.4; surf.ruin.glow.position.copy(surf.ruin.relic.position); surf.ruin.glow.material.opacity=0.7+Math.sin(surf.ruin.ph*3)*0.2; }
     surf.blasterCd=Math.max(0,surf.blasterCd-dt);
@@ -2937,6 +2976,8 @@
     critterNear:function(){ var b=999,bc=null; surf.critters.forEach(function(c){ var d=surf.pp.distanceTo(c.g.position); if(d<b){b=d;bc=c;} }); return bc?{kind:bc.kind,dist:Math.round(b),hp:bc.hp}:null; },
     tpToCritter:function(){ if(!surf.critters.length) return false; var c=surf.critters[0]; surf.pp.set(c.g.position.x-14,surf.heightFn(c.g.position.x-14,c.g.position.z)+1.75,c.g.position.z); var d=c.g.position.clone().sub(surf.pp); plYaw=Math.atan2(d.x,d.z); plPitch=0; return true; },
     city:function(){ return surf.city?{x:surf.city.x,z:surf.city.z,r:surf.city.r,npcs:surf.npcs.length}:null; },
+    setTime:function(t){ surf.time=t; return surf.time; },
+    dayval:function(){ return surf._day; },
     tpCity:function(dx,dz,pitch,yaw){ if(!surf.city) return false; surf.pp.set(surf.city.x+(dx||0),surf.heightFn(surf.city.x+(dx||0),surf.city.z+(dz||0))+1.75,surf.city.z+(dz||0)); plPitch=pitch||0; plYaw=(yaw===undefined?0:yaw); return true; },
     hurtSelf:function(){ surfDamage(9); },
     net:NET.dbg, netHost:NET.host, netJoin:NET.join,
