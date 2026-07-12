@@ -1382,7 +1382,7 @@
     nightGlows:[], nightLights:[], moon:null, neonMats:[], quest:null,
     weather:null, weatherOff:null, weatherN:0, weatherKind:null, pois:[], aurora:null, emitters:[],
     shots:[], eshots:[], turrets:[], flyers:[], hostile:false,
-    portals:[], portalCd:0 };
+    portals:[], portalCd:0, decoPortals:[] };
   var portalGun=false; // sbloccata parlando con lo scienziato
   var _sunWhite=new TH.Color(0xffffff), _sunWarm=new TH.Color(0xff9a50);
   var CRIT_CFG={ terran:{col:0x7a9a4a,fl:0}, ocean:{col:0x4a9ab0,fl:0.5}, desert:{col:0xc8a060,fl:0},
@@ -1579,7 +1579,7 @@
   }
   function updatePortals(dt){
     surf.portalCd=Math.max(0,surf.portalCd-dt);
-    surf.portals.forEach(function(p){
+    surf.portals.concat(surf.decoPortals).forEach(function(p){
       p.mat.uniforms.uTime.value+=dt; p.g.rotation.z+=dt*0.5; p.born=Math.min(1,(p.born||0)+dt*2.5);
       // apparizione a scatto
       var s=0.2+0.8*p.born; p.g.scale.set(s,s,s);
@@ -1638,14 +1638,33 @@
     g.traverse(function(c){ if(c.isMesh) c.castShadow=true; });
     return g;
   }
+  function labelSprite(text,color){
+    var cv=document.createElement('canvas'); cv.width=256; cv.height=64; var x=cv.getContext('2d');
+    x.font='600 26px IBM Plex Mono,monospace'; x.textAlign='center';
+    var w=Math.min(240,x.measureText(text).width+24);
+    x.fillStyle='rgba(6,12,8,0.6)'; x.fillRect(128-w/2,12,w,40);
+    x.fillStyle=color||'#7dffa0'; x.fillText(text,128,40);
+    var t=new TH.CanvasTexture(cv);
+    var s=new TH.Sprite(new TH.SpriteMaterial({map:t,transparent:true,depthWrite:false}));
+    s.scale.set(7,1.75,1); return s;
+  }
   function spawnDuo(rng){
     var C=surf.city; if(!C) return;
-    var a=rng()*6.283, d=C.r*0.4;
-    var sx=C.x+Math.cos(a)*d, sz=C.z+Math.sin(a)*d;
-    var sci=duoModel('scienziato'); sci.position.set(sx,surf.heightFn(sx,sz),sz); sci.scale.setScalar(1.08); surf.group.add(sci);
-    var kid=duoModel('nipote'); kid.position.set(sx+2,surf.heightFn(sx+2,sz),sz); kid.scale.setScalar(0.9); surf.group.add(kid);
+    // posizione FISSA e visibile: accanto al Colosseo a Roma, ai piedi della guglia su Nyx
+    var sx,sz;
+    if(C.kind==='roma'){ sx=C.x-95+54; sz=C.z-70+14; }
+    else { sx=C.x+24; sz=C.z+16; }
+    var sci=duoModel('scienziato'); sci.position.set(sx,surf.heightFn(sx,sz),sz); sci.scale.setScalar(1.15); surf.group.add(sci);
+    var kid=duoModel('nipote'); kid.position.set(sx+2.2,surf.heightFn(sx+2.2,sz),sz); kid.scale.setScalar(0.9); surf.group.add(kid);
+    // etichette sopra la testa
+    var lb=labelSprite('SCIENZIATO','#7dffa0'); lb.position.y=2.75; sci.add(lb);
+    var lb2=labelSprite('NIPOTE','#ffe08a'); lb2.position.y=2.35; kid.add(lb2);
+    // portale decorativo aperto dietro di lui (visibile da lontano)
+    var pp=new TH.Vector3(sx-3.5,surf.heightFn(sx-3.5,sz-3)+2.6,sz-3);
+    var deco=makePortal(pp,new TH.Vector3(0.5,0,0.86)); deco.born=1;
+    surf.decoPortals.push(deco);
     // marcatore verde portale sopra lo scienziato
-    var mk=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0x3aff5a,blending:TH.AdditiveBlending,depthWrite:false,transparent:true,opacity:0.95})); mk.position.y=3.2; mk.scale.set(2.6,2.6,1); sci.add(mk);
+    var mk=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0x3aff5a,blending:TH.AdditiveBlending,depthWrite:false,transparent:true,opacity:0.95})); mk.position.y=3.6; mk.scale.set(2.6,2.6,1); sci.add(mk);
     surf.npcs.push({ g:sci, kind:'scienziato', special:true, lines:[
       'Ascolta bene, perché lo dico una volta sola *burp*. Questa è una portal gun.',
       'Punti, spari, ci passi attraverso. Fisica interdimensionale, roba che il tuo cervello nemmeno.',
@@ -1754,7 +1773,7 @@
         wander:rng()*6.28, wt:rng()*3, spd:1.0+rng()*1.2, talkCd:0, hx:px, hz:pz, home:new TH.Vector3(px,0,pz), floatK:(kind==='drone') });
     }
     markQuestGiver('drone','UNITÀ SINTETICA');
-    if(!portalGun) spawnDuo(rng);
+    spawnDuo(rng);
   }
   function alienModel(rng,kind){
     var g=new TH.Group();
@@ -2074,6 +2093,12 @@
       });
     })();
 
+    // monumenti sul radar
+    poi(C.x-95,C.z-70,'Colosseo','rgba(255,214,140,1)');
+    poi(C.x+90,C.z+50,'Pantheon','rgba(232,226,210,0.95)');
+    poi(C.x+150,C.z-150,'San Pietro','rgba(200,215,230,0.95)');
+    poi(C.x+surf.tiber,C.z-150,'Castel S.Angelo','rgba(240,200,120,0.9)');
+
     surf.cityGroup=grp;
   }
 
@@ -2101,7 +2126,7 @@
         hx:px, hz:pz, home:new TH.Vector3(px,0,pz) });
     }
     markQuestGiver('centurione','CENTURIONE');
-    if(!portalGun) spawnDuo(rng);
+    spawnDuo(rng);
   }
   function markQuestGiver(preferKind,label){
     if(!surf.npcs.length) return;
@@ -2125,7 +2150,8 @@
         var tx=Math.cos(n.wander), tz=Math.sin(n.wander);
         // richiamo verso casa se troppo lontano
         var dh=Math.hypot(g.position.x-n.home.x,g.position.z-n.home.z);
-        if(dh>45){ tx=(n.home.x-g.position.x); tz=(n.home.z-g.position.z); var l=Math.hypot(tx,tz)||1; tx/=l; tz/=l; }
+        var maxRoam=n.special?8:45;
+        if(dh>maxRoam){ tx=(n.home.x-g.position.x); tz=(n.home.z-g.position.z); var l=Math.hypot(tx,tz)||1; tx/=l; tz/=l; }
         var nx=g.position.x+tx*n.spd*dt, nz=g.position.z+tz*n.spd*dt;
         var dc=Math.hypot(nx-surf.city.x,nz-surf.city.z);
         if(dc<surf.city.r-6){ g.position.x=nx; g.position.z=nz; g.rotation.y=Math.atan2(tx,tz); moving=true; }
@@ -2612,7 +2638,7 @@
       else if(type==='toxic' && rng2()<0.5) buildWeather('rain');
     }
     // contenuti/punti d'interesse specifici del bioma
-    surf.turrets=[]; surf.flyers=[]; surf.shots=[]; surf.eshots=[]; surf.hostile=!!body.hostile; surf.portals=[]; surf.portalCd=0;
+    surf.turrets=[]; surf.flyers=[]; surf.shots=[]; surf.eshots=[]; surf.hostile=!!body.hostile; surf.portals=[]; surf.portalCd=0; surf.decoPortals=[];
     if(!surf.city) buildBiome(type,rng2);
     if(!surf.city && body.hostile) buildThreats(rng2);
 
@@ -2736,7 +2762,7 @@
     surf.nightGlows=[]; surf.nightLights=[]; surf.moon=null; surf.neonMats=[]; surf.platforms=[]; surf.quest=null;
     surf.weather=null; surf.weatherOff=null; surf.aurora=null; surf.pois=[]; surf.emitters=[];
     surf.turrets=[]; surf.flyers=[]; surf.shots=[]; surf.eshots=[]; surf.hostile=false;
-    surf.portals=[]; surf.portalCd=0;
+    surf.portals=[]; surf.portalCd=0; surf.decoPortals=[];
     scene.fog=null; surf.active=false; surf.water=null;
     amb.intensity=0.5; hemi.intensity=0.3; sunLight.intensity=2.6;
     if(bloomPass){ bloomPass.strength=PROPS.bloomStrength; bloomPass.threshold=0.55; }
@@ -2788,8 +2814,8 @@
       mission('★','Nyx Prime · METROPOLI','Esplora la città aliena al neon. Parla con gli abitanti (F), sorvolala (E)');
       toast('BENVENUTA A NYX PRIME','Metropoli aliena · torri al neon e piattaforme fluttuanti');
     } else if(surf.city){
-      mission('★','Terra · ROMA','Visita la Città Eterna: Colosseo, Pantheon, obelisco. Parla coi romani (F)');
-      toast('BENVENUTA A ROMA','Segui il blip dorato sul radar · F per parlare con la gente');
+      mission('★','Terra · ROMA','Visita la Città Eterna — lo scienziato col portale ti aspetta al Colosseo');
+      toast('BENVENUTA A ROMA',portalGun?'Lo scienziato è al Colosseo (blip verde)':'Cerca il portale verde al Colosseo: lo scienziato ha un regalo per te');
     } else if(body.hostile){
       mission('★','⚠ '+body.name+' · OSTILE','Difese nemiche attive: torrette e droni. Distruggile (blaster o cannone in volo)');
       toast('MONDO OSTILE · '+body.name.toUpperCase(),'Difese attive! Sali sulla nave (E) e apri il fuoco (CLIC)');
@@ -3124,7 +3150,7 @@
       if(inShip) sblip(surf.pp.x,surf.pp.z,'rgba(120,255,180,0.5)',1.4);
       surf.nodes.forEach(function(n){ sblip(n.m.position.x,n.m.position.z,'rgba(87,214,160,0.9)',1.8); });
       surf.critters.forEach(function(cr){ sblip(cr.g.position.x,cr.g.position.z,cr.hostile?'rgba(255,80,70,1)':'rgba(200,190,120,0.85)',cr.hostile?2.4:1.8); });
-      surf.npcs.forEach(function(n){ sblip(n.g.position.x,n.g.position.z,'rgba(120,200,255,0.7)',1.4); });
+      surf.npcs.forEach(function(n){ sblip(n.g.position.x,n.g.position.z,n.special?'rgba(58,255,90,1)':'rgba(120,200,255,0.7)',n.special?2.8:1.4); });
       if(surf.city){ sblip(surf.city.x,surf.city.z,'rgba(240,200,120,0.9)',3); }
       surf.pois.forEach(function(pt){ sblip(pt.x,pt.z,pt.col,2.4); });
       surf.turrets.forEach(function(t){ sblip(t.g.position.x,t.g.position.z,'rgba(255,80,70,1)',2.2); });
