@@ -277,10 +277,16 @@
   var amb=new TH.AmbientLight(0x22303f,0.32); scene.add(amb);
   var hemi=new TH.HemisphereLight(0x33506e,0x05060c,0.2); scene.add(hemi);
   var sunLight=new TH.DirectionalLight(0xffffff,2.6); sunLight.position.set(1,0.4,1); scene.add(sunLight);
-  sunLight.castShadow=true; sunLight.shadow.mapSize.set(2048,2048); sunLight.shadow.bias=-0.0005;
+  sunLight.castShadow=true; sunLight.shadow.mapSize.set(2048,2048); sunLight.shadow.bias=-0.0004; sunLight.shadow.normalBias=0.03;
   sunLight.shadow.camera.left=-300; sunLight.shadow.camera.right=300; sunLight.shadow.camera.top=300; sunLight.shadow.camera.bottom=-300;
   sunLight.shadow.camera.near=1; sunLight.shadow.camera.far=1400;
   scene.add(sunLight.target);
+  var MAX_ANISO=4; try{ MAX_ANISO=renderer.capabilities.getMaxAnisotropy(); }catch(e){}
+  // ombre nitide: frustum stretto in superficie, largo nello spazio
+  function setShadowArea(half,far,mapSz){
+    var c=sunLight.shadow.camera; c.left=-half; c.right=half; c.top=half; c.bottom=-half; c.far=far; c.updateProjectionMatrix();
+    if(mapSz && sunLight.shadow.mapSize.x!==mapSz){ sunLight.shadow.mapSize.set(mapSz,mapSz); if(sunLight.shadow.map){ sunLight.shadow.map.dispose(); sunLight.shadow.map=null; } }
+  }
   var sunLight2=new TH.PointLight(0xffe0b0,0.0,4000); scene.add(sunLight2); // companion (binary) light
 
   // ---------- environment map PBR: riflessi realistici su metalli e vetri ----------
@@ -522,7 +528,7 @@
     }
     for(i=0;i<S*S*0.02;i++){ var g2=(rng()*255)|0; x.fillStyle='rgba('+g2+','+g2+','+g2+','+(0.015+rng()*0.04)+')'; x.fillRect(rng()*S,rng()*S,1.2,1.2); }
 
-    var tex=new TH.CanvasTexture(cv); tex.anisotropy=8;
+    var tex=new TH.CanvasTexture(cv); tex.anisotropy=MAX_ANISO;
     var rtex=new TH.CanvasTexture(rcv);
     var btex=new TH.CanvasTexture(bcv);
     var ntex=new TH.CanvasTexture(ncv);
@@ -596,6 +602,44 @@
     var mesh=new TH.Mesh(g,m);
     mesh.rotation.x=Math.PI/2.25+(rng()-0.5)*0.2; mesh.rotation.y=rng()*0.3;
     return mesh;
+  }
+
+  // ---------- texture condivise: micro-dettaglio terreno + onde acqua ----------
+  var DETAIL_TEX=null, WATER_NRM=null;
+  function getDetailTex(){
+    if(DETAIL_TEX) return DETAIL_TEX;
+    var S=256, cv=document.createElement('canvas'); cv.width=cv.height=S; var x=cv.getContext('2d');
+    var n=makeNoise2D(mulberry32(4242)), n2=makeNoise2D(mulberry32(777));
+    var img=x.createImageData(S,S), d=img.data;
+    for(var py=0;py<S;py++){ for(var px=0;px<S;px++){
+      var e=n(px/S*6,py/S*6,4)*0.6+n2(px/S*18,py/S*18,3)*0.4;
+      var v=Math.max(150,Math.min(255,205+e*56));
+      var i=(py*S+px)*4; d[i]=v; d[i+1]=v; d[i+2]=v; d[i+3]=255;
+    }}
+    x.putImageData(img,0,0);
+    DETAIL_TEX=new TH.CanvasTexture(cv);
+    DETAIL_TEX.wrapS=DETAIL_TEX.wrapT=TH.MirroredRepeatWrapping;
+    DETAIL_TEX.repeat.set(150,150); DETAIL_TEX.anisotropy=MAX_ANISO;
+    return DETAIL_TEX;
+  }
+  function getWaterNrm(){
+    if(WATER_NRM) return WATER_NRM;
+    var S=256, cv=document.createElement('canvas'); cv.width=cv.height=S; var x=cv.getContext('2d');
+    var n=makeNoise2D(mulberry32(1313));
+    var h=new Float32Array(S*S);
+    for(var py=0;py<S;py++){ for(var px=0;px<S;px++){ h[py*S+px]=n(px/S*7,py/S*7,4)*0.6+n(px/S*19+5,py/S*19+5,3)*0.4; }}
+    var img=x.createImageData(S,S), d=img.data, str=2.4;
+    for(py=0;py<S;py++){ for(px=0;px<S;px++){
+      var xl=h[py*S+((px-1+S)%S)], xr=h[py*S+((px+1)%S)];
+      var yu=h[((py-1+S)%S)*S+px], yd=h[((py+1)%S)*S+px];
+      var dx=(xl-xr)*str, dy=(yu-yd)*str, inv=1/Math.sqrt(dx*dx+dy*dy+1);
+      var i=(py*S+px)*4; d[i]=(dx*inv*0.5+0.5)*255; d[i+1]=(dy*inv*0.5+0.5)*255; d[i+2]=(inv*0.5+0.5)*255; d[i+3]=255;
+    }}
+    x.putImageData(img,0,0);
+    WATER_NRM=new TH.CanvasTexture(cv);
+    WATER_NRM.wrapS=WATER_NRM.wrapT=TH.MirroredRepeatWrapping;
+    WATER_NRM.repeat.set(26,26); WATER_NRM.anisotropy=MAX_ANISO;
+    return WATER_NRM;
   }
 
   // ---------- starfield con scintillio ----------
@@ -789,9 +833,10 @@
   // ---------- nave (modello riutilizzabile: locale + giocatori remoti) ----------
   function buildShipModel(ship,lite){
     var shipEngines=[], shipNavLights=[], engineLight=null;
-    var body=new TH.MeshStandardMaterial({color:0xb9c4d0,metalness:0.85,roughness:0.32});
-    var dark=new TH.MeshStandardMaterial({color:0x2b333d,metalness:0.72,roughness:0.46});
-    var panel=new TH.MeshStandardMaterial({color:0x8b95a2,metalness:0.7,roughness:0.4});
+    // vernice metallica con clearcoat (materiali fisici, riflessi da carrozzeria)
+    var body=new TH.MeshPhysicalMaterial({color:0xb9c4d0,metalness:0.85,roughness:0.28,clearcoat:0.8,clearcoatRoughness:0.2});
+    var dark=new TH.MeshPhysicalMaterial({color:0x2b333d,metalness:0.72,roughness:0.42,clearcoat:0.5,clearcoatRoughness:0.3});
+    var panel=new TH.MeshPhysicalMaterial({color:0x8b95a2,metalness:0.7,roughness:0.36,clearcoat:0.6,clearcoatRoughness:0.25});
     var accentGlow=new TH.MeshStandardMaterial({color:0x5fd0e0,emissive:0x2a8090,emissiveIntensity:1.2,metalness:0.5,roughness:0.3});
     var fus=new TH.Mesh(new TH.CylinderGeometry(0.5,0.92,5.2,18),body); fus.rotation.x=Math.PI/2; ship.add(fus);
     var nose=new TH.Mesh(new TH.ConeGeometry(0.5,1.9,18),body); nose.rotation.x=-Math.PI/2; nose.position.z=3.4; ship.add(nose);
@@ -1495,7 +1540,7 @@
       dx.strokeStyle='rgba(30,22,14,0.6)'; dx.lineWidth=1; dx.beginPath(); dx.moveTo(wx+ww/2,wy); dx.lineTo(wx+ww/2,wy+wh); dx.moveTo(wx,wy+wh/2); dx.lineTo(wx+ww,wy+wh/2); dx.stroke();
       if(rng()<0.5){ ex.fillStyle='rgb(255,'+(198+Math.floor(rng()*44))+','+(104+Math.floor(rng()*70))+')'; ex.fillRect(wx,wy,ww,wh); }
     }}
-    var m=new TH.CanvasTexture(dc); m.wrapS=m.wrapT=TH.RepeatWrapping; m.anisotropy=8;
+    var m=new TH.CanvasTexture(dc); m.wrapS=m.wrapT=TH.RepeatWrapping; m.anisotropy=MAX_ANISO;
     var e=new TH.CanvasTexture(ec); e.wrapS=e.wrapT=TH.RepeatWrapping; e.anisotropy=4;
     return {map:m,emis:e};
   }
@@ -1508,7 +1553,7 @@
       x.fillStyle='rgb('+b+','+(b-8)+','+(b-16)+')';
       x.beginPath(); x.arc((gx+off)%S+5,gy+5,4.4,0,7); x.fill();
     }}
-    var t=new TH.CanvasTexture(c); t.wrapS=t.wrapT=TH.RepeatWrapping; t.anisotropy=8; return t;
+    var t=new TH.CanvasTexture(c); t.wrapS=t.wrapT=TH.RepeatWrapping; t.anisotropy=MAX_ANISO; return t;
   }
 
   // ================== PORTAL GUN (omaggio parodia) ==================
@@ -2621,7 +2666,7 @@
     }
     tg.setAttribute('color',new TH.Float32BufferAttribute(colArr,3));
     tg.computeVertexNormals();
-    var tmat=new TH.MeshStandardMaterial({vertexColors:true,roughness:0.95,metalness:0.02});
+    var tmat=new TH.MeshStandardMaterial({vertexColors:true,map:getDetailTex(),roughness:0.95,metalness:0.02});
     tmat.envMapIntensity=0.2;
     var terrain=new TH.Mesh(tg,tmat); terrain.receiveShadow=true; surf.group.add(terrain);
 
@@ -2630,9 +2675,10 @@
     if(surf.waterY>-9000){
       var isLava=(type==='lava');
       var wmat=new TH.MeshStandardMaterial({ color:new TH.Color(P.water),
-        transparent:!isLava, opacity:isLava?1:0.84, roughness:isLava?0.6:0.1, metalness:0.05 });
+        transparent:!isLava, opacity:isLava?1:0.84, roughness:isLava?0.6:0.06, metalness:0.08,
+        normalMap:getWaterNrm(), normalScale:new TH.Vector2(isLava?0.6:0.35,isLava?0.6:0.35) });
       if(isLava){ wmat.emissive=new TH.Color(0xff5a2a); wmat.emissiveIntensity=0.9; }
-      wmat.envMapIntensity=1.1;
+      wmat.envMapIntensity=1.3;
       surf.water=new TH.Mesh(new TH.PlaneGeometry(SIZE,SIZE),wmat);
       surf.water.rotation.x=-Math.PI/2; surf.water.position.y=surf.waterY; surf.group.add(surf.water);
     }
@@ -2799,6 +2845,7 @@
 
     // illuminazione superficie (bloom tarato per lo spazio: quaggiù va ridotto)
     amb.intensity=P.atmo?0.55:0.35; hemi.intensity=P.atmo?0.42:0.22; sunLight.intensity=1.35;
+    setShadowArea(130,700,qualityHigh?4096:1024); // ombre nitide a terra
     if(bloomPass){ bloomPass.strength=0.22; bloomPass.threshold=0.85; }
     // con atmosfera il cielo copre lo spazio profondo: niente stelle/via lattea in additive
     if(P.atmo){ stars.visible=false; milkyMesh.visible=false; nebulaSprites.forEach(function(sp){ sp.visible=false; }); }
@@ -2825,6 +2872,7 @@
     amb.intensity=0.32; hemi.intensity=0.2; sunLight.intensity=2.6;
     if(bloomPass){ bloomPass.strength=PROPS.bloomStrength; bloomPass.threshold=0.55; }
     stars.visible=true; milkyMesh.visible=true; nebulaSprites.forEach(function(sp){ sp.visible=true; });
+    setShadowArea(300,1400,2048);
   }
   function tryLand(){
     if(mode!=='space'||warp||docked||dActive) return;
@@ -2993,6 +3041,8 @@
       stars.visible=nightSky; milkyMesh.visible=nightSky;
     }
     surf.clouds.forEach(function(c){ c.position.x+=c.userData.v*dt; if(c.position.x>2600) c.position.x=-2600; c.material.opacity=0.05+0.11*day; });
+    // onde: la normal map dell'acqua scorre
+    if(surf.water&&surf.water.material.normalMap){ var wnm=surf.water.material.normalMap; wnm.offset.x+=dt*0.014; wnm.offset.y+=dt*0.008; }
     updateWeather(dt); updateEmitters(dt);
     if(surf.aurora){ surf.aurora.mat.uniforms.uTime.value+=dt; surf.aurora.mat.uniforms.uOp.value=clamp01((0.4-day)/0.4); }
     if(surf.city) cityNight(dt,day);
@@ -3739,6 +3789,7 @@
       if(bloomPass) bloomPass.strength=surf.active?0.12:PROPS.bloomStrength*0.5;
     }
     scene.traverse(function(o){ if(o.material){ var m=Array.isArray(o.material)?o.material:[o.material]; m.forEach(function(mm){ mm.needsUpdate=true; }); } });
+    if(surf.active) setShadowArea(130,700,qualityHigh?4096:1024); else setShadowArea(300,1400,2048);
     setTxt('rr_setQual',qualityHigh?'ALTA':'BASSA');
     onResize();
   }
