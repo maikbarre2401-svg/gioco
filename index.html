@@ -251,6 +251,8 @@
     return;
   }
   var PROPS={ bloomStrength:0.72, flightAssist:true, hudAccent:'Cyan' };
+  // acchiappa-errori: non far mai morire il gioco in silenzio
+  window.addEventListener('error',function(ev){ try{ window.DF_LAST_ERROR=ev.message; console.warn('DEEP FIELD errore:',ev.message,ev.filename,ev.lineno); }catch(e){} });
   var TH=THREE;
   var $=function(id){ return document.getElementById(id); };
   var root=$('rr_root'), canvas=$('rr_c');
@@ -867,12 +869,26 @@
       var s=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0x6fd6ff,blending:TH.AdditiveBlending,depthWrite:false,transparent:true})); s.position.set(xe,0,-3.4); s.scale.set(2.6,2.6,1); ship.add(s); shipEngines.push(s);
     });
     if(!lite){ engineLight=new TH.PointLight(0x6fd6ff,0.8,26); engineLight.position.set(0,0,-3.6); ship.add(engineLight); }
+    // carrello d'atterraggio retrattile (visibile solo a terra)
+    var legsG=null;
+    if(!lite){
+      legsG=new TH.Group();
+      var strutM=new TH.MeshStandardMaterial({color:0x4a505a,metalness:0.75,roughness:0.4});
+      [[-1.7,-0.6,-14],[1.7,-0.6,14],[0,2.6,0]].forEach(function(pp){
+        var strut=new TH.Mesh(new TH.CylinderGeometry(0.09,0.12,1.5,8),strutM);
+        strut.position.set(pp[0],-1.0,pp[1]); strut.rotation.z=pp[2]*0.017; legsG.add(strut);
+        var foot=new TH.Mesh(new TH.CylinderGeometry(0.34,0.42,0.16,10),strutM);
+        foot.position.set(pp[0],-1.72,pp[1]); legsG.add(foot);
+      });
+      legsG.traverse(function(c){ if(c.isMesh){ c.castShadow=true; } });
+      legsG.visible=false; ship.add(legsG);
+    }
     ship.traverse(function(c){ if(c.isMesh){ c.castShadow=true; c.receiveShadow=true; } });
-    return {engines:shipEngines, navs:shipNavLights, engineLight:engineLight};
+    return {engines:shipEngines, navs:shipNavLights, engineLight:engineLight, legs:legsG};
   }
   var ship=new TH.Group(); scene.add(ship);
   var _sm=buildShipModel(ship,false);
-  var shipEngines=_sm.engines, shipNavLights=_sm.navs, engineLight=_sm.engineLight;
+  var shipEngines=_sm.engines, shipNavLights=_sm.navs, engineLight=_sm.engineLight, shipLegs=_sm.legs;
 
   // scia dei motori
   var trail=[]; var trailTimer=0;
@@ -1654,10 +1670,17 @@
     destroySurface();
     buildSurface(db);
     ship.visible=false;
-    surf.pp.set(0,surf.heightFn(0,0)+1.75,0); surf.pv.set(0,0,0); surf.onGround=true; plYaw=Math.PI; plPitch=-0.02;
+    // trova terra asciutta (mai spawn in un lago!)
+    var sx0=0,sz0=0;
+    if(surf.waterY>-9000 && surf.heightFn(0,0)<surf.waterY+2.5){
+      for(var ri=1;ri<60;ri++){ var ra=ri*2.39996, rd=ri*26;
+        var tx0=Math.cos(ra)*rd, tz0=Math.sin(ra)*rd;
+        if(surf.heightFn(tx0,tz0)>surf.waterY+2.5){ sx0=tx0; sz0=tz0; break; } }
+    }
+    surf.pp.set(sx0,surf.heightFn(sx0,sz0)+1.75,sz0); surf.pv.set(0,0,0); surf.onGround=true; plYaw=Math.PI; plPitch=-0.02;
     camera.position.copy(surf.pp); camera.rotation.set(plPitch,plYaw,0);
     // portale di ritorno alle tue spalle
-    var rp=makePortal(new TH.Vector3(0,surf.heightFn(0,7)+2.6,7),new TH.Vector3(0,0,-1));
+    var rp=makePortal(new TH.Vector3(sx0,surf.heightFn(sx0,sz0+7)+2.6,sz0+7),new TH.Vector3(0,0,-1));
     rp.born=1; rp.isReturn=true; surf.decoPortals.push(rp);
     surf.portalCd=1.6;
     flash(); SND.warpJump();
@@ -2505,12 +2528,30 @@
       var drill=new TH.Mesh(new TH.ConeGeometry(2,6,6),new TH.MeshStandardMaterial({color:0x8a7a60,metalness:0.7,roughness:0.5})); drill.position.y=3; rig.add(drill);
       var tank=new TH.Mesh(new TH.CylinderGeometry(3,3,6,10),new TH.MeshStandardMaterial({color:0x7a8088,metalness:0.6,roughness:0.5})); tank.position.set(8,3,4); rig.add(tank);
       rig.add(new TH.PointLight(0xffcf70,1,60)); rig.traverse(function(c){ if(c.isMesh) c.castShadow=true; }); poi(110,90,'Rig minerario','rgba(255,207,112,0.9)');
-    } else { // terran / ocean non-Roma: villaggio
+    } else { // terran / ocean non-Roma: villaggio con case vere
       var vil=grpAt(90,-70);
-      for(i=0;i<7;i++){ var va=i/7*6.28, vd=8+rng()*10; var hut=new TH.Mesh(new TH.BoxGeometry(4,3.4,4),new TH.MeshStandardMaterial({color:[0xc9a06a,0xb08858,0xa87848][i%3],roughness:0.9})); hut.position.set(Math.cos(va)*vd,1.7,Math.sin(va)*vd); vil.add(hut);
-        var roof=new TH.Mesh(new TH.ConeGeometry(3.4,2.4,4),new TH.MeshStandardMaterial({color:0x7a4a2a,roughness:0.9})); roof.position.set(Math.cos(va)*vd,4.4,Math.sin(va)*vd); roof.rotation.y=0.78; vil.add(roof); }
-      var well=new TH.Mesh(new TH.CylinderGeometry(2,2,1.5,10),new TH.MeshStandardMaterial({color:0x8a8078,roughness:0.9})); well.position.y=0.75; vil.add(well);
-      vil.add(new TH.PointLight(0xffd090,0.9,50)); vil.traverse(function(c){ if(c.isMesh) c.castShadow=true; }); poi(90,-70,'Villaggio','rgba(255,208,144,0.9)');
+      surf.villageMats=[];
+      for(i=0;i<8;i++){ var va=i/8*6.28, vd=9+rng()*12;
+        var hx2=Math.cos(va)*vd, hz2=Math.sin(va)*vd;
+        var hw=4.5+rng()*2, hd=4+rng()*2, hh=3.6+rng()*1.2;
+        // pareti con facciata texturizzata (finestre vere, emissive di notte)
+        var ft2=facadeTex(rng); ft2.map.repeat.set(1,1); ft2.emis.repeat.set(1,1);
+        var wallMat=new TH.MeshStandardMaterial({map:ft2.map,emissiveMap:ft2.emis,emissive:0xffffff,emissiveIntensity:0,roughness:0.9});
+        surf.villageMats.push(wallMat);
+        var hut=new TH.Mesh(new TH.BoxGeometry(hw,hh,hd),wallMat); hut.position.set(hx2,hh/2,hz2); hut.rotation.y=va+1.57; vil.add(hut);
+        // tetto a falde in coppi
+        var roof=new TH.Mesh(new TH.CylinderGeometry(0.01,hw*0.78,2.2,4),new TH.MeshStandardMaterial({color:0x8a4a28,roughness:0.85,flatShading:true}));
+        roof.position.set(hx2,hh+1.1,hz2); roof.rotation.y=va+1.57+0.785; vil.add(roof);
+        // porta + comignolo
+        var door=new TH.Mesh(new TH.BoxGeometry(0.9,1.7,0.08),new TH.MeshStandardMaterial({color:0x4a2e18,roughness:0.9}));
+        door.position.set(hx2+Math.cos(va)*(0.04+hd/2)*(-1),0.85,hz2+Math.sin(va)*(0.04+hd/2)*(-1)); door.rotation.y=va+1.57; vil.add(door);
+        var chim=new TH.Mesh(new TH.BoxGeometry(0.5,1.4,0.5),new TH.MeshStandardMaterial({color:0x8a8078,roughness:0.95}));
+        chim.position.set(hx2+0.9,hh+1.4,hz2+0.6); vil.add(chim);
+      }
+      var well=new TH.Mesh(new TH.CylinderGeometry(2,2.2,1.5,12),new TH.MeshStandardMaterial({color:0x8a8078,roughness:0.9})); well.position.y=0.75; vil.add(well);
+      var wroof=new TH.Mesh(new TH.ConeGeometry(2.6,1.4,8),new TH.MeshStandardMaterial({color:0x6a4028,roughness:0.9})); wroof.position.y=3.4; vil.add(wroof);
+      [[-1],[1]].forEach(function(a){ var post=new TH.Mesh(new TH.CylinderGeometry(0.12,0.12,2.6,6),new TH.MeshStandardMaterial({color:0x5a4030})); post.position.set(a[0]*1.6,2,0); vil.add(post); });
+      vil.add(new TH.PointLight(0xffd090,0.9,50)); vil.traverse(function(c){ if(c.isMesh){ c.castShadow=true; c.receiveShadow=true; } }); poi(90,-70,'Villaggio','rgba(255,208,144,0.9)');
     }
   }
   function updateEmitters(dt){
@@ -2649,7 +2690,7 @@
     surf.group=new TH.Group(); scene.add(surf.group);
 
     // terreno con vertex color
-    var SEG=150, SIZE=4200;
+    var SEG=qualityHigh?200:130, SIZE=4200;
     var tg=new TH.PlaneGeometry(SIZE,SIZE,SEG,SEG); tg.rotateX(-Math.PI/2);
     var pos=tg.attributes.position, colArr=[];
     var cw=hx(P.shallow||P.low), cl=hx(P.low), ch=hx(P.high), cp=hx(P.peak);
@@ -2867,7 +2908,7 @@
     surf.nightGlows=[]; surf.nightLights=[]; surf.moon=null; surf.neonMats=[]; surf.platforms=[]; surf.quest=null;
     surf.weather=null; surf.weatherOff=null; surf.aurora=null; surf.pois=[]; surf.emitters=[];
     surf.turrets=[]; surf.flyers=[]; surf.shots=[]; surf.eshots=[]; surf.hostile=false;
-    surf.portals=[]; surf.portalCd=0; surf.decoPortals=[];
+    surf.portals=[]; surf.portalCd=0; surf.decoPortals=[]; surf.villageMats=[];
     scene.fog=null; surf.active=false; surf.water=null;
     amb.intensity=0.32; hemi.intensity=0.2; sunLight.intensity=2.6;
     if(bloomPass){ bloomPass.strength=PROPS.bloomStrength; bloomPass.threshold=0.55; }
@@ -2911,6 +2952,7 @@
     var shx=lx0+12, shz=lz0+18, sy=surf.heightFn(shx,shz);
     ship.position.set(shx,sy+1.7,shz);
     ship.quaternion.set(0,0,0,1); ship.rotateY(Math.PI*0.7); ship.rotateZ(0.02);
+    if(shipLegs) shipLegs.visible=true;
     plYaw=surf.city?Math.PI:0; plPitch=-0.04;
     surf.pp.set(lx0,surf.heightFn(lx0,lz0)+1.75,lz0); surf.pv.set(0,0,0); surf.onGround=true;
     camera.rotation.order='YXZ'; camera.fov=70; camera.updateProjectionMatrix();
@@ -2934,6 +2976,7 @@
   function leaveSurface(){
     destroySurface();
     dimension=null; ship.visible=true;
+    if(shipLegs) shipLegs.visible=false;
     if(document.exitPointerLock) document.exitPointerLock();
     sysGroup.visible=true; dust.visible=true;
     if(outpost) outpost.visible=true;
@@ -2956,6 +2999,7 @@
     if(dimension){ toast('LA NAVE NON È QUI','La nave è rimasta a casa — torna dal portale (B)'); return; }
     if(surf.pp.distanceTo(ship.position)>28){ toast('TROPPO LONTANO','Avvicinati alla nave e premi E'); return; }
     if(document.exitPointerLock) document.exitPointerLock();
+    if(shipLegs) shipLegs.visible=false;
     mode='surfship'; shipYaw=plYaw; shipPitch=0.06; throttle=0.35; boosting=false;
     var gy=surf.heightFn(ship.position.x,ship.position.z);
     ship.position.y=Math.max(ship.position.y,gy+10);
@@ -2970,6 +3014,7 @@
     ship.position.y=gy+1.7; shipPitch=0;
     var fq=new TH.Quaternion().setFromUnitVectors(new TH.Vector3(0,0,1),new TH.Vector3(Math.sin(shipYaw),0,Math.cos(shipYaw)));
     ship.quaternion.copy(fq);
+    if(shipLegs) shipLegs.visible=true;
     // scendi accanto alla nave
     var side=new TH.Vector3(Math.cos(shipYaw),0,-Math.sin(shipYaw)).multiplyScalar(4);
     var px=ship.position.x+side.x, pz=ship.position.z+side.z;
@@ -3043,6 +3088,9 @@
     surf.clouds.forEach(function(c){ c.position.x+=c.userData.v*dt; if(c.position.x>2600) c.position.x=-2600; c.material.opacity=0.05+0.11*day; });
     // onde: la normal map dell'acqua scorre
     if(surf.water&&surf.water.material.normalMap){ var wnm=surf.water.material.normalMap; wnm.offset.x+=dt*0.014; wnm.offset.y+=dt*0.008; }
+    // finestre dei villaggi accese di notte
+    if(surf.villageMats&&surf.villageMats.length){ var vlit=day<0.45?clamp01((0.45-day)/0.35):0;
+      surf.villageMats.forEach(function(m){ if(m._bias===undefined) m._bias=0.5+Math.random()*0.5; m.emissiveIntensity=vlit*m._bias; }); }
     updateWeather(dt); updateEmitters(dt);
     if(surf.aurora){ surf.aurora.mat.uniforms.uTime.value+=dt; surf.aurora.mat.uniforms.uOp.value=clamp01((0.4-day)/0.4); }
     if(surf.city) cityNight(dt,day);
