@@ -274,8 +274,8 @@
   var camera=new TH.PerspectiveCamera(62, W/H, 0.5, 90000);
   camera.position.set(0,8,-26);
 
-  var amb=new TH.AmbientLight(0x22303f,0.5); scene.add(amb);
-  var hemi=new TH.HemisphereLight(0x33506e,0x05060c,0.3); scene.add(hemi);
+  var amb=new TH.AmbientLight(0x22303f,0.32); scene.add(amb);
+  var hemi=new TH.HemisphereLight(0x33506e,0x05060c,0.2); scene.add(hemi);
   var sunLight=new TH.DirectionalLight(0xffffff,2.6); sunLight.position.set(1,0.4,1); scene.add(sunLight);
   sunLight.castShadow=true; sunLight.shadow.mapSize.set(2048,2048); sunLight.shadow.bias=-0.0005;
   sunLight.shadow.camera.left=-300; sunLight.shadow.camera.right=300; sunLight.shadow.camera.top=300; sunLight.shadow.camera.bottom=-300;
@@ -340,8 +340,8 @@
       '  col+=uSunCol*(shaft*0.42+core*0.5);',
       ' }',
       ' col*=1.0-uVig*r*r*1.4;',
-      ' col+=vec3((rnd(uv*vec2(1487.0,911.0)+fract(uTime))-0.5)*0.028);',
-      ' col*=1.0-0.022*sin(uv.y*860.0);',
+      ' col+=vec3((rnd(uv*vec2(1487.0,911.0)+fract(uTime))-0.5)*0.012);',
+      ' col*=1.0-0.01*sin(uv.y*860.0);',
       ' gl_FragColor=vec4(col,1.0);',
       '}'
     ].join('\n')
@@ -632,7 +632,8 @@
         var dust=noise(px/Sx*22+9,py/Sy*16+9,3)*0.5+0.5;
         var centerT=Math.exp(-Math.pow((px/Sx-0.5)*3.2,2));
         var col=rgbArr(blue,core,clamp01(centerT*0.8+n*0.25));
-        var a=falloff*(0.08+n*0.30)*(0.35+dust*0.65);
+        var xfade=Math.sin(px/Sx*Math.PI); xfade=xfade*xfade; // dissolve i bordi orizzontali
+        var a=falloff*(0.08+n*0.30)*(0.35+dust*0.65)*xfade;
         var idx=(py*Sx+px)*4;
         d[idx]=col[0]; d[idx+1]=col[1]; d[idx+2]=col[2]; d[idx+3]=Math.min(255,a*255);
       }
@@ -640,17 +641,26 @@
     x.putImageData(img,0,0);
     return new TH.CanvasTexture(cv);
   }
-  var milkyMesh=new TH.Mesh(new TH.PlaneGeometry(64000,21000), new TH.MeshBasicMaterial({map:milkyTex(),transparent:true,blending:TH.AdditiveBlending,depthWrite:false,side:TH.DoubleSide,opacity:0.55}));
+  var milkyMesh=new TH.Mesh(new TH.PlaneGeometry(64000,21000), new TH.MeshBasicMaterial({map:milkyTex(),transparent:true,blending:TH.AdditiveBlending,depthWrite:false,side:TH.DoubleSide,opacity:0.4}));
   milkyMesh.position.set(0,-6000,0); milkyMesh.rotation.x=Math.PI/2.1; milkyMesh.rotation.z=0.4; scene.add(milkyMesh);
 
   // ---------- nebulose ----------
   var _ns=99; function rndN(){ _ns=(_ns*1103515245+12345)&0x7fffffff; return _ns/0x7fffffff; }
   function nebula(c){ var s=256,cv=document.createElement('canvas');cv.width=cv.height=s;var x=cv.getContext('2d');
-    for(var i=0;i<28;i++){ var cx=rndN()*s,cy=rndN()*s,r=20+rndN()*100; var g=x.createRadialGradient(cx,cy,0,cx,cy,r); g.addColorStop(0,c); g.addColorStop(1,'rgba(0,0,0,0)'); x.fillStyle=g; x.fillRect(0,0,s,s);} return new TH.CanvasTexture(cv); }
+    // blob concentrati verso il centro, mai sui bordi
+    for(var i=0;i<26;i++){ var cx=s*0.5+(rndN()-0.5)*s*0.55, cy=s*0.5+(rndN()-0.5)*s*0.55, r=18+rndN()*70;
+      var g=x.createRadialGradient(cx,cy,0,cx,cy,r); g.addColorStop(0,c); g.addColorStop(1,'rgba(0,0,0,0)'); x.fillStyle=g; x.fillRect(0,0,s,s);}
+    // maschera radiale: dissolve i bordi (niente quadrato visibile)
+    x.globalCompositeOperation='destination-in';
+    var m=x.createRadialGradient(s/2,s/2,0,s/2,s/2,s/2);
+    m.addColorStop(0,'rgba(0,0,0,1)'); m.addColorStop(0.55,'rgba(0,0,0,0.85)'); m.addColorStop(1,'rgba(0,0,0,0)');
+    x.fillStyle=m; x.fillRect(0,0,s,s);
+    x.globalCompositeOperation='source-over';
+    return new TH.CanvasTexture(cv); }
   var nebulaSprites=[];
   [['rgba(60,90,160,0.5)',-14000,4000,-9000],['rgba(120,70,150,0.42)',12000,-3000,-15000],['rgba(40,120,140,0.42)',-9000,-6000,14000],['rgba(150,60,110,0.32)',18000,6000,9000],['rgba(50,150,110,0.3)',-19000,-2000,-4000]].forEach(function(a){
     var c=a[0],x=a[1],y=a[2],z=a[3];
-    var sp=new TH.Sprite(new TH.SpriteMaterial({map:nebula(c),blending:TH.AdditiveBlending,depthWrite:false,transparent:true,opacity:0.65}));
+    var sp=new TH.Sprite(new TH.SpriteMaterial({map:nebula(c),blending:TH.AdditiveBlending,depthWrite:false,transparent:true,opacity:0.32}));
     sp.position.set(x,y,z); sp.scale.set(17000,17000,1); scene.add(sp); nebulaSprites.push(sp);
   });
 
@@ -683,10 +693,10 @@
   var slMat=new TH.LineBasicMaterial({color:0xaee2ff,transparent:true,opacity:0,depthWrite:false,blending:TH.AdditiveBlending});
   var speedLines=new TH.LineSegments(slGeo,slMat); speedLines.frustumCulled=false; scene.add(speedLines);
   function updateSpeedLines(speed,fwd,warping){
-    var vis=warping?0.85:clamp01((speed-100)/130)*0.6;
-    slMat.opacity+= (vis-slMat.opacity)*0.15;
+    var vis=warping?0.85:clamp01((speed-110)/150)*0.22;
+    slMat.opacity+= (vis-slMat.opacity)*0.1;
     if(slMat.opacity<0.02){ return; }
-    var len=warping?90:(4+speed*0.09);
+    var len=warping?90:(2+speed*0.04);
     for(var i=0;i<SL_N;i++){
       var p=slPts[i];
       if(p.distanceTo(ship.position)>620){
@@ -2812,7 +2822,7 @@
     surf.turrets=[]; surf.flyers=[]; surf.shots=[]; surf.eshots=[]; surf.hostile=false;
     surf.portals=[]; surf.portalCd=0; surf.decoPortals=[];
     scene.fog=null; surf.active=false; surf.water=null;
-    amb.intensity=0.5; hemi.intensity=0.3; sunLight.intensity=2.6;
+    amb.intensity=0.32; hemi.intensity=0.2; sunLight.intensity=2.6;
     if(bloomPass){ bloomPass.strength=PROPS.bloomStrength; bloomPass.threshold=0.55; }
     stars.visible=true; milkyMesh.visible=true; nebulaSprites.forEach(function(sp){ sp.visible=true; });
   }
@@ -3451,7 +3461,7 @@
     if(shake>0){ desired.x+=(Math.random()-0.5)*shake; desired.y+=(Math.random()-0.5)*shake; shake*=0.86; }
     camera.position.lerp(desired,Math.min(1,dt*3.5));
     camera.lookAt(ship.position.clone().add(fwd.clone().multiplyScalar(12)));
-    var fov=boosting?74:62; camera.fov+=(fov-camera.fov)*Math.min(1,dt*4); camera.updateProjectionMatrix();
+    var fov=boosting?67:62; camera.fov+=(fov-camera.fov)*Math.min(1,dt*3); camera.updateProjectionMatrix();
   }
   function fire(dt){
     fireTimer-=dt;
@@ -3529,7 +3539,7 @@
     var et=clock.elapsedTime;
     starUniforms.uTime.value=et;
     sunShaderMats.forEach(function(m){ m.uniforms.uTime.value=et; });
-    if(finalPass && !warp && mode!=='landing'){ finalPass.uniforms.uTime.value=et; finalPass.uniforms.uWarp.value=Math.max(0,finalPass.uniforms.uWarp.value-dt*2.2)+(boosting?0.06:0); }
+    if(finalPass && !warp && mode!=='landing'){ finalPass.uniforms.uTime.value=et; finalPass.uniforms.uWarp.value=Math.max(0,finalPass.uniforms.uWarp.value-dt*2.2); }
     else if(finalPass) finalPass.uniforms.uTime.value=et;
 
     bodies.forEach(function(b){ b.mesh.rotation.y+=dt*b.spin; if(b.cloudMesh) b.cloudMesh.rotation.y+=dt*b.spin*1.7; });
