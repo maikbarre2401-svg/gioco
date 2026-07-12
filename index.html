@@ -1384,6 +1384,7 @@
     shots:[], eshots:[], turrets:[], flyers:[], hostile:false,
     portals:[], portalCd:0, decoPortals:[] };
   var portalGun=false; // sbloccata parlando con lo scienziato
+  var dimension=null;  // {home:{body, pp, shipPos, shipQuat}} quando sei in un'altra dimensione
   var _sunWhite=new TH.Color(0xffffff), _sunWarm=new TH.Color(0xff9a50);
   var CRIT_CFG={ terran:{col:0x7a9a4a,fl:0}, ocean:{col:0x4a9ab0,fl:0.5}, desert:{col:0xc8a060,fl:0},
     ice:{col:0xa8d0e8,fl:0.2}, rock:{col:0x8a8078,fl:0.15}, lava:{col:0x9a4a30,fl:0.2},
@@ -1568,14 +1569,62 @@
     var norm=dir.clone().negate();
     var p=makePortal(pos,norm);
     surf.portals.push(p); SND.warpJump();
-    toast('PORTALE APERTO', surf.portals.length===1?'Apri un secondo portale (Q) per collegarli':'Portali collegati! Attraversali');
+    toast('PORTALE INTERDIMENSIONALE APERTO', dimension?'Attraversalo per TORNARE A CASA':'Attraversalo: ti porta in un altro mondo!');
     if(surf.portals.length>2){ var old=surf.portals.shift(); surf.group.remove(old.g); disposeObj(old.g); }
   }
   function homePortal(){
-    if(mode!=='surface'||!portalGun) { if(mode==='surface'&&!portalGun) throwPortal(); return; }
+    if(mode!=='surface') return;
+    if(dimension){ returnHome(); return; }
+    if(!portalGun){ throwPortal(); return; }
     // portale diretto verso la nave
     surf.pp.set(ship.position.x+3,surf.heightFn(ship.position.x+3,ship.position.z)+1.75,ship.position.z);
     surf.pv.set(0,0,0); flash(); SND.warpJump(); toast('SALTO AL GARAGE','Teletrasportato alla nave');
+  }
+  // ---- VIAGGIO INTERDIMENSIONALE: il portale ti porta in un mondo tasca ----
+  var DIM_TYPES=['terran','desert','ice','rock','lava','ocean','toxic','crystal'];
+  function randomDimensionBody(){
+    var t=DIM_TYPES[Math.floor(Math.random()*DIM_TYPES.length)];
+    var seed=(Math.random()*1e9)>>>0;
+    return { name:'Dimensione '+String.fromCharCode(65+Math.floor(Math.random()*26))+'-'+(100+Math.floor(Math.random()*899)),
+      type:t, seed:seed, radius:50, isBody:true, dimension:true,
+      hostile:Math.random()<0.35,
+      alienCity:(t==='crystal'||t==='toxic')&&Math.random()<0.35 };
+  }
+  function enterDimension(){
+    if(mode!=='surface') return;
+    if(!dimension){
+      dimension={ home:{ body:surf.body, pp:surf.pp.clone(), shipPos:ship.position.clone(), shipQuat:ship.quaternion.clone() } };
+    }
+    var db=randomDimensionBody();
+    destroySurface();
+    buildSurface(db);
+    ship.visible=false;
+    surf.pp.set(0,surf.heightFn(0,0)+1.75,0); surf.pv.set(0,0,0); surf.onGround=true; plYaw=Math.PI; plPitch=-0.02;
+    camera.position.copy(surf.pp); camera.rotation.set(plPitch,plYaw,0);
+    // portale di ritorno alle tue spalle
+    var rp=makePortal(new TH.Vector3(0,surf.heightFn(0,7)+2.6,7),new TH.Vector3(0,0,-1));
+    rp.born=1; rp.isReturn=true; surf.decoPortals.push(rp);
+    surf.portalCd=1.6;
+    flash(); SND.warpJump();
+    if(finalPass) finalPass.uniforms.uWarp.value=0.8;
+    mission('★','☄ '+db.name.toUpperCase(),'Dimensione sconosciuta ('+db.type+') — saccheggia e torna dal portale (o B)');
+    toast('SALTO INTERDIMENSIONALE','Benvenuta in '+db.name+' — minerali doppi qui!');
+  }
+  function returnHome(){
+    if(!dimension) return false;
+    var h=dimension.home;
+    destroySurface();
+    buildSurface(h.body);
+    ship.visible=true; ship.position.copy(h.shipPos); ship.quaternion.copy(h.shipQuat);
+    surf.pp.copy(h.pp); surf.pv.set(0,0,0); surf.onGround=true;
+    camera.position.copy(surf.pp);
+    surf.portalCd=1.6;
+    dimension=null;
+    flash(); SND.warpJump();
+    if(finalPass) finalPass.uniforms.uWarp.value=0.8;
+    mission('★','Superficie di '+h.body.name,'Bentornata — la nave ti aspetta (E per pilotare, T per orbita)');
+    toast('CASA DOLCE CASA','Sei tornata su '+h.body.name);
+    return true;
   }
   function updatePortals(dt){
     surf.portalCd=Math.max(0,surf.portalCd-dt);
@@ -1592,14 +1641,13 @@
         arr[k*3]=Math.cos(o.a)*rr; arr[k*3+1]=Math.sin(o.a)*rr; arr[k*3+2]=o.z+Math.sin(o.tw*0.5)*0.3; }
       p.sparks.geometry.attributes.position.needsUpdate=true;
     });
-    if(surf.portals.length>=2 && surf.portalCd<=0){
-      for(var i=0;i<surf.portals.length;i++){
-        if(surf.pp.distanceTo(surf.portals[i].pos)<2.6){
-          var dest=surf.portals[(i+1)%surf.portals.length];
-          surf.pp.set(dest.pos.x,surf.heightFn(dest.pos.x,dest.pos.z)+1.75,dest.pos.z);
-          surf.pv.set(0,0,0); surf.portalCd=1.4; flash(); SND.warpJump();
-          if(finalPass) finalPass.uniforms.uWarp.value=0.7; // pulse cromatico allo schermo
-          break;
+    // ingresso: QUALSIASI portale ti trasporta in un'altra dimensione (o a casa)
+    if(surf.portalCd<=0){
+      var all=surf.portals.concat(surf.decoPortals);
+      for(var i=0;i<all.length;i++){
+        if(surf.pp.distanceTo(all[i].pos)<2.6){
+          if(dimension){ returnHome(); } else { enterDimension(); }
+          return;
         }
       }
     }
@@ -2616,9 +2664,9 @@
     }
     surf.time=0.1;
 
-    // frammenti minerali raccoglibili
+    // frammenti minerali raccoglibili (doppi nelle dimensioni tasca)
     surf.nodes=[]; surf.nearNode=null;
-    for(var ni=0;ni<12;ni++){
+    for(var ni=0;ni<(body.dimension?24:12);ni++){
       var nx3=(rng2()-0.5)*1500, nz3=(rng2()-0.5)*1500, ny3=surf.heightFn(nx3,nz3);
       if(ny3<surf.waterY+0.8) continue;
       var nm=new TH.Mesh(new TH.OctahedronGeometry(0.9,0), new TH.MeshStandardMaterial({color:0x9fe8c0,emissive:0x2ee08a,emissiveIntensity:0.9,metalness:0.3,roughness:0.3}));
@@ -2827,6 +2875,7 @@
   }
   function leaveSurface(){
     destroySurface();
+    dimension=null; ship.visible=true;
     if(document.exitPointerLock) document.exitPointerLock();
     sysGroup.visible=true; dust.visible=true;
     if(outpost) outpost.visible=true;
@@ -2839,12 +2888,14 @@
   function tryTakeoff(){
     if(mode==='surfship'){ leaveSurface(); return; }
     if(mode!=='surface') return;
+    if(dimension){ toast('LA NAVE NON È IN QUESTA DIMENSIONE','Torna dal portale di ritorno (o premi B)'); return; }
     if(surf.pp.distanceTo(ship.position)>24){ toast('TROPPO LONTANO DALLA NAVE','Torna alla nave per decollare'); return; }
     leaveSurface();
   }
   // ---- volo atmosferico: pilota la nave sul pianeta ----
   function boardShip(){
     if(mode!=='surface') return;
+    if(dimension){ toast('LA NAVE NON È QUI','La nave è rimasta a casa — torna dal portale (B)'); return; }
     if(surf.pp.distanceTo(ship.position)>28){ toast('TROPPO LONTANO','Avvicinati alla nave e premi E'); return; }
     if(document.exitPointerLock) document.exitPointerLock();
     mode='surfship'; shipYaw=plYaw; shipPitch=0.06; throttle=0.35; boosting=false;
@@ -3342,7 +3393,7 @@
 
   function resetGame(){
     if(mode!=='space'){ destroySurface(); sysGroup.visible=true; dust.visible=true; mode='space'; camera.fov=62; camera.updateProjectionMatrix(); }
-    landingBody=null;
+    landingBody=null; dimension=null; ship.visible=true;
     buildGalaxy(); buildSystem(galaxy[0].seed, galaxy[0].cls, true);
     sysName=galaxy[0].name; setTxt('rr_sysName',sysName); var sp=SPECTRAL[galaxy[0].cls]; setTxt('rr_sysSub','CLASSE '+sp.c+' · '+sp.t+' · SETTORE 00-A');
     ship.position.set(0,0,0); shipYaw=0; shipPitch=0; throttle=0.35;
@@ -3712,6 +3763,9 @@
     talkSci:function(){ var s=null; surf.npcs.forEach(function(n){ if(n.kind==='scienziato') s=n; }); if(!s) return null; surf.nearNPC=s; talkToNPC(); if(dActive){ while(dActive) dNext(); } return portalGun; },
     portalInfo:function(){ return {gun:portalGun,portals:surf.portals.length}; },
     throwPortal:function(){ throwPortal(); return surf.portals.length; },
+    dim:function(){ return {inDim:!!dimension, body:surf.body?surf.body.name:null, type:surf.body?surf.body.type:null, shipVisible:ship.visible, retPortals:surf.decoPortals.length, nodes:surf.nodes.length}; },
+    jump:function(){ enterDimension(); return window.DF.dim(); },
+    back:function(){ returnHome(); return window.DF.dim(); },
     tpCity:function(dx,dz,pitch,yaw){ if(!surf.city) return false; surf.pp.set(surf.city.x+(dx||0),surf.heightFn(surf.city.x+(dx||0),surf.city.z+(dz||0))+1.75,surf.city.z+(dz||0)); plPitch=pitch||0; plYaw=(yaw===undefined?0:yaw); return true; },
     hurtSelf:function(){ surfDamage(9); },
     net:NET.dbg, netHost:NET.host, netJoin:NET.join,

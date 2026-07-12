@@ -38,8 +38,8 @@ Gioco spaziale 3D completo in un singolo file HTML. Niente da installare: apri `
 | SHIFT | corri |
 | SPAZIO | salta (gravità diversa su ogni mondo!) |
 | F | raccogli minerali / manufatti / **parla con NPC** / accetta missioni |
-| Q | **portal gun**: apri un portale (dopo averla ottenuta dallo scienziato) |
-| B | portale-garage: torna istantaneamente alla nave |
+| Q | **portal gun**: apri un portale → attraversalo e finisci **in un'altra dimensione!** |
+| B | torna alla nave / torna a casa dalla dimensione |
 | E | **sali sulla nave e vola in atmosfera** |
 | T | decolla verso l'orbita |
 
@@ -58,7 +58,7 @@ Gioco spaziale 3D completo in un singolo file HTML. Niente da installare: apri `
 - **🏛️ ROMA in 3D** sulla Terra: Colosseo, Pantheon, Basilica di San Pietro, Castel Sant'Angelo, obelisco, arco di trionfo, acquedotto, Tevere coi ponti, palazzi con facciate texturizzate e finestre che si accendono di notte, sampietrini, traffico, uccelli e cittadini romani con cui parlare
 - **🛸 NYX PRIME**, metropoli aliena al neon su un mondo di cristallo: torri luminose, pavimento a griglia cyberpunk, guglia centrale, piattaforme fluttuanti, ologrammi, abitanti alieni e droni sintetici
 - **📜 Missioni (taglie)**: gli NPC segnati dal marcatore dorato affidano incarichi — raccogli minerali o abbatti predatori — in cambio di crediti
-- **Portal gun** (omaggio parodia sci-fi): incontra lo scienziato eccentrico e il nipote nella città, ottieni la portal gun e apri portali verdi per teletrasportarti — o torna al volo alla nave
+- **Portal gun e VIAGGIO INTERDIMENSIONALE** (omaggio parodia sci-fi): lo scienziato eccentrico ti aspetta al Colosseo col suo portale aperto — ottieni la portal gun e attraversa i portali per finire in **dimensioni tasca procedurali** (mondi extra con minerali doppi, a volte ostili, a volte con città aliene!), poi torna a casa dal portale di ritorno
 - **Mondi ostili**: alcuni pianeti hanno difese nemiche — torrette di terra e droni volanti che ti sparano; distruggile a piedi (blaster) o sorvolandole col cannone della nave, per crediti
 - **Fauna aliena**: erbivori, predatori che ti cacciano e meduse fluttuanti — difenditi col blaster
 - **Rovine precursori**: monoliti con manufatti da recuperare
