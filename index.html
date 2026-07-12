@@ -51,6 +51,7 @@
       <div id="rr_sysSub" style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.12em;color:#7e90a4;margin-top:3px;">CLASSE G · 5700K · SETTORE 04-A</div>
       <div id="rr_coords" style="font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.04em;color:#aab8c8;margin-top:9px;padding-top:9px;border-top:1px solid rgba(120,160,190,.14);">X +0000  Y +0000  Z +0000</div>
       <div id="rr_netHud" style="display:none;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.1em;color:#57d6a0;margin-top:7px;padding-top:7px;border-top:1px solid rgba(120,160,190,.14);">◉ ONLINE · —</div>
+      <div id="rr_fps" style="font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.1em;color:#5b6b80;margin-top:5px;">FPS —</div>
     </div>
 
     <div style="position:absolute;top:18px;left:50%;transform:translateX(-50%);background:rgba(7,12,19,.74);backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px);border:1px solid rgba(120,160,190,.20);border-radius:5px;padding:10px 22px;text-align:center;min-width:320px;max-width:540px;">
@@ -1608,11 +1609,10 @@
     ].join('\n'),
     transparent:true, depthWrite:false, side:TH.DoubleSide, blending:TH.AdditiveBlending
   });
-  var portalMats=[];
   function makePortal(pos,normal){
     var g=new TH.Group(); g.position.copy(pos);
     var R=2.6;
-    var m=portalMat.clone(); m.uniforms=TH.UniformsUtils.clone(portalMat.uniforms); portalMats.push(m);
+    var m=portalMat.clone(); m.uniforms=TH.UniformsUtils.clone(portalMat.uniforms);
     // due lastre a vortice leggermente sfalsate → senso di profondità
     var disc=new TH.Mesh(new TH.CircleGeometry(R,64),m); g.add(disc);
     // anello di energia ad alta risoluzione con emissivo forte (fa fiorire il bloom)
@@ -1702,6 +1702,7 @@
     if(finalPass) finalPass.uniforms.uWarp.value=0.8;
     mission('★','Superficie di '+h.body.name,'Bentornata — la nave ti aspetta (E per pilotare, T per orbita)');
     toast('CASA DOLCE CASA','Sei tornata su '+h.body.name);
+    questProgress('dimensione');
     return true;
   }
   function updatePortals(dt){
@@ -2328,7 +2329,10 @@
      done:['Li hai presi tutti! Sapevo di poter contare su di te.','Ecco i tuoi 60 crediti. Buona fortuna là fuori.']},
     {t:'caccia', need:2, txt:'Abbatti 2 predatori ostili fuori città (col blaster)', rew:90,
      brief:['C’è un problema, pilota.','Predatori ostili si aggirano fuori dalle mura. Abbattine 2 col blaster.','Fallo e avrai 90 crediti.'],
-     done:['La zona è più sicura ora. Grazie di cuore.','Prendi: 90 crediti ben meritati.']}
+     done:['La zona è più sicura ora. Grazie di cuore.','Prendi: 90 crediti ben meritati.']},
+    {t:'dimensione', need:1, txt:'Attraversa un portale, visita una dimensione e torna vivo', rew:120,
+     brief:['Ho bisogno di dati interdimensionali, pilota.','Attraversa un portale verde, dai un’occhiata in giro e torna tutto intero.','Ti pago bene: 120 crediti. Non toccare niente di appiccicoso.'],
+     done:['Le letture sono... inquietanti. Perfetto!','Eccoti 120 crediti. La scienza ti ringrazia.']}
   ];
   function handleQuest(n,who){
     var q=surf.quest;
@@ -3284,6 +3288,16 @@
   function pad(n){ var s=Math.abs(Math.round(n)).toString().padStart(4,'0'); return (n<0?'-':'+')+s; }
   function setBars(){ $('rr_shield').style.width=(Math.max(0,shield)/maxShield()*100)+'%'; setTxt('rr_shieldN',Math.max(0,Math.round(shield))); $('rr_hull').style.width=Math.max(0,hull)+'%'; setTxt('rr_hullN',Math.max(0,Math.round(hull))); }
   function mission(n,title,obj){ setTxt('rr_mKick','DIRETTIVA '+n+' / 6'); setTxt('rr_mTitle',title); setTxt('rr_mObj',obj); }
+  function missionForState(){
+    switch(mState){
+      case 1: mission(1,'Calibrazione di volo','Attraversa il marcatore di rotta — segui l’anello verde'); break;
+      case 2: mission(2,'Rilevamento planetario','Aggancia (TAB) e scansiona (F) 3 pianeti'); break;
+      case 3: mission(3,'Estrazione mineraria','Avvicinati a un asteroide minerale e tieni premuto G per estrarre 60 unità'); break;
+      case 4: mission(4,'Minaccia ostile','Distruggi 4 droni ostili — SPAZIO per fare fuoco'); break;
+      case 5: mission(5,'Avamposto di rilevamento','Premi F per dispiegare un avamposto (richiede 40 minerali)'); break;
+      default: mission(6,'Salto iperspaziale','Premi M, seleziona un sistema e attiva l’ipermotore');
+    }
+  }
   var toastTO=null;
   function toast(t,m){ setTxt('rr_toastT',t); setTxt('rr_toastM',m); var x=$('rr_toast'); x.style.opacity='1'; x.style.transform='translate(-50%,-50%) scale(1)'; clearTimeout(toastTO); toastTO=setTimeout(function(){ x.style.opacity='0'; x.style.transform='translate(-50%,-50%) scale(.94)'; },1900); SND.ui(); }
   function prompt2(key,text){ setTxt('rr_pKey',key); setTxt('rr_pText',text); $('rr_prompt').style.display='flex'; }
@@ -3631,10 +3645,23 @@
   }
 
   var clock=new TH.Clock();
+  // monitor FPS + auto-qualità: se il gioco arranca passa da solo a BASSA
+  var fpsEma=60, fpsT=0, autoDropped=false, fpsGrace=8;
+  function fpsTick(dt){
+    if(dt>0) fpsEma+= (1/dt - fpsEma)*0.05;
+    fpsT+=dt; fpsGrace=Math.max(0,fpsGrace-dt);
+    if(fpsT>0.5){ fpsT=0; setTxt('rr_fps','FPS '+Math.round(fpsEma)+(qualityHigh?' · ALTA':' · BASSA'));
+      if(started && !autoDropped && fpsGrace<=0 && fpsEma<26 && qualityHigh){
+        autoDropped=true; qualityHigh=false; applyQuality();
+        toast('QUALITÀ AUTOMATICA','Impostata su BASSA per mantenere la fluidità (ESC per cambiare)');
+      }
+    }
+  }
   function animate(){
     requestAnimationFrame(animate);
     var dt=Math.min(0.05,clock.getDelta());
     var et=clock.elapsedTime;
+    fpsTick(dt);
     starUniforms.uTime.value=et;
     sunShaderMats.forEach(function(m){ m.uniforms.uTime.value=et; });
     if(finalPass && !warp && mode!=='landing'){ finalPass.uniforms.uTime.value=et; finalPass.uniforms.uWarp.value=Math.max(0,finalPass.uniforms.uWarp.value-dt*2.2); }
@@ -3811,7 +3838,7 @@
       if(d.upgrades){ upgrades.cannon=d.upgrades.cannon||0; upgrades.shield=d.upgrades.shield||0; upgrades.engine=d.upgrades.engine||0; }
       kills=d.kills||0; portalGun=!!d.portalGun;
       if(d.freeMode){ freeMode=true; mState=6; if(waypoint) waypoint.visible=false; mission('6','Rotta libera','Esplora la galassia · progressi ripristinati'); }
-      else if(d.mState){ mState=d.mState; }
+      else if(d.mState){ mState=d.mState; if(mState>1 && waypoint) waypoint.visible=false; missionForState(); if(mState===4 && !drones.length) spawnDrones(4); }
       shield=maxShield();
       setTxt('rr_min',Math.floor(minerals)); setTxt('rr_kills',kills); setBars(); updMsl(); updCred();
       return true;
