@@ -268,7 +268,7 @@
   // ---------- renderer ----------
   var renderer=new TH.WebGLRenderer({canvas:canvas,antialias:true,preserveDrawingBuffer:true,powerPreference:'high-performance'});
   renderer.setSize(W,H); renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
-  renderer.outputEncoding=TH.sRGBEncoding; renderer.toneMapping=TH.ACESFilmicToneMapping; renderer.toneMappingExposure=1.05;
+  renderer.outputEncoding=TH.sRGBEncoding; renderer.toneMapping=TH.ACESFilmicToneMapping; renderer.toneMappingExposure=1.12;
   renderer.shadowMap.enabled=true; renderer.shadowMap.type=TH.PCFSoftShadowMap;
   var scene=new TH.Scene();
   var camera=new TH.PerspectiveCamera(62, W/H, 0.5, 90000);
@@ -1506,27 +1506,59 @@
     vertexShader:'varying vec2 vUv;void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
     fragmentShader:[
       'uniform float uTime;varying vec2 vUv;',
-      'void main(){ vec2 c=vUv-0.5; float r=length(c); if(r>0.5) discard;',
-      ' float ang=atan(c.y,c.x); float swirl=sin(ang*5.0+uTime*4.0-r*22.0)*0.5+0.5;',
-      ' float ring=smoothstep(0.5,0.4,r);',
-      ' vec3 col=mix(vec3(0.15,0.9,0.35),vec3(0.7,1.0,0.6),swirl);',
-      ' float glow=smoothstep(0.5,0.2,r);',
-      ' gl_FragColor=vec4(col,(0.55+0.45*swirl)*ring);}'
+      'float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }',
+      'float vnoise(vec2 p){ vec2 i=floor(p),f=fract(p); vec2 u=f*f*(3.0-2.0*f);',
+      ' return mix(mix(hash(i),hash(i+vec2(1.,0.)),u.x),mix(hash(i+vec2(0.,1.)),hash(i+vec2(1.,1.)),u.x),u.y); }',
+      'float fbm(vec2 p){ float s=0.0,a=0.5; for(int i=0;i<5;i++){ s+=vnoise(p)*a; p=p*2.02+vec2(1.7); a*=0.5; } return s; }',
+      'void main(){',
+      ' vec2 c=vUv-0.5; float r=length(c)*2.0; if(r>1.0) discard;',
+      ' float ang=atan(c.y,c.x);',
+      ' float tunnel=(1.0-r);',
+      ' float tw=ang*1.0 + uTime*1.6 + tunnel*7.0;',            // rotazione + effetto tunnel
+      ' vec2 sw=vec2(cos(tw),sin(tw))*(0.4+r*0.9);',
+      ' float n=fbm(sw*3.2 + uTime*0.35);',
+      ' float n2=fbm(sw*6.4 - uTime*0.5);',
+      ' float core=pow(tunnel,1.8);',                            // nucleo luminoso al centro
+      ' float ring=smoothstep(0.72,0.98,r)*smoothstep(1.02,0.9,r);', // anello di energia al bordo
+      ' vec3 deep=vec3(0.02,0.18,0.08);',
+      ' vec3 mid=vec3(0.12,0.85,0.32);',
+      ' vec3 bright=vec3(0.75,1.0,0.65);',
+      ' vec3 col=mix(deep,mid,smoothstep(0.2,0.8,n));',
+      ' col=mix(col,bright,pow(n2,3.0)*0.55);',                  // filamenti brillanti
+      ' col+=vec3(0.3,0.7,0.4)*core*0.55;',                      // bagliore centrale (moderato)
+      ' col+=vec3(0.7,1.0,0.8)*ring*1.3;',                       // anello',
+      ' float bands=sin(tw*3.0 - uTime*3.5 + n*5.0)*0.5+0.5;',
+      ' col*=0.55+0.6*bands;',                                   // bande cromatiche pulsanti
+      ' col*=0.9;',
+      ' float alpha=smoothstep(1.0,0.82,r); alpha=max(alpha,ring);',
+      ' gl_FragColor=vec4(col,alpha);',
+      '}'
     ].join('\n'),
     transparent:true, depthWrite:false, side:TH.DoubleSide, blending:TH.AdditiveBlending
   });
   var portalMats=[];
   function makePortal(pos,normal){
     var g=new TH.Group(); g.position.copy(pos);
+    var R=2.6;
     var m=portalMat.clone(); m.uniforms=TH.UniformsUtils.clone(portalMat.uniforms); portalMats.push(m);
-    var disc=new TH.Mesh(new TH.CircleGeometry(2.2,40),m); g.add(disc);
-    var ring=new TH.Mesh(new TH.TorusGeometry(2.2,0.28,10,40),new TH.MeshStandardMaterial({color:0x0c1a10,emissive:0x2ee050,emissiveIntensity:1.6,metalness:0.4,roughness:0.3})); g.add(ring);
-    var glow=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0x3aff5a,blending:TH.AdditiveBlending,depthWrite:false,transparent:true,opacity:0.8})); glow.scale.set(9,9,1); g.add(glow);
-    g.add(new TH.PointLight(0x3aff5a,1.4,60));
-    // orienta verso il giocatore (verticale)
+    // due lastre a vortice leggermente sfalsate → senso di profondità
+    var disc=new TH.Mesh(new TH.CircleGeometry(R,64),m); g.add(disc);
+    // anello di energia ad alta risoluzione con emissivo forte (fa fiorire il bloom)
+    var ring=new TH.Mesh(new TH.TorusGeometry(R,0.22,20,80),new TH.MeshStandardMaterial({color:0x0c1a10,emissive:0x3aff64,emissiveIntensity:2.4,metalness:0.5,roughness:0.2})); g.add(ring);
+    var ring2=new TH.Mesh(new TH.TorusGeometry(R*1.05,0.06,12,80),new TH.MeshBasicMaterial({color:0xbfffcf})); g.add(ring2);
+    // alone morbido
+    var glow=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0x3aff5a,blending:TH.AdditiveBlending,depthWrite:false,transparent:true,opacity:0.5})); glow.scale.set(8,8,1); g.add(glow);
+    // scintille che orbitano il bordo
+    var SN=70, sp=new Float32Array(SN*3), sc=new Float32Array(SN*3), off=[];
+    for(var i=0;i<SN;i++){ off.push({a:Math.random()*6.28,rad:R*(0.9+Math.random()*0.35),sp:1.4+Math.random()*2.6,z:(Math.random()-0.5)*0.6,tw:Math.random()*6.28});
+      var t=Math.random(); sc[i*3]=0.4+t*0.5; sc[i*3+1]=1.0; sc[i*3+2]=0.5+t*0.4; }
+    var sg=new TH.BufferGeometry(); sg.setAttribute('position',new TH.BufferAttribute(sp,3)); sg.setAttribute('color',new TH.BufferAttribute(sc,3));
+    var sparks=new TH.Points(sg,new TH.PointsMaterial({map:GLOW_W,size:0.5,vertexColors:true,transparent:true,opacity:0.95,depthWrite:false,blending:TH.AdditiveBlending,sizeAttenuation:true}));
+    sparks.frustumCulled=false; g.add(sparks);
+    var pl=new TH.PointLight(0x3aff5a,2.2,90); g.add(pl);
     if(normal){ g.lookAt(pos.clone().add(normal)); }
     surf.group.add(g);
-    return {g:g, pos:pos.clone(), mat:m};
+    return {g:g, pos:pos.clone(), mat:m, sparks:sparks, sparkOff:off, sparkN:SN, ring:ring2, light:pl, born:0};
   }
   function throwPortal(){
     if(mode!=='surface') return;
@@ -1547,13 +1579,26 @@
   }
   function updatePortals(dt){
     surf.portalCd=Math.max(0,surf.portalCd-dt);
-    surf.portals.forEach(function(p){ p.mat.uniforms.uTime.value+=dt; p.g.rotation.z+=dt*0.6; });
+    surf.portals.forEach(function(p){
+      p.mat.uniforms.uTime.value+=dt; p.g.rotation.z+=dt*0.5; p.born=Math.min(1,(p.born||0)+dt*2.5);
+      // apparizione a scatto
+      var s=0.2+0.8*p.born; p.g.scale.set(s,s,s);
+      if(p.ring) p.ring.material.color.setScalar(0.7+Math.sin(performance.now()*0.01)*0.3);
+      if(p.light) p.light.intensity=2.0+Math.sin(performance.now()*0.02)*0.6;
+      // scintille orbitanti
+      var arr=p.sparks.geometry.attributes.position.array;
+      for(var k=0;k<p.sparkN;k++){ var o=p.sparkOff[k]; o.a+=dt*o.sp; o.tw+=dt*4;
+        var rr=o.rad*(1+Math.sin(o.tw)*0.08);
+        arr[k*3]=Math.cos(o.a)*rr; arr[k*3+1]=Math.sin(o.a)*rr; arr[k*3+2]=o.z+Math.sin(o.tw*0.5)*0.3; }
+      p.sparks.geometry.attributes.position.needsUpdate=true;
+    });
     if(surf.portals.length>=2 && surf.portalCd<=0){
       for(var i=0;i<surf.portals.length;i++){
-        if(surf.pp.distanceTo(surf.portals[i].pos)<2.4){
+        if(surf.pp.distanceTo(surf.portals[i].pos)<2.6){
           var dest=surf.portals[(i+1)%surf.portals.length];
           surf.pp.set(dest.pos.x,surf.heightFn(dest.pos.x,dest.pos.z)+1.75,dest.pos.z);
-          surf.pv.set(0,0,0); surf.portalCd=1.2; flash(); SND.warpJump();
+          surf.pv.set(0,0,0); surf.portalCd=1.4; flash(); SND.warpJump();
+          if(finalPass) finalPass.uniforms.uWarp.value=0.7; // pulse cromatico allo schermo
           break;
         }
       }
