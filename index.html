@@ -600,6 +600,15 @@ body.no-cursor-fx #cursor,body.no-cursor-fx #cursor2{display:none}
     <div class="trk-grid" id="trk-data"></div>
   </div>
   <div id="alert-pop"></div>
+  <div id="sv-panel" style="display:none;position:absolute;left:9px;bottom:34px;width:min(420px,60%);height:60%;z-index:40;background:#000;border:1px solid var(--border3);box-shadow:0 10px 40px rgba(0,0,0,.8);border-radius:2px;overflow:hidden">
+    <div style="display:flex;align-items:center;gap:6px;padding:4px 8px;background:rgba(0,255,65,.06);border-bottom:1px solid var(--border2)">
+      <span style="font-size:11px">&#128694;</span>
+      <span id="sv-title" style="flex:1;font-size:7px;color:var(--gd);font-family:var(--font-h);letter-spacing:.06em">STREET VIEW</span>
+      <button id="sv-ext" style="font-size:6px;font-family:var(--font);background:var(--gs);border:1px solid var(--border2);color:var(--gd);cursor:pointer;padding:1px 6px;border-radius:1px">&#8599; MAPS</button>
+      <button id="sv-close" style="font-size:6px;font-family:var(--font);background:var(--redf);border:1px solid rgba(255,34,68,.3);color:var(--red);cursor:pointer;padding:1px 6px;border-radius:1px">&#10005;</button>
+    </div>
+    <div id="sv-body" style="position:absolute;top:23px;left:0;right:0;bottom:0"></div>
+  </div>
 </div>
 <div id="dash">
 <div class="col" id="c1">
@@ -871,11 +880,11 @@ body.no-cursor-fx #cursor,body.no-cursor-fx #cursor2{display:none}
   </div>
 </div>
 <div class="col" id="c5">
-  <div class="sh c-mg" data-toggle="sb-tv"><span class="sh-icon">&#128250;</span><span class="sh-title">Live TV — YouTube Streams</span><span class="badge b-live sh-cnt">LIVE</span><span class="sh-pop">&#10530;</span><span class="sh-arrow">&#9660;</span></div>
+  <div class="sh c-mg" data-toggle="sb-tv"><span class="sh-icon">&#128250;</span><span class="sh-title">Live TV — HLS Streams</span><span class="badge b-live sh-cnt">LIVE</span><span class="sh-pop">&#10530;</span><span class="sh-arrow">&#9660;</span></div>
   <div class="sb" id="sb-tv" style="max-height:420px">
     <div id="tv-player-wrap">
       <div id="tv-iframe-container">
-        <iframe id="tv-iframe" src="about:blank" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen loading="lazy"></iframe>
+        <video id="tv-video" autoplay muted playsinline style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000"></video>
         <div id="tv-status-bar">
           <div id="tv-live-badge">&#9679; LIVE</div>
           <div id="tv-channel-name">&#128225; Seleziona canale</div>
@@ -883,8 +892,8 @@ body.no-cursor-fx #cursor,body.no-cursor-fx #cursor2{display:none}
         </div>
         <div id="tv-placeholder">
           <div id="tv-placeholder-icon">&#128250;</div>
-          <div id="tv-placeholder-text">Clicca un canale per guardare in diretta<br>via YouTube Live embed</div>
-          <div id="tv-placeholder-hint">&#9654; Stream live via ID canale (sempre aggiornato)</div>
+          <div id="tv-placeholder-text">Clicca un canale per guardare in diretta<br>via streaming HLS (.m3u8)</div>
+          <div id="tv-placeholder-hint">&#9654; Player video nativo · fallback proxy CORS</div>
         </div>
       </div>
     </div>
@@ -905,7 +914,7 @@ body.no-cursor-fx #cursor,body.no-cursor-fx #cursor2{display:none}
   <div class="sh c-blu" data-toggle="sb-cams"><span class="sh-icon">&#128249;</span><span class="sh-title">Webcam — 12 Citt&agrave; Live</span><span class="badge b-ok sh-cnt">LIVE</span><span class="sh-pop">&#10530;</span><span class="sh-arrow">&#9660;</span></div>
   <div class="sb" id="sb-cams" style="max-height:185px">
     <div id="wc-preview-wrap">
-      <iframe id="wc-preview-iframe" src="about:blank" allow="autoplay" loading="lazy"></iframe>
+      <iframe id="wc-preview-iframe" src="about:blank" allow="autoplay; fullscreen" loading="lazy"></iframe>
       <div id="wc-city-label">-- Seleziona citt&agrave; --</div>
       <button id="wc-expand-btn" onclick="openMediaModal('cam')">&#10530; FULL</button>
       <div id="wc-placeholder">
@@ -949,10 +958,11 @@ body.no-cursor-fx #cursor,body.no-cursor-fx #cursor2{display:none}
     <div id="media-layout">
       <div id="media-sidebar"><div id="media-ch-list"></div></div>
       <div id="media-player">
-        <iframe id="media-iframe" src="about:blank" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+        <video id="media-video" controls autoplay playsinline style="width:100%;height:100%;flex:1;background:#000;display:block"></video>
+        <iframe id="media-iframe" src="about:blank" allow="autoplay; fullscreen" allowfullscreen style="display:none"></iframe>
         <div id="media-info-bar">
           <div id="media-ch-label" style="font-size:7px;color:var(--gd);flex:1">Seleziona canale dalla lista</div>
-          <div id="media-now-playing" style="font-size:5.5px;color:var(--gf)">&#9679; YouTube Live</div>
+          <div id="media-now-playing" style="font-size:5.5px;color:var(--gf)">&#9679; HLS Live</div>
         </div>
       </div>
     </div>
@@ -1007,6 +1017,12 @@ body.no-cursor-fx #cursor,body.no-cursor-fx #cursor2{display:none}
           <div class="st-flabel">Finnhub API Key <span class="st-tag st-tag-opt">OPZIONALE</span></div>
           <div class="st-fhint">Per prezzi di mercato azionari live. Chiave gratuita su <a href="https://finnhub.io/" target="_blank" rel="noopener">finnhub.io</a>. (Crypto funziona sempre via CoinGecko.)</div>
           <input class="st-input" id="st-finnhub" type="text" placeholder="c9x..." autocomplete="off" spellcheck="false">
+        </div>
+        <div class="st-sec">Street View</div>
+        <div class="st-field">
+          <div class="st-flabel">Google Maps Embed API Key <span class="st-tag st-tag-opt">OPZIONALE</span></div>
+          <div class="st-fhint">Per Street View a 360&deg; dentro il pannello. Crea la chiave su <a href="https://console.cloud.google.com/google/maps-apis" target="_blank" rel="noopener">Google Cloud Console</a> e abilita <b>Maps Embed API</b> (gratis).</div>
+          <input class="st-input" id="st-google" type="text" placeholder="AIza..." autocomplete="off" spellcheck="false">
         </div>
       </div>
       <div class="st-pane" data-stpane="graphics">
@@ -1081,7 +1097,7 @@ const CFG=Object.freeze({ADSB_INTERVAL:22000,AIS_INTERVAL:45000,ISS_INTERVAL:100
 const Settings=(()=>{
   const KEY='ojo_settings_v92';
   const DEFAULTS={
-    mapboxToken:'',firmsKey:'',aishubUser:'',finnhubKey:'',
+    mapboxToken:'',firmsKey:'',aishubUser:'',finnhubKey:'',googleKey:'',
     mapStyle:'satellite-streets-v12',terrain:1.5,
     atmosphere:true,daynight:true,autospin:true,scanlines:true,cursorfx:true,
     tts:false,units:'metric',corsProxy:'allorigins'
@@ -1339,7 +1355,7 @@ function createMap(){
   function _makeZoneCircle(z,color){const r=(z.r||100)*1000;const opts={color,fillColor:color,fillOpacity:0.08,weight:1.5,dashArray:'6,6',opacity:0.65};const circ=L.circle([z.lat,z.lng],{...opts,radius:r});circ.on('click',()=>Alert.show(`${z.name}${z.intensity?' · '+z.intensity:''}`,z.intensity==='CRIT'?'war':z.intensity==='HIGH'?'orn':'ok'));return circ;}
   function _buildGroup(key,cfg){const grp=L.layerGroup();if(cfg.points&&cfg.points.length){cfg.points.forEach(p=>{const m=L.marker([p.lat,p.lng],{icon:_makeIcon(cfg.icon,cfg.color)});const tip=`<div style="background:rgba(0,3,0,.95);border:1px solid ${cfg.color};color:${cfg.color};font:6.5px 'Share Tech Mono',monospace;padding:3px 7px;border-radius:1px;min-width:120px"><b style="font-size:7.5px">${cfg.icon} ${p.name||p.type||key}</b><br>${p.type?`<span style="opacity:.6">${p.type}</span>`:''}${p.risk?` · <span style="color:#ff2244">${p.risk}</span>`:''}${p.country?`<br><span style="opacity:.5">${p.country}</span>`:''}</div>`;m.bindTooltip(tip,{permanent:false,direction:'top',offset:[0,-8],opacity:1,className:''});m.on('click',()=>{Alert.show(`${cfg.icon} ${p.name}`,p.risk==='CRIT'?'war':p.risk==='HIGH'?'orn':'ok');TTS.speak(`${p.name}.`,true);_showCoordPanel(p.lat,p.lng,{zoom:map.getZoom()});});grp.addLayer(m);});}if(cfg.zones&&cfg.zones.length){cfg.zones.forEach(z=>grp.addLayer(_makeZoneCircle(z,cfg.color)));}_lfGroups[key]=grp;if(Layers&&Layers.active&&Layers.active.has(key))grp.addTo(map);}
   setTimeout(()=>{Object.entries(LAYER_DATA).forEach(([key,cfg])=>{if(key!=='adsb'&&key!=='war4d'&&key!=='daynight')_buildGroup(key,cfg);});Alert.show('✓ SATELLITE MAP · ESRI · v92 · Layer attivi','ok');},400);
-  const LeafletADSBLayer=L.Layer.extend({onAdd(m){this._map=m;const pane=m.getPane('overlayPane');this._canvas=document.createElement('canvas');this._canvas.style.cssText='position:absolute;top:0;left:0;pointer-events:none;z-index:500';pane.appendChild(this._canvas);m.on('moveend zoomend resize',this._redraw,this);this._redraw();this._startLoop();},onRemove(m){this._canvas.remove();m.off('moveend zoomend resize',this._redraw,this);cancelAnimationFrame(this._raf);},_redraw(){const s=this._map.getSize();this._canvas.width=s.x;this._canvas.height=s.y;const mp=this._map.containerPointToLayerPoint([0,0]);this._canvas.style.transform=`translate(${mp.x}px,${mp.y}px)`;},_startLoop(){const draw=()=>{this._raf=requestAnimationFrame(draw);if(!this._map)return;const ctx=this._canvas.getContext('2d');const W=this._canvas.width,H=this._canvas.height;ctx.clearRect(0,0,W,H);const zoom=this._map.getZoom();const S=zoom<7?.7:zoom<10?1:1.3;if(MapState.adsbOn&&ADSB.data.length){ADSB.data.slice(0,CFG.MAX_AC_RENDER).forEach(ac=>{if(!ac.lat||!ac.lon)return;try{const cp=this._map.latLngToContainerPoint([ac.lat,ac.lon]);const px=cp.x,py=cp.y;if(px<-20||px>W+20||py<-20||py>H+20)return;const cls=ADSB.classify(ac);const st=ADSB.STYLES[cls]??ADSB.STYLES.civil;const hd=(ac.track??0)*Math.PI/180;ADSB.drawShape(ctx,px,py,hd,cls,st,S);if(zoom>=10){ctx.font=`7px Share Tech Mono,monospace`;ctx.fillStyle=st.glow;ctx.globalAlpha=.8;ctx.fillText(ac.callsign||'',px+9,py-5);ctx.globalAlpha=1;}}catch{}});}if(MapState.aisOn&&AIS.data.length&&zoom>=3){const Ss=zoom<6?.5:zoom<9?.8:1.1;AIS.data.slice(0,CFG.MAX_SHIP_RENDER).forEach(s=>{if(!s.lat||!s.lon)return;try{const cp=this._map.latLngToContainerPoint([s.lat,s.lon]);const px=cp.x,py=cp.y;if(px<-20||px>W+20||py<-20||py>H+20)return;const cls=AIS.classify(s);const hdg=(s.course||0)*Math.PI/180;AIS.drawShip(ctx,px,py,hdg,cls,Ss);}catch{}});}};draw();}});
+  const LeafletADSBLayer=L.Layer.extend({onAdd(m){this._map=m;const pane=m.getPane('overlayPane');this._canvas=document.createElement('canvas');this._canvas.style.cssText='position:absolute;top:0;left:0;pointer-events:none;z-index:500';pane.appendChild(this._canvas);m.on('moveend zoomend resize',this._redraw,this);this._redraw();this._startLoop();},onRemove(m){this._canvas.remove();m.off('moveend zoomend resize',this._redraw,this);cancelAnimationFrame(this._raf);},_redraw(){const s=this._map.getSize();this._canvas.width=s.x;this._canvas.height=s.y;const mp=this._map.containerPointToLayerPoint([0,0]);this._canvas.style.transform=`translate(${mp.x}px,${mp.y}px)`;},_startLoop(){const draw=()=>{this._raf=requestAnimationFrame(draw);if(!this._map)return;const ctx=this._canvas.getContext('2d');const W=this._canvas.width,H=this._canvas.height;ctx.clearRect(0,0,W,H);const zoom=this._map.getZoom();const S=zoom<7?.7:zoom<10?1:1.3;const projLf=(lng,lat)=>{try{const cp=this._map.latLngToContainerPoint([lat,lng]);return{x:cp.x,y:cp.y};}catch{return null;}};if(MapState.warOn)War4D.draw(ctx,projLf,zoom<5?1:zoom<8?1.6:2.4);if(MapState.adsbOn&&ADSB.data.length){ADSB.data.slice(0,CFG.MAX_AC_RENDER).forEach(ac=>{if(!ac.lat||!ac.lon)return;try{const cp=this._map.latLngToContainerPoint([ac.lat,ac.lon]);const px=cp.x,py=cp.y;if(px<-20||px>W+20||py<-20||py>H+20)return;const cls=ADSB.classify(ac);const st=ADSB.STYLES[cls]??ADSB.STYLES.civil;const hd=(ac.track??0)*Math.PI/180;ADSB.drawShape(ctx,px,py,hd,cls,st,S);if(zoom>=10){ctx.font=`7px Share Tech Mono,monospace`;ctx.fillStyle=st.glow;ctx.globalAlpha=.8;ctx.fillText(ac.callsign||'',px+9,py-5);ctx.globalAlpha=1;}}catch{}});}if(MapState.aisOn&&AIS.data.length&&zoom>=3){const Ss=zoom<6?.5:zoom<9?.8:1.1;AIS.data.slice(0,CFG.MAX_SHIP_RENDER).forEach(s=>{if(!s.lat||!s.lon)return;try{const cp=this._map.latLngToContainerPoint([s.lat,s.lon]);const px=cp.x,py=cp.y;if(px<-20||px>W+20||py<-20||py>H+20)return;const cls=AIS.classify(s);const hdg=(s.course||0)*Math.PI/180;AIS.drawShip(ctx,px,py,hdg,cls,Ss);}catch{}});}};draw();}});
   leafletADSBLayer=new LeafletADSBLayer();leafletADSBLayer.addTo(map);
   _lfToggle=(key,on)=>{const grp=_lfGroups[key];if(!grp)return;if(on&&!map.hasLayer(grp))grp.addTo(map);else if(!on&&map.hasLayer(grp))map.removeLayer(grp);};
   _lfUpdateNatural=(pts)=>{if(_lfGroups.natural){map.removeLayer(_lfGroups.natural);delete _lfGroups.natural;}if(!pts.length)return;const grp=L.layerGroup();pts.filter(p=>p.mag>=3).forEach(p=>{const col=p.mag>=6?'#ff0000':p.mag>=5?'#ff4400':'#ff8c00';const sz=Math.max(10,Math.min(26,p.mag*4));const m=L.circleMarker([p.lat,p.lng],{radius:sz/2,color:col,fillColor:col,fillOpacity:0.7,weight:0.8,opacity:0.9});m.bindTooltip(`<div style="background:rgba(0,3,0,.95);border:1px solid ${col};color:${col};font:6.5px 'Share Tech Mono',monospace;padding:2px 6px">🌍 M${p.mag} · ${p.name.slice(0,35)}</div>`,{direction:'top',offset:[0,-4],opacity:1,className:''});m.on('click',()=>{Alert.show(`🌍 M${p.mag} · ${p.name.slice(0,40)}`,p.mag>=6?'war':p.mag>=5?'orn':'ok');});grp.addLayer(m);});_lfGroups.natural=grp;if(Layers&&Layers.active&&Layers.active.has('natural'))grp.addTo(map);};
@@ -1361,31 +1377,60 @@ function drawEntity(ctx,e,projFn,scale=1){const p=projFn(e.x,e.y);if(!p)return;c
 return{get entities(){return entities;},get log(){return log;},
 init(){for(let i=0;i<7;i++)spawn('tank',ZONES[0],Math.random()<.55?'RUSSIA':'UKRAINE');for(let i=0;i<4;i++)spawn(Math.random()<.4?'missile_ballistic':'missile_cruise',ZONES[0],'RUSSIA');for(let i=0;i<5;i++)spawn('shahed',ZONES[0],'RUSSIA');spawn('missile_ballistic',ZONES[2],'IRGC');spawn('missile_cruise',ZONES[4],'HOUTHI');for(let i=0;i<2;i++)spawn('tank',ZONES[3],Math.random()<.5?'SAF':'RSF');},
 tick(){FL.osc.forEach(o=>o.phase+=o.spd);const rem=[];entities.forEach((e,id)=>{if(!e.alive){rem.push(id);return;}e.age++;const dx=e.tx-e.x,dy=e.ty-e.y,dist=Math.hypot(dx,dy);if(dist<e.spd*1.5||e.fuel<=0){e.alive=false;const ts=new Date().toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit',second:'2-digit'});const z=ZONES.find(z=>z.name===e.zone);log.unshift({ts,zone:z?.label??e.zone,txt:`${e.type}·${e.faction}`,col:z?.col??'#ff6600'});if(log.length>50)log.length=50;return;}e.heading=Math.atan2(dy,dx);e.x+=Math.cos(e.heading)*e.spd+(e.type==='tank'?rnd(-.0003,.0003):0);e.y+=Math.sin(e.heading)*e.spd+(e.type==='tank'?rnd(-.0002,.0002):0);e.fuel--;if(e.type==='tank'&&Math.random()<.008){const z=ZONES.find(z=>z.name===e.zone);if(z){e.tx=z.lng+rnd(-z.radius*.6,z.radius*.6);e.ty=z.lat+rnd(-z.radius*.4,z.radius*.4);}}});rem.forEach(id=>entities.delete(id));if(Math.random()<.016&&entities.size<CFG.MAX_W4D){const z=ZONES[Math.floor(Math.random()*ZONES.length)],r=Math.random();if(r<.25)spawn(Math.random()<.4?'missile_ballistic':'missile_cruise',z,z.factions[0]);else if(r<.5)spawn('shahed',z,'RUSSIA');else if(r<.7)spawn('tank',z,z.factions[Math.floor(Math.random()*z.factions.length)]);}DOM.setText('sb-ent',entities.size);DOM.setText('lc-war4d',entities.size);},
-drawGlobe(ctx){if(!Globe.map||!Globe.ready)return;const scale=CFG.DPR;const projFn=(lng,lat)=>{try{const pt=Globe.map.project([lng,lat]);return{x:pt.x*scale,y:pt.y*scale};}catch{return null;}};drawFrontline(ctx,projFn);entities.forEach(e=>{if(e.alive)drawEntity(ctx,e,projFn,scale);});}};})();
+draw(ctx,projFn,scale=1){drawFrontline(ctx,projFn);entities.forEach(e=>{if(e.alive)drawEntity(ctx,e,projFn,scale);});},
+drawGlobe(ctx){if(!Globe.map||!Globe.ready)return;const scale=CFG.DPR;const projFn=(lng,lat)=>{try{const pt=Globe.map.project([lng,lat]);return{x:pt.x*scale,y:pt.y*scale};}catch{return null;}};this.draw(ctx,projFn,scale);}};})();
 /* ═══════════════════════════════
    TV ENGINE — YouTube CHANNEL-LIVE embeds
    Uses embed/live_stream?channel=UC... → always resolves to the
    channel's CURRENT live stream (never goes stale like fixed video IDs)
 ═══════════════════════════════ */
+const HLSPlayer=(()=>{
+  let _load=null;
+  function ensure(){if(window.Hls)return Promise.resolve();if(_load)return _load;_load=new Promise(res=>{const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js';s.onload=()=>res();s.onerror=()=>res();document.head.appendChild(s);});return _load;}
+  const _inst=new WeakMap();
+  function stop(video){if(!video)return;const h=_inst.get(video);if(h){try{h.destroy();}catch(e){}_inst.delete(video);}try{video.pause();video.removeAttribute('src');video.load();}catch(e){}}
+  async function play(video,url,opts={}){if(!video||!url)return;await ensure();stop(video);video.muted=opts.mute!==false;const status=opts.onStatus||(()=>{});
+    if(window.Hls&&Hls.isSupported()){
+      const mk=src=>{const h=new Hls({lowLatencyMode:true,maxBufferLength:14,manifestLoadingTimeOut:11000,xhrSetup:x=>{try{x.timeout=11000;}catch(e){}}});_inst.set(video,h);h.loadSource(src);h.attachMedia(video);return h;};
+      let tried=false;const h=mk(url);
+      h.on(Hls.Events.MANIFEST_PARSED,()=>{video.play().catch(()=>{});status('live');});
+      h.on(Hls.Events.ERROR,(e,d)=>{if(!d||!d.fatal)return;if(!tried){tried=true;try{h.destroy();}catch(e2){}const prox='https://corsproxy.io/?url='+encodeURIComponent(url);const h2=mk(prox);h2.on(Hls.Events.MANIFEST_PARSED,()=>{video.play().catch(()=>{});status('proxy');});h2.on(Hls.Events.ERROR,(e3,d3)=>{if(d3&&d3.fatal)status('error');});}else status('error');});
+    }else if(video.canPlayType('application/vnd.apple.mpegurl')){video.src=url;video.play().catch(()=>{});status('native');}
+    else status('error');
+  }
+  return{play,stop,ensure};
+})();
+
+/* ═══ TV ENGINE — HLS live streams (.m3u8) ═══ */
 const TV=(()=>{
   const CH=[
-    {id:'aljazeera',cat:'news',label:'Al Jazeera EN',flag:'📡',ch:'UCNye-wNBqNL5ZzHSJj3l8Bg'},
-    {id:'dw',cat:'news',label:'DW News',flag:'🇩🇪',ch:'UCknLrEdhRCp1aegoMqRaCZg'},
-    {id:'france24',cat:'news',label:'France 24 EN',flag:'🇫🇷',ch:'UCQfwfsi5VrQ8yKZ-UWmAEFg'},
-    {id:'trt',cat:'news',label:'TRT World',flag:'🇹🇷',ch:'UC7fWeaHhqgM4Ry-RMpM2YYw'},
-    {id:'bloomberg',cat:'news',label:'Bloomberg TV',flag:'💹',ch:'UCIALMKvObZNtJ6AmdCLP7Lg'},
-    {id:'abc',cat:'news',label:'ABC News',flag:'🇺🇸',ch:'UCBi2mrWuNuyYy4gbM6fU18Q'},
-    {id:'wion',cat:'war',label:'WION World',flag:'🌏',ch:'UC_gUM8rL-Lrg6O3adPW9K1g'},
-    {id:'times',cat:'war',label:'Times Now',flag:'🇮🇳',ch:'UC6RJ7-PaXg6TIH2BzZfTV7w'},
-    {id:'sky',cat:'eu',label:'Sky News UK',flag:'🇬🇧',ch:'UCoMdktPbSTixAyNGwb-UYkQ'},
-    {id:'euronews',cat:'eu',label:'Euronews EN',flag:'🇪🇺',ch:'UCSrZ3UV4jOWvUdejJFTqhAg'},
-    {id:'ndtv',cat:'asia',label:'NDTV India',flag:'🇮🇳',ch:'UCZFMm1mMw0F81Z37aaEzTUA'},
-    {id:'cna',cat:'asia',label:'CNA Singapore',flag:'🇸🇬',ch:'UC53T_ekgTGCZbg4Rfg7hQaA'},
-    {id:'nasa',cat:'sci',label:'NASA Live',flag:'🚀',ch:'UCLA_DiR1FfKNvjuUpBHmylQ'},
-    {id:'space',cat:'sci',label:'Space Videos',flag:'🛰',ch:'UCknLrEdhRCp1aegoMqRaCZg'},
+    {id:'aljazeera',cat:'news',label:'Al Jazeera EN',flag:'📡',u:'https://live-hls-web-aje.getaj.net/AJE/index.m3u8'},
+    {id:'dwen',cat:'news',label:'DW English',flag:'🇩🇪',u:'https://dwamdstream102.akamaized.net/hls/live/2015525/dwstream102/index.m3u8'},
+    {id:'france24',cat:'news',label:'France 24 EN',flag:'🇫🇷',u:'https://live.france24.com/hls/live/2037218/F24_EN_HI_HLS/master_5000.m3u8'},
+    {id:'sky',cat:'news',label:'Sky News',flag:'🌍',u:'https://sky-news-international.akamaized.net/hls/live/2082860/skynewsintl/primary/index.m3u8'},
+    {id:'alarabiya',cat:'news',label:'Al Arabiya',flag:'🌍',u:'https://live.alarabiya.net/alarabiapublish/alarabiya.smil/playlist.m3u8'},
+    {id:'euronews',cat:'news',label:'Euronews',flag:'🛰',u:'https://viamotionhsi.netplus.ch/live/eds/euronews/browser-HLS8/euronews.m3u8'},
+    {id:'bfm',cat:'news',label:'BFM TV',flag:'🇫🇷',u:'https://viamotionhsi.netplus.ch/live/eds/bfmtv/browser-HLS8/bfmtv.m3u8'},
+    {id:'globonews',cat:'news',label:'GloboNews',flag:'🇧🇷',u:'https://jhgjhgjhg.cloudfront.net/i/globonews/index_2500.m3u8'},
+    {id:'kanal24',cat:'war',label:'24 Kanal UA',flag:'🇺🇦',u:'https://streamvideol1.luxnet.ua/news24/news24.stream/playlist.m3u8'},
+    {id:'espresso',cat:'war',label:'Espresso UA',flag:'🇺🇦',u:'https://streamvideol1.luxnet.ua/espreso/espreso.stream/playlist.m3u8'},
+    {id:'i24',cat:'war',label:'i24 News',flag:'🇮🇱',u:'https://bcovlive-a.akamaihd.net/ecf224f43f3b43e69471a7b626481af0/eu-central-1/5377161796001/playlist.m3u8'},
+    {id:'trt',cat:'war',label:'TRT World',flag:'🇹🇷',u:'https://trtworld.live.trt.com.tr/master.m3u8'},
+    {id:'alekhbariya',cat:'war',label:'Al Ekhbariya',flag:'🇸🇦',u:'https://iphone.sauditv.sa/alekhbariahd/smil:alekhbariahd.smil/playlist.m3u8'},
+    {id:'rai24',cat:'eu',label:'RAI News24',flag:'🇮🇹',u:'https://ilglobotv-live.akamaized.net/channels/RAINews24/Live.m3u8'},
+    {id:'la7',cat:'eu',label:'La7',flag:'🇮🇹',u:'https://d15umi5iaezxgx.cloudfront.net/LA7/CLN/HLS-B/Live_1280x720_.m3u8'},
+    {id:'dwde',cat:'eu',label:'DW Deutsch',flag:'🇩🇪',u:'https://dwamdstream104.akamaized.net/hls/live/2015530/dwstream104/index.m3u8'},
+    {id:'orf',cat:'eu',label:'ORF Austria',flag:'🇦🇹',u:'https://viamotionhsi.netplus.ch/live/eds/orf1/browser-HLS8/orf1.m3u8'},
+    {id:'srf',cat:'eu',label:'SRF News',flag:'🇨🇭',u:'https://viamotionhsi.netplus.ch/live/eds/srfinfo/browser-HLS8/srfinfo.m3u8'},
+    {id:'nhk',cat:'asia',label:'NHK World',flag:'🇯🇵',u:'https://nhkwlive-ojp.akamaized.net/hls/live/2003459/nhkwlive-ojp-en/index_1M.m3u8'},
+    {id:'ndtv',cat:'asia',label:'NDTV 24x7',flag:'🇮🇳',u:'https://ndtv24x7english-lh.akamaihd.net/i/NDTV24x7English_1@70004/master.m3u8'},
+    {id:'cgtn',cat:'asia',label:'CGTN English',flag:'🌐',u:'https://live.cgtn.com/cctv-9.m3u8'},
+    {id:'abcau',cat:'asia',label:'ABC Australia',flag:'🇦🇺',u:'https://abc-iview-ive.akamaized.net/abc-news/index.m3u8'},
+    {id:'accuweather',cat:'sci',label:'AccuWeather',flag:'🌀',u:'https://accuweather-vh.akamaihd.net/i/accuweather_1@549530/master.m3u8'},
+    {id:'nasa',cat:'sci',label:'NASA ISS TV',flag:'🛸',u:'https://ntv1.akamaized.net/hls/live/2014075/NASA-NTV1-HLS/master.m3u8'},
   ];
-  let active=null;
-  function ytUrl(ch,autoplay=1,mute=1){return `https://www.youtube.com/embed/live_stream?channel=${ch}&autoplay=${autoplay}&mute=${mute}&rel=0&modestbranding=1&iv_load_policy=3`;}
+  let active=null,okCount=0;
+  function _badge(st){const b=DOM.get('tv-live-badge');if(!b)return;if(st==='live'||st==='native'){b.textContent='● LIVE';b.style.background='rgba(255,0,0,.88)';}else if(st==='proxy'){b.textContent='● LIVE';b.style.background='rgba(255,120,0,.88)';}else if(st==='error'){b.textContent='⚠ N/D';b.style.background='rgba(120,120,120,.85)';}}
   function buildGrids(){
     const grids={news:DOM.get('tv-grid-news'),war:DOM.get('tv-grid-war'),eu:DOM.get('tv-grid-eu'),asia:DOM.get('tv-grid-asia'),sci:DOM.get('tv-grid-sci')};
     Object.values(grids).forEach(g=>{if(g)g.replaceChildren();});
@@ -1396,46 +1441,44 @@ const TV=(()=>{
     document.querySelectorAll('.tv-btn').forEach(b=>b.classList.toggle('act',b.dataset.tvid===id));
     DOM.get('tv-placeholder')?.classList.add('hidden');
     const cn=DOM.get('tv-channel-name');if(cn)cn.textContent=`${ch.flag} ${ch.label}`;
-    const iframe=DOM.get('tv-iframe');if(iframe)iframe.src=ytUrl(ch.ch,1,1);
-    document.querySelectorAll('.media-ch-btn').forEach(b=>b.classList.toggle('act',b.dataset.chid===id));
-    const ml=DOM.get('media-ch-label');if(ml)ml.textContent=`${ch.flag} ${ch.label}`;
-    Alert.show(`📺 ${ch.flag} ${ch.label} · YouTube Live`,'ok');TTS.speak(`Canale attivo: ${ch.label}.`);
+    _badge('load');
+    HLSPlayer.play(DOM.get('tv-video'),ch.u,{mute:true,onStatus:st=>{_badge(st);if(st==='live'||st==='proxy'||st==='native'){okCount++;DOM.setText('sb-tv',okCount);}}});
+    if(DOM.get('media-modal')?.classList.contains('open')&&_mediaMode==='tv'){document.querySelectorAll('.media-ch-btn').forEach(b=>b.classList.toggle('act',b.dataset.chid===id));HLSPlayer.play(DOM.get('media-video'),ch.u,{mute:false});const ml=DOM.get('media-ch-label');if(ml)ml.textContent=`${ch.flag} ${ch.label}`;}
+    Alert.show(`📺 ${ch.flag} ${ch.label} · HLS Live`,'ok');TTS.speak(`Canale attivo: ${ch.label}.`);
   }
   function buildMediaSidebar(){
     const cont=DOM.get('media-ch-list');if(!cont)return;cont.replaceChildren();
     const cats={news:'🌍 NEWS GLOBALI',war:'⚔ GUERRA',eu:'🇪🇺 EUROPA',asia:'🌏 ASIA',sci:'🔭 SCIENZA'};
     const grouped={};CH.forEach(ch=>{(grouped[ch.cat]=grouped[ch.cat]||[]).push(ch);});
-    Object.entries(cats).forEach(([cat,label])=>{if(!grouped[cat])return;cont.appendChild(DOM.make('div',{class:'media-section-hdr'},label));grouped[cat].forEach(ch=>{const btn=DOM.make('button',{class:`media-ch-btn${active===ch.id?' act':''}`,'data-chid':ch.id});const dot=DOM.make('span',{class:'media-ch-dot'});btn.append(dot,`${ch.flag} ${ch.label}`);btn.addEventListener('click',()=>{document.querySelectorAll('.media-ch-btn').forEach(b=>b.classList.toggle('act',b===btn));const iframe=DOM.get('media-iframe');if(iframe)iframe.src=ytUrl(ch.ch,1,0);const ml=DOM.get('media-ch-label');if(ml)ml.textContent=`${ch.flag} ${ch.label}`;active=ch.id;});cont.appendChild(btn);});});
+    Object.entries(cats).forEach(([cat,label])=>{if(!grouped[cat])return;cont.appendChild(DOM.make('div',{class:'media-section-hdr'},label));grouped[cat].forEach(ch=>{const btn=DOM.make('button',{class:`media-ch-btn${active===ch.id?' act':''}`,'data-chid':ch.id});const dot=DOM.make('span',{class:'media-ch-dot'});btn.append(dot,`${ch.flag} ${ch.label}`);btn.addEventListener('click',()=>{document.querySelectorAll('.media-ch-btn').forEach(b=>b.classList.toggle('act',b===btn));active=ch.id;HLSPlayer.play(DOM.get('media-video'),ch.u,{mute:false});const ml=DOM.get('media-ch-label');if(ml)ml.textContent=`${ch.flag} ${ch.label}`;});cont.appendChild(btn);});});
   }
-  return{CH,play,buildGrids,buildMediaSidebar,ytUrl,get active(){return active;}};
+  return{CH,play,buildGrids,buildMediaSidebar,get active(){return active;}};
 })();
 
-/* ═══ WEBCAM ENGINE (YouTube live cams by channel-or-video) ═══ */
+/* ═══ WEBCAM ENGINE — Windy webcams (iframe, affidabile) ═══ */
 const Webcams=(()=>{
   const CITIES=[
-    {city:'Roma',flag:'🇮🇹',lat:41.9,lng:12.5,yt:'Ml4MYnhSDGE'},
-    {city:'Kiev',flag:'🇺🇦',lat:50.45,lng:30.52,yt:'M-Rvzb7fSUE'},
-    {city:'New York',flag:'🇺🇸',lat:40.75,lng:-74,yt:'rnXIjl_Rzy4'},
-    {city:'Tokyo',flag:'🇯🇵',lat:35.7,lng:139.7,yt:'DjdUEyjx8GM'},
-    {city:'London',flag:'🇬🇧',lat:51.5,lng:-0.1,yt:'St7aTfyOZ-c'},
-    {city:'Paris',flag:'🇫🇷',lat:48.85,lng:2.35,yt:'S5kbAOTj141'},
-    {city:'Dubai',flag:'🇦🇪',lat:25.2,lng:55.27,yt:'HP7uh4jbnQY'},
-    {city:'Singapore',flag:'🇸🇬',lat:1.35,lng:103.82,yt:'0nTO4zSEpOs'},
-    {city:'Seoul',flag:'🇰🇷',lat:37.6,lng:127,yt:'y2H1Ds2Nr_A'},
-    {city:'Venezia',flag:'🇮🇹',lat:45.44,lng:12.34,yt:'RfHILC5eL0M'},
-    {city:'Praga',flag:'🇨🇿',lat:50.08,lng:14.42,yt:'nlfmWlbz5cE'},
-    {city:'Times Sq',flag:'🗽',lat:40.758,lng:-73.985,yt:'eJ7ZkQ5TC08'},
+    {city:'Roma',flag:'🇮🇹',lat:41.9,lng:12.5},{city:'Venezia',flag:'🇮🇹',lat:45.44,lng:12.34},
+    {city:'Milano',flag:'🇮🇹',lat:45.46,lng:9.19},{city:'Napoli',flag:'🇮🇹',lat:40.85,lng:14.27},
+    {city:'Kyiv',flag:'🇺🇦',lat:50.45,lng:30.52},{city:'Tel Aviv',flag:'🇮🇱',lat:32.07,lng:34.78},
+    {city:'Parigi',flag:'🇫🇷',lat:48.86,lng:2.35},{city:'Londra',flag:'🇬🇧',lat:51.5,lng:-0.1},
+    {city:'New York',flag:'🇺🇸',lat:40.71,lng:-74.0},{city:'Tokyo',flag:'🇯🇵',lat:35.68,lng:139.76},
+    {city:'Dubai',flag:'🇦🇪',lat:25.2,lng:55.27},{city:'Istanbul',flag:'🇹🇷',lat:41.01,lng:28.98},
   ];
+  function _url(c,zoom){return `https://embed.windy.com/embed2.html?lat=${c.lat}&lon=${c.lng}&zoom=${zoom||11}&level=surface&overlay=webcams&menu=&message=true&marker=true&type=map&location=coordinates&detail=true&metricWind=kt&metricTemp=%C2%B0C&radarRange=-1`;}
   function buildMiniGrid(){const g=DOM.get('wc-mini-grid');if(!g)return;const frag=document.createDocumentFragment();CITIES.forEach((c,i)=>{const btn=DOM.make('button',{class:'wc-m','data-cityidx':String(i)},`${c.flag} ${c.city}`);btn.addEventListener('click',()=>loadCity(i));frag.appendChild(btn);});g.replaceChildren(frag);}
-  function loadCity(idx){const c=CITIES[idx];if(!c)return;document.querySelectorAll('.wc-m').forEach((b,i)=>b.classList.toggle('active',i===idx));DOM.setText('wc-city-label',`${c.flag} ${c.city}`);DOM.get('wc-placeholder')?.classList.add('hidden');const iframe=DOM.get('wc-preview-iframe');if(iframe)iframe.src=`https://www.youtube.com/embed/${c.yt}?autoplay=1&mute=1&rel=0&modestbranding=1&controls=0`;MapEngine.flyTo(c.lat,c.lng,12);Alert.show(`📹 ${c.flag} ${c.city} · Live Camera`,'ok');}
-  function buildMediaSidebar(cont){if(!cont)return;cont.replaceChildren();CITIES.forEach((c,i)=>{const btn=DOM.make('button',{class:'media-ch-btn','data-cityidx':String(i)});const dot=DOM.make('span',{class:'media-ch-dot'});btn.append(dot,`${c.flag} ${c.city}`);btn.addEventListener('click',()=>{document.querySelectorAll('.media-ch-btn').forEach(b=>b.classList.toggle('act',b===btn));const iframe=DOM.get('media-iframe');if(iframe)iframe.src=`https://www.youtube.com/embed/${c.yt}?autoplay=1&mute=0&rel=0&modestbranding=1`;const ml=DOM.get('media-ch-label');if(ml)ml.textContent=`${c.flag} ${c.city}`;});cont.appendChild(btn);});}
+  function loadCity(idx){const c=CITIES[idx];if(!c)return;document.querySelectorAll('.wc-m').forEach((b,i)=>b.classList.toggle('active',i===idx));DOM.setText('wc-city-label',`${c.flag} ${c.city}`);DOM.get('wc-placeholder')?.classList.add('hidden');const fr=DOM.get('wc-preview-iframe');if(fr)fr.src=_url(c,11);MapEngine.flyTo(c.lat,c.lng,11);Alert.show(`📹 ${c.flag} ${c.city} · Webcam Windy`,'ok');}
+  function buildMediaSidebar(cont){if(!cont)return;cont.replaceChildren();cont.appendChild(DOM.make('div',{class:'media-section-hdr'},'📹 WEBCAM CITTÀ'));CITIES.forEach((c,i)=>{const btn=DOM.make('button',{class:'media-ch-btn','data-cityidx':String(i)});const dot=DOM.make('span',{class:'media-ch-dot'});btn.append(dot,`${c.flag} ${c.city}`);btn.addEventListener('click',()=>{document.querySelectorAll('.media-ch-btn').forEach(b=>b.classList.toggle('act',b===btn));const fr=DOM.get('media-iframe');if(fr)fr.src=_url(c,12);const ml=DOM.get('media-ch-label');if(ml)ml.textContent=`${c.flag} ${c.city}`;});cont.appendChild(btn);});}
   return{CITIES,loadCity,buildMiniGrid,buildMediaSidebar};
 })();
 
 /* ═══ MEDIA MODAL ═══ */
 let _mediaMode='tv';
-function openMediaModal(mode='tv'){_mediaMode=mode;const modal=DOM.get('media-modal');if(!modal)return;modal.classList.add('open');const icon=DOM.get('media-icon'),title=DOM.get('media-title'),sub=DOM.get('media-sub');if(mode==='tv'){if(icon)icon.textContent='📺';if(title)title.textContent='LIVE TV — YouTube Live';if(sub)sub.textContent='Canali globali · Stream sempre aggiornato';}else{if(icon)icon.textContent='📹';if(title)title.textContent='WEBCAM LIVE — Città';if(sub)sub.textContent='Stream live YouTube';}const cont=DOM.get('media-ch-list');if(!cont)return;if(mode==='tv')TV.buildMediaSidebar();else Webcams.buildMediaSidebar(cont);const firstBtn=DOM.get('media-ch-list')?.querySelector('.media-ch-btn');if(firstBtn)firstBtn.click();}
-function closeMediaModal(){DOM.get('media-modal')?.classList.remove('open');const iframe=DOM.get('media-iframe');if(iframe)iframe.src='about:blank';}
+function openMediaModal(mode='tv'){_mediaMode=mode;const modal=DOM.get('media-modal');if(!modal)return;modal.classList.add('open');const icon=DOM.get('media-icon'),title=DOM.get('media-title'),sub=DOM.get('media-sub'),vid=DOM.get('media-video'),ifr=DOM.get('media-iframe');
+  if(mode==='tv'){if(icon)icon.textContent='📺';if(title)title.textContent='LIVE TV — HLS Streams';if(sub)sub.textContent='Canali globali · player video HLS';if(vid)vid.style.display='block';if(ifr){ifr.style.display='none';ifr.src='about:blank';}TV.buildMediaSidebar();}
+  else{if(icon)icon.textContent='📹';if(title)title.textContent='WEBCAM LIVE — Città';if(sub)sub.textContent='Webcam live via Windy';if(vid){vid.style.display='none';HLSPlayer.stop(vid);}if(ifr){ifr.style.display='block';ifr.style.flex='1';ifr.style.width='100%';ifr.style.height='100%';}Webcams.buildMediaSidebar(DOM.get('media-ch-list'));}
+  const firstBtn=DOM.get('media-ch-list')?.querySelector('.media-ch-btn');if(firstBtn)firstBtn.click();}
+function closeMediaModal(){DOM.get('media-modal')?.classList.remove('open');const ifr=DOM.get('media-iframe');if(ifr)ifr.src='about:blank';HLSPlayer.stop(DOM.get('media-video'));}
 /* ═══ LIVE DATA FETCHERS ═══ */
 async function fetchISS(){try{const r=await fetchSafe('https://api.wheretheiss.at/v1/satellites/25544',{},6000);const d=await r.json();DOM.setText('iss-lat',`${d.latitude.toFixed(2)}°`);DOM.setText('iss-lon',`${d.longitude.toFixed(2)}°`);DOM.setText('iss-alt',`${Math.round(d.altitude)} km`);DOM.setText('iss-vel',`${Math.round(d.velocity)} km/h`);const dot=DOM.get('iss-dot');if(dot){dot.style.left=`${((d.longitude+180)/360*62+2)}px`;dot.style.top=`${((90-d.latitude)/180*62+2)}px`;}DOM.setText('iss-over',`Sopra: ${_getZoneName(d.latitude,d.longitude)}`);DOM.setText('iss-cover',d.latitude>45||d.latitude<-45?'Polare — limitata':'Equatoriale — ottima');}catch{}}
 async function fetchEQ(){try{const r=await fetchSafe('https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson',{},8000);const d=await r.json();const feats=d.features??[];const m6=feats.filter(f=>f.properties.mag>=6),tsus=feats.filter(f=>f.properties.tsunami===1);DOM.setText('eq-m6',m6.length);DOM.setText('eq-tot',feats.length);DOM.setText('sb-eq',feats.length);DOM.setText('sb-eq2',feats.length);DOM.setText('eq-badge-n',String(feats.length));DOM.setText('eq-n-top',feats.length);DOM.setText('eq-tsunami',tsus.length||'OK');Layers.updateNatural(feats);const list=DOM.get('eq-list');if(!list)return;const frag=document.createDocumentFragment();feats.sort((a,b)=>b.properties.mag-a.properties.mag).slice(0,8).forEach(f=>{const m=f.properties.mag,cls=m>=7?'hi':m>=5?'md':'lo';const div=DOM.make('div',{class:'eq-row'});div.addEventListener('click',()=>{if(f.geometry){MapEngine.flyTo(f.geometry.coordinates[1],f.geometry.coordinates[0],8);Alert.show(`🌍 M${m} · ${(f.properties.place||'').slice(0,40)}`,m>=6?'war':m>=5?'orn':'ok');}});div.append(DOM.make('div',{class:'eq-place'},(f.properties.place??'--').slice(0,32)),DOM.make('div',{class:`eq-mag eq-${cls}`},`M${m.toFixed(1)}`));frag.appendChild(div);});list.replaceChildren(frag);}catch{}}
@@ -1479,7 +1522,7 @@ const CD={'UCRAINA':{flag:'🇺🇦',name:'Ucraina',risk:79,mil:'450k+ truppe, F
 function openCountryModal(name){const data=CD[name]??CD['GLOBALE'];DOM.setText('country-flag',data.flag);DOM.setText('country-name',data.name);const body=DOM.get('country-body');if(!body)return;body.replaceChildren();[{title:'RISCHIO',content:`Score: ${data.risk}/100`,color:data.risk>70?'var(--red)':data.risk>50?'var(--orn)':'var(--g)'},{title:'FORZE MILITARI',content:data.mil,color:'var(--gd)'},{title:'NUCLEARE',content:data.nuke,color:'var(--pur)'},{title:'ECONOMIA',content:data.economy,color:'var(--yel)'},{title:'EVENTI',content:data.events.join(' · '),color:'var(--cyn)'}].forEach(s=>{const div=DOM.make('div',{style:'padding:8px 10px;background:var(--bg2)'});div.appendChild(DOM.make('div',{style:'font-size:6px;color:var(--gf);letter-spacing:.1em;text-transform:uppercase;margin-bottom:4px'},s.title));div.appendChild(DOM.make('div',{style:`font-size:7.5px;color:${s.color};line-height:1.5`},s.content));body.appendChild(div);});DOM.get('country-modal')?.classList.add('open');}
 
 /* ═══ COORD PANEL ═══ */
-function _showCoordPanel(lat,lng,opts={}){const panel=DOM.get('trkp');if(!panel)return;if(!DOM.get('trk-data')){panel.innerHTML='<div class="trk-h"><span id="trkp-title">📍 COORDINATE</span><span id="trkp-close" style="cursor:pointer;color:rgba(255,34,68,.6)">✕</span></div><div class="trk-grid" id="trk-data"></div>';AIS._setHighlight(null);ADSB._setHighlight(null);}const el=DOM.get('trk-data');if(!el)return;el.innerHTML='';[['LAT',`${lat.toFixed(5)}°`],['LON',`${lng.toFixed(5)}°`],['ZONA',_getZoneName(lat,lng)],['ZOOM',opts.zoom?`Z${(+opts.zoom).toFixed(1)}`:'?']].forEach(([l,v])=>{el.append(DOM.make('div',{class:'tv-row'},l),DOM.make('div',{class:'tv-val'},v));});const row=DOM.make('div',{style:'grid-column:1/-1;margin-top:4px;display:flex;gap:2px'});[['🔍 ZOOM',()=>MapEngine.flyTo(lat,lng,14),'#00ff41'],['🌍 EARTH',()=>window.open(`https://earth.google.com/web/@${lat.toFixed(4)},${lng.toFixed(4)},500a,800d,35y`,'_blank'),'#58a6ff'],['📋',()=>navigator.clipboard?.writeText(`${lat.toFixed(5)}, ${lng.toFixed(5)}`).then(()=>Alert.show('📋 Copiato!','ok')),'#ffd700']].forEach(([l,fn,c])=>{const b=DOM.make('button',{style:`flex:1;padding:3px;font-size:6px;font-family:var(--font);background:rgba(0,255,65,.06);border:1px solid rgba(0,255,65,.18);color:${c};cursor:pointer;border-radius:1px`},l);b.addEventListener('click',fn);row.appendChild(b);});el.appendChild(row);panel.querySelector('#trkp-close')?.addEventListener('click',()=>{panel.style.display='none';});panel.style.display='block';}
+function _showCoordPanel(lat,lng,opts={}){const panel=DOM.get('trkp');if(!panel)return;if(!DOM.get('trk-data')){panel.innerHTML='<div class="trk-h"><span id="trkp-title">📍 COORDINATE</span><span id="trkp-close" style="cursor:pointer;color:rgba(255,34,68,.6)">✕</span></div><div class="trk-grid" id="trk-data"></div>';AIS._setHighlight(null);ADSB._setHighlight(null);}const el=DOM.get('trk-data');if(!el)return;el.innerHTML='';[['LAT',`${lat.toFixed(5)}°`],['LON',`${lng.toFixed(5)}°`],['ZONA',_getZoneName(lat,lng)],['ZOOM',opts.zoom?`Z${(+opts.zoom).toFixed(1)}`:'?']].forEach(([l,v])=>{el.append(DOM.make('div',{class:'tv-row'},l),DOM.make('div',{class:'tv-val'},v));});const row=DOM.make('div',{style:'grid-column:1/-1;margin-top:4px;display:flex;gap:2px'});[['🔍 ZOOM',()=>MapEngine.flyTo(lat,lng,14),'#00ff41'],['🚶 STREET VIEW',()=>openStreetView(lat,lng),'#58a6ff'],['📋',()=>navigator.clipboard?.writeText(`${lat.toFixed(5)}, ${lng.toFixed(5)}`).then(()=>Alert.show('📋 Copiato!','ok')),'#ffd700']].forEach(([l,fn,c])=>{const b=DOM.make('button',{style:`flex:1;padding:3px;font-size:6px;font-family:var(--font);background:rgba(0,255,65,.06);border:1px solid rgba(0,255,65,.18);color:${c};cursor:pointer;border-radius:1px`},l);b.addEventListener('click',fn);row.appendChild(b);});el.appendChild(row);panel.querySelector('#trkp-close')?.addEventListener('click',()=>{panel.style.display='none';});panel.style.display='block';}
 /* ═══ AIRCRAFT CLICK PANEL ═══ */
 const AC_TYPE_IT={civil:'Aereo Civile',mil:'Aereo Militare',fighter:'Caccia',helo:'Elicottero',awacs:'AWACS / Pattugliamento',drone:'Drone'};
 async function _lookupFlight(callsign){if(!callsign||callsign.length<3)return{origin:'--',destination:'--',airline:'--'};try{const r=await fetchSafe(`https://api.adsbdb.com/v0/callsign/${callsign.toUpperCase().replace(/\s/g,'')}`,{},5000);const d=await r.json();const fp=d?.response?.flightroute;if(fp){return{origin:fp.origin?.name||fp.origin?.iata_country_iso||'--',destination:fp.destination?.name||fp.destination?.iata_country_iso||'--',airline:fp.airline?.name||'--'};}}catch{}const pfx=callsign.substring(0,3).toUpperCase();const AIRLINES={RYR:'Ryanair',EZY:'easyJet',BAW:'British Airways',DLH:'Lufthansa',AFR:'Air France',AZA:'ITA Airways',UAE:'Emirates',QTR:'Qatar Airways',THY:'Turkish Airlines',SWR:'Swiss',KLM:'KLM',IBE:'Iberia',AFL:'Aeroflot',UAL:'United',AAL:'American',DAL:'Delta',JAL:'Japan Airlines',ANA:'ANA',SIA:'Singapore Air',QFA:'Qantas'};return{origin:'--',destination:'--',airline:AIRLINES[pfx]||pfx};}
@@ -1514,8 +1557,35 @@ function _hitTestAircraft(cx,cy,pr){if(!ADSB.data.length||!Globe.map||!Globe.rea
 
 /* ═══ CONTEXT MENU ═══ */
 let _ctxEl=null;
-function showContextMenu(lat,lng,ev){_removeCtx();let x=ev?.clientX??window.innerWidth/2,y=ev?.clientY??window.innerHeight/2;x=Math.min(x,window.innerWidth-168);y=Math.min(y,window.innerHeight-225);const menu=DOM.make('div',{});menu.id='ctx-menu';const hdr=DOM.make('div',{});hdr.id='ctx-menu-hdr';hdr.textContent=`📍 ${lat.toFixed(4)}° ${lng.toFixed(4)}°`;menu.appendChild(hdr);[{ico:'🔍',lbl:'Zoom qui',fn:()=>MapEngine.flyTo(lat,lng,14)},{ico:'🌍',lbl:'Google Earth',fn:()=>window.open(`https://earth.google.com/web/@${lat.toFixed(4)},${lng.toFixed(4)},500a,800d,35y`,'_blank')},{ico:'🌐',lbl:'Deep-dive Paese',fn:()=>openCountryModal(_getZoneName(lat,lng))},{ico:'📋',lbl:'Copia coord',fn:()=>navigator.clipboard?.writeText(`${lat.toFixed(5)}, ${lng.toFixed(5)}`).then(()=>Alert.show('📋 Copiato!','ok'))},{ico:'🔊',lbl:'TTS',fn:()=>TTS.speak(`Coordinate: latitudine ${lat.toFixed(2)}, longitudine ${lng.toFixed(2)}.`)},{ico:'❌',lbl:'Chiudi',fn:()=>{}}].forEach(item=>{const row=DOM.make('div',{class:'ctx-item'});row.append(DOM.make('span',{class:'ctx-ico'},item.ico),DOM.make('span',{},item.lbl));row.addEventListener('click',()=>{_removeCtx();item.fn();});menu.appendChild(row);});menu.style.left=x+'px';menu.style.top=y+'px';document.body.appendChild(menu);_ctxEl=menu;setTimeout(()=>document.addEventListener('click',_removeCtx,{once:true}),80);}
+function showContextMenu(lat,lng,ev){_removeCtx();let x=ev?.clientX??window.innerWidth/2,y=ev?.clientY??window.innerHeight/2;x=Math.min(x,window.innerWidth-168);y=Math.min(y,window.innerHeight-225);const menu=DOM.make('div',{});menu.id='ctx-menu';const hdr=DOM.make('div',{});hdr.id='ctx-menu-hdr';hdr.textContent=`📍 ${lat.toFixed(4)}° ${lng.toFixed(4)}°`;menu.appendChild(hdr);[{ico:'🔍',lbl:'Zoom qui',fn:()=>MapEngine.flyTo(lat,lng,14)},{ico:'🚶',lbl:'Street View (pannello)',fn:()=>openStreetView(lat,lng)},{ico:'🌐',lbl:'Deep-dive Paese',fn:()=>openCountryModal(_getZoneName(lat,lng))},{ico:'📋',lbl:'Copia coord',fn:()=>navigator.clipboard?.writeText(`${lat.toFixed(5)}, ${lng.toFixed(5)}`).then(()=>Alert.show('📋 Copiato!','ok'))},{ico:'🔊',lbl:'TTS',fn:()=>TTS.speak(`Coordinate: latitudine ${lat.toFixed(2)}, longitudine ${lng.toFixed(2)}.`)},{ico:'❌',lbl:'Chiudi',fn:()=>{}}].forEach(item=>{const row=DOM.make('div',{class:'ctx-item'});row.append(DOM.make('span',{class:'ctx-ico'},item.ico),DOM.make('span',{},item.lbl));row.addEventListener('click',()=>{_removeCtx();item.fn();});menu.appendChild(row);});menu.style.left=x+'px';menu.style.top=y+'px';document.body.appendChild(menu);_ctxEl=menu;setTimeout(()=>document.addEventListener('click',_removeCtx,{once:true}),80);}
 function _removeCtx(){if(_ctxEl){_ctxEl.remove();_ctxEl=null;}}
+
+/* ═══ STREET VIEW (in-panel) ═══ */
+let _svLast=null;
+function openStreetView(lat,lng){
+  _svLast={lat,lng};
+  const panel=DOM.get('sv-panel'),body=DOM.get('sv-body'),title=DOM.get('sv-title');if(!panel||!body)return;
+  if(title)title.textContent=`STREET VIEW · ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+  const key=Settings.get('googleKey');
+  if(key&&key.startsWith('AIza')){
+    body.innerHTML=`<iframe style="width:100%;height:100%;border:none" allow="fullscreen" referrerpolicy="no-referrer-when-downgrade" src="https://www.google.com/maps/embed/v1/streetview?key=${encodeURIComponent(key)}&location=${lat},${lng}&heading=0&pitch=0&fov=90"></iframe>`;
+  }else{
+    body.innerHTML=`<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:8px;text-align:center;padding:16px;background:radial-gradient(ellipse at 50% 40%,#001a06,#000)">
+      <div style="font-size:26px">🚶</div>
+      <div style="font-size:8px;color:var(--gd);font-family:var(--font-h);letter-spacing:.08em">STREET VIEW — CHIAVE GOOGLE RICHIESTA</div>
+      <div style="font-size:7px;color:var(--gm);max-width:300px;line-height:1.6">Aggiungi una <b style="color:var(--g)">Google Maps Embed API key</b> in ⚙ Impostazioni per vedere Street View a 360° direttamente qui nel pannello.</div>
+      <div style="display:flex;gap:6px;margin-top:4px">
+        <button id="sv-open-settings" style="padding:6px 14px;font-family:var(--font-h);font-size:7px;font-weight:700;background:rgba(0,255,65,.14);border:1px solid var(--border3);color:var(--g);cursor:pointer;border-radius:2px">⚙ IMPOSTAZIONI</button>
+        <button id="sv-open-ext" style="padding:6px 14px;font-family:var(--font-h);font-size:7px;font-weight:700;background:var(--bluf);border:1px solid rgba(0,170,255,.4);color:var(--blu);cursor:pointer;border-radius:2px">↗ APRI SU GOOGLE</button>
+      </div></div>`;
+    body.querySelector('#sv-open-settings')?.addEventListener('click',()=>SettingsUI.open());
+    body.querySelector('#sv-open-ext')?.addEventListener('click',()=>window.open(`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${lat},${lng}`,'_blank'));
+  }
+  panel.style.display='block';
+}
+function closeStreetView(){const p=DOM.get('sv-panel');if(p)p.style.display='none';const b=DOM.get('sv-body');if(b)b.innerHTML='';}
+DOM.get('sv-close')?.addEventListener('click',closeStreetView);
+DOM.get('sv-ext')?.addEventListener('click',()=>{if(_svLast)window.open(`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${_svLast.lat},${_svLast.lng}`,'_blank');});
 
 /* ═══ WINDY / DEFCON / GEO ═══ */
 function setWindy(type){const maps={ukraine:'https://embed.windy.com/embed2.html?lat=50&lon=35&zoom=5&overlay=wind',mideast:'https://embed.windy.com/embed2.html?lat=32&lon=45&zoom=4&overlay=wind',global:'https://embed.windy.com/embed2.html?lat=25&lon=20&zoom=2&overlay=wind',rain:'https://embed.windy.com/embed2.html?lat=48&lon=14&zoom=4&overlay=rain',temp:'https://embed.windy.com/embed2.html?lat=48&lon=14&zoom=4&overlay=temp'};const fr=DOM.get('wc-frame');if(fr&&maps[type]){fr.src=maps[type];Alert.show(`🌍 Windy: ${type.toUpperCase()}`,'ok');}}
@@ -1598,6 +1668,7 @@ const SettingsUI=(()=>{
     DOM.get('st-firms').value=Settings.get('firmsKey')||'';
     DOM.get('st-aishub').value=Settings.get('aishubUser')||'';
     DOM.get('st-finnhub').value=Settings.get('finnhubKey')||'';
+    DOM.get('st-google').value=Settings.get('googleKey')||'';
     document.querySelectorAll('#st-mapstyle .st-seg-btn').forEach(b=>b.classList.toggle('act',b.dataset.mapstyle===Settings.get('mapStyle')));
     const tv=+Settings.get('terrain');DOM.get('st-terrain').value=tv;DOM.setText('st-terrain-val',tv.toFixed(1)+'x');
     document.querySelectorAll('#st-units .st-seg-btn').forEach(b=>b.classList.toggle('act',b.dataset.units===Settings.get('units')));
@@ -1628,6 +1699,7 @@ const SettingsUI=(()=>{
       firmsKey:DOM.get('st-firms').value.trim(),
       aishubUser:DOM.get('st-aishub').value.trim(),
       finnhubKey:DOM.get('st-finnhub').value.trim(),
+      googleKey:DOM.get('st-google').value.trim(),
       mapStyle:document.querySelector('#st-mapstyle .st-seg-btn.act')?.dataset.mapstyle||'satellite-streets-v12',
       terrain:+DOM.get('st-terrain').value,
       units:document.querySelector('#st-units .st-seg-btn.act')?.dataset.units||'metric',
@@ -1699,7 +1771,7 @@ document.addEventListener('click',e=>{
   const seg=t.closest('.st-seg-btn');if(seg){seg.parentElement.querySelectorAll('.st-seg-btn').forEach(b=>b.classList.toggle('act',b===seg));return;}
 });
 DOM.get('st-terrain')?.addEventListener('input',e=>{DOM.setText('st-terrain-val',(+e.target.value).toFixed(1)+'x');});
-document.addEventListener('keydown',e=>{if(e.target.tagName==='INPUT')return;const k=e.key.toUpperCase();if(k==='1')MapState.setMode('earth');else if(k==='2')MapState.setMode('maps');else if(k==='3')MapState.setMode('split');else if(k==='W')MapState.toggleWar();else if(k==='A')MapState.toggleADSB();else if(k==='T')TTS.toggle();else if(k==='S')SettingsUI.open();else if(k==='L'){const p=DOM.get('layer-panel');p?.classList.toggle('open');}else if(k==='ESCAPE'){_removeCtx();if(DOM.get('trkp'))DOM.get('trkp').style.display='none';closeMediaModal();DOM.get('country-modal')?.classList.remove('open');SettingsUI.close();}else if(k==='/'||k==='F')DOM.get('hk-inp')?.focus();});
+document.addEventListener('keydown',e=>{if(e.target.tagName==='INPUT')return;const k=e.key.toUpperCase();if(k==='1')MapState.setMode('earth');else if(k==='2')MapState.setMode('maps');else if(k==='3')MapState.setMode('split');else if(k==='W')MapState.toggleWar();else if(k==='A')MapState.toggleADSB();else if(k==='T')TTS.toggle();else if(k==='S')SettingsUI.open();else if(k==='L'){const p=DOM.get('layer-panel');p?.classList.toggle('open');}else if(k==='ESCAPE'){_removeCtx();if(DOM.get('trkp'))DOM.get('trkp').style.display='none';closeMediaModal();closeStreetView();DOM.get('country-modal')?.classList.remove('open');SettingsUI.close();}else if(k==='/'||k==='F')DOM.get('hk-inp')?.focus();});
 document.addEventListener('keydown',e=>{if(e.target.id==='hk-inp'&&e.key==='Enter')hackCmd();if(e.target.id==='ip-inp'&&e.key==='Enter')geoLookup();if(e.target.id==='st-mapbox'&&e.key==='Enter')SettingsUI.save();});
 DOM.get('boot-token-skip')?.addEventListener('click',startBoot);
 DOM.get('boot-mapbox-token')?.addEventListener('keydown',e=>{if(e.key==='Enter')startBoot();});
@@ -1714,7 +1786,9 @@ async function startBoot(){
   for(const step of steps){await new Promise(r=>setTimeout(r,80+Math.random()*70));addLine(step.msg,step.ok);if(status)status.textContent=step.msg;if(bar)bar.style.width=`${step.p}%`;}
   await new Promise(r=>setTimeout(r,320));
   if(bootEl){bootEl.classList.add('fade-out');setTimeout(()=>{bootEl.style.display='none';},520);}
-  MapState.setMode('earth');
+  /* Con token Mapbox → globo 3D. Senza → mappa satellitare ESRI (nessuna chiave) così aerei/navi/guerra sono subito visibili */
+  const _hasTok=(Settings.get('mapboxToken')||'').startsWith('pk.');
+  MapState.setMode(_hasTok?'earth':'maps');
   SettingsUI.applyInitial();
   TV.buildGrids();Webcams.buildMiniGrid();
   renderEscalation();renderForcePosture();renderInstability();renderSigint();renderThreatMatrix();updateHeatmap();

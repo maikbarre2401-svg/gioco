@@ -20,9 +20,14 @@ browser (localStorage) e non vengono mai inviate a server esterni.
 - **Finnhub** (opzionale) — prezzi azionari live.
 
 ## Novità v92
-- Pannello **Impostazioni** completo con gestione API keys, qualità grafica e sistema.
+- **Mappa satellitare gratis di default**: senza token Mapbox l'app parte in modalità MAPS (satellite ESRI, nessuna chiave) così **aerei ADS-B, navi AIS e la simulazione WAR4D sono subito visibili**. Col token Mapbox si passa al globo 3D.
+- **Aerei reali** via ADS-B (adsb.lol → adsb.fi → OpenSky) disegnati sia sul globo 3D sia sulla mappa 2D.
+- **WAR4D** (fronte, missili, droni, tank) ora renderizzato anche sulla mappa 2D, non solo sul globo.
+- **Live TV via HLS** (`.m3u8` in un player video nativo con hls.js e fallback proxy CORS) — molto più affidabile degli embed.
+- **Webcam** città via layer webcam di Windy (iframe affidabile).
+- **Street View nel pannello**: clic sulla mappa → 🚶 Street View a 360° dentro l'app (richiede una Google Maps Embed API key, gratuita, in Impostazioni). Niente più redirect a Google Earth.
+- Pannello **Impostazioni** con gestione API keys (Mapbox, NASA FIRMS, AISHub, Finnhub, Google), qualità grafica e sistema.
 - **Terminatore Giorno/Notte 4D**: ombra notturna reale calcolata dalla posizione del sole, con marcatore subsolare.
-- **TV live via ID canale** (`embed/live_stream?channel=…`): gli stream restano sempre aggiornati invece di scadere.
 - Rotazione automatica del globo, esagerazione terreno regolabile, scelta stile mappa, toggle effetti (atmosfera, scanline, cursore).
 - Mercati e feed instradati tramite proxy CORS selezionabile per maggiore affidabilità.
 
