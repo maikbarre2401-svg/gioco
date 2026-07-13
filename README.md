@@ -1,4 +1,4 @@
-# 🚀 DEEP FIELD — MK-XXV
+# 🚀 DEEP FIELD — MK-XXVI
 
 Gioco spaziale 3D completo in un singolo file HTML. Niente da installare: apri `index.html` in un browser moderno (serve internet per le librerie Three.js/PeerJS da CDN) e gioca.
 
@@ -63,13 +63,20 @@ Gioco spaziale 3D completo in un singolo file HTML. Niente da installare: apri `
 - **Fauna aliena**: erbivori, predatori che ti cacciano e meduse fluttuanti — difenditi col blaster
 - **Rovine precursori**: monoliti con manufatti da recuperare
 - **Economia**: mina/raccogli → vendi alla stazione o ai mercanti di città → potenzia cannoni, scudi, motori, missili
-- **🚀 Hangar navi — 3 classi pilotabili**: attracca alla stazione e scegli la tua nave!
+- **🚀 Hangar navi — 4 classi pilotabili**: attracca alla stazione e scegli la tua nave!
   - **FALCO · Ricognitore** (di serie) — agile e veloce (+15% velocità), scudi leggeri
   - **VESPA · Caccia** (450 cr) — ali a X e cannoni gemelli, +35% danno
   - **TITANO · Corazzata** (950 cr) — tre motori, corazza pesante, +60% scudi
+  - **FANTASMA · Intercettore** (1800 cr) — prototipo stealth ad ali a freccia, +30% velocità e +50% danno
   - Ogni nave ha modello 3D, colori e statistiche propri; la scelta viene salvata
-- **Nemici**: droni pirata, **intercettori veloci**, **mine a ricerca** che ti inseguono ed esplodono (abbattile prima!), corvette miniboss — le imboscate sono più frequenti e numerose nei sistemi ad alto PERICOLO
+- **📋 CONTRATTI — bacheca taglie**: ogni stazione offre 3 incarichi (caccia ai droni, taglie su corvette, ORDINE ROSSO sull'ammiraglia, bonifica mine, forniture di minerali) — firma, completa, riscuoti
+- **👑 AMMIRAGLIA PIRATA**: boss capitale da 1500 di scafo con 4 torrette a raffica che schiera ondate di caccia di scorta — abbattila per 400 crediti e 80 minerali
+- **🕳️ BUCHI NERI**: singolarità con disco di accrescimento in ~1 sistema su 5 — l'attrazione gravitazionale ti trascina; tuffati nel disco e vieni scagliato in un sistema casuale della galassia (viaggio gratis, se hai coraggio)
+- **🚛 Convogli mercantili**: cargo civili in rotta tra i pianeti rendono viva la galassia
+- **🛠️ Relitti saccheggiabili**: avvicinati al relitto alla deriva e premi F — crediti e missili gratis… o un'imboscata pirata
+- **Nemici**: droni pirata, **intercettori veloci**, **mine a ricerca** che ti inseguono ed esplodono (abbattile prima!), corvette miniboss, ammiraglia boss — le imboscate sono più frequenti e numerose nei sistemi ad alto PERICOLO
 - **Città aliene ovunque**: oltre a Nyx Prime, le metropoli al neon possono sorgere su mondi di cristallo, tossici, ghiacciati e desertici
+- **🌿 Erba 3D** sui mondi con vegetazione (qualità ALTA) e **texture planetarie a risoluzione maggiorata**
 - **Grafica**: PBR con riflessi, ombre dinamiche, normal map, raggi solari volumetrici, lens flare, tunnel iperspaziale, luna, illuminazione notturna, FXAA, aberrazione cromatica
 - **Audio 100% procedurale** (WebAudio): motore, laser, esplosioni, warp, ambiente
 - **Salvataggio automatico** dei progressi (crediti, potenziamenti, missili, missioni) nel browser: riprendi da dove avevi lasciato
@@ -86,7 +93,7 @@ Usa il servizio gratuito PeerJS. Per un server proprio: `index.html?ph=tuoserver
 
 ## 🛠️ Debug (console del browser)
 
-`DF.gotoPlanet(n)` · `DF.land()` · `DF.takeoff()` · `DF.spawnCorvette()` · `DF.spawnMines(5)` · `DF.addCredits(500)` · `DF.openHangar()` · `DF.setShip(0/1/2)` · `DF.shipsInfo()` · `DF.setTime(0.8)` (0=notte, 0.25=alba) · `DF.talkGiver()` · `DF.state()` · `DF.net()`
+`DF.gotoPlanet(n)` · `DF.land()` · `DF.takeoff()` · `DF.spawnCorvette()` · `DF.spawnDread()` · `DF.spawnMines(5)` · `DF.addCredits(500)` · `DF.openHangar()` · `DF.setShip(0..3)` · `DF.shipsInfo()` · `DF.offers()` · `DF.accept(0)` · `DF.findBH()` · `DF.tpBH()` · `DF.tpWreck()` · `DF.setTime(0.8)` (0=notte, 0.25=alba) · `DF.talkGiver()` · `DF.state()` · `DF.net()`
 
 ---
 

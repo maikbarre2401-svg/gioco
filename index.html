@@ -188,6 +188,8 @@
       <div id="rr_hgSell" style="cursor:pointer;margin:12px 0 16px;text-align:center;background:rgba(87,214,160,.14);border:1px solid rgba(87,214,160,.5);color:#8fe8c0;font-family:'IBM Plex Mono',monospace;font-weight:600;letter-spacing:.08em;font-size:12.5px;border-radius:6px;padding:11px;">⇪ VENDI TUTTI I MINERALI · 2 crediti / unità</div>
       <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.2em;color:#7e90a4;margin:2px 0 8px;">◈ HANGAR NAVI — SCEGLI LA TUA NAVE</div>
       <div id="rr_hgShips" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin-bottom:16px;"></div>
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.2em;color:#7e90a4;margin:2px 0 8px;">◈ CONTRATTI — BACHECA TAGLIE</div>
+      <div id="rr_hgContracts" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin-bottom:16px;"></div>
       <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.2em;color:#7e90a4;margin:2px 0 8px;">◈ POTENZIAMENTI</div>
       <div id="rr_hgGrid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;"></div>
       <div style="display:flex;justify-content:center;margin-top:18px;">
@@ -425,7 +427,7 @@
     gasblue:{bands:true,b1:'#bfe0ff',b2:'#3a6494',b3:'#7fb0d8',atmo:0xaad0ff}
   };
   function planetTex(type,rng,S){
-    S=S||384;
+    S=S||(qualityHigh!==false?512:384);
     var P=PALS[type]||PALS.rock;
     var cv=document.createElement('canvas'); cv.width=cv.height=S; var x=cv.getContext('2d');
     var rcv=document.createElement('canvas'); rcv.width=rcv.height=S; var rx=rcv.getContext('2d');
@@ -836,11 +838,12 @@
     };
   })();
 
-  // ---------- flotta: 3 classi di nave selezionabili ----------
+  // ---------- flotta: 4 classi di nave selezionabili ----------
   var SHIPS=[
     {id:'scout', nome:'FALCO · Ricognitore', desc:'Agile e veloce, scudi leggeri', prezzo:0,   spd:1.15, sh:0.85, dmg:0.9,  hull:0xb9c4d0, accent:0x5fd0e0},
     {id:'fighter', nome:'VESPA · Caccia',    desc:'Bilanciato, potenza di fuoco alta', prezzo:450, spd:1.0,  sh:1.0,  dmg:1.35, hull:0xc8b8a0, accent:0xff7a3a},
-    {id:'tank', nome:'TITANO · Corazzata',   desc:'Lenta ma corazzata, scudi enormi', prezzo:950, spd:0.8,  sh:1.6,  dmg:1.1,  hull:0x9aa89a, accent:0x57d6a0}
+    {id:'tank', nome:'TITANO · Corazzata',   desc:'Lenta ma corazzata, scudi enormi', prezzo:950, spd:0.8,  sh:1.6,  dmg:1.1,  hull:0x9aa89a, accent:0x57d6a0},
+    {id:'ghost', nome:'FANTASMA · Intercettore', desc:'Prototipo stealth: velocità e danno estremi', prezzo:1800, spd:1.3, sh:0.75, dmg:1.5, hull:0x2a2f3a, accent:0xb070ff}
   ];
   var curShip=0, ownedShips=[0];
   function shipDef(){ return SHIPS[curShip]||SHIPS[0]; }
@@ -898,6 +901,14 @@
         var n2=new TH.Mesh(new TH.CylinderGeometry(0.3,0.2,0.5,10),new TH.MeshBasicMaterial({color:0x9fe8ff})); n2.rotation.x=Math.PI/2; n2.position.set(a[0],0,-2.6); ship.add(n2);
         var s2=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0x6fd6ff,blending:TH.AdditiveBlending,depthWrite:false,transparent:true})); s2.position.set(a[0],0,-3.1); s2.scale.set(2.2,2.2,1); ship.add(s2); shipEngines.push(s2);
       });
+    } else if(def.id==='ghost'){
+      // prototipo stealth: muso allungato + ali a freccia + bagliori viola
+      var snout=new TH.Mesh(new TH.ConeGeometry(0.34,2.6,14),body); snout.rotation.x=-Math.PI/2; snout.position.z=5.2; ship.add(snout);
+      [[-1],[1]].forEach(function(a){
+        var sw=new TH.Mesh(new TH.BoxGeometry(3.4,0.1,1.5),dark); sw.position.set(a[0]*2.6,0.05,-1.5); sw.rotation.y=a[0]*0.5; ship.add(sw);
+        var edge=new TH.Mesh(new TH.BoxGeometry(3.2,0.05,0.12),accentGlow); edge.position.set(a[0]*2.6,0.12,-0.85); edge.rotation.y=a[0]*0.5; ship.add(edge);
+      });
+      var spine=new TH.Mesh(new TH.BoxGeometry(0.1,0.1,5.0),accentGlow); spine.position.set(0,0.42,0.8); ship.add(spine);
     }
     if(!lite){ engineLight=new TH.PointLight(0x6fd6ff,0.8,26); engineLight.position.set(0,0,-3.6); ship.add(engineLight); }
     // carrello d'atterraggio retrattile (visibile solo a terra)
@@ -1091,7 +1102,7 @@
   var SPECTRAL=[{c:'O',col:0x9bb0ff,t:'30000K'},{c:'B',col:0xaabfff,t:'19000K'},{c:'A',col:0xcad7ff,t:'8800K'},{c:'F',col:0xf6f4ff,t:'7000K'},{c:'G',col:0xfff2e6,t:'5700K'},{c:'K',col:0xffd0a0,t:'4400K'},{c:'M',col:0xff9a66,t:'3300K'}];
   var RES=['Ferrite','Idrogeno','Silicati','Titanio','Acqua','Elio-3','Platino','Iridio','Cobalto','Ammoniaca'];
   function disposeObj(o){ o.traverse(function(c){ if(c.geometry) c.geometry.dispose(); if(c.material){ var m=Array.isArray(c.material)?c.material:[c.material]; m.forEach(function(mm){ if(mm.map) mm.map.dispose(); if(mm.roughnessMap) mm.roughnessMap.dispose(); if(mm.bumpMap) mm.bumpMap.dispose(); if(mm.normalMap) mm.normalMap.dispose(); if(mm.emissiveMap&&mm.emissiveMap!==mm.map) mm.emissiveMap.dispose(); mm.dispose(); }); } }); }
-  function clearSystem(){ while(sysGroup.children.length){ var c=sysGroup.children[0]; sysGroup.remove(c); disposeObj(c); } bodies=[]; mineables=[]; moons=[]; decor=[]; comets=[]; sun=null; sunGlow=null; sunCorona=null; companion=null; beltGroups=[]; sunShaderMats=[]; sunLight2.intensity=0; }
+  function clearSystem(){ while(sysGroup.children.length){ var c=sysGroup.children[0]; sysGroup.remove(c); disposeObj(c); } bodies=[]; mineables=[]; moons=[]; decor=[]; comets=[]; sun=null; sunGlow=null; sunCorona=null; companion=null; beltGroups=[]; sunShaderMats=[]; sunLight2.intensity=0; convoys=[]; blackhole=null; }
 
   // sole vivo: superficie turbolenta via shader
   function sunMaterial(colHex){
@@ -1274,8 +1285,14 @@
       wg.rotation.set(rng()*6,rng()*6,rng()*6);
       wg.traverse(function(c){ if(c.isMesh){ c.castShadow=true; c.receiveShadow=true; } });
       sysGroup.add(wg);
-      decor.push({g:wg, beacon:beacon, sprite:bsprite, phase:rng()*10, spin:0.02});
+      decor.push({g:wg, beacon:beacon, sprite:bsprite, phase:rng()*10, spin:0.02, wreckLoot:true, salvaged:false});
     }
+
+    // convogli mercantili in transito
+    if(rng()<0.75){ spawnConvoys(rng, 1+(rng()<0.4?1:0)); }
+
+    // buco nero ai margini del sistema (~1 su 5, mai nel Sol)
+    if(!ensureStation && rng()<0.2){ buildBlackhole(rng); }
   }
   function updateComets(dt){
     comets.forEach(function(cm){
@@ -1365,7 +1382,7 @@
       scene.add(g); mines.push({g:g, t:Math.random()*6}); }
     SND.alarm(); toast('CAMPO MINATO','Mine a ricerca in avvicinamento — abbattile!');
   }
-  function killMine(i){ var mn=mines[i]; explode(mn.g.position.clone(),4.5,{color:0xffa060}); scene.remove(mn.g); disposeObj(mn.g); mines.splice(i,1); kills++; setTxt('rr_kills',kills); credits+=10; updCred(); }
+  function killMine(i){ var mn=mines[i]; explode(mn.g.position.clone(),4.5,{color:0xffa060}); scene.remove(mn.g); disposeObj(mn.g); mines.splice(i,1); kills++; setTxt('rr_kills',kills); credits+=10; updCred(); contractProgress('mine'); }
   function updateMines(dt){
     for(var i=mines.length-1;i>=0;i--){ var mn=mines[i]; mn.t+=dt;
       var dir=ship.position.clone().sub(mn.g.position); var d=dir.length();
@@ -1435,26 +1452,232 @@
   function killDrone(di){
     if(di<0) return; var d=drones[di];
     explode(d.g.position,5.2); scene.remove(d.g); disposeObj(d.g); drones.splice(di,1);
-    kills++; setTxt('rr_kills',kills); credits+=15; updCred();
+    kills++; setTxt('rr_kills',kills); credits+=15; updCred(); contractProgress('droni');
     if(mState===4 && kills>=4){ mState=5; mission(5,'Avamposto di rilevamento','Premi F per dispiegare un avamposto (richiede 40 minerali)'); toast('SETTORE LIBERO','Dispiega un avamposto'); }
   }
   function killCorvette(ci){
     if(ci<0) return; var cv=corvettes[ci];
     explode(cv.g.position,11,{color:0xffc890}); scene.remove(cv.g); disposeObj(cv.g); corvettes.splice(ci,1);
-    kills++; setTxt('rr_kills',kills); minerals+=35; credits+=80; setTxt('rr_min',Math.floor(minerals)); updCred();
+    kills++; setTxt('rr_kills',kills); minerals+=35; credits+=80; setTxt('rr_min',Math.floor(minerals)); updCred(); contractProgress('corv');
     toast('CORVETTA DISTRUTTA','+35 minerali · +80 crediti');
   }
   function clearHostiles(){
     corvettes.forEach(function(c){ scene.remove(c.g); disposeObj(c.g); }); corvettes=[];
     missilesArr.forEach(function(m){ scene.remove(m.g); disposeObj(m.g); }); missilesArr=[];
     mines.forEach(function(m){ scene.remove(m.g); disposeObj(m.g); }); mines=[];
+    dreads.forEach(function(d){ scene.remove(d.g); disposeObj(d.g); }); dreads=[];
+  }
+
+  // ---------- AMMIRAGLIA PIRATA (boss capitale) ----------
+  var dreads=[];
+  function dreadModel(){
+    var g=new TH.Group();
+    var hullM=new TH.MeshStandardMaterial({color:0x3a2026,metalness:0.78,roughness:0.42});
+    var darkM=new TH.MeshStandardMaterial({color:0x1c1014,metalness:0.7,roughness:0.5});
+    var trimM=new TH.MeshStandardMaterial({color:0x5a3038,metalness:0.75,roughness:0.4});
+    var hull=new TH.Mesh(new TH.BoxGeometry(16,9,70),hullM); g.add(hull);
+    var keel=new TH.Mesh(new TH.BoxGeometry(8,5,60),darkM); keel.position.y=-6; g.add(keel);
+    var prow=new TH.Mesh(new TH.ConeGeometry(8,20,4),hullM); prow.rotation.x=Math.PI/2; prow.rotation.y=Math.PI/4; prow.position.z=45; g.add(prow);
+    var deck=new TH.Mesh(new TH.BoxGeometry(10,4,40),trimM); deck.position.set(0,6.2,-6); g.add(deck);
+    var tower=new TH.Mesh(new TH.BoxGeometry(6,9,10),darkM); tower.position.set(0,11,-18); g.add(tower);
+    var bridge=new TH.Mesh(new TH.BoxGeometry(7.5,2.4,4),new TH.MeshStandardMaterial({color:0x30161c,metalness:0.6,roughness:0.3,emissive:0xff3a2a,emissiveIntensity:0.35})); bridge.position.set(0,14,-16); g.add(bridge);
+    [[-11],[11]].forEach(function(a){ var pon=new TH.Mesh(new TH.BoxGeometry(5,4,44),trimM); pon.position.set(a[0],-1,-4); g.add(pon);
+      var fin2=new TH.Mesh(new TH.BoxGeometry(0.8,7,14),darkM); fin2.position.set(a[0],3,-22); g.add(fin2); });
+    g.userData.turrets=[];
+    [[-6,6.5,14],[6,6.5,14],[-6,6.5,-2],[6,6.5,-2]].forEach(function(tp){
+      var tb=new TH.Mesh(new TH.SphereGeometry(2.6,12,10),darkM); tb.position.set(tp[0],tp[1],tp[2]); g.add(tb);
+      var barrel=new TH.Mesh(new TH.CylinderGeometry(0.5,0.5,6,8),trimM); barrel.rotation.x=Math.PI/2; barrel.position.set(tp[0],tp[1]+1,tp[2]+3); g.add(barrel);
+      g.userData.turrets.push(tb);
+    });
+    for(var li=0;li<8;li++){ var lz=-30+li*9;
+      var lt=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:(li%2)?0xff4a3a:0xffa050,blending:TH.AdditiveBlending,depthWrite:false,transparent:true}));
+      lt.position.set((li%2)?8.2:-8.2,1.5,lz); lt.scale.set(2.2,2.2,1); g.add(lt); }
+    [[-5],[0],[5]].forEach(function(a){ var e=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0xff8a50,blending:TH.AdditiveBlending,depthWrite:false,transparent:true})); e.position.set(a[0],0,-38); e.scale.set(8,8,1); g.add(e); });
+    var eye=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0xff3a2a,blending:TH.AdditiveBlending,depthWrite:false,transparent:true})); eye.position.set(0,14,-13.5); eye.scale.set(5,5,1); g.add(eye);
+    g.add(new TH.PointLight(0xff5a3a,1.4,160));
+    g.traverse(function(c){ if(c.isMesh){ c.castShadow=true; c.receiveShadow=true; } });
+    return g;
+  }
+  function spawnDread(){
+    if(dreads.length) return;
+    var g=dreadModel();
+    var a=Math.random()*Math.PI*2;
+    g.position.set(ship.position.x+Math.cos(a)*760, ship.position.y+(Math.random()-0.5)*180, ship.position.z+Math.sin(a)*760);
+    scene.add(g);
+    dreads.push({g:g, hp:1500, hpMax:1500, fire:4, volley:0, escortT:9, orbit:Math.random()*Math.PI*2, name:'Ammiraglia Vekkar'});
+    explode(g.position,10,{color:0xff8a6a}); SND.alarm();
+    toast('⚠ ALLERTA CAPITALE','Ammiraglia pirata nel settore — 1500 di scafo!');
+  }
+  function updateDreads(dt){
+    dreads.forEach(function(dd){
+      dd.orbit+=dt*0.06;
+      var desired=ship.position.clone().add(new TH.Vector3(Math.cos(dd.orbit)*400,90*Math.sin(dd.orbit*0.6),Math.sin(dd.orbit)*400));
+      dd.g.position.lerp(desired,Math.min(1,dt*0.22));
+      dd.g.lookAt(ship.position);
+      dd.fire-=dt;
+      if(dd.fire<=0){
+        dd.fire=1.7+Math.random()*0.9; dd.volley++;
+        var t=dd.g.userData.turrets[dd.volley%dd.g.userData.turrets.length];
+        var wp=t.getWorldPosition(new TH.Vector3());
+        var base=ship.position.clone().sub(wp).normalize();
+        for(var s2=-2;s2<=2;s2++){
+          var dir=base.clone().applyAxisAngle(new TH.Vector3(0,1,0),s2*0.045);
+          spawnBolt(wp.clone().add(dir.clone().multiplyScalar(6)),dir,false);
+        }
+      }
+      dd.escortT-=dt;
+      if(dd.escortT<=0){ dd.escortT=14+Math.random()*8;
+        if(drones.length<4){ var n=2;
+          for(var i=0;i<n;i++){ var fast=Math.random()<0.5; var dg=droneModel(fast);
+            dg.position.copy(dd.g.position).add(new TH.Vector3((Math.random()-0.5)*40,8,(Math.random()-0.5)*40));
+            scene.add(dg); drones.push({g:dg, hp:fast?45:68, fire:1+Math.random()*2, orbit:Math.random()*Math.PI*2, fast:fast});
+            explode(dg.position,2.2,{color:0xff8a6a}); }
+          toast('LANCIO CACCIA','L’ammiraglia schiera droni di scorta'); }
+      }
+    });
+  }
+  function killDread(i){
+    if(i<0) return; var dd=dreads[i];
+    var p=dd.g.position.clone();
+    explode(p,16,{color:0xffd090});
+    for(var k=0;k<5;k++){ (function(off,delay){ setTimeout(function(){ explode(p.clone().add(off),9,{color:0xff9a60}); },delay); })(new TH.Vector3((Math.random()-0.5)*50,(Math.random()-0.5)*16,(Math.random()-0.5)*60),120+k*160); }
+    scene.remove(dd.g); disposeObj(dd.g); dreads.splice(i,1);
+    kills++; setTxt('rr_kills',kills); credits+=400; minerals+=80; setTxt('rr_min',Math.floor(minerals)); updCred();
+    contractProgress('dread');
+    toast('AMMIRAGLIA DISTRUTTA','+400 crediti · +80 minerali'); flash(); SND.alarm();
+  }
+
+  // ---------- BUCO NERO: singolarità che ti risucchia in un altro sistema ----------
+  var blackhole=null;
+  function buildBlackhole(rng){
+    var g=new TH.Group();
+    g.add(new TH.Mesh(new TH.SphereGeometry(15,24,18),new TH.MeshBasicMaterial({color:0x000000})));
+    var c=document.createElement('canvas'); c.width=256; c.height=256; var x=c.getContext('2d');
+    var gr=x.createRadialGradient(128,128,20,128,128,128);
+    gr.addColorStop(0,'rgba(255,240,220,0)'); gr.addColorStop(0.18,'rgba(255,225,180,0.55)'); gr.addColorStop(0.42,'rgba(255,150,80,0.32)'); gr.addColorStop(0.72,'rgba(170,90,255,0.14)'); gr.addColorStop(1,'rgba(0,0,0,0)');
+    x.fillStyle=gr; x.fillRect(0,0,256,256);
+    x.globalCompositeOperation='destination-out'; x.beginPath(); x.arc(128,128,27,0,7); x.fill();
+    var diskTex=new TH.CanvasTexture(c);
+    var disks=[];
+    [[0.68,1,0],[0.95,0.8,0.8],[0.45,0.62,1.9]].forEach(function(cfg){
+      var tilt=new TH.Group(); tilt.rotation.x=-Math.PI/2*cfg[0]; tilt.rotation.y=cfg[2];
+      var d=new TH.Mesh(new TH.PlaneGeometry(150,150),new TH.MeshBasicMaterial({map:diskTex,transparent:true,blending:TH.AdditiveBlending,depthWrite:false,side:TH.DoubleSide}));
+      d.scale.setScalar(cfg[1]); tilt.add(d); g.add(tilt); disks.push(d);
+    });
+    var ring=new TH.Mesh(new TH.TorusGeometry(17.5,1.0,10,60),new TH.MeshBasicMaterial({color:0xffd8a0,transparent:true,opacity:0.55,blending:TH.AdditiveBlending,depthWrite:false}));
+    g.add(ring);
+    var halo=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0xb070ff,blending:TH.AdditiveBlending,depthWrite:false,transparent:true,opacity:0.22}));
+    halo.scale.set(130,130,1); g.add(halo);
+    var halo2=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0xffa050,blending:TH.AdditiveBlending,depthWrite:false,transparent:true,opacity:0.2}));
+    halo2.scale.set(60,60,1); g.add(halo2);
+    g.add(new TH.PointLight(0xffaa60,1.6,600));
+    var ang=rng()*Math.PI*2, dist=1900+rng()*900;
+    g.position.set(Math.cos(ang)*dist,(rng()-0.5)*300,Math.sin(ang)*dist);
+    sysGroup.add(g);
+    blackhole={g:g, disks:disks, ring:ring, cd:0};
+  }
+  function updateBlackhole(dt){
+    if(!blackhole) return;
+    blackhole.disks[0].rotation.z+=dt*0.45; blackhole.disks[1].rotation.z-=dt*0.3;
+    blackhole.ring.rotation.z+=dt*0.2;
+    blackhole.cd=Math.max(0,blackhole.cd-dt);
+    if(mode!=='space'||warp||docked) return;
+    var d=ship.position.distanceTo(blackhole.g.position);
+    if(d<420){
+      var pull=(1-d/420); pull=pull*pull*150;
+      ship.position.addScaledVector(blackhole.g.position.clone().sub(ship.position).normalize(),pull*dt);
+      shake=Math.max(shake,pull*0.012);
+      if(d<420 && blackhole.cd<=0 && d>60){ blackhole.cd=6; toast('⚠ SINGOLARITÀ','Attrazione gravitazionale — entra nel disco per il salto o allontanati a tutta spinta!'); }
+    }
+    if(d<45){
+      var cands=galaxy.filter(function(n){ return n.id!==galCur; });
+      var unsc=cands.filter(function(n){ return !n.scanned; });
+      var pick=(unsc.length?unsc:cands)[Math.floor(Math.random()*(unsc.length?unsc.length:cands.length))];
+      flash(); SND.warpJump();
+      finishWarp(pick);
+      toast('SINGOLARITÀ ATTRAVERSATA','Il tunnel spaziotemporale ti ha scagliato in '+pick.name);
+    }
+  }
+
+  // ---------- convogli mercantili (traffico ambientale) ----------
+  var convoys=[];
+  function freighterModel(rng){
+    var g=new TH.Group();
+    var hullM=new TH.MeshStandardMaterial({color:0x7a828e,metalness:0.7,roughness:0.5});
+    var cabM=new TH.MeshStandardMaterial({color:0x4a5262,metalness:0.65,roughness:0.45});
+    var spine=new TH.Mesh(new TH.CylinderGeometry(1.6,1.6,34,10),hullM); spine.rotation.x=Math.PI/2; g.add(spine);
+    var cab=new TH.Mesh(new TH.BoxGeometry(5,4,7),cabM); cab.position.z=18; g.add(cab);
+    var win=new TH.Mesh(new TH.BoxGeometry(4.2,1,0.3),new TH.MeshStandardMaterial({color:0x9fd8ff,emissive:0x6fb8e0,emissiveIntensity:0.8})); win.position.set(0,0.8,21.6); g.add(win);
+    var cols=[0xc06840,0x4a8a6a,0x5a6aa0,0xb0a050];
+    for(var i=0;i<5;i++){ var ct=new TH.Mesh(new TH.BoxGeometry(4.4,4.4,5.4),new TH.MeshStandardMaterial({color:cols[Math.floor(rng()*cols.length)],metalness:0.4,roughness:0.7}));
+      ct.position.z=10-i*6.2; ct.position.y=0.4; g.add(ct); }
+    var eng=new TH.Mesh(new TH.BoxGeometry(6,3,4),cabM); eng.position.z=-19; g.add(eng);
+    [[-1.8],[1.8]].forEach(function(a){ var e=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0x8fd0ff,blending:TH.AdditiveBlending,depthWrite:false,transparent:true})); e.position.set(a[0],0,-21.6); e.scale.set(3.4,3.4,1); g.add(e); });
+    [[-2.6,8],[2.6,-6]].forEach(function(a){ var lt=new TH.Sprite(new TH.SpriteMaterial({map:GLOW_W,color:0x57d6a0,blending:TH.AdditiveBlending,depthWrite:false,transparent:true})); lt.position.set(a[0],1.8,a[1]); lt.scale.set(1.6,1.6,1); g.add(lt); });
+    g.traverse(function(cc){ if(cc.isMesh){ cc.castShadow=true; cc.receiveShadow=true; } });
+    return g;
+  }
+  function spawnConvoys(rng,n){
+    for(var i=0;i<n;i++){
+      var g=freighterModel(rng);
+      var a=rng()*Math.PI*2, dd=500+rng()*900;
+      g.position.set(Math.cos(a)*dd,(rng()-0.5)*160,Math.sin(a)*dd);
+      var a2=rng()*Math.PI*2, d2=500+rng()*900;
+      var to=new TH.Vector3(Math.cos(a2)*d2,(rng()-0.5)*160,Math.sin(a2)*d2);
+      sysGroup.add(g);
+      convoys.push({g:g, to:to, speed:16+rng()*10, name:'Cargo Helios-'+(10+Math.floor(rng()*89))});
+    }
+  }
+  function updateConvoys(dt){
+    convoys.forEach(function(cv){
+      var dir=cv.to.clone().sub(cv.g.position);
+      var d=dir.length();
+      if(d<30){ var a2=Math.random()*Math.PI*2, d2=500+Math.random()*900; cv.to.set(Math.cos(a2)*d2,(Math.random()-0.5)*160,Math.sin(a2)*d2); return; }
+      dir.normalize();
+      cv.g.position.addScaledVector(dir,cv.speed*dt);
+      var look=cv.g.position.clone().add(dir);
+      cv.g.lookAt(look);
+    });
+  }
+
+  // ---------- CONTRATTI: bacheca taglie della stazione ----------
+  var contract=null, nearWreck=null;
+  var CONTRACT_TYPES=[
+    {type:'droni', label:'Caccia grossa: elimina 5 droni pirata', need:5, reward:180},
+    {type:'corv',  label:'Taglia: distruggi la corvetta segnalata', need:1, reward:300},
+    {type:'dread', label:'ORDINE ROSSO: abbatti l’ammiraglia pirata', need:1, reward:600},
+    {type:'minerali', label:'Fornitura: consegna 80 minerali alla stazione', need:80, reward:200},
+    {type:'mine', label:'Bonifica: fai brillare 6 mine a ricerca', need:6, reward:160}
+  ];
+  function contractOffers(){
+    var rng=mulberry32(((galaxy[galCur]?galaxy[galCur].seed:1)^0x9e3779)>>>0);
+    var idxs=[]; while(idxs.length<3){ var i=Math.floor(rng()*CONTRACT_TYPES.length); if(idxs.indexOf(i)<0) idxs.push(i); }
+    return idxs.map(function(i){ return CONTRACT_TYPES[i]; });
+  }
+  function acceptContract(def){
+    contract={type:def.type,label:def.label,need:def.need,have:0,reward:def.reward,done:false};
+    if(def.type==='corv') spawnCorvette();
+    else if(def.type==='dread') spawnDread();
+    else if(def.type==='mine') spawnMines(6);
+    else if(def.type==='droni') spawnDrones(3);
+    toast('CONTRATTO ACCETTATO',def.label); SND.ui(); saveGame();
+  }
+  function contractProgress(kind,amt){
+    if(!contract||contract.done||contract.type!==kind) return;
+    contract.have+=(amt||1);
+    if(contract.have>=contract.need){ contract.done=true; toast('✔ CONTRATTO COMPLETATO','Riscuoti '+contract.reward+' cr all’hangar della stazione'); flash(); }
+    else {
+      toast('CONTRATTO','Progresso: '+contract.have+' / '+contract.need);
+      if(kind==='droni'&&drones.length===0) spawnDrones(Math.min(4,contract.need-contract.have));
+      if(kind==='mine'&&mines.length===0) spawnMines(contract.need-contract.have);
+    }
   }
 
   // ---------- missili a guida ----------
   function fireMissile(){
     if(docked||warp||dActive) return;
     if(missiles<=0){ toast('MISSILI ESAURITI','Rifornisci alla stazione'); return; }
-    var tgt=(locked&&(locked.drone||locked.corv))?locked:null;
+    var tgt=(locked&&(locked.drone||locked.corv||locked.dread))?locked:null;
     if(!tgt){ toast('NESSUN AGGANCIO OSTILE','Aggancia un nemico con TAB'); return; }
     missiles--; updMsl();
     var g=new TH.Group();
@@ -1468,6 +1691,7 @@
   function missileTargetAlive(t){
     if(t.drone) return drones.indexOf(t.drone)>=0;
     if(t.corv) return corvettes.indexOf(t.corv)>=0;
+    if(t.dread) return dreads.indexOf(t.dread)>=0;
     return false;
   }
   function updateMissiles(dt){
@@ -1483,10 +1707,11 @@
       ms.g.quaternion.setFromUnitVectors(new TH.Vector3(0,0,1),dirv);
       ms.smk-=dt; if(ms.smk<=0){ ms.smk=0.03; spawnTrail(ms.g.position.clone().addScaledVector(dirv,-1.6),false); }
       var hit=false;
-      if(alive && ms.g.position.distanceTo(ms.tgt.mesh.position)<(ms.tgt.corv?17:9)){
+      if(alive && ms.g.position.distanceTo(ms.tgt.mesh.position)<(ms.tgt.dread?34:(ms.tgt.corv?17:9))){
         hit=true; explode(ms.g.position,7,{color:0xffd090});
         if(ms.tgt.drone){ ms.tgt.drone.hp-=160; if(ms.tgt.drone.hp<=0) killDrone(drones.indexOf(ms.tgt.drone)); }
         else if(ms.tgt.corv){ ms.tgt.corv.hp-=160; if(ms.tgt.corv.hp<=0) killCorvette(corvettes.indexOf(ms.tgt.corv)); }
+        else if(ms.tgt.dread){ ms.tgt.dread.hp-=200; if(ms.tgt.dread.hp<=0) killDread(dreads.indexOf(ms.tgt.dread)); }
       }
       if(hit||ms.life<=0){ if(!hit) explode(ms.g.position,2.5); scene.remove(ms.g); disposeObj(ms.g); missilesArr.splice(i,1); }
     }
@@ -2640,6 +2865,50 @@
     });
   }
   // aurora boreale (mondi ghiacciati, di notte)
+  // erba 3D instanziata sui mondi con vegetazione (solo qualità ALTA)
+  function buildGrass(type){
+    var gcol={terran:0x4c7a34, ocean:0x3f7a44, toxic:0x3aa07a}[type];
+    if(!gcol||!qualityHigh) return;
+    var c=document.createElement('canvas'); c.width=64; c.height=64; var x=c.getContext('2d');
+    x.strokeStyle='rgba(255,255,255,0.95)'; x.lineWidth=4; x.lineCap='round';
+    for(var i=0;i<11;i++){ var bx=3+i*5.6+(Math.random()*4-2); x.beginPath(); x.moveTo(bx,64); x.quadraticCurveTo(bx+(Math.random()*10-5),34,bx+(Math.random()*14-7),6+Math.random()*12); x.stroke(); }
+    var tex=new TH.CanvasTexture(c);
+    var mat=new TH.MeshStandardMaterial({map:tex,color:gcol,transparent:true,alphaTest:0.35,side:TH.DoubleSide,roughness:1,metalness:0});
+    // ciuffo a croce: due quad incrociati in un'unica geometria instanziata
+    var geo=new TH.BufferGeometry();
+    var hw=1.3, hh=1.5;
+    var verts=[], uvs=[], idx=[];
+    [[1,0],[0,1]].forEach(function(dirg,k){
+      var bx2=dirg[0]*hw, bz2=dirg[1]*hw, o=k*4;
+      verts.push(-bx2,0,-bz2,  bx2,0,bz2,  bx2,hh,bz2,  -bx2,hh,-bz2);
+      uvs.push(0,0, 1,0, 1,1, 0,1);
+      idx.push(o,o+1,o+2, o,o+2,o+3);
+    });
+    geo.setAttribute('position',new TH.Float32BufferAttribute(verts,3));
+    geo.setAttribute('uv',new TH.Float32BufferAttribute(uvs,2));
+    geo.setIndex(idx); geo.computeVertexNormals();
+    var N=2400;
+    var im=new TH.InstancedMesh(geo,mat,N);
+    var lx0=0,lz0=0; if(surf.city){ lx0=surf.city.x; lz0=surf.city.z+surf.city.r-24; }
+    var m4=new TH.Matrix4(), q=new TH.Quaternion(), up=new TH.Vector3(0,1,0), sc=new TH.Vector3(), pos=new TH.Vector3();
+    var placed=0, tries=0;
+    while(placed<N && tries<N*4){ tries++;
+      var cx,cz;
+      if(Math.random()<0.7){ var a=Math.random()*6.283, r=14+Math.pow(Math.random(),0.7)*300; cx=lx0+Math.cos(a)*r; cz=lz0+Math.sin(a)*r; }
+      else { cx=(Math.random()-0.5)*2600; cz=(Math.random()-0.5)*2600; }
+      var y=surf.heightFn(cx,cz);
+      if(y<surf.waterY+1.2) continue;
+      if(surf.city && Math.hypot(cx-surf.city.x,cz-surf.city.z)<surf.city.r) continue;
+      q.setFromAxisAngle(up,Math.random()*6.283);
+      var s=0.7+Math.random()*0.9; sc.set(s,s,s);
+      pos.set(cx,y,cz);
+      m4.compose(pos,q,sc); im.setMatrixAt(placed,m4); placed++;
+    }
+    im.count=placed; im.instanceMatrix.needsUpdate=true;
+    im.receiveShadow=true;
+    surf.group.add(im);
+  }
+
   function buildAurora(){
     var mat=new TH.ShaderMaterial({ uniforms:{ uTime:{value:0}, uOp:{value:0} },
       vertexShader:'varying vec2 vUv;void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
@@ -2862,6 +3131,7 @@
     surf.turrets=[]; surf.flyers=[]; surf.shots=[]; surf.eshots=[]; surf.hostile=!!body.hostile; surf.portals=[]; surf.portalCd=0; surf.decoPortals=[];
     if(!surf.city) buildBiome(type,rng2);
     if(!surf.city && body.hostile) buildThreats(rng2);
+    buildGrass(type);
 
     // nuvole alla deriva
     surf.clouds=[];
@@ -3417,6 +3687,9 @@
     drones.forEach(function(d){ blip(d.g.position,'rgba(255,80,70,1)',2.4); });
     corvettes.forEach(function(c){ blip(c.g.position,'rgba(255,80,70,1)',3.6); });
     mines.forEach(function(m){ blip(m.g.position,'rgba(255,160,60,1)',2); });
+    dreads.forEach(function(d){ blip(d.g.position,'rgba(255,50,40,1)',5); });
+    convoys.forEach(function(cv){ blip(cv.g.position,'rgba(150,220,180,0.85)',2.2); });
+    if(blackhole) blip(blackhole.g.position,'rgba(190,110,255,1)',4);
     comets.forEach(function(c){ blip(c.nuc.position,'rgba(160,210,255,0.9)',2); });
     decor.forEach(function(dc){ if(dc.station) blip(dc.g.position,'rgba(159,200,255,0.9)',2.6); });
     if(outpost) blip(outpost.position,'rgba(240,168,48,1)',2.6);
@@ -3483,14 +3756,15 @@
 
   function droneWrapper(d){ if(!d._tw) d._tw={mesh:d.g,name:'Drone Ostile',type:'ostile',radius:3,drone:d,res:[]}; return d._tw; }
   function corvWrapper(c){ if(!c._tw) c._tw={mesh:c.g,name:c.name,type:'ostile · corvetta',radius:16,corv:c,res:[]}; return c._tw; }
-  function allTargets(){ return bodies.concat(mineables).concat(drones.map(droneWrapper)).concat(corvettes.map(corvWrapper)); }
+  function dreadWrapper(d){ if(!d._tw) d._tw={mesh:d.g,name:d.name,type:'ostile · capitale',radius:36,dread:d,res:[]}; return d._tw; }
+  function allTargets(){ return bodies.concat(mineables).concat(drones.map(droneWrapper)).concat(corvettes.map(corvWrapper)).concat(dreads.map(dreadWrapper)); }
   function cycleLock(){ var list=allTargets(); if(!list.length){ locked=null; return; } var idx=list.indexOf(locked); idx=(idx+1)%list.length; locked=list[idx]; refreshTarget(); }
   function autoLock(){
     if(locked && allTargets().indexOf(locked)<0) locked=null;
     if(locked) return;
     var fwd=shipForward();
     function bestOf(list,maxA){ var b=null,ba=maxA; list.forEach(function(o){ var to=o.mesh.position.clone().sub(ship.position); var d=to.length(); if(d>2600||d<1) return; var a=fwd.angleTo(to.clone().normalize()); if(a<ba){ ba=a; b=o; } }); return b; }
-    var hostiles=drones.map(droneWrapper).concat(corvettes.map(corvWrapper));
+    var hostiles=drones.map(droneWrapper).concat(corvettes.map(corvWrapper)).concat(dreads.map(dreadWrapper));
     locked=bestOf(hostiles,0.45)||bestOf(bodies.concat(mineables),0.3);
   }
   function refreshTarget(){ var tp=$('rr_target'); if(!locked){ tp.style.display='none'; $('rr_bracket').style.display='none'; return; } tp.style.display='block'; setTxt('rr_tName',locked.name); setTxt('rr_tType',(locked.type||'').toUpperCase()); setTxt('rr_tComp', locked.scanned?('RISORSE: '+(locked.res&&locked.res.length?locked.res.join(', '):'nessuna')):((locked.drone||locked.corv)?'OSTILE · armato — missile pronto (R)':'RISORSE: non analizzato')); }
@@ -3498,6 +3772,16 @@
   function doInteract(){
     if(docked) return;
     if(nearStation){ openHangar(); return; }
+    if(nearWreck){
+      var w=nearWreck; w.salvaged=true; nearWreck=null;
+      if(w.beacon) w.beacon.intensity=0; if(w.sprite) w.sprite.material.opacity=0.12;
+      if(Math.random()<0.3){ spawnDrones(2+Math.floor(Math.random()*2)); toast('⚠ TRAPPOLA','Il relitto era un’esca — pirati in avvicinamento!'); }
+      else { var cr=40+Math.floor(Math.random()*70); credits+=cr; updCred();
+        if(Math.random()<0.4&&missiles<MSL_MAX){ missiles++; updMsl(); toast('RELITTO SACCHEGGIATO','+'+cr+' crediti · +1 missile'); }
+        else toast('RELITTO SACCHEGGIATO','+'+cr+' crediti');
+        flash(); SND.scan(); }
+      return;
+    }
     if(locked && !locked.drone && !locked.corv && !locked.scanned){
       locked.scanned=true; refreshTarget(); flash(); SND.scan(); toast('SCANSIONE COMPLETA', locked.name);
       if(mState===2 && locked.isBody){ scanCount++; setTxt('rr_scan',scanCount); if(scanCount>=3){ mState=3; mission(3,'Estrazione mineraria','Avvicinati a un asteroide minerale e tieni premuto G per estrarre 60 unità'); toast('NUOVA DIRETTIVA','Estrai minerali'); } }
@@ -3579,7 +3863,38 @@
         +'</div>';
     });
     sg.innerHTML=sh;
+    var cg=$('rr_hgContracts'); var ch='';
+    if(contract){
+      var canClaim=contract.done || (contract.type==='minerali' && minerals>=contract.need);
+      var prog=contract.type==='minerali'?(Math.min(Math.floor(minerals),contract.need)+' / '+contract.need+' minerali'):(contract.have+' / '+contract.need);
+      ch+='<div style="border:1px solid rgba(240,200,128,.4);border-radius:7px;padding:13px 14px;background:rgba(240,200,128,.04);">'
+        +'<div style="display:flex;justify-content:space-between;align-items:baseline;"><b style="color:#f0dcb0;font-size:13px;">CONTRATTO ATTIVO</b><span style="font-family:\'IBM Plex Mono\',monospace;font-size:10px;color:#f0c880;">'+contract.reward+' cr</span></div>'
+        +'<div style="font-size:11px;color:#c8b89a;margin:5px 0 6px;">'+contract.label+'</div>'
+        +'<div style="font-family:\'IBM Plex Mono\',monospace;font-size:10px;color:#8fa0b2;margin-bottom:10px;">'+(canClaim?'✔ COMPLETATO':('progresso: '+prog))+'</div>'
+        +(canClaim
+          ?'<div data-hgcl="1" style="cursor:pointer;text-align:center;font-family:\'IBM Plex Mono\',monospace;font-size:11px;font-weight:600;letter-spacing:.06em;border-radius:5px;padding:8px;background:rgba(87,214,160,.18);border:1px solid rgba(87,214,160,.6);color:#8fe8c0;">⇪ RISCUOTI · '+contract.reward+' cr</div>'
+          :'<div data-hgab="1" style="cursor:pointer;text-align:center;font-family:\'IBM Plex Mono\',monospace;font-size:11px;font-weight:600;letter-spacing:.06em;border-radius:5px;padding:8px;background:rgba(255,90,74,.1);border:1px solid rgba(255,90,74,.4);color:#e09a90;">✕ ANNULLA CONTRATTO</div>')
+        +'</div>';
+    } else {
+      contractOffers().forEach(function(co,idx){
+        ch+='<div style="border:1px solid rgba(120,160,190,.22);border-radius:7px;padding:13px 14px;background:rgba(255,255,255,.02);">'
+          +'<div style="display:flex;justify-content:space-between;align-items:baseline;"><b style="color:#eaf2fa;font-size:13px;">TAGLIA</b><span style="font-family:\'IBM Plex Mono\',monospace;font-size:10px;color:#f0c880;">'+co.reward+' cr</span></div>'
+          +'<div style="font-size:11px;color:#8fa0b2;margin:5px 0 10px;">'+co.label+'</div>'
+          +'<div data-hgc="'+idx+'" style="cursor:pointer;text-align:center;font-family:\'IBM Plex Mono\',monospace;font-size:11px;font-weight:600;letter-spacing:.06em;border-radius:5px;padding:8px;background:rgba(240,200,128,.14);border:1px solid rgba(240,200,128,.5);color:#f0c880;">FIRMA IL CONTRATTO</div>'
+          +'</div>';
+      });
+    }
+    cg.innerHTML=ch;
   }
+  $('rr_hgContracts').addEventListener('click',function(e){
+    var t=e.target.closest?e.target.closest('[data-hgc],[data-hgcl],[data-hgab]'):null; if(!t) return;
+    if(t.hasAttribute('data-hgc')){ acceptContract(contractOffers()[Number(t.getAttribute('data-hgc'))]); renderHangar(); return; }
+    if(t.hasAttribute('data-hgcl')){
+      if(contract.type==='minerali'&&!contract.done){ if(minerals<contract.need){ toast('MINERALI INSUFFICIENTI','Servono '+contract.need+' unità'); return; } minerals-=contract.need; setTxt('rr_min',Math.floor(minerals)); }
+      credits+=contract.reward; updCred(); toast('PAGAMENTO RICEVUTO','+'+contract.reward+' crediti'); SND.scan(); contract=null; saveGame(); renderHangar(); return;
+    }
+    if(t.hasAttribute('data-hgab')){ contract=null; toast('CONTRATTO ANNULLATO','La bacheca offre nuovi incarichi'); SND.ui(); saveGame(); renderHangar(); return; }
+  });
   $('rr_hgShips').addEventListener('click',function(e){
     var t=e.target.closest?e.target.closest('[data-hgs]'):null; if(!t) return;
     var idx=Number(t.getAttribute('data-hgs')); var sd=SHIPS[idx]; if(!sd||idx===curShip) return;
@@ -3606,7 +3921,7 @@
 
   function doWarp(node){ closeMap(); warp={phase:'charge',t:0,node:node}; toast('CARICA IPERMOTORE','Destinazione: '+node.name); SND.warpCharge(); }
   function finishWarp(node){
-    buildSystem(node.seed,node.cls); galCur=node.id; node.scanned=true; galSel=-1;
+    buildSystem(node.seed,node.cls,node.id===0); galCur=node.id; node.scanned=true; galSel=-1;
     ship.position.set(0,0,0); shipYaw=0; shipPitch=0; throttle=0.35;
     sysName=node.name; setTxt('rr_sysName',node.name); var sp=SPECTRAL[node.cls]; setTxt('rr_sysSub','CLASSE '+sp.c+' · '+sp.t+' · SETTORE '+(node.id<10?'0':'')+node.id+'-A');
     locked=null; refreshTarget(); ambushTimer=Math.max(40,110-node.danger*25)+Math.random()*50;
@@ -3625,7 +3940,7 @@
     ship.position.set(0,0,0); shipYaw=0; shipPitch=0; throttle=0.35;
     shield=100; hull=100; minerals=0; scanCount=0; kills=0; locked=null; freeMode=false; warp=null; minedM=0; ambushTimer=75;
     credits=0; missiles=2; upgrades={cannon:0,shield:0,engine:0}; docked=false; nearStation=null;
-    ownedShips=[0]; if(curShip!==0){ curShip=0; rebuildShip(); }
+    ownedShips=[0]; if(curShip!==0){ curShip=0; rebuildShip(); } contract=null;
     $('rr_hangar').style.display='none';
     setTxt('rr_min',0); setTxt('rr_scan',0); setTxt('rr_kills',0); setBars(); refreshTarget(); updMsl(); updCred();
     drones.forEach(function(d){ scene.remove(d.g); disposeObj(d.g); }); drones=[];
@@ -3691,6 +4006,7 @@
         for(var di=0;di<drones.length;di++){ var d=drones[di]; if(b.mesh.position.distanceTo(d.g.position)<8){ d.hp-=boltDmg(); hit=true; flashAt(d.g.position); if(d.hp<=0) killDrone(di); break; } }
         if(!hit){ for(var ci=0;ci<corvettes.length;ci++){ var cv2=corvettes[ci]; if(b.mesh.position.distanceTo(cv2.g.position)<17){ cv2.hp-=boltDmg(); hit=true; flashAt(b.mesh.position); if(cv2.hp<=0) killCorvette(ci); break; } } }
         if(!hit){ for(var mi2=0;mi2<mines.length;mi2++){ if(b.mesh.position.distanceTo(mines[mi2].g.position)<6.5){ hit=true; flashAt(b.mesh.position); killMine(mi2); break; } } }
+        if(!hit){ for(var ddi=0;ddi<dreads.length;ddi++){ var dd2=dreads[ddi]; if(b.mesh.position.distanceTo(dd2.g.position)<34){ dd2.hp-=boltDmg(); hit=true; flashAt(b.mesh.position); if(dd2.hp<=0) killDread(ddi); break; } } }
       }
       else { if(b.mesh.position.distanceTo(ship.position)<5){ hit=true; shield-=16; shielTimer=0; if(shield<0){ hull+=shield; shield=0; } setBars(); shake=1.6; SND.hit(); var dm=$('rr_dmg'); dm.style.boxShadow='inset 0 0 160px 30px rgba(255,60,40,0.5)'; setTimeout(function(){ dm.style.boxShadow='inset 0 0 160px 30px rgba(255,60,40,0)'; },250); if(hull<=0){ hull=100; shield=maxShield(); setBars(); toast('SCAFO RIPRISTINATO','Sistemi di emergenza'); } } }
       if(hit||b.life<=0){ scene.remove(b.mesh); b.mesh.geometry.dispose(); bolts.splice(i,1); }
@@ -3729,13 +4045,15 @@
   function checkMissions(dt){
     if(mState===1 && waypoint && waypoint.visible){ if(ship.position.distanceTo(waypoint.position)<30){ waypoint.visible=false; flash(); dialog('DR. HALSA — CONTROLLO MISSIONE',['Rotta calibrata, pilota. Bentornato in servizio.','Il tuo compito: rilevare questo sistema. Aggancia un corpo con TAB e premi F per scansionarlo.','Scansiona 3 pianeti. I corpi minori ce li vediamo dopo.'],function(){ mState=2; mission(2,'Rilevamento planetario','Aggancia (TAB) e scansiona (F) 3 pianeti'); toast('NUOVA DIRETTIVA','Scansiona 3 pianeti'); }); } }
     if(dActive){ hidePrompt(); return; }
-    nearStation=null;
+    nearStation=null; nearWreck=null;
     for(var i2=0;i2<decor.length;i2++){ if(decor[i2].station && ship.position.distanceTo(decor[i2].g.position)<190){ nearStation=decor[i2]; break; } }
+    for(var i3=0;i3<decor.length;i3++){ if(decor[i3].wreckLoot && !decor[i3].salvaged && ship.position.distanceTo(decor[i3].g.position)<140){ nearWreck=decor[i3]; break; } }
     var shown=false;
     if(locked && !locked.drone && !locked.corv && !locked.scanned){ prompt2('F', locked.mineable?'Scansiona asteroide':'Scansiona '+locked.name); shown=true; }
     if(mState===3 && locked && locked.mineable && ship.position.distanceTo(locked.mesh.position)<170){ prompt2('G','Tieni premuto · Estrai minerale'); shown=true; }
     if(mState===5){ prompt2('F','Dispiega avamposto (40 minerali)'); shown=true; }
     if(locked && locked.isBody && !PALS[locked.type].bands && ship.position.distanceTo(locked.mesh.position)<locked.radius*4.5){ prompt2('L','Atterra su '+locked.name); shown=true; }
+    if(nearWreck){ prompt2('F','Recupera rottami dal relitto alla deriva'); shown=true; }
     if(nearStation){ prompt2('F','Attracca alla stazione — riparazioni e hangar'); shown=true; }
     if(mState===6||freeMode){ if(!shown){ prompt2('M','Apri mappa galattica'); shown=true; } }
     if(!shown) hidePrompt();
@@ -3804,7 +4122,8 @@
       else if(mode==='surfship'){ updateSurfShip(dt); updateCamera(dt); }
       else if(!docked){
         updateFlight(dt); autoLock(); refreshTarget(); fire(dt); updateMining(dt); updateDrones(dt);
-        updateCorvettes(dt); updateMissiles(dt); updateMines(dt); updateCollisions(dt);
+        updateCorvettes(dt); updateDreads(dt); updateMissiles(dt); updateMines(dt); updateCollisions(dt);
+        updateConvoys(dt); updateBlackhole(dt);
         checkMissions(dt); updateBracket();
         updateCamera(dt);
       } else { updateCamera(dt); }
@@ -3937,7 +4256,7 @@
     try{ localStorage.setItem(SAVE_KEY, JSON.stringify({
       credits:Math.floor(credits), missiles:missiles, upgrades:upgrades, kills:kills,
       mState:mState, freeMode:freeMode, minerals:Math.floor(minerals), portalGun:portalGun,
-      curShip:curShip, ownedShips:ownedShips
+      curShip:curShip, ownedShips:ownedShips, contract:contract
     })); }catch(e){}
   }
   function hasSave(){ try{ return !!localStorage.getItem(SAVE_KEY); }catch(e){ return false; } }
@@ -3951,6 +4270,13 @@
       if(Array.isArray(d.ownedShips)&&d.ownedShips.length) ownedShips=d.ownedShips.filter(function(i){ return i>=0&&i<SHIPS.length; });
       if(ownedShips.indexOf(0)<0) ownedShips.unshift(0);
       if(d.curShip!=null && ownedShips.indexOf(d.curShip)>=0 && d.curShip!==curShip){ curShip=d.curShip; rebuildShip(); }
+      if(d.contract&&d.contract.type){ contract=d.contract;
+        if(!contract.done){
+          if(contract.type==='corv'&&!corvettes.length) spawnCorvette();
+          else if(contract.type==='dread'&&!dreads.length) spawnDread();
+          else if(contract.type==='mine'&&!mines.length) spawnMines(Math.max(1,contract.need-contract.have));
+          else if(contract.type==='droni'&&!drones.length&&mState!==4) spawnDrones(Math.min(4,contract.need-contract.have));
+        } }
       if(d.freeMode){ freeMode=true; mState=6; if(waypoint) waypoint.visible=false; mission('6','Rotta libera','Esplora la galassia · progressi ripristinati'); }
       else if(d.mState){ mState=d.mState; if(mState>1 && waypoint) waypoint.visible=false; missionForState(); if(mState===4 && !drones.length) spawnDrones(4); }
       shield=maxShield();
@@ -4023,6 +4349,18 @@
     setShip:function(i){ if(i<0||i>=SHIPS.length) return false; if(ownedShips.indexOf(i)<0) ownedShips.push(i); curShip=i; rebuildShip(); shield=Math.min(shield,maxShield()); setBars(); return SHIPS[i].nome; },
     shipsInfo:function(){ return {cur:curShip, owned:ownedShips.slice(), stats:{sh:maxShield(),spd:maxSpd(),dmg:boltDmg()}, list:SHIPS.map(function(s){return s.id;})}; },
     spawnMines:spawnMines, minesInfo:function(){ return {mines:mines.length, drones:drones.length, fast:drones.filter(function(d){return d.fast;}).length}; },
+    spawnDread:spawnDread, dreadInfo:function(){ return dreads.length?{hp:dreads[0].hp, n:dreads.length}:null; },
+    hitDread:function(n){ if(!dreads.length) return null; dreads[0].hp-=(n||500); if(dreads[0].hp<=0) killDread(0); return dreads.length?dreads[0].hp:'distrutta'; },
+    contract:function(){ return contract; },
+    accept:function(i){ acceptContract(contractOffers()[i||0]); return contract; },
+    offers:function(){ return contractOffers().map(function(o){ return o.type+' · '+o.reward+'cr'; }); },
+    bh:function(){ return blackhole?{dist:Math.round(ship.position.distanceTo(blackhole.g.position))}:null; },
+    tpBH:function(){ if(!blackhole) return false; ship.position.copy(blackhole.g.position).add(new TH.Vector3(200,20,0)); return true; },
+    diveBH:function(){ if(!blackhole) return false; ship.position.copy(blackhole.g.position).add(new TH.Vector3(30,0,0)); return true; },
+    faceBH:function(){ if(!blackhole) return false; var d=blackhole.g.position.clone().sub(ship.position).normalize(); shipYaw=Math.atan2(d.x,d.z); shipPitch=Math.asin(d.y); return true; },
+    findBH:function(){ var t=0; while(!blackhole&&t<60){ var n=galaxy[Math.floor(Math.random()*galaxy.length)]; if(n.id!==galCur) finishWarp(n); t++; } return blackhole?galaxy[galCur].name:null; },
+    tpWreck:function(){ for(var i=0;i<decor.length;i++){ if(decor[i].wreckLoot&&!decor[i].salvaged){ ship.position.copy(decor[i].g.position).add(new TH.Vector3(60,10,0)); return true; } } return false; },
+    convoyInfo:function(){ return convoys.map(function(c){ return c.name; }); },
     bodyNames:function(){ return bodies.map(function(b){ return b.name+' ('+b.type+')'; }); } };
 
   buildGalaxy(); buildSystem(galaxy[0].seed, galaxy[0].cls, true); setTxt('rr_sysName',galaxy[0].name);
