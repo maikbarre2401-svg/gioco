@@ -1,4 +1,4 @@
-# 🚀 DEEP FIELD — MK-XIII
+# 🚀 DEEP FIELD — MK-XXV
 
 Gioco spaziale 3D completo in un singolo file HTML. Niente da installare: apri `index.html` in un browser moderno (serve internet per le librerie Three.js/PeerJS da CDN) e gioca.
 
@@ -53,7 +53,7 @@ Gioco spaziale 3D completo in un singolo file HTML. Niente da installare: apri `
 
 ## 🌌 Caratteristiche
 
-- **Galassia procedurale**: 110 sistemi, fino a 8 pianeti ciascuno, stelle binarie, comete, cinture di asteroidi, stazioni orbitali, relitti
+- **Galassia procedurale**: 110 sistemi divisi in regioni (Nucleo, Braccio di Orione, Frontiera, Vuoto Esterno), fino a 8 pianeti ciascuno, stelle binarie, comete, cinture di asteroidi, stazioni orbitali, relitti
 - **Atterraggio planetario**: esplora a piedi o **in volo** mondi con terreno procedurale, laghi/lava, vegetazione per bioma, **ciclo giorno/notte** con albe, tramonti e notti stellate
 - **🏛️ ROMA in 3D** sulla Terra: Colosseo, Pantheon, Basilica di San Pietro, Castel Sant'Angelo, obelisco, arco di trionfo, acquedotto, Tevere coi ponti, palazzi con facciate texturizzate e finestre che si accendono di notte, sampietrini, traffico, uccelli e cittadini romani con cui parlare
 - **🛸 NYX PRIME**, metropoli aliena al neon su un mondo di cristallo: torri luminose, pavimento a griglia cyberpunk, guglia centrale, piattaforme fluttuanti, ologrammi, abitanti alieni e droni sintetici
@@ -63,7 +63,13 @@ Gioco spaziale 3D completo in un singolo file HTML. Niente da installare: apri `
 - **Fauna aliena**: erbivori, predatori che ti cacciano e meduse fluttuanti — difenditi col blaster
 - **Rovine precursori**: monoliti con manufatti da recuperare
 - **Economia**: mina/raccogli → vendi alla stazione o ai mercanti di città → potenzia cannoni, scudi, motori, missili
-- **Nemici**: droni pirata, corvette miniboss, imboscate casuali
+- **🚀 Hangar navi — 3 classi pilotabili**: attracca alla stazione e scegli la tua nave!
+  - **FALCO · Ricognitore** (di serie) — agile e veloce (+15% velocità), scudi leggeri
+  - **VESPA · Caccia** (450 cr) — ali a X e cannoni gemelli, +35% danno
+  - **TITANO · Corazzata** (950 cr) — tre motori, corazza pesante, +60% scudi
+  - Ogni nave ha modello 3D, colori e statistiche propri; la scelta viene salvata
+- **Nemici**: droni pirata, **intercettori veloci**, **mine a ricerca** che ti inseguono ed esplodono (abbattile prima!), corvette miniboss — le imboscate sono più frequenti e numerose nei sistemi ad alto PERICOLO
+- **Città aliene ovunque**: oltre a Nyx Prime, le metropoli al neon possono sorgere su mondi di cristallo, tossici, ghiacciati e desertici
 - **Grafica**: PBR con riflessi, ombre dinamiche, normal map, raggi solari volumetrici, lens flare, tunnel iperspaziale, luna, illuminazione notturna, FXAA, aberrazione cromatica
 - **Audio 100% procedurale** (WebAudio): motore, laser, esplosioni, warp, ambiente
 - **Salvataggio automatico** dei progressi (crediti, potenziamenti, missili, missioni) nel browser: riprendi da dove avevi lasciato
@@ -80,7 +86,7 @@ Usa il servizio gratuito PeerJS. Per un server proprio: `index.html?ph=tuoserver
 
 ## 🛠️ Debug (console del browser)
 
-`DF.gotoPlanet(n)` · `DF.land()` · `DF.takeoff()` · `DF.spawnCorvette()` · `DF.addCredits(500)` · `DF.openHangar()` · `DF.setTime(0.8)` (0=notte, 0.25=alba) · `DF.talkGiver()` · `DF.state()` · `DF.net()`
+`DF.gotoPlanet(n)` · `DF.land()` · `DF.takeoff()` · `DF.spawnCorvette()` · `DF.spawnMines(5)` · `DF.addCredits(500)` · `DF.openHangar()` · `DF.setShip(0/1/2)` · `DF.shipsInfo()` · `DF.setTime(0.8)` (0=notte, 0.25=alba) · `DF.talkGiver()` · `DF.state()` · `DF.net()`
 
 ---
 
