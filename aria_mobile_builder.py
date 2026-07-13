@@ -7,6 +7,19 @@ Desktop/AriaMobile e tenta la compilazione (gradlew assembleDebug)
 usando il JDK e l'Android SDK già presenti sul sistema (Android Studio
 installato).
 
+NOVITÀ v9.0 (ARIA CONTROLLA IL TELEFONO):
+- CONTROLLO DEL TELEFONO: chiedi ad ARIA (a voce o per iscritto) di
+  aprire app, cercare su Google/YouTube, aprire siti, CHIAMARE, mandare
+  messaggi WHATSAPP/SMS/EMAIL, aprire le MAPPE, impostare TIMER/SVEGLIA,
+  accendere la TORCIA o aprire la FOTOCAMERA. L'AI emette comandi che
+  l'app esegue via Intent Android.
+- FUNZIONA ANCHE OFFLINE: comandi naturali diretti ("apri youtube",
+  "chiama 333...", "torcia", "timer di 5 minuti") senza bisogno dell'AI.
+- FUNZIONA COL WAKE: "Hey Maik, apri WhatsApp" e lo fa a voce.
+- SICUREZZA: chiamate e messaggi NON partono di nascosto: ARIA apre
+  telefono/WhatsApp/SMS gia' compilati e sei TU a premere invia/chiama.
+  Interruttore 'Controllo telefono' nelle impostazioni (attivo).
+
 NOVITÀ v8.0 (LA VERA AI - LIVELLO MONDIALE):
 - RISPOSTE IN STREAMING: il testo appare PAROLA PER PAROLA in tempo
   reale come ChatGPT (Server-Sent Events di Groq). La chat scorre da
@@ -205,8 +218,8 @@ android {
         applicationId "com.aria.mobile"
         minSdk 26
         targetSdk 34
-        versionCode 11
-        versionName "8.0.0"
+        versionCode 12
+        versionName "9.0.0"
         multiDexEnabled true
     }
 
@@ -311,6 +324,31 @@ MANIFEST = """\
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
 
+    <queries>
+        <intent><action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="https"/></intent>
+        <intent><action android:name="android.intent.action.DIAL"/></intent>
+        <intent><action android:name="android.intent.action.SENDTO"/>
+            <data android:scheme="smsto"/></intent>
+        <intent><action android:name="android.intent.action.SENDTO"/>
+            <data android:scheme="mailto"/></intent>
+        <intent><action android:name="android.media.action.STILL_IMAGE_CAMERA"/></intent>
+        <package android:name="com.whatsapp"/>
+        <package android:name="com.google.android.youtube"/>
+        <package android:name="com.instagram.android"/>
+        <package android:name="com.facebook.katana"/>
+        <package android:name="com.facebook.orca"/>
+        <package android:name="org.telegram.messenger"/>
+        <package android:name="com.zhiliaoapp.musically"/>
+        <package android:name="com.spotify.music"/>
+        <package android:name="com.android.chrome"/>
+        <package android:name="com.google.android.gm"/>
+        <package android:name="com.google.android.apps.maps"/>
+        <package android:name="com.netflix.mediaclient"/>
+        <package android:name="com.twitter.android"/>
+        <package android:name="com.snapchat.android"/>
+    </queries>
+
     <application
         android:name=".AriaApp"
         android:allowBackup="true"
@@ -388,9 +426,10 @@ object AppConfig {
     const val PREF_WAKE_WORD = "wake_word"
     const val PREF_OFFLINE_MODE = "offline_mode"
     const val PREF_AI_MODE = "ai_mode"  // auto | online | offline
+    const val PREF_ACTIONS_ENABLED = "actions_enabled"
 
     const val CREATOR = "MaikGost"
-    const val VERSION = "8.0.0"
+    const val VERSION = "9.0.0"
 
     const val COLOR_BG = 0xFF0A0E1A.toInt()
     const val COLOR_SURFACE = 0xFF121826.toInt()
@@ -677,7 +716,17 @@ class AriaBrain(private val context: Context) {
         sb.append("Sei $assistantName, un'assistente AI personale creata da ${AppConfig.CREATOR}. ")
         sb.append("Sei utile, diretta e concisa. $personalityDesc ")
         sb.append("Rispondi in italiano salvo richiesta diversa. ")
-        sb.append("Per riferimento, data e ora attuali: $nowStr.")
+        sb.append("Per riferimento, data e ora attuali: $nowStr. ")
+        sb.append("Puoi COMANDARE il telefono: quando l'utente chiede di aprire un'app, ")
+        sb.append("cercare qualcosa, chiamare, mandare un messaggio, aprire le mappe, ")
+        sb.append("impostare timer o sveglia, accendere la torcia o aprire la fotocamera, ")
+        sb.append("aggiungi ALLA FINE della risposta un marcatore nel formato ")
+        sb.append("[[DO:TIPO|arg1|arg2]] e scrivi anche una breve frase di conferma. ")
+        sb.append("Tipi disponibili: OPEN_APP|nome, SEARCH|testo, WEB|url, YOUTUBE|testo, ")
+        sb.append("CALL|numero, SMS|numero|testo, WHATSAPP|numero|testo, ")
+        sb.append("EMAIL|indirizzo|oggetto|corpo, MAPS|luogo, TIMER|secondi, ")
+        sb.append("ALARM|ora|minuti, TORCH|on, TORCH|off, CAMERA, SETTINGS, WIFI, BLUETOOTH. ")
+        sb.append("Usa il marcatore SOLO quando l'utente chiede davvero un'azione sul telefono.")
         if (userName.isNotBlank()) {
             sb.append(" L'utente si chiama $userName: chiamalo per nome quando risulta naturale.")
         }
@@ -817,6 +866,9 @@ import androidx.lifecycle.viewModelScope
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.State
 import com.aria.mobile.core.AriaBrain
+import com.aria.mobile.core.AriaAction
+import com.aria.mobile.core.PhoneActions
+import com.aria.mobile.core.AppConfig
 import com.aria.mobile.data.AriaDatabase
 import kotlinx.coroutines.launch
 
@@ -837,6 +889,7 @@ class AriaViewModel(app: Application) : AndroidViewModel(app) {
     val isStreaming: State<Boolean> get() = _isStreaming
 
     var onAssistantResponse: ((String) -> Unit)? = null
+    var onActions: ((List<AriaAction>) -> Unit)? = null
 
     init {
         // Ricarica la conversazione salvata all'avvio
@@ -854,13 +907,32 @@ class AriaViewModel(app: Application) : AndroidViewModel(app) {
 
     fun sendMessage(text: String) {
         if (text.isBlank() || _isLoading.value || _isStreaming.value) return
+
+        val prefs = getApplication<Application>()
+            .getSharedPreferences(AppConfig.PREFS, android.content.Context.MODE_PRIVATE)
+        val actionsEnabled = prefs.getBoolean(AppConfig.PREF_ACTIONS_ENABLED, true)
+
+        // Comando naturale diretto (funziona anche offline, senza AI)
+        if (actionsEnabled) {
+            val nat = PhoneActions.parseNatural(text)
+            if (nat != null) {
+                _messages.value = _messages.value + ChatMessage("user", text)
+                val conf = PhoneActions.describe(nat)
+                _messages.value = _messages.value + ChatMessage("assistant", conf)
+                onActions?.invoke(listOf(nat))
+                onAssistantResponse?.invoke(conf)
+                return
+            }
+        }
+
         _messages.value = _messages.value + ChatMessage("user", text)
         _isLoading.value = true
         _errorMessage.value = null
 
         brain.sendMessage(
             text = text,
-            onPartial = { partial ->
+            onPartial = { raw ->
+                val partial = PhoneActions.stripForDisplay(raw)
                 // streaming: il messaggio dell'assistente cresce in tempo reale
                 if (!_isStreaming.value) {
                     _isStreaming.value = true
@@ -875,16 +947,19 @@ class AriaViewModel(app: Application) : AndroidViewModel(app) {
                 }
             },
             onResult = { response ->
+                val (clean, actions) = PhoneActions.parseMarkers(response)
+                val shown = clean.ifBlank { "Fatto." }
                 val list = _messages.value.toMutableList()
                 if (_isStreaming.value && list.isNotEmpty() && list.last().role == "assistant") {
-                    list[list.size - 1] = list.last().copy(content = response)
+                    list[list.size - 1] = list.last().copy(content = shown)
                     _messages.value = list
                 } else {
-                    _messages.value = list + ChatMessage("assistant", response)
+                    _messages.value = list + ChatMessage("assistant", shown)
                 }
                 _isLoading.value = false
                 _isStreaming.value = false
-                onAssistantResponse?.invoke(response)
+                if (actionsEnabled && actions.isNotEmpty()) onActions?.invoke(actions)
+                onAssistantResponse?.invoke(shown)
             },
             onError = { error ->
                 _errorMessage.value = error
@@ -908,6 +983,217 @@ class AriaViewModel(app: Application) : AndroidViewModel(app) {
             brain.clearHistory {
                 _messages.value = emptyList()
             }
+        }
+    }
+}
+"""
+
+PHONE_ACTIONS = r"""package com.aria.mobile.core
+
+import android.content.Context
+import android.content.Intent
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
+import android.net.Uri
+import android.provider.AlarmClock
+import android.provider.MediaStore
+import android.provider.Settings
+import java.util.Locale
+
+data class AriaAction(val type: String, val args: List<String>)
+
+/**
+ * Controllo del telefono: l'AI emette marcatori [[DO:TIPO|arg|arg]] che qui
+ * vengono eseguiti come Intent Android. Funziona anche offline tramite
+ * comandi naturali ("apri youtube", "chiama...", "torcia"...).
+ *
+ * Sicurezza: chiamate e messaggi NON vengono inviati di nascosto: apriamo
+ * il telefono/WhatsApp/SMS con tutto pronto e sei TU a premere invia/chiama.
+ */
+object PhoneActions {
+
+    private val knownApps = mapOf(
+        "youtube" to "com.google.android.youtube",
+        "whatsapp" to "com.whatsapp",
+        "instagram" to "com.instagram.android",
+        "facebook" to "com.facebook.katana",
+        "messenger" to "com.facebook.orca",
+        "telegram" to "org.telegram.messenger",
+        "tiktok" to "com.zhiliaoapp.musically",
+        "spotify" to "com.spotify.music",
+        "chrome" to "com.android.chrome",
+        "gmail" to "com.google.android.gm",
+        "maps" to "com.google.android.apps.maps",
+        "mappe" to "com.google.android.apps.maps",
+        "netflix" to "com.netflix.mediaclient",
+        "twitter" to "com.twitter.android",
+        "snapchat" to "com.snapchat.android"
+    )
+
+    private val marker = Regex("\\[\\[DO:([^\\]]+)]]")
+
+    fun parseMarkers(text: String): Pair<String, List<AriaAction>> {
+        val actions = ArrayList<AriaAction>()
+        for (m in marker.findAll(text)) {
+            val parts = m.groupValues[1].split("|").map { it.trim() }
+            if (parts.isNotEmpty() && parts[0].isNotBlank()) {
+                actions.add(AriaAction(parts[0].uppercase(Locale.ROOT), parts.drop(1)))
+            }
+        }
+        return stripForDisplay(text) to actions
+    }
+
+    fun stripForDisplay(text: String): String {
+        var t = marker.replace(text, "")
+        t = t.replace(Regex("\\[\\[DO:[^\\]]*$"), "")  // marcatore incompleto a fine stream
+        return t.trim()
+    }
+
+    fun parseNatural(raw: String): AriaAction? {
+        val t = raw.trim().lowercase(Locale.getDefault())
+        fun after(vararg p: String): String? {
+            for (x in p) if (t.startsWith(x)) return raw.trim().substring(x.length).trim()
+            return null
+        }
+        after("cerca su google ", "cercami ", "cerca ")?.let { return AriaAction("SEARCH", listOf(it)) }
+        after("cerca su youtube ", "su youtube ", "youtube ")?.let { return AriaAction("YOUTUBE", listOf(it)) }
+        after("vai sul sito ", "apri il sito ", "vai su ")?.let { return AriaAction("WEB", listOf(it)) }
+        after("chiama il numero ", "chiama ", "telefona a ", "telefona ")?.let { return AriaAction("CALL", listOf(it)) }
+        after("naviga verso ", "portami a ", "indicazioni per ", "mappa di ", "dove si trova ")?.let { return AriaAction("MAPS", listOf(it)) }
+        after("timer di ", "imposta un timer di ", "metti un timer di ")?.let { return AriaAction("TIMER", listOf(it)) }
+        after("apri l'app ", "apri app ", "apri ")?.let { return AriaAction("OPEN_APP", listOf(it)) }
+        if (t.contains("torcia") || t.contains("flash")) {
+            val on = !(t.contains("spegni") || t.contains("spegnere"))
+            return AriaAction("TORCH", listOf(if (on) "on" else "off"))
+        }
+        if (t.contains("fotocamera") || t.contains("scatta") || t.contains("apri la camera")) {
+            return AriaAction("CAMERA", emptyList())
+        }
+        if (t.contains("impostazioni") && (t.startsWith("apri") || t.startsWith("vai"))) {
+            return AriaAction("SETTINGS", emptyList())
+        }
+        return null
+    }
+
+    fun describe(a: AriaAction): String {
+        val arg = a.args.getOrElse(0) { "" }
+        return when (a.type) {
+            "OPEN_APP" -> "Apro $arg."
+            "SEARCH" -> "Cerco \"$arg\" su Google."
+            "WEB" -> "Apro $arg."
+            "YOUTUBE" -> "Cerco \"$arg\" su YouTube."
+            "CALL" -> "Apro il telefono per chiamare $arg."
+            "SMS" -> "Preparo un messaggio per $arg."
+            "WHATSAPP" -> "Apro WhatsApp con il messaggio pronto."
+            "EMAIL" -> "Preparo un'email."
+            "MAPS" -> "Apro le mappe verso $arg."
+            "TIMER" -> "Imposto il timer."
+            "ALARM" -> "Imposto la sveglia."
+            "TORCH" -> if (arg == "off") "Spengo la torcia." else "Accendo la torcia."
+            "CAMERA" -> "Apro la fotocamera."
+            "SETTINGS" -> "Apro le impostazioni."
+            "WIFI" -> "Apro le impostazioni Wi-Fi."
+            "BLUETOOTH" -> "Apro le impostazioni Bluetooth."
+            else -> "Eseguo il comando."
+        }
+    }
+
+    /** Esegue l'azione. Ritorna null se ok, altrimenti un messaggio d'errore. */
+    fun execute(context: Context, a: AriaAction): String? {
+        return try {
+            when (a.type) {
+                "OPEN_APP" -> openApp(context, a.args.getOrElse(0) { "" })
+                "SEARCH" -> view(context, "https://www.google.com/search?q=" + Uri.encode(a.args.getOrElse(0) { "" }))
+                "WEB" -> {
+                    var u = a.args.getOrElse(0) { "" }.trim()
+                    if (!u.startsWith("http")) u = "https://$u"
+                    view(context, u)
+                }
+                "YOUTUBE" -> view(context, "https://www.youtube.com/results?search_query=" + Uri.encode(a.args.getOrElse(0) { "" }))
+                "CALL" -> {
+                    val num = a.args.getOrElse(0) { "" }.filter { it.isDigit() || it == '+' }
+                    launch(context, Intent(Intent.ACTION_DIAL, Uri.parse("tel:$num")))
+                }
+                "SMS" -> {
+                    val i = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:" + a.args.getOrElse(0) { "" }))
+                    i.putExtra("sms_body", a.args.getOrElse(1) { "" })
+                    launch(context, i)
+                }
+                "WHATSAPP" -> {
+                    val num = a.args.getOrElse(0) { "" }.filter { it.isDigit() || it == '+' }.trimStart('+')
+                    val body = Uri.encode(a.args.getOrElse(1) { "" })
+                    val url = if (num.isBlank()) "https://wa.me/?text=$body" else "https://wa.me/$num?text=$body"
+                    view(context, url)
+                }
+                "EMAIL" -> {
+                    val i = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:" + a.args.getOrElse(0) { "" }))
+                    i.putExtra(Intent.EXTRA_SUBJECT, a.args.getOrElse(1) { "" })
+                    i.putExtra(Intent.EXTRA_TEXT, a.args.getOrElse(2) { "" })
+                    launch(context, i)
+                }
+                "MAPS" -> launch(context, Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=" + Uri.encode(a.args.getOrElse(0) { "" }))))
+                "TIMER" -> launch(
+                    context,
+                    Intent(AlarmClock.ACTION_SET_TIMER)
+                        .putExtra(AlarmClock.EXTRA_LENGTH, parseSeconds(a.args.getOrElse(0) { "" }))
+                        .putExtra(AlarmClock.EXTRA_SKIP_UI, false)
+                )
+                "ALARM" -> launch(
+                    context,
+                    Intent(AlarmClock.ACTION_SET_ALARM)
+                        .putExtra(AlarmClock.EXTRA_HOUR, a.args.getOrElse(0) { "0" }.toIntOrNull() ?: 0)
+                        .putExtra(AlarmClock.EXTRA_MINUTES, a.args.getOrElse(1) { "0" }.toIntOrNull() ?: 0)
+                )
+                "TORCH" -> torch(context, a.args.getOrElse(0) { "on" } != "off")
+                "CAMERA" -> launch(context, Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA))
+                "SETTINGS" -> launch(context, Intent(Settings.ACTION_SETTINGS))
+                "WIFI" -> launch(context, Intent(Settings.ACTION_WIFI_SETTINGS))
+                "BLUETOOTH" -> launch(context, Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
+                else -> "Comando non riconosciuto: ${a.type}"
+            }
+        } catch (e: Exception) {
+            "Non riesco a eseguire (${a.type}): ${e.message}"
+        }
+    }
+
+    private fun openApp(context: Context, name: String): String? {
+        val key = name.lowercase(Locale.getDefault()).trim()
+        val pkg = knownApps.entries.firstOrNull { key.contains(it.key) }?.value
+        if (pkg != null) {
+            val i = context.packageManager.getLaunchIntentForPackage(pkg)
+            if (i != null) {
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(i)
+                return null
+            }
+        }
+        return view(context, "https://www.google.com/search?q=" + Uri.encode(name))
+    }
+
+    private fun torch(context: Context, on: Boolean): String? {
+        val cm = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        val id = cm.cameraIdList.firstOrNull {
+            cm.getCameraCharacteristics(it).get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+        } ?: return "Nessuna torcia disponibile"
+        cm.setTorchMode(id, on)
+        return null
+    }
+
+    private fun view(context: Context, url: String): String? =
+        launch(context, Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+
+    private fun launch(context: Context, intent: Intent): String? {
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(intent)
+        return null
+    }
+
+    private fun parseSeconds(sRaw: String): Int {
+        val digits = Regex("\\d+").find(sRaw)?.value?.toIntOrNull() ?: 1
+        return when {
+            sRaw.contains("minut") -> digits * 60
+            sRaw.contains("or") -> digits * 3600
+            else -> digits
         }
     }
 }
@@ -1890,6 +2176,14 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+        viewModel.onActions = { actions ->
+            for (a in actions) {
+                val err = com.aria.mobile.core.PhoneActions.execute(this, a)
+                if (err != null) {
+                    Toast.makeText(this, err, Toast.LENGTH_LONG).show()
+                }
+            }
+        }
         viewModel.onAssistantResponse = { text ->
             if (voiceEnabled.value) speak(text)
         }
@@ -2377,9 +2671,9 @@ fun WelcomeCard(
 ) {
     val suggestions = listOf(
         "Ciao! Chi sei?",
-        "Dammi un'idea creativa",
-        "Raccontami una curiosità",
-        "Aiutami a scrivere un messaggio"
+        "Apri YouTube",
+        "Cerca ricette veloci",
+        "Imposta un timer di 5 minuti"
     )
     Column(
         modifier = Modifier
@@ -2723,6 +3017,7 @@ class SettingsActivity : AppCompatActivity() {
         val rgPersonality = findViewById<RadioGroup>(R.id.rg_personality)
         val swVoice = findViewById<SwitchCompat>(R.id.sw_voice)
         val swMemory = findViewById<SwitchCompat>(R.id.sw_memory)
+        val swActions = findViewById<SwitchCompat>(R.id.sw_actions)
         val swWake = findViewById<SwitchCompat>(R.id.sw_wake)
         val etWakeWord = findViewById<EditText>(R.id.et_wake_word)
         val swOffline = findViewById<SwitchCompat>(R.id.sw_offline)
@@ -2754,6 +3049,7 @@ class SettingsActivity : AppCompatActivity() {
         etModel.setText(prefs.getString(AppConfig.PREF_MODEL, AppConfig.DEFAULT_MODEL))
         swVoice.isChecked = prefs.getBoolean(AppConfig.PREF_VOICE_ENABLED, true)
         swMemory.isChecked = prefs.getBoolean(AppConfig.PREF_MEMORY_ENABLED, true)
+        swActions.isChecked = prefs.getBoolean(AppConfig.PREF_ACTIONS_ENABLED, true)
         swWake.isChecked = prefs.getBoolean(AppConfig.PREF_WAKE_ENABLED, false)
         etWakeWord.setText(
             prefs.getString(AppConfig.PREF_WAKE_WORD, AppConfig.DEFAULT_WAKE_WORD)
@@ -2939,6 +3235,7 @@ class SettingsActivity : AppCompatActivity() {
                 .putBoolean(AppConfig.PREF_VOICE_ENABLED, swVoice.isChecked)
                 .putBoolean(AppConfig.PREF_MEMORY_ENABLED, swMemory.isChecked)
                 .putBoolean(AppConfig.PREF_WAKE_ENABLED, swWake.isChecked)
+                .putBoolean(AppConfig.PREF_ACTIONS_ENABLED, swActions.isChecked)
                 .putBoolean(AppConfig.PREF_OFFLINE_MODE, swOffline.isChecked)
                 .putString(
                     AppConfig.PREF_AI_MODE,
@@ -3338,7 +3635,14 @@ class WakeWordService : Service() {
         if (b == null) { speak("Il mio cervello non è pronto.", "answer"); return }
         b.sendMessage(
             text = command,
-            onResult = { resp -> updateStatus("Parlo..."); speak(resp, "answer") },
+            onResult = { resp ->
+                val (clean, actions) = com.aria.mobile.core.PhoneActions.parseMarkers(resp)
+                val actionsEnabled = getSharedPreferences(AppConfig.PREFS, Context.MODE_PRIVATE)
+                    .getBoolean(AppConfig.PREF_ACTIONS_ENABLED, true)
+                if (actionsEnabled) for (a in actions) com.aria.mobile.core.PhoneActions.execute(applicationContext, a)
+                updateStatus("Parlo...")
+                speak(clean.ifBlank { "Fatto" }, "answer")
+            },
             onError = { errMsg -> speak("Errore: $errMsg", "answer") }
         )
     }
@@ -3613,6 +3917,20 @@ LAYOUT_SETTINGS = """\
         android:background="#1E2A44" android:layout_marginBottom="16dp"/>
 
     <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="🤖 CONTROLLO TELEFONO" android:textColor="#00E5FF"
+        android:textSize="14sp" android:textStyle="bold"/>
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="ARIA puo' aprire app, cercare, chiamare, mandare messaggi WhatsApp/SMS/email, aprire mappe, timer, torcia e fotocamera. Chiamate e messaggi restano pronti: premi tu invia."
+        android:textColor="#5A7A99" android:textSize="11sp" android:layout_marginBottom="8dp"/>
+    <androidx.appcompat.widget.SwitchCompat android:id="@+id/sw_actions"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Consenti ad ARIA di comandare il telefono" android:textColor="#E8F0FF"
+        android:layout_marginBottom="20dp"/>
+
+    <View android:layout_width="match_parent" android:layout_height="1dp"
+        android:background="#1E2A44" android:layout_marginBottom="16dp"/>
+
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
         android:text="🎙️ ASCOLTO SEMPRE ATTIVO" android:textColor="#00E5FF"
         android:textSize="14sp" android:textStyle="bold"/>
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
@@ -3700,7 +4018,7 @@ LAYOUT_SETTINGS = """\
         android:textStyle="bold"/>
 
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="Creator: MaikGost  •  ARIA Mobile v8.0"
+        android:text="Creator: MaikGost  •  ARIA Mobile v9.0"
         android:textColor="#5A7A99" android:textSize="12sp"
         android:gravity="center" android:layout_marginTop="24dp"/>
 </LinearLayout>
@@ -3801,6 +4119,7 @@ def build_kotlin_file_map():
         f"{PKG_DATA}/MessageDao.kt":                   MESSAGE_DAO,
         f"{PKG_DATA}/AriaDatabase.kt":                 ARIA_DATABASE,
         f"{PKG_NET}/GroqClient.kt":                    GROQ_CLIENT,
+        f"{PKG_CORE}/PhoneActions.kt":                 PHONE_ACTIONS,
         f"{PKG_CORE}/OfflineBrain.kt":                 OFFLINE_BRAIN,
         f"{PKG_CORE}/AriaBrain.kt":                    ARIA_BRAIN,
         f"{PKG_UI}/ChatMessage.kt":                    CHAT_MESSAGE_MODEL,
@@ -3814,7 +4133,7 @@ def build_kotlin_file_map():
     }
 
 def create_project(java_path):
-    title("STEP 1 - Creazione progetto ARIA Mobile v8.0")
+    title("STEP 1 - Creazione progetto ARIA Mobile v9.0")
     if PROJECT_DIR.exists():
         answer = input(f"\n  Directory {PROJECT_DIR.name} esiste. Sovrascrivere? (y/N): ").strip().lower()
         if answer == "y":
@@ -3932,7 +4251,7 @@ def build_apk(java_path):
 
 def summarise(apk):
     title("STEP 3 - Output")
-    dest = DESKTOP / "ARIA-Mobile-v8.0.apk"
+    dest = DESKTOP / "ARIA-Mobile-v9.0.apk"
     if apk and apk.exists():
         shutil.copy2(apk, dest)
         print(f"\n{C.BOLD}{'='*60}")
@@ -3945,7 +4264,7 @@ def summarise(apk):
         info(str(PROJECT_DIR))
 
     print(f"\n{C.BOLD}SETUP:{C.RESET}")
-    info("1. Installa ARIA-Mobile-v8.0.apk sul telefono")
+    info("1. Installa ARIA-Mobile-v9.0.apk sul telefono")
     info("2. All'avvio vedrai la splash 3D con 'Creator: MaikGost'")
     info("3. In chat tocca l'INGRANAGGIO in alto -> inserisci la Groq API key")
     info("   (usa 'Prova connessione' per verificare che funzioni)")
@@ -3972,13 +4291,16 @@ def summarise(apk):
     info("    '🧪 Prova AI offline'.")
     info("13. STREAMING: le risposte appaiono parola per parola; il pulsante")
     info("    rosso STOP ferma la generazione in corso.")
+    info("14. CONTROLLO TELEFONO: prova 'apri youtube', 'cerca il meteo',")
+    info("    'timer di 5 minuti', 'accendi la torcia', 'manda un whatsapp a...'")
+    info("    (anche con 'Hey Maik ...'). Disattivabile dalle impostazioni.")
     print()
 
 def main():
     if platform.system() == "Windows":
         os.system("color")
     print(f"\n{C.BOLD}{C.CYAN}{'='*60}")
-    print("  ARIA Mobile v8.0 - Builder Android (Kotlin + Compose)")
+    print("  ARIA Mobile v9.0 - Builder Android (Kotlin + Compose)")
     print("  Creator: MaikGost")
     print(f"{'='*60}{C.RESET}\n")
 
@@ -3999,7 +4321,7 @@ def main():
         create_project(java)
         apk = build_apk(java)
         summarise(apk)
-        print(f"{C.OK}{C.BOLD}ARIA Mobile v8.0 - Completato!{C.RESET}\n")
+        print(f"{C.OK}{C.BOLD}ARIA Mobile v9.0 - Completato!{C.RESET}\n")
     except KeyboardInterrupt:
         print(f"\n{C.WARN}Interrotto.{C.RESET}")
         sys.exit(0)
