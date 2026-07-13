@@ -7,6 +7,22 @@ Desktop/AriaMobile e tenta la compilazione (gradlew assembleDebug)
 usando il JDK e l'Android SDK già presenti sul sistema (Android Studio
 installato).
 
+NOVITÀ v7.0 (AI OFFLINE SCARICABILE + SFERA 3D VERA):
+- PULSANTE '⬇ SCARICA AI OFFLINE': scarica il pacchetto di conoscenza
+  (65+ risposte: capitali, scienza, storia, geografia, animali,
+  conversioni...) che RESTA sul telefono. Prova prima online (versione
+  aggiornata da GitHub), altrimenti usa quello incluso nell'APK.
+- SELETTORE MODALITA' AI: Auto (consigliato) / Solo online (Groq) /
+  Solo offline (senza internet). La modalita' e' mostrata anche nella
+  barra della chat.
+- PULSANTE '🧪 PROVA AI OFFLINE': testa matematica, ora e conoscenza
+  e ti dice esattamente cosa funziona.
+- SFERA 3D VERA: illuminazione lambertiana (una sorgente di luce in
+  alto a sinistra: il lato illuminato brilla, quello in ombra si
+  scurisce), ordinamento per profondita' (le particelle dietro passano
+  DIETRO il nucleo, quelle davanti sopra), ombra morbida a terra che
+  segue la fluttuazione. Effetto tridimensionale reale.
+
 NOVITÀ v6.2 (GROQ TORNA PRIMARIO):
 - FIX: la 'Modalita' offline' NON blocca piu' Groq. Prima intercettava
   ogni messaggio col cervello locale: ecco perche' Groq 'non funzionava
@@ -123,7 +139,7 @@ FIX ereditati dalla v1.1:
 - @OptIn(ExperimentalMaterial3Api::class) dove serve.
 """
 
-import os, sys, shutil, subprocess, platform, urllib.request, time
+import os, sys, shutil, subprocess, platform, urllib.request, time, json
 from pathlib import Path
 
 class C:
@@ -145,6 +161,9 @@ PKG_CORE    = f"{PKG_ROOT}/core"
 PKG_DATA    = f"{PKG_ROOT}/data"
 PKG_NET     = f"{PKG_ROOT}/net"
 PKG_VOICE   = f"{PKG_ROOT}/voice"
+
+# Pacchetto di conoscenza offline (scaricabile/incluso nell'APK)
+KNOWLEDGE_PACK_JSON = '{\n "version": 1,\n "entries": [\n  {\n   "k": [\n    "capitale",\n    "italia"\n   ],\n   "a": "La capitale dell\'Italia è Roma."\n  },\n  {\n   "k": [\n    "capitale",\n    "francia"\n   ],\n   "a": "La capitale della Francia è Parigi."\n  },\n  {\n   "k": [\n    "capitale",\n    "germania"\n   ],\n   "a": "La capitale della Germania è Berlino."\n  },\n  {\n   "k": [\n    "capitale",\n    "spagna"\n   ],\n   "a": "La capitale della Spagna è Madrid."\n  },\n  {\n   "k": [\n    "capitale",\n    "portogallo"\n   ],\n   "a": "La capitale del Portogallo è Lisbona."\n  },\n  {\n   "k": [\n    "capitale",\n    "inghilterra"\n   ],\n   "a": "La capitale dell\'Inghilterra è Londra."\n  },\n  {\n   "k": [\n    "capitale",\n    "regno"\n   ],\n   "a": "La capitale del Regno Unito è Londra."\n  },\n  {\n   "k": [\n    "capitale",\n    "america"\n   ],\n   "a": "La capitale degli Stati Uniti è Washington D.C."\n  },\n  {\n   "k": [\n    "capitale",\n    "stati"\n   ],\n   "a": "La capitale degli Stati Uniti è Washington D.C."\n  },\n  {\n   "k": [\n    "capitale",\n    "giappone"\n   ],\n   "a": "La capitale del Giappone è Tokyo."\n  },\n  {\n   "k": [\n    "capitale",\n    "cina"\n   ],\n   "a": "La capitale della Cina è Pechino."\n  },\n  {\n   "k": [\n    "capitale",\n    "russia"\n   ],\n   "a": "La capitale della Russia è Mosca."\n  },\n  {\n   "k": [\n    "capitale",\n    "grecia"\n   ],\n   "a": "La capitale della Grecia è Atene."\n  },\n  {\n   "k": [\n    "capitale",\n    "egitto"\n   ],\n   "a": "La capitale dell\'Egitto è Il Cairo."\n  },\n  {\n   "k": [\n    "capitale",\n    "brasile"\n   ],\n   "a": "La capitale del Brasile è Brasilia."\n  },\n  {\n   "k": [\n    "capitale",\n    "canada"\n   ],\n   "a": "La capitale del Canada è Ottawa."\n  },\n  {\n   "k": [\n    "capitale",\n    "australia"\n   ],\n   "a": "La capitale dell\'Australia è Canberra."\n  },\n  {\n   "k": [\n    "capitale",\n    "svizzera"\n   ],\n   "a": "La capitale della Svizzera è Berna."\n  },\n  {\n   "k": [\n    "capitale",\n    "austria"\n   ],\n   "a": "La capitale dell\'Austria è Vienna."\n  },\n  {\n   "k": [\n    "capitale",\n    "olanda"\n   ],\n   "a": "La capitale dei Paesi Bassi è Amsterdam."\n  },\n  {\n   "k": [\n    "quanti",\n    "pianeti"\n   ],\n   "a": "Il sistema solare ha 8 pianeti: Mercurio, Venere, Terra, Marte, Giove, Saturno, Urano e Nettuno."\n  },\n  {\n   "k": [\n    "pianeta",\n    "piu grande"\n   ],\n   "a": "Giove è il pianeta più grande del sistema solare."\n  },\n  {\n   "k": [\n    "pianeta",\n    "vicino",\n    "sole"\n   ],\n   "a": "Mercurio è il pianeta più vicino al Sole."\n  },\n  {\n   "k": [\n    "pianeta",\n    "rosso"\n   ],\n   "a": "Il pianeta rosso è Marte."\n  },\n  {\n   "k": [\n    "velocita",\n    "luce"\n   ],\n   "a": "La luce viaggia a circa 299.792 chilometri al secondo."\n  },\n  {\n   "k": [\n    "acqua",\n    "bolle"\n   ],\n   "a": "L\'acqua bolle a 100 gradi Celsius (al livello del mare)."\n  },\n  {\n   "k": [\n    "acqua",\n    "congela"\n   ],\n   "a": "L\'acqua congela a 0 gradi Celsius."\n  },\n  {\n   "k": [\n    "formula",\n    "acqua"\n   ],\n   "a": "La formula chimica dell\'acqua è H2O."\n  },\n  {\n   "k": [\n    "quante",\n    "ossa"\n   ],\n   "a": "Il corpo umano adulto ha 206 ossa."\n  },\n  {\n   "k": [\n    "simbolo",\n    "oro"\n   ],\n   "a": "Il simbolo chimico dell\'oro è Au."\n  },\n  {\n   "k": [\n    "simbolo",\n    "ossigeno"\n   ],\n   "a": "Il simbolo chimico dell\'ossigeno è O."\n  },\n  {\n   "k": [\n    "satellite",\n    "terra"\n   ],\n   "a": "Il satellite naturale della Terra è la Luna."\n  },\n  {\n   "k": [\n    "stella",\n    "vicina"\n   ],\n   "a": "La stella più vicina alla Terra è il Sole; dopo di lui, Proxima Centauri."\n  },\n  {\n   "k": [\n    "fiume",\n    "piu lungo"\n   ],\n   "a": "Il Nilo e il Rio delle Amazzoni si contendono il primato di fiume più lungo del mondo, circa 6.650 km."\n  },\n  {\n   "k": [\n    "monte",\n    "piu alto"\n   ],\n   "a": "Il monte più alto del mondo è l\'Everest, 8.849 metri."\n  },\n  {\n   "k": [\n    "monte",\n    "piu alto",\n    "italia"\n   ],\n   "a": "Il monte più alto d\'Italia è il Monte Bianco, 4.806 metri."\n  },\n  {\n   "k": [\n    "fiume",\n    "piu lungo",\n    "italia"\n   ],\n   "a": "Il fiume più lungo d\'Italia è il Po, 652 km."\n  },\n  {\n   "k": [\n    "oceano",\n    "piu grande"\n   ],\n   "a": "L\'oceano più grande è il Pacifico."\n  },\n  {\n   "k": [\n    "deserto",\n    "piu grande"\n   ],\n   "a": "Il deserto più grande è l\'Antartide; il più grande deserto caldo è il Sahara."\n  },\n  {\n   "k": [\n    "quante",\n    "regioni",\n    "italia"\n   ],\n   "a": "L\'Italia ha 20 regioni."\n  },\n  {\n   "k": [\n    "vulcano",\n    "europa"\n   ],\n   "a": "Il vulcano attivo più alto d\'Europa è l\'Etna, in Sicilia."\n  },\n  {\n   "k": [\n    "quanti",\n    "continenti"\n   ],\n   "a": "I continenti sono 7: Africa, America del Nord, America del Sud, Antartide, Asia, Europa e Oceania."\n  },\n  {\n   "k": [\n    "seconda",\n    "guerra",\n    "mondiale"\n   ],\n   "a": "La Seconda Guerra Mondiale è durata dal 1939 al 1945."\n  },\n  {\n   "k": [\n    "prima",\n    "guerra",\n    "mondiale"\n   ],\n   "a": "La Prima Guerra Mondiale è durata dal 1914 al 1918."\n  },\n  {\n   "k": [\n    "scoperta",\n    "america"\n   ],\n   "a": "L\'America fu raggiunta da Cristoforo Colombo nel 1492."\n  },\n  {\n   "k": [\n    "unita",\n    "italia"\n   ],\n   "a": "L\'Unità d\'Italia è stata proclamata nel 1861."\n  },\n  {\n   "k": [\n    "uomo",\n    "luna"\n   ],\n   "a": "Il primo uomo sulla Luna fu Neil Armstrong, il 20 luglio 1969."\n  },\n  {\n   "k": [\n    "muro",\n    "berlino"\n   ],\n   "a": "Il Muro di Berlino è caduto il 9 novembre 1989."\n  },\n  {\n   "k": [\n    "quando",\n    "fondata",\n    "roma"\n   ],\n   "a": "Secondo la tradizione, Roma fu fondata nel 753 a.C."\n  },\n  {\n   "k": [\n    "animale",\n    "piu veloce"\n   ],\n   "a": "L\'animale terrestre più veloce è il ghepardo (circa 110 km/h); il falco pellegrino in picchiata supera i 300 km/h."\n  },\n  {\n   "k": [\n    "animale",\n    "piu grande"\n   ],\n   "a": "L\'animale più grande mai esistito è la balenottera azzurra, fino a 30 metri."\n  },\n  {\n   "k": [\n    "animale",\n    "piu alto"\n   ],\n   "a": "L\'animale più alto è la giraffa, fino a 5,5 metri."\n  },\n  {\n   "k": [\n    "quanto",\n    "vive",\n    "gatto"\n   ],\n   "a": "Un gatto domestico vive in media 12-18 anni."\n  },\n  {\n   "k": [\n    "quanto",\n    "vive",\n    "cane"\n   ],\n   "a": "Un cane vive in media 10-13 anni, a seconda della taglia."\n  },\n  {\n   "k": [\n    "quanti",\n    "giorni",\n    "anno"\n   ],\n   "a": "Un anno ha 365 giorni; 366 negli anni bisestili."\n  },\n  {\n   "k": [\n    "anno",\n    "bisestile"\n   ],\n   "a": "L\'anno bisestile arriva ogni 4 anni e ha 366 giorni (febbraio ne ha 29)."\n  },\n  {\n   "k": [\n    "pi greco"\n   ],\n   "a": "Pi greco vale circa 3,14159."\n  },\n  {\n   "k": [\n    "colori",\n    "arcobaleno"\n   ],\n   "a": "L\'arcobaleno ha 7 colori: rosso, arancione, giallo, verde, blu, indaco e violetto."\n  },\n  {\n   "k": [\n    "lingua",\n    "piu parlata"\n   ],\n   "a": "L\'inglese è la lingua più diffusa nel mondo; il cinese mandarino ha più madrelingua."\n  },\n  {\n   "k": [\n    "quante",\n    "ore",\n    "giorno"\n   ],\n   "a": "Un giorno ha 24 ore."\n  },\n  {\n   "k": [\n    "quanti",\n    "minuti",\n    "ora"\n   ],\n   "a": "Un\'ora ha 60 minuti."\n  },\n  {\n   "k": [\n    "cuore",\n    "batte"\n   ],\n   "a": "A riposo il cuore batte in media 60-100 volte al minuto."\n  },\n  {\n   "k": [\n    "miglio",\n    "km"\n   ],\n   "a": "Un miglio equivale a 1,609 chilometri."\n  },\n  {\n   "k": [\n    "pollice",\n    "centimetri"\n   ],\n   "a": "Un pollice equivale a 2,54 centimetri."\n  },\n  {\n   "k": [\n    "litro",\n    "millilitri"\n   ],\n   "a": "Un litro equivale a 1.000 millilitri."\n  },\n  {\n   "k": [\n    "kg",\n    "libbre"\n   ],\n   "a": "Un chilogrammo equivale a circa 2,205 libbre."\n  }\n ]\n}'
 
 # ============================================================
 #  GRADLE / BUILD FILES
@@ -175,8 +194,8 @@ android {
         applicationId "com.aria.mobile"
         minSdk 26
         targetSdk 34
-        versionCode 9
-        versionName "6.2.0"
+        versionCode 10
+        versionName "7.0.0"
         multiDexEnabled true
     }
 
@@ -357,9 +376,10 @@ object AppConfig {
     const val PREF_WAKE_ENABLED = "wake_enabled"
     const val PREF_WAKE_WORD = "wake_word"
     const val PREF_OFFLINE_MODE = "offline_mode"
+    const val PREF_AI_MODE = "ai_mode"  // auto | online | offline
 
     const val CREATOR = "MaikGost"
-    const val VERSION = "6.2.0"
+    const val VERSION = "7.0.0"
 
     const val COLOR_BG = 0xFF0A0E1A.toInt()
     const val COLOR_SURFACE = 0xFF121826.toInt()
@@ -373,6 +393,9 @@ object AppConfig {
     const val DEFAULT_ASSISTANT_NAME = "ARIA"
     const val DEFAULT_PERSONALITY = "Amichevole"
     const val DEFAULT_WAKE_WORD = "maik"
+    const val DEFAULT_AI_MODE = "auto"
+    const val KNOWLEDGE_URL =
+        "https://raw.githubusercontent.com/maikbarre2401-svg/gioco/claude/aria-mobile-android-builder-urk50v/knowledge_pack_it.json"
     const val DEFAULT_MODEL = "llama-3.3-70b-versatile"
     const val GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
 }
@@ -577,10 +600,20 @@ class AriaBrain(private val context: Context) {
         val apiKey = prefs.getString(AppConfig.PREF_API_KEY, "") ?: ""
         val model = prefs.getString(AppConfig.PREF_MODEL, AppConfig.DEFAULT_MODEL) ?: AppConfig.DEFAULT_MODEL
         val memoryEnabled = prefs.getBoolean(AppConfig.PREF_MEMORY_ENABLED, true)
+        val aiMode = prefs.getString(AppConfig.PREF_AI_MODE, AppConfig.DEFAULT_AI_MODE)
+            ?: AppConfig.DEFAULT_AI_MODE
 
         scope.launch {
             try {
                 db.messageDao().insert(MessageEntity(role = "user", content = text))
+
+                // 0) Modalita' SOLO OFFLINE scelta dall'utente
+                if (aiMode == "offline") {
+                    val local = offline.answer(text) ?: offline.offlineFallback()
+                    db.messageDao().insert(MessageEntity(role = "assistant", content = local))
+                    withContext(Dispatchers.Main) { onResult(local) }
+                    return@launch
+                }
 
                 // 1) Ora/data sempre in locale: sono accurate, l'AI no.
                 val realtime = offline.quickLocal(text)
@@ -622,9 +655,9 @@ class AriaBrain(private val context: Context) {
                     }
                     override fun onError(message: String) {
                         // fallback: se Groq non risponde (rete assente/errore),
-                        // prova il cervello locale; altrimenti mostra l'errore.
+                        // prova il cervello locale (solo in modalita' auto).
                         scope.launch {
-                            val local = offline.answer(text)
+                            val local = if (aiMode == "auto") offline.answer(text) else null
                             if (local != null) {
                                 db.messageDao().insert(MessageEntity(role = "assistant", content = local))
                                 withContext(Dispatchers.Main) { onResult(local) }
@@ -737,6 +770,9 @@ class AriaViewModel(app: Application) : AndroidViewModel(app) {
 OFFLINE_BRAIN = r"""package com.aria.mobile.core
 
 import android.content.Context
+import org.json.JSONObject
+import java.io.File
+import java.text.Normalizer
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
@@ -756,6 +792,62 @@ class OfflineBrain(private val context: Context) {
         prefs.getString(AppConfig.PREF_ASSISTANT_NAME, AppConfig.DEFAULT_ASSISTANT_NAME)
             ?: AppConfig.DEFAULT_ASSISTANT_NAME
 
+    // ---- PACCHETTO DI CONOSCENZA (scaricabile, resta sul telefono) ----
+    private var packEntries: List<Pair<List<String>, String>> = emptyList()
+
+    init {
+        reloadPack()
+    }
+
+    fun reloadPack() {
+        packEntries = try {
+            val f = File(context.filesDir, "knowledge_pack.json")
+            if (!f.exists()) emptyList()
+            else {
+                val json = JSONObject(f.readText())
+                val arr = json.getJSONArray("entries")
+                val list = ArrayList<Pair<List<String>, String>>()
+                for (i in 0 until arr.length()) {
+                    val e = arr.getJSONObject(i)
+                    val ks = e.getJSONArray("k")
+                    val keys = ArrayList<String>()
+                    for (j in 0 until ks.length()) keys.add(normalizeTxt(ks.getString(j)))
+                    list.add(keys to e.getString("a"))
+                }
+                list
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    fun packCount(): Int = packEntries.size
+
+    private fun normalizeTxt(s: String): String {
+        val d = Normalizer.normalize(s.lowercase(Locale.getDefault()), Normalizer.Form.NFD)
+        val sb = StringBuilder()
+        for (c in d) if (c in 'a'..'z' || c in '0'..'9' || c == ' ') sb.append(c)
+        return sb.toString().trim()
+    }
+
+    /** Cerca nel pacchetto: vince la voce con piu' parole chiave presenti. */
+    private fun packAnswer(t: String): String? {
+        if (packEntries.isEmpty()) return null
+        val norm = " " + normalizeTxt(t) + " "
+        var best: String? = null
+        var bestScore = 0
+        for ((keys, ans) in packEntries) {
+            if (keys.isEmpty()) continue
+            var all = true
+            for (k in keys) if (!norm.contains(k)) { all = false; break }
+            if (all && keys.size > bestScore) {
+                bestScore = keys.size
+                best = ans
+            }
+        }
+        return best
+    }
+
     private val jokes = listOf(
         "Perche' gli scienziati non si fidano degli atomi? Perche' compongono tutto!",
         "Come si chiama un boomerang che non torna? Un bastone.",
@@ -767,7 +859,7 @@ class OfflineBrain(private val context: Context) {
     fun answer(raw: String): String? {
         val t = raw.lowercase(Locale.getDefault()).trim()
         if (t.isBlank()) return null
-        return greeting(t) ?: identity(t) ?: dateTime(t) ?: games(t) ?: joke(t) ?: math(t)
+        return greeting(t) ?: identity(t) ?: dateTime(t) ?: games(t) ?: joke(t) ?: math(t) ?: packAnswer(t)
     }
 
     fun offlineFallback(): String =
@@ -937,6 +1029,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -1120,6 +1213,15 @@ fun AriaOrb3D(
             return floatArrayOf(sx, sy, depth, persp)
         }
 
+        // ---- ombra a terra (radica la sfera nello spazio 3D) ----
+        val floatPhase = sin(time * 0.9f)
+        drawOval(
+            color = Color.Black,
+            topLeft = Offset(cx - r * 0.8f, size.height - r * 0.40f),
+            size = Size(r * 1.6f, r * 0.26f),
+            alpha = ((0.20f - 0.05f * floatPhase) * (0.5f + glow * 0.5f)).coerceIn(0f, 1f)
+        )
+
         // ---- aura esterna pulsante ----
         for (k in 5 downTo 1) {
             drawCircle(
@@ -1143,6 +1245,47 @@ fun AriaOrb3D(
                 )
             }
         }
+
+        // ---- guscio interno: 3D VERO con luce (lambert) e profondita' ----
+        // sorgente di luce in alto a sinistra, verso l'osservatore
+        val lx = -0.5f
+        val ly = -0.55f
+        val lz = -0.67f
+        val innerList = ArrayList<FloatArray>(shellInner.size)
+        for ((i, pt) in shellInner.withIndex()) {
+            val jitter = 1f + energy * 0.03f * sin(time * 3.2f + i)
+            val rx = pt.x * ca + pt.z * sa
+            val rz = -pt.x * sa + pt.z * ca
+            val ry = pt.y * ct - rz * st
+            val rz2 = pt.y * st + rz * ct
+            val fx = rx * cw - ry * sw
+            val fy = rx * sw + ry * cw
+            val rad = r * jitter
+            val persp = focal / (focal + rz2 * rad)
+            val px = cx + fx * rad * persp
+            val py = cy + fy * rad * persp
+            // illuminazione lambertiana: il lato verso la luce brilla
+            val lam = (fx * lx + fy * ly + rz2 * lz).coerceAtLeast(0f)
+            innerList.add(floatArrayOf(px, py, rz2, persp, lam, (i % 4).toFloat()))
+        }
+        // ordinamento per profondita': dietro prima, davanti dopo (3D corretto)
+        innerList.sortByDescending { it[2] }
+
+        fun drawInner(p: FloatArray) {
+            val depth = (1f - p[2]) / 2f
+            val base = if (p[5] == 0f) ringColor else mainColor
+            val lit = lerp(base, Color.White, p[4] * 0.55f)
+            val col = lerp(fog, lit, (0.18f + depth * 0.82f))
+            drawCircle(
+                color = col,
+                radius = (1.0f + 2.0f * depth) * p[3] * (1f + p[4] * 0.35f),
+                center = Offset(p[0], p[1]),
+                alpha = ((0.1f + 0.9f * depth) * (0.35f + glow * 0.65f)).coerceIn(0f, 1f)
+            )
+        }
+
+        // meta' POSTERIORE della sfera (dietro il nucleo)
+        for (p in innerList) if (p[2] > 0f) drawInner(p)
 
         // ---- nucleo luminoso che respira ----
         drawCircle(
@@ -1185,21 +1328,8 @@ fun AriaOrb3D(
             )
         }
 
-        // ---- guscio interno di particelle ----
-        for ((i, pt) in shellInner.withIndex()) {
-            // jitter energetico: la sfera "vibra" quando pensa/parla
-            val jitter = 1f + energy * 0.03f * sin(time * 3.2f + i)
-            val p = project(pt.x, pt.y, pt.z, r * jitter, ca, sa)
-            val depth = p[2]
-            val base = if (i % 4 == 0) ringColor else mainColor
-            val col = lerp(fog, base, (0.18f + depth * 0.82f))
-            drawCircle(
-                color = col,
-                radius = (1.0f + 2.0f * depth) * p[3],
-                center = Offset(p[0], p[1]),
-                alpha = ((0.1f + 0.9f * depth) * (0.35f + glow * 0.65f)).coerceIn(0f, 1f)
-            )
-        }
+        // ---- meta' ANTERIORE della sfera (davanti al nucleo, illuminata) ----
+        for (p in innerList) if (p[2] <= 0f) drawInner(p)
 
         // ---- anelli orbitali 3D con elettroni e scia ----
         val rings = listOf(
@@ -1563,6 +1693,7 @@ class MainActivity : ComponentActivity() {
     private val assistantName = mutableStateOf(AppConfig.DEFAULT_ASSISTANT_NAME)
     private val voiceEnabled = mutableStateOf(true)
     private val speaking = mutableStateOf(false)
+    private val aiModeLabel = mutableStateOf("AI auto")
 
     private val speechLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -1622,6 +1753,7 @@ class MainActivity : ComponentActivity() {
                     assistantName = assistantName.value,
                     voiceEnabled = voiceEnabled.value,
                     speaking = speaking.value,
+                    aiModeLabel = aiModeLabel.value,
                     onToggleVoice = { toggleVoice() },
                     onVoiceInput = { startVoiceInput() },
                     onSpeak = { speak(it) },
@@ -1644,6 +1776,11 @@ class MainActivity : ComponentActivity() {
             AppConfig.PREF_ASSISTANT_NAME, AppConfig.DEFAULT_ASSISTANT_NAME
         ) ?: AppConfig.DEFAULT_ASSISTANT_NAME
         voiceEnabled.value = prefs.getBoolean(AppConfig.PREF_VOICE_ENABLED, true)
+        aiModeLabel.value = when (prefs.getString(AppConfig.PREF_AI_MODE, AppConfig.DEFAULT_AI_MODE)) {
+            "online" -> "solo online"
+            "offline" -> "solo offline"
+            else -> "AI auto"
+        }
     }
 
     override fun onDestroy() {
@@ -1736,6 +1873,7 @@ fun ChatScreen(
     assistantName: String,
     voiceEnabled: Boolean,
     speaking: Boolean,
+    aiModeLabel: String,
     onToggleVoice: () -> Unit,
     onVoiceInput: () -> Unit,
     onSpeak: (String) -> Unit,
@@ -1825,7 +1963,7 @@ fun ChatScreen(
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                "by ${AppConfig.CREATOR}",
+                                "by ${AppConfig.CREATOR} • $aiModeLabel",
                                 color = Color(AppConfig.COLOR_TEXT_DIM),
                                 fontSize = 10.sp
                             )
@@ -2326,9 +2464,13 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
 import androidx.core.content.ContextCompat
 import com.aria.mobile.R
+import androidx.appcompat.app.AlertDialog
 import com.aria.mobile.core.AppConfig
+import com.aria.mobile.core.OfflineBrain
 import com.aria.mobile.net.GroqClient
 import com.aria.mobile.voice.WakeWordService
+import java.io.File
+import java.net.URL
 
 class SettingsActivity : AppCompatActivity() {
 
@@ -2404,6 +2546,9 @@ class SettingsActivity : AppCompatActivity() {
         val swWake = findViewById<SwitchCompat>(R.id.sw_wake)
         val etWakeWord = findViewById<EditText>(R.id.et_wake_word)
         val swOffline = findViewById<SwitchCompat>(R.id.sw_offline)
+        val rgAiMode = findViewById<RadioGroup>(R.id.rg_ai_mode)
+        val btnDownloadAi = findViewById<Button>(R.id.btn_download_ai)
+        val btnTestOffline = findViewById<Button>(R.id.btn_test_offline)
         val btnDownloadVoice = findViewById<Button>(R.id.btn_download_voice)
         val btnTestListen = findViewById<Button>(R.id.btn_test_listen)
         val btnSave = findViewById<Button>(R.id.btn_save_settings)
@@ -2434,6 +2579,77 @@ class SettingsActivity : AppCompatActivity() {
             prefs.getString(AppConfig.PREF_WAKE_WORD, AppConfig.DEFAULT_WAKE_WORD)
         )
         swOffline.isChecked = prefs.getBoolean(AppConfig.PREF_OFFLINE_MODE, false)
+        when (prefs.getString(AppConfig.PREF_AI_MODE, AppConfig.DEFAULT_AI_MODE)) {
+            "online" -> rgAiMode.check(R.id.rb_mode_online)
+            "offline" -> rgAiMode.check(R.id.rb_mode_offline)
+            else -> rgAiMode.check(R.id.rb_mode_auto)
+        }
+
+        // ---- SCARICA AI OFFLINE (resta sul telefono) ----
+        btnDownloadAi.setOnClickListener {
+            Toast.makeText(this, "Scarico l'AI offline...", Toast.LENGTH_SHORT).show()
+            Thread {
+                var data: String? = null
+                // 1) prova online (versione piu' aggiornata)
+                try {
+                    val conn = URL(AppConfig.KNOWLEDGE_URL).openConnection()
+                    conn.connectTimeout = 8000
+                    conn.readTimeout = 8000
+                    data = conn.getInputStream().bufferedReader().readText()
+                } catch (_: Exception) {}
+                // 2) fallback: pacchetto incluso nell'APK (funziona anche offline)
+                if (data == null || !data.contains("\"entries\"")) {
+                    data = try {
+                        assets.open("knowledge_pack_it.json").bufferedReader().readText()
+                    } catch (e: Exception) { null }
+                }
+                if (data != null) {
+                    try {
+                        File(filesDir, "knowledge_pack.json").writeText(data)
+                        val n = OfflineBrain(this).packCount()
+                        runOnUiThread {
+                            Toast.makeText(
+                                this,
+                                "AI offline installata: $n risposte pronte. Resta sul telefono!",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    } catch (e: Exception) {
+                        runOnUiThread {
+                            Toast.makeText(this, "Errore salvataggio: ${e.message}", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                } else {
+                    runOnUiThread {
+                        Toast.makeText(this, "Download fallito, riprova", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }.start()
+        }
+
+        // ---- TEST AI OFFLINE ----
+        btnTestOffline.setOnClickListener {
+            val ob = OfflineBrain(this)
+            val sb = StringBuilder()
+            sb.append("Matematica (12*8+4):\n")
+            sb.append(ob.answer("quanto fa 12*8+4") ?: "NON RISPONDE").append("\n\n")
+            sb.append("Ora:\n")
+            sb.append(ob.answer("che ore sono") ?: "NON RISPONDE").append("\n\n")
+            val n = ob.packCount()
+            if (n > 0) {
+                sb.append("Conoscenza (capitale della Francia):\n")
+                sb.append(ob.answer("qual e la capitale della francia") ?: "NON RISPONDE")
+                sb.append("\n\nPacchetto installato: $n risposte ✓")
+            } else {
+                sb.append("Pacchetto conoscenza: NON installato.\n")
+                sb.append("Tocca '⬇ Scarica AI offline' qui sopra.")
+            }
+            AlertDialog.Builder(this)
+                .setTitle("Test AI offline")
+                .setMessage(sb.toString())
+                .setPositiveButton("OK", null)
+                .show()
+        }
 
         btnTestListen.setOnClickListener {
             if (!SpeechRecognizer.isRecognitionAvailable(this)) {
@@ -2544,6 +2760,14 @@ class SettingsActivity : AppCompatActivity() {
                 .putBoolean(AppConfig.PREF_MEMORY_ENABLED, swMemory.isChecked)
                 .putBoolean(AppConfig.PREF_WAKE_ENABLED, swWake.isChecked)
                 .putBoolean(AppConfig.PREF_OFFLINE_MODE, swOffline.isChecked)
+                .putString(
+                    AppConfig.PREF_AI_MODE,
+                    when (rgAiMode.checkedRadioButtonId) {
+                        R.id.rb_mode_online -> "online"
+                        R.id.rb_mode_offline -> "offline"
+                        else -> "auto"
+                    }
+                )
                 .apply()
 
             Toast.makeText(this, "Impostazioni salvate", Toast.LENGTH_SHORT).show()
@@ -3227,6 +3451,43 @@ LAYOUT_SETTINGS = """\
         android:background="#1E2A44" android:layout_marginBottom="16dp"/>
 
     <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="🧠 CERVELLO AI" android:textColor="#00E5FF"
+        android:textSize="14sp" android:textStyle="bold"/>
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Auto = Groq online, con passaggio automatico all'offline se manca la rete."
+        android:textColor="#5A7A99" android:textSize="11sp" android:layout_marginBottom="6dp"/>
+
+    <RadioGroup android:id="@+id/rg_ai_mode"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginBottom="10dp">
+        <RadioButton android:id="@+id/rb_mode_auto"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="Auto (consigliato)" android:textColor="#E8F0FF"
+            android:buttonTint="#7C4DFF" android:checked="true"/>
+        <RadioButton android:id="@+id/rb_mode_online"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="Solo online (Groq)" android:textColor="#E8F0FF"
+            android:buttonTint="#7C4DFF"/>
+        <RadioButton android:id="@+id/rb_mode_offline"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="Solo offline (senza internet)" android:textColor="#E8F0FF"
+            android:buttonTint="#7C4DFF"/>
+    </RadioGroup>
+
+    <Button android:id="@+id/btn_download_ai"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="⬇  Scarica AI offline (resta sul telefono)" android:backgroundTint="#7C4DFF"
+        android:textColor="#FFFFFF" android:layout_marginBottom="8dp"/>
+
+    <Button android:id="@+id/btn_test_offline"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="🧪  Prova AI offline (vedi se funziona)" android:backgroundTint="#121826"
+        android:textColor="#00E5FF" android:layout_marginBottom="20dp"/>
+
+    <View android:layout_width="match_parent" android:layout_height="1dp"
+        android:background="#1E2A44" android:layout_marginBottom="16dp"/>
+
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
         android:text="🔌 EXTRA OFFLINE" android:textColor="#00E5FF"
         android:textSize="14sp" android:textStyle="bold"/>
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
@@ -3249,7 +3510,7 @@ LAYOUT_SETTINGS = """\
         android:textStyle="bold"/>
 
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="Creator: MaikGost  •  ARIA Mobile v6.2"
+        android:text="Creator: MaikGost  •  ARIA Mobile v7.0"
         android:textColor="#5A7A99" android:textSize="12sp"
         android:gravity="center" android:layout_marginTop="24dp"/>
 </LinearLayout>
@@ -3363,7 +3624,7 @@ def build_kotlin_file_map():
     }
 
 def create_project(java_path):
-    title("STEP 1 - Creazione progetto ARIA Mobile v6.2")
+    title("STEP 1 - Creazione progetto ARIA Mobile v7.0")
     if PROJECT_DIR.exists():
         answer = input(f"\n  Directory {PROJECT_DIR.name} esiste. Sovrascrivere? (y/N): ").strip().lower()
         if answer == "y":
@@ -3423,7 +3684,8 @@ def create_project(java_path):
     write_file(res_dir / "values" / "strings.xml", STRINGS_XML)
     write_file(res_dir / "values" / "themes.xml", THEMES_XML)
     write_file(res_dir / "drawable" / "ic_aria.xml", IC_ARIA_XML)
-    ok("Layout e resources scritti")
+    write_file(app_src / "assets" / "knowledge_pack_it.json", KNOWLEDGE_PACK_JSON)
+    ok("Layout, resources e knowledge pack scritti")
 
     step(7, 8, "gradle.properties + local.properties")
     java_esc = str(java_path).replace("\\", "\\\\")
@@ -3480,7 +3742,7 @@ def build_apk(java_path):
 
 def summarise(apk):
     title("STEP 3 - Output")
-    dest = DESKTOP / "ARIA-Mobile-v6.2.apk"
+    dest = DESKTOP / "ARIA-Mobile-v7.0.apk"
     if apk and apk.exists():
         shutil.copy2(apk, dest)
         print(f"\n{C.BOLD}{'='*60}")
@@ -3493,7 +3755,7 @@ def summarise(apk):
         info(str(PROJECT_DIR))
 
     print(f"\n{C.BOLD}SETUP:{C.RESET}")
-    info("1. Installa ARIA-Mobile-v6.2.apk sul telefono")
+    info("1. Installa ARIA-Mobile-v7.0.apk sul telefono")
     info("2. All'avvio vedrai la splash 3D con 'Creator: MaikGost'")
     info("3. In chat tocca l'INGRANAGGIO in alto -> inserisci la Groq API key")
     info("   (usa 'Prova connessione' per verificare che funzioni)")
@@ -3515,13 +3777,16 @@ def summarise(apk):
     info("    Escludi ARIA dal risparmio batteria (Impostazioni Android > App).")
     info("11. GROQ: inserisci la API key e usa 'Prova connessione'. Groq e'")
     info("    sempre il cervello principale; l'offline e' solo rete di sicurezza.")
+    info("12. AI OFFLINE: tocca '⬇ Scarica AI offline' (resta sul telefono),")
+    info("    scegli la modalita' (Auto/Online/Offline) e verifica con")
+    info("    '🧪 Prova AI offline'.")
     print()
 
 def main():
     if platform.system() == "Windows":
         os.system("color")
     print(f"\n{C.BOLD}{C.CYAN}{'='*60}")
-    print("  ARIA Mobile v6.2 - Builder Android (Kotlin + Compose)")
+    print("  ARIA Mobile v7.0 - Builder Android (Kotlin + Compose)")
     print("  Creator: MaikGost")
     print(f"{'='*60}{C.RESET}\n")
 
@@ -3542,7 +3807,7 @@ def main():
         create_project(java)
         apk = build_apk(java)
         summarise(apk)
-        print(f"{C.OK}{C.BOLD}ARIA Mobile v6.2 - Completato!{C.RESET}\n")
+        print(f"{C.OK}{C.BOLD}ARIA Mobile v7.0 - Completato!{C.RESET}\n")
     except KeyboardInterrupt:
         print(f"\n{C.WARN}Interrotto.{C.RESET}")
         sys.exit(0)

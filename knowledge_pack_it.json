@@ -1,0 +1,478 @@
+{
+ "version": 1,
+ "entries": [
+  {
+   "k": [
+    "capitale",
+    "italia"
+   ],
+   "a": "La capitale dell'Italia è Roma."
+  },
+  {
+   "k": [
+    "capitale",
+    "francia"
+   ],
+   "a": "La capitale della Francia è Parigi."
+  },
+  {
+   "k": [
+    "capitale",
+    "germania"
+   ],
+   "a": "La capitale della Germania è Berlino."
+  },
+  {
+   "k": [
+    "capitale",
+    "spagna"
+   ],
+   "a": "La capitale della Spagna è Madrid."
+  },
+  {
+   "k": [
+    "capitale",
+    "portogallo"
+   ],
+   "a": "La capitale del Portogallo è Lisbona."
+  },
+  {
+   "k": [
+    "capitale",
+    "inghilterra"
+   ],
+   "a": "La capitale dell'Inghilterra è Londra."
+  },
+  {
+   "k": [
+    "capitale",
+    "regno"
+   ],
+   "a": "La capitale del Regno Unito è Londra."
+  },
+  {
+   "k": [
+    "capitale",
+    "america"
+   ],
+   "a": "La capitale degli Stati Uniti è Washington D.C."
+  },
+  {
+   "k": [
+    "capitale",
+    "stati"
+   ],
+   "a": "La capitale degli Stati Uniti è Washington D.C."
+  },
+  {
+   "k": [
+    "capitale",
+    "giappone"
+   ],
+   "a": "La capitale del Giappone è Tokyo."
+  },
+  {
+   "k": [
+    "capitale",
+    "cina"
+   ],
+   "a": "La capitale della Cina è Pechino."
+  },
+  {
+   "k": [
+    "capitale",
+    "russia"
+   ],
+   "a": "La capitale della Russia è Mosca."
+  },
+  {
+   "k": [
+    "capitale",
+    "grecia"
+   ],
+   "a": "La capitale della Grecia è Atene."
+  },
+  {
+   "k": [
+    "capitale",
+    "egitto"
+   ],
+   "a": "La capitale dell'Egitto è Il Cairo."
+  },
+  {
+   "k": [
+    "capitale",
+    "brasile"
+   ],
+   "a": "La capitale del Brasile è Brasilia."
+  },
+  {
+   "k": [
+    "capitale",
+    "canada"
+   ],
+   "a": "La capitale del Canada è Ottawa."
+  },
+  {
+   "k": [
+    "capitale",
+    "australia"
+   ],
+   "a": "La capitale dell'Australia è Canberra."
+  },
+  {
+   "k": [
+    "capitale",
+    "svizzera"
+   ],
+   "a": "La capitale della Svizzera è Berna."
+  },
+  {
+   "k": [
+    "capitale",
+    "austria"
+   ],
+   "a": "La capitale dell'Austria è Vienna."
+  },
+  {
+   "k": [
+    "capitale",
+    "olanda"
+   ],
+   "a": "La capitale dei Paesi Bassi è Amsterdam."
+  },
+  {
+   "k": [
+    "quanti",
+    "pianeti"
+   ],
+   "a": "Il sistema solare ha 8 pianeti: Mercurio, Venere, Terra, Marte, Giove, Saturno, Urano e Nettuno."
+  },
+  {
+   "k": [
+    "pianeta",
+    "piu grande"
+   ],
+   "a": "Giove è il pianeta più grande del sistema solare."
+  },
+  {
+   "k": [
+    "pianeta",
+    "vicino",
+    "sole"
+   ],
+   "a": "Mercurio è il pianeta più vicino al Sole."
+  },
+  {
+   "k": [
+    "pianeta",
+    "rosso"
+   ],
+   "a": "Il pianeta rosso è Marte."
+  },
+  {
+   "k": [
+    "velocita",
+    "luce"
+   ],
+   "a": "La luce viaggia a circa 299.792 chilometri al secondo."
+  },
+  {
+   "k": [
+    "acqua",
+    "bolle"
+   ],
+   "a": "L'acqua bolle a 100 gradi Celsius (al livello del mare)."
+  },
+  {
+   "k": [
+    "acqua",
+    "congela"
+   ],
+   "a": "L'acqua congela a 0 gradi Celsius."
+  },
+  {
+   "k": [
+    "formula",
+    "acqua"
+   ],
+   "a": "La formula chimica dell'acqua è H2O."
+  },
+  {
+   "k": [
+    "quante",
+    "ossa"
+   ],
+   "a": "Il corpo umano adulto ha 206 ossa."
+  },
+  {
+   "k": [
+    "simbolo",
+    "oro"
+   ],
+   "a": "Il simbolo chimico dell'oro è Au."
+  },
+  {
+   "k": [
+    "simbolo",
+    "ossigeno"
+   ],
+   "a": "Il simbolo chimico dell'ossigeno è O."
+  },
+  {
+   "k": [
+    "satellite",
+    "terra"
+   ],
+   "a": "Il satellite naturale della Terra è la Luna."
+  },
+  {
+   "k": [
+    "stella",
+    "vicina"
+   ],
+   "a": "La stella più vicina alla Terra è il Sole; dopo di lui, Proxima Centauri."
+  },
+  {
+   "k": [
+    "fiume",
+    "piu lungo"
+   ],
+   "a": "Il Nilo e il Rio delle Amazzoni si contendono il primato di fiume più lungo del mondo, circa 6.650 km."
+  },
+  {
+   "k": [
+    "monte",
+    "piu alto"
+   ],
+   "a": "Il monte più alto del mondo è l'Everest, 8.849 metri."
+  },
+  {
+   "k": [
+    "monte",
+    "piu alto",
+    "italia"
+   ],
+   "a": "Il monte più alto d'Italia è il Monte Bianco, 4.806 metri."
+  },
+  {
+   "k": [
+    "fiume",
+    "piu lungo",
+    "italia"
+   ],
+   "a": "Il fiume più lungo d'Italia è il Po, 652 km."
+  },
+  {
+   "k": [
+    "oceano",
+    "piu grande"
+   ],
+   "a": "L'oceano più grande è il Pacifico."
+  },
+  {
+   "k": [
+    "deserto",
+    "piu grande"
+   ],
+   "a": "Il deserto più grande è l'Antartide; il più grande deserto caldo è il Sahara."
+  },
+  {
+   "k": [
+    "quante",
+    "regioni",
+    "italia"
+   ],
+   "a": "L'Italia ha 20 regioni."
+  },
+  {
+   "k": [
+    "vulcano",
+    "europa"
+   ],
+   "a": "Il vulcano attivo più alto d'Europa è l'Etna, in Sicilia."
+  },
+  {
+   "k": [
+    "quanti",
+    "continenti"
+   ],
+   "a": "I continenti sono 7: Africa, America del Nord, America del Sud, Antartide, Asia, Europa e Oceania."
+  },
+  {
+   "k": [
+    "seconda",
+    "guerra",
+    "mondiale"
+   ],
+   "a": "La Seconda Guerra Mondiale è durata dal 1939 al 1945."
+  },
+  {
+   "k": [
+    "prima",
+    "guerra",
+    "mondiale"
+   ],
+   "a": "La Prima Guerra Mondiale è durata dal 1914 al 1918."
+  },
+  {
+   "k": [
+    "scoperta",
+    "america"
+   ],
+   "a": "L'America fu raggiunta da Cristoforo Colombo nel 1492."
+  },
+  {
+   "k": [
+    "unita",
+    "italia"
+   ],
+   "a": "L'Unità d'Italia è stata proclamata nel 1861."
+  },
+  {
+   "k": [
+    "uomo",
+    "luna"
+   ],
+   "a": "Il primo uomo sulla Luna fu Neil Armstrong, il 20 luglio 1969."
+  },
+  {
+   "k": [
+    "muro",
+    "berlino"
+   ],
+   "a": "Il Muro di Berlino è caduto il 9 novembre 1989."
+  },
+  {
+   "k": [
+    "quando",
+    "fondata",
+    "roma"
+   ],
+   "a": "Secondo la tradizione, Roma fu fondata nel 753 a.C."
+  },
+  {
+   "k": [
+    "animale",
+    "piu veloce"
+   ],
+   "a": "L'animale terrestre più veloce è il ghepardo (circa 110 km/h); il falco pellegrino in picchiata supera i 300 km/h."
+  },
+  {
+   "k": [
+    "animale",
+    "piu grande"
+   ],
+   "a": "L'animale più grande mai esistito è la balenottera azzurra, fino a 30 metri."
+  },
+  {
+   "k": [
+    "animale",
+    "piu alto"
+   ],
+   "a": "L'animale più alto è la giraffa, fino a 5,5 metri."
+  },
+  {
+   "k": [
+    "quanto",
+    "vive",
+    "gatto"
+   ],
+   "a": "Un gatto domestico vive in media 12-18 anni."
+  },
+  {
+   "k": [
+    "quanto",
+    "vive",
+    "cane"
+   ],
+   "a": "Un cane vive in media 10-13 anni, a seconda della taglia."
+  },
+  {
+   "k": [
+    "quanti",
+    "giorni",
+    "anno"
+   ],
+   "a": "Un anno ha 365 giorni; 366 negli anni bisestili."
+  },
+  {
+   "k": [
+    "anno",
+    "bisestile"
+   ],
+   "a": "L'anno bisestile arriva ogni 4 anni e ha 366 giorni (febbraio ne ha 29)."
+  },
+  {
+   "k": [
+    "pi greco"
+   ],
+   "a": "Pi greco vale circa 3,14159."
+  },
+  {
+   "k": [
+    "colori",
+    "arcobaleno"
+   ],
+   "a": "L'arcobaleno ha 7 colori: rosso, arancione, giallo, verde, blu, indaco e violetto."
+  },
+  {
+   "k": [
+    "lingua",
+    "piu parlata"
+   ],
+   "a": "L'inglese è la lingua più diffusa nel mondo; il cinese mandarino ha più madrelingua."
+  },
+  {
+   "k": [
+    "quante",
+    "ore",
+    "giorno"
+   ],
+   "a": "Un giorno ha 24 ore."
+  },
+  {
+   "k": [
+    "quanti",
+    "minuti",
+    "ora"
+   ],
+   "a": "Un'ora ha 60 minuti."
+  },
+  {
+   "k": [
+    "cuore",
+    "batte"
+   ],
+   "a": "A riposo il cuore batte in media 60-100 volte al minuto."
+  },
+  {
+   "k": [
+    "miglio",
+    "km"
+   ],
+   "a": "Un miglio equivale a 1,609 chilometri."
+  },
+  {
+   "k": [
+    "pollice",
+    "centimetri"
+   ],
+   "a": "Un pollice equivale a 2,54 centimetri."
+  },
+  {
+   "k": [
+    "litro",
+    "millilitri"
+   ],
+   "a": "Un litro equivale a 1.000 millilitri."
+  },
+  {
+   "k": [
+    "kg",
+    "libbre"
+   ],
+   "a": "Un chilogrammo equivale a circa 2,205 libbre."
+  }
+ ]
+}
