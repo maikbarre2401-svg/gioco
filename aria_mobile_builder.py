@@ -7,6 +7,17 @@ Desktop/AriaMobile e tenta la compilazione (gradlew assembleDebug)
 usando il JDK e l'Android SDK già presenti sul sistema (Android Studio
 installato).
 
+NOVITÀ v8.0 (LA VERA AI - LIVELLO MONDIALE):
+- RISPOSTE IN STREAMING: il testo appare PAROLA PER PAROLA in tempo
+  reale come ChatGPT (Server-Sent Events di Groq). La chat scorre da
+  sola mentre l'AI scrive e la sfera mostra 'sto scrivendo...'.
+- PULSANTE STOP: mentre l'AI scrive, il pulsante Invia diventa un
+  pulsante rosso di STOP per fermare subito la generazione.
+- BENVENUTO INTELLIGENTE: al primo avvio senza API key appare il
+  pulsante 'Configura ARIA in 30 secondi' che porta alle impostazioni.
+- NUOVA ICONA APP: orb luminoso viola/ciano con anello orbitale ed
+  elettrone, in tema con la sfera 3D.
+
 NOVITÀ v7.0 (AI OFFLINE SCARICABILE + SFERA 3D VERA):
 - PULSANTE '⬇ SCARICA AI OFFLINE': scarica il pacchetto di conoscenza
   (65+ risposte: capitali, scienza, storia, geografia, animali,
@@ -194,8 +205,8 @@ android {
         applicationId "com.aria.mobile"
         minSdk 26
         targetSdk 34
-        versionCode 10
-        versionName "7.0.0"
+        versionCode 11
+        versionName "8.0.0"
         multiDexEnabled true
     }
 
@@ -379,7 +390,7 @@ object AppConfig {
     const val PREF_AI_MODE = "ai_mode"  // auto | online | offline
 
     const val CREATOR = "MaikGost"
-    const val VERSION = "7.0.0"
+    const val VERSION = "8.0.0"
 
     const val COLOR_BG = 0xFF0A0E1A.toInt()
     const val COLOR_SURFACE = 0xFF121826.toInt()
@@ -544,6 +555,88 @@ class GroqClient(private val apiKey: String, private val model: String) {
             cb.onError("Errore invio: ${e.message}")
         }
     }
+
+    /**
+     * STREAMING (SSE): la risposta arriva parola per parola, come ChatGPT.
+     * onToken riceve il testo accumulato ad ogni pezzo; onDone il testo
+     * completo. Ritorna la Call per poter ANNULLARE la generazione.
+     */
+    fun sendMessageStream(
+        history: List<Pair<String, String>>,
+        onToken: (String) -> Unit,
+        onDone: (String) -> Unit,
+        onError: (String) -> Unit
+    ): Call? {
+        try {
+            val messagesArray = JSONArray()
+            for ((role, content) in history) {
+                val m = JSONObject()
+                m.put("role", role)
+                m.put("content", content)
+                messagesArray.put(m)
+            }
+            val body = JSONObject()
+            body.put("model", model)
+            body.put("messages", messagesArray)
+            body.put("temperature", 0.7)
+            body.put("stream", true)
+
+            val mediaType = "application/json; charset=utf-8".toMediaType()
+            val reqBody = body.toString().toRequestBody(mediaType)
+
+            val req = Request.Builder()
+                .url("https://api.groq.com/openai/v1/chat/completions")
+                .addHeader("Authorization", "Bearer $apiKey")
+                .addHeader("Content-Type", "application/json")
+                .post(reqBody)
+                .build()
+
+            val call = client.newCall(req)
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    if (call.isCanceled()) onDone("") else onError(e.message ?: "Errore di rete")
+                }
+                override fun onResponse(call: Call, response: Response) {
+                    val sb = StringBuilder()
+                    try {
+                        if (!response.isSuccessful) {
+                            val raw = response.body?.string() ?: ""
+                            onError("HTTP ${response.code}: $raw")
+                            return
+                        }
+                        val source = response.body?.source()
+                        if (source == null) { onError("Risposta vuota"); return }
+                        while (true) {
+                            val line = source.readUtf8Line() ?: break
+                            if (!line.startsWith("data:")) continue
+                            val payload = line.removePrefix("data:").trim()
+                            if (payload == "[DONE]") break
+                            try {
+                                val delta = JSONObject(payload).getJSONArray("choices")
+                                    .getJSONObject(0).optJSONObject("delta")
+                                val piece = delta?.optString("content") ?: ""
+                                if (piece.isNotEmpty()) {
+                                    sb.append(piece)
+                                    onToken(sb.toString())
+                                }
+                            } catch (_: Exception) {
+                            }
+                        }
+                        onDone(sb.toString())
+                    } catch (e: Exception) {
+                        if (call.isCanceled()) onDone(sb.toString())
+                        else onError("Streaming: ${e.message}")
+                    } finally {
+                        response.close()
+                    }
+                }
+            })
+            return call
+        } catch (e: Exception) {
+            onError("Errore invio: ${e.message}")
+            return null
+        }
+    }
 }
 """
 
@@ -564,6 +657,7 @@ class AriaBrain(private val context: Context) {
     private val db = AriaDatabase.getInstance(context)
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val offline = OfflineBrain(context)
+    private var activeCall: okhttp3.Call? = null
 
     private fun buildSystemPrompt(): String {
         val assistantName = prefs.getString(AppConfig.PREF_ASSISTANT_NAME, AppConfig.DEFAULT_ASSISTANT_NAME)
@@ -597,6 +691,20 @@ class AriaBrain(private val context: Context) {
      * (es. niente rete). Cosi' funziona sempre come prima, ma piu' robusto.
      */
     fun sendMessage(text: String, onResult: (String) -> Unit, onError: (String) -> Unit) {
+        sendMessage(text, {}, onResult, onError)
+    }
+
+    /** Ferma la generazione in corso (pulsante Stop). */
+    fun cancelStream() {
+        try { activeCall?.cancel() } catch (_: Exception) {}
+    }
+
+    fun sendMessage(
+        text: String,
+        onPartial: (String) -> Unit,
+        onResult: (String) -> Unit,
+        onError: (String) -> Unit
+    ) {
         val apiKey = prefs.getString(AppConfig.PREF_API_KEY, "") ?: ""
         val model = prefs.getString(AppConfig.PREF_MODEL, AppConfig.DEFAULT_MODEL) ?: AppConfig.DEFAULT_MODEL
         val memoryEnabled = prefs.getBoolean(AppConfig.PREF_MEMORY_ENABLED, true)
@@ -646,14 +754,22 @@ class AriaBrain(private val context: Context) {
                 history.add("user" to text)
 
                 val client = GroqClient(apiKey, model)
-                client.sendMessage(history, object : GroqClient.ResultCallback {
-                    override fun onResult(response: String) {
+                activeCall = client.sendMessageStream(
+                    history,
+                    onToken = { partial ->
+                        scope.launch(Dispatchers.Main) { onPartial(partial) }
+                    },
+                    onDone = { full ->
                         scope.launch {
-                            db.messageDao().insert(MessageEntity(role = "assistant", content = response))
-                            withContext(Dispatchers.Main) { onResult(response) }
+                            if (full.isBlank()) {
+                                withContext(Dispatchers.Main) { onError("Generazione annullata") }
+                            } else {
+                                db.messageDao().insert(MessageEntity(role = "assistant", content = full))
+                                withContext(Dispatchers.Main) { onResult(full) }
+                            }
                         }
-                    }
-                    override fun onError(message: String) {
+                    },
+                    onError = { message ->
                         // fallback: se Groq non risponde (rete assente/errore),
                         // prova il cervello locale (solo in modalita' auto).
                         scope.launch {
@@ -666,7 +782,7 @@ class AriaBrain(private val context: Context) {
                             }
                         }
                     }
-                })
+                )
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { onError("Errore interno: ${e.message}") }
             }
@@ -717,6 +833,9 @@ class AriaViewModel(app: Application) : AndroidViewModel(app) {
     private val _errorMessage = mutableStateOf<String?>(null)
     val errorMessage: State<String?> get() = _errorMessage
 
+    private val _isStreaming = mutableStateOf(false)
+    val isStreaming: State<Boolean> get() = _isStreaming
+
     var onAssistantResponse: ((String) -> Unit)? = null
 
     init {
@@ -734,23 +853,50 @@ class AriaViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun sendMessage(text: String) {
-        if (text.isBlank() || _isLoading.value) return
+        if (text.isBlank() || _isLoading.value || _isStreaming.value) return
         _messages.value = _messages.value + ChatMessage("user", text)
         _isLoading.value = true
         _errorMessage.value = null
 
         brain.sendMessage(
             text = text,
+            onPartial = { partial ->
+                // streaming: il messaggio dell'assistente cresce in tempo reale
+                if (!_isStreaming.value) {
+                    _isStreaming.value = true
+                    _isLoading.value = false
+                    _messages.value = _messages.value + ChatMessage("assistant", partial)
+                } else {
+                    val list = _messages.value.toMutableList()
+                    if (list.isNotEmpty() && list.last().role == "assistant") {
+                        list[list.size - 1] = list.last().copy(content = partial)
+                        _messages.value = list
+                    }
+                }
+            },
             onResult = { response ->
-                _messages.value = _messages.value + ChatMessage("assistant", response)
+                val list = _messages.value.toMutableList()
+                if (_isStreaming.value && list.isNotEmpty() && list.last().role == "assistant") {
+                    list[list.size - 1] = list.last().copy(content = response)
+                    _messages.value = list
+                } else {
+                    _messages.value = list + ChatMessage("assistant", response)
+                }
                 _isLoading.value = false
+                _isStreaming.value = false
                 onAssistantResponse?.invoke(response)
             },
             onError = { error ->
                 _errorMessage.value = error
                 _isLoading.value = false
+                _isStreaming.value = false
             }
         )
+    }
+
+    /** Ferma la generazione in corso. */
+    fun stopGeneration() {
+        brain.cancelStream()
     }
 
     fun dismissError() {
@@ -1642,6 +1788,7 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -1694,6 +1841,7 @@ class MainActivity : ComponentActivity() {
     private val voiceEnabled = mutableStateOf(true)
     private val speaking = mutableStateOf(false)
     private val aiModeLabel = mutableStateOf("AI auto")
+    private val hasApiKey = mutableStateOf(false)
 
     private val speechLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -1754,6 +1902,7 @@ class MainActivity : ComponentActivity() {
                     voiceEnabled = voiceEnabled.value,
                     speaking = speaking.value,
                     aiModeLabel = aiModeLabel.value,
+                    hasApiKey = hasApiKey.value,
                     onToggleVoice = { toggleVoice() },
                     onVoiceInput = { startVoiceInput() },
                     onSpeak = { speak(it) },
@@ -1781,6 +1930,7 @@ class MainActivity : ComponentActivity() {
             "offline" -> "solo offline"
             else -> "AI auto"
         }
+        hasApiKey.value = !prefs.getString(AppConfig.PREF_API_KEY, "").isNullOrBlank()
     }
 
     override fun onDestroy() {
@@ -1874,6 +2024,7 @@ fun ChatScreen(
     voiceEnabled: Boolean,
     speaking: Boolean,
     aiModeLabel: String,
+    hasApiKey: Boolean,
     onToggleVoice: () -> Unit,
     onVoiceInput: () -> Unit,
     onSpeak: (String) -> Unit,
@@ -1887,18 +2038,19 @@ fun ChatScreen(
     var menuOpen by remember { mutableStateOf(false) }
     val messages = viewModel.messages.value
     val isLoading = viewModel.isLoading.value
+    val isStreaming = viewModel.isStreaming.value
     val error = viewModel.errorMessage.value
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
     val orbMood = when {
         error != null -> OrbMood.ERROR
-        isLoading -> OrbMood.THINKING
+        isLoading || isStreaming -> OrbMood.THINKING
         speaking -> OrbMood.SPEAKING
         else -> OrbMood.IDLE
     }
 
-    LaunchedEffect(messages.size, isLoading) {
+    LaunchedEffect(messages.size, isLoading, messages.lastOrNull()?.content?.length ?: 0) {
         if (messages.isNotEmpty()) {
             scope.launch { listState.animateScrollToItem(messages.size - 1) }
         }
@@ -2077,7 +2229,7 @@ fun ChatScreen(
                 )
                 Text(
                     text = when (orbMood) {
-                        OrbMood.THINKING -> "sto pensando..."
+                        OrbMood.THINKING -> if (isStreaming) "sto scrivendo..." else "sto pensando..."
                         OrbMood.SPEAKING -> "sto parlando..."
                         OrbMood.ERROR -> "qualcosa è andato storto"
                         OrbMood.IDLE -> "tocca la sfera per parlarmi"
@@ -2098,7 +2250,11 @@ fun ChatScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 if (messages.isEmpty() && !isLoading) {
-                    item { WelcomeCard(assistantName) { viewModel.sendMessage(it) } }
+                    item {
+                        WelcomeCard(assistantName, hasApiKey, onOpenSettings) {
+                            viewModel.sendMessage(it)
+                        }
+                    }
                 }
                 items(messages) { msg ->
                     MessageBubble(msg, assistantName, onSpeak)
@@ -2183,9 +2339,12 @@ fun ChatScreen(
                     )
                 )
                 Spacer(modifier = Modifier.width(8.dp))
+                val busy = isLoading || isStreaming
                 Button(
                     onClick = {
-                        if (input.isNotBlank()) {
+                        if (busy) {
+                            viewModel.stopGeneration()
+                        } else if (input.isNotBlank()) {
                             viewModel.sendMessage(input)
                             input = ""
                         }
@@ -2194,12 +2353,13 @@ fun ChatScreen(
                     contentPadding = PaddingValues(0.dp),
                     modifier = Modifier.size(52.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(AppConfig.COLOR_PRIMARY)
+                        containerColor = if (busy) Color(AppConfig.COLOR_ERROR)
+                        else Color(AppConfig.COLOR_PRIMARY)
                     )
                 ) {
                     Icon(
-                        Icons.AutoMirrored.Filled.Send,
-                        contentDescription = "Invia",
+                        if (busy) Icons.Filled.Stop else Icons.AutoMirrored.Filled.Send,
+                        contentDescription = if (busy) "Ferma" else "Invia",
                         tint = Color.White
                     )
                 }
@@ -2209,7 +2369,12 @@ fun ChatScreen(
 }
 
 @Composable
-fun WelcomeCard(assistantName: String, onSuggestion: (String) -> Unit) {
+fun WelcomeCard(
+    assistantName: String,
+    hasApiKey: Boolean,
+    onOpenSettings: () -> Unit,
+    onSuggestion: (String) -> Unit
+) {
     val suggestions = listOf(
         "Ciao! Chi sei?",
         "Dammi un'idea creativa",
@@ -2240,6 +2405,21 @@ fun WelcomeCard(assistantName: String, onSuggestion: (String) -> Unit) {
             fontSize = 13.sp,
             color = Color(AppConfig.COLOR_TEXT_DIM)
         )
+        if (!hasApiKey) {
+            Spacer(modifier = Modifier.height(14.dp))
+            Button(
+                onClick = onOpenSettings,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(AppConfig.COLOR_PRIMARY)
+                )
+            ) { Text("⚙️  Configura ARIA in 30 secondi") }
+            Text(
+                "Serve solo una API key Groq gratuita (console.groq.com)",
+                fontSize = 11.sp,
+                color = Color(AppConfig.COLOR_TEXT_DIM),
+                modifier = Modifier.padding(top = 4.dp)
+            )
+        }
         Spacer(modifier = Modifier.height(20.dp))
         for (s in suggestions) {
             AssistChip(
@@ -3306,10 +3486,20 @@ IC_ARIA_XML = """\
     android:width="108dp" android:height="108dp"
     android:viewportWidth="108" android:viewportHeight="108">
   <path android:fillColor="#0A0E1A" android:pathData="M0,0h108v108h-108z"/>
+  <path android:fillColor="#151B30"
+    android:pathData="M10,54 a44,44 0 1,0 88,0 a44,44 0 1,0 -88,0"/>
   <path android:fillColor="#7C4DFF"
-    android:pathData="M54,20 L74,88 L62,88 L57,72 L51,72 L46,88 L34,88 Z"/>
+    android:pathData="M26,54 a28,28 0 1,0 56,0 a28,28 0 1,0 -56,0"/>
+  <path android:fillColor="#9C6BFF"
+    android:pathData="M32,54 a22,22 0 1,0 44,0 a22,22 0 1,0 -44,0"/>
   <path android:fillColor="#00E5FF"
-    android:pathData="M54,40 m-6,0 a6,6 0 1,0 12,0 a6,6 0 1,0 -12,0"/>
+    android:pathData="M42,54 a12,12 0 1,0 24,0 a12,12 0 1,0 -24,0"/>
+  <path android:fillColor="#FFFFFF"
+    android:pathData="M43,45 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0"/>
+  <path android:strokeColor="#00E5FF" android:strokeWidth="3"
+    android:pathData="M12,54 a42,16 0 1,0 84,0 a42,16 0 1,0 -84,0"/>
+  <path android:fillColor="#FFFFFF"
+    android:pathData="M92,54 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0"/>
 </vector>"""
 
 LAYOUT_SETTINGS = """\
@@ -3510,7 +3700,7 @@ LAYOUT_SETTINGS = """\
         android:textStyle="bold"/>
 
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="Creator: MaikGost  •  ARIA Mobile v7.0"
+        android:text="Creator: MaikGost  •  ARIA Mobile v8.0"
         android:textColor="#5A7A99" android:textSize="12sp"
         android:gravity="center" android:layout_marginTop="24dp"/>
 </LinearLayout>
@@ -3624,7 +3814,7 @@ def build_kotlin_file_map():
     }
 
 def create_project(java_path):
-    title("STEP 1 - Creazione progetto ARIA Mobile v7.0")
+    title("STEP 1 - Creazione progetto ARIA Mobile v8.0")
     if PROJECT_DIR.exists():
         answer = input(f"\n  Directory {PROJECT_DIR.name} esiste. Sovrascrivere? (y/N): ").strip().lower()
         if answer == "y":
@@ -3742,7 +3932,7 @@ def build_apk(java_path):
 
 def summarise(apk):
     title("STEP 3 - Output")
-    dest = DESKTOP / "ARIA-Mobile-v7.0.apk"
+    dest = DESKTOP / "ARIA-Mobile-v8.0.apk"
     if apk and apk.exists():
         shutil.copy2(apk, dest)
         print(f"\n{C.BOLD}{'='*60}")
@@ -3755,7 +3945,7 @@ def summarise(apk):
         info(str(PROJECT_DIR))
 
     print(f"\n{C.BOLD}SETUP:{C.RESET}")
-    info("1. Installa ARIA-Mobile-v7.0.apk sul telefono")
+    info("1. Installa ARIA-Mobile-v8.0.apk sul telefono")
     info("2. All'avvio vedrai la splash 3D con 'Creator: MaikGost'")
     info("3. In chat tocca l'INGRANAGGIO in alto -> inserisci la Groq API key")
     info("   (usa 'Prova connessione' per verificare che funzioni)")
@@ -3780,13 +3970,15 @@ def summarise(apk):
     info("12. AI OFFLINE: tocca '⬇ Scarica AI offline' (resta sul telefono),")
     info("    scegli la modalita' (Auto/Online/Offline) e verifica con")
     info("    '🧪 Prova AI offline'.")
+    info("13. STREAMING: le risposte appaiono parola per parola; il pulsante")
+    info("    rosso STOP ferma la generazione in corso.")
     print()
 
 def main():
     if platform.system() == "Windows":
         os.system("color")
     print(f"\n{C.BOLD}{C.CYAN}{'='*60}")
-    print("  ARIA Mobile v7.0 - Builder Android (Kotlin + Compose)")
+    print("  ARIA Mobile v8.0 - Builder Android (Kotlin + Compose)")
     print("  Creator: MaikGost")
     print(f"{'='*60}{C.RESET}\n")
 
@@ -3807,7 +3999,7 @@ def main():
         create_project(java)
         apk = build_apk(java)
         summarise(apk)
-        print(f"{C.OK}{C.BOLD}ARIA Mobile v7.0 - Completato!{C.RESET}\n")
+        print(f"{C.OK}{C.BOLD}ARIA Mobile v8.0 - Completato!{C.RESET}\n")
     except KeyboardInterrupt:
         print(f"\n{C.WARN}Interrotto.{C.RESET}")
         sys.exit(0)
