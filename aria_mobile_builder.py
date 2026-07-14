@@ -7,6 +7,14 @@ Desktop/AriaMobile e tenta la compilazione (gradlew assembleDebug)
 usando il JDK e l'Android SDK già presenti sul sistema (Android Studio
 installato).
 
+NOVITÀ v9.1 (ASCOLTO CHE DURA NEL TEMPO):
+- PULSANTE '🔋 Escludi dal risparmio batteria': con un tocco chiedi ad
+  Android di non chiudere ARIA. Senza questo, il telefono uccide il
+  servizio 'Hey Maik' dopo qualche minuto (era la causa di 'poi non
+  mi sente piu').
+- RIAVVIO AUTOMATICO dopo il reboot del telefono: se l'ascolto era
+  attivo, riparte da solo (BootReceiver).
+
 NOVITÀ v9.0 (ARIA CONTROLLA IL TELEFONO):
 - CONTROLLO DEL TELEFONO: chiedi ad ARIA (a voce o per iscritto) di
   aprire app, cercare su Google/YouTube, aprire siti, CHIAMARE, mandare
@@ -218,8 +226,8 @@ android {
         applicationId "com.aria.mobile"
         minSdk 26
         targetSdk 34
-        versionCode 12
-        versionName "9.0.0"
+        versionCode 13
+        versionName "9.1.0"
         multiDexEnabled true
     }
 
@@ -323,6 +331,8 @@ MANIFEST = """\
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
 
     <queries>
         <intent><action android:name="android.intent.action.VIEW"/>
@@ -377,6 +387,13 @@ MANIFEST = """\
             android:exported="false"
             android:foregroundServiceType="microphone"/>
 
+        <receiver android:name=".voice.BootReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.QUICKBOOT_POWERON"/>
+            </intent-filter>
+        </receiver>
+
     </application>
 </manifest>
 """
@@ -429,7 +446,7 @@ object AppConfig {
     const val PREF_ACTIONS_ENABLED = "actions_enabled"
 
     const val CREATOR = "MaikGost"
-    const val VERSION = "9.0.0"
+    const val VERSION = "9.1.0"
 
     const val COLOR_BG = 0xFF0A0E1A.toInt()
     const val COLOR_SURFACE = 0xFF121826.toInt()
@@ -2924,8 +2941,11 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
@@ -3026,6 +3046,7 @@ class SettingsActivity : AppCompatActivity() {
         val btnTestOffline = findViewById<Button>(R.id.btn_test_offline)
         val btnDownloadVoice = findViewById<Button>(R.id.btn_download_voice)
         val btnTestListen = findViewById<Button>(R.id.btn_test_listen)
+        val btnBattery = findViewById<Button>(R.id.btn_battery)
         val btnSave = findViewById<Button>(R.id.btn_save_settings)
         val btnBack = findViewById<Button>(R.id.btn_settings_back)
         val btnTest = findViewById<Button>(R.id.btn_test_api)
@@ -3125,6 +3146,25 @@ class SettingsActivity : AppCompatActivity() {
                 .setMessage(sb.toString())
                 .setPositiveButton("OK", null)
                 .show()
+        }
+
+        btnBattery.setOnClickListener {
+            try {
+                val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+                if (pm.isIgnoringBatteryOptimizations(packageName)) {
+                    Toast.makeText(this, "Gia' escluso dal risparmio batteria ✓", Toast.LENGTH_LONG).show()
+                } else {
+                    val i = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                    i.data = Uri.parse("package:$packageName")
+                    startActivity(i)
+                }
+            } catch (e: Exception) {
+                try {
+                    startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                } catch (_: Exception) {
+                    Toast.makeText(this, "Apri Impostazioni > Batteria e togli le restrizioni ad ARIA", Toast.LENGTH_LONG).show()
+                }
+            }
         }
 
         btnTestListen.setOnClickListener {
@@ -3317,6 +3357,35 @@ class HistoryActivity : AppCompatActivity() {
                     val who = if (it.role == "user") "TU" else "AI"
                     "[${fmt.format(Date(it.timestamp))}] $who:\n${it.content}"
                 }
+        }
+    }
+}
+"""
+
+BOOT_RECEIVER = r"""package com.aria.mobile.voice
+
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import androidx.core.content.ContextCompat
+import com.aria.mobile.core.AppConfig
+
+/** Riavvia l'ascolto "Hey ..." dopo il riavvio del telefono, se era attivo. */
+class BootReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent?) {
+        val action = intent?.action ?: return
+        if (action == Intent.ACTION_BOOT_COMPLETED ||
+            action == "android.intent.action.QUICKBOOT_POWERON"
+        ) {
+            val prefs = context.getSharedPreferences(AppConfig.PREFS, Context.MODE_PRIVATE)
+            if (prefs.getBoolean(AppConfig.PREF_WAKE_ENABLED, false)) {
+                try {
+                    ContextCompat.startForegroundService(
+                        context, Intent(context, WakeWordService::class.java)
+                    )
+                } catch (_: Exception) {
+                }
+            }
         }
     }
 }
@@ -3953,6 +4022,11 @@ LAYOUT_SETTINGS = """\
     <Button android:id="@+id/btn_test_listen"
         android:layout_width="match_parent" android:layout_height="wrap_content"
         android:text="🎤  Prova ascolto (vedi se ti sente)" android:backgroundTint="#121826"
+        android:textColor="#00E5FF" android:layout_marginBottom="8dp"/>
+
+    <Button android:id="@+id/btn_battery"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="🔋  Escludi dal risparmio batteria (consigliato)" android:backgroundTint="#121826"
         android:textColor="#00E5FF" android:layout_marginBottom="20dp"/>
 
     <View android:layout_width="match_parent" android:layout_height="1dp"
@@ -4018,7 +4092,7 @@ LAYOUT_SETTINGS = """\
         android:textStyle="bold"/>
 
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="Creator: MaikGost  •  ARIA Mobile v9.0"
+        android:text="Creator: MaikGost  •  ARIA Mobile v9.1"
         android:textColor="#5A7A99" android:textSize="12sp"
         android:gravity="center" android:layout_marginTop="24dp"/>
 </LinearLayout>
@@ -4130,10 +4204,11 @@ def build_kotlin_file_map():
         f"{PKG_UI}/SettingsActivity.kt":                SETTINGS_ACTIVITY,
         f"{PKG_UI}/HistoryActivity.kt":                 HISTORY_ACTIVITY,
         f"{PKG_VOICE}/WakeWordService.kt":              WAKE_WORD_SERVICE,
+        f"{PKG_VOICE}/BootReceiver.kt":                 BOOT_RECEIVER,
     }
 
 def create_project(java_path):
-    title("STEP 1 - Creazione progetto ARIA Mobile v9.0")
+    title("STEP 1 - Creazione progetto ARIA Mobile v9.1")
     if PROJECT_DIR.exists():
         answer = input(f"\n  Directory {PROJECT_DIR.name} esiste. Sovrascrivere? (y/N): ").strip().lower()
         if answer == "y":
@@ -4251,7 +4326,7 @@ def build_apk(java_path):
 
 def summarise(apk):
     title("STEP 3 - Output")
-    dest = DESKTOP / "ARIA-Mobile-v9.0.apk"
+    dest = DESKTOP / "ARIA-Mobile-v9.1.apk"
     if apk and apk.exists():
         shutil.copy2(apk, dest)
         print(f"\n{C.BOLD}{'='*60}")
@@ -4264,7 +4339,7 @@ def summarise(apk):
         info(str(PROJECT_DIR))
 
     print(f"\n{C.BOLD}SETUP:{C.RESET}")
-    info("1. Installa ARIA-Mobile-v9.0.apk sul telefono")
+    info("1. Installa ARIA-Mobile-v9.1.apk sul telefono")
     info("2. All'avvio vedrai la splash 3D con 'Creator: MaikGost'")
     info("3. In chat tocca l'INGRANAGGIO in alto -> inserisci la Groq API key")
     info("   (usa 'Prova connessione' per verificare che funzioni)")
@@ -4294,13 +4369,15 @@ def summarise(apk):
     info("14. CONTROLLO TELEFONO: prova 'apri youtube', 'cerca il meteo',")
     info("    'timer di 5 minuti', 'accendi la torcia', 'manda un whatsapp a...'")
     info("    (anche con 'Hey Maik ...'). Disattivabile dalle impostazioni.")
+    info("15. AFFIDABILITA': tocca '🔋 Escludi dal risparmio batteria' cosi'")
+    info("    l'ascolto 'Hey Maik' non viene chiuso da Android e riparte al reboot.")
     print()
 
 def main():
     if platform.system() == "Windows":
         os.system("color")
     print(f"\n{C.BOLD}{C.CYAN}{'='*60}")
-    print("  ARIA Mobile v9.0 - Builder Android (Kotlin + Compose)")
+    print("  ARIA Mobile v9.1 - Builder Android (Kotlin + Compose)")
     print("  Creator: MaikGost")
     print(f"{'='*60}{C.RESET}\n")
 
@@ -4321,7 +4398,7 @@ def main():
         create_project(java)
         apk = build_apk(java)
         summarise(apk)
-        print(f"{C.OK}{C.BOLD}ARIA Mobile v9.0 - Completato!{C.RESET}\n")
+        print(f"{C.OK}{C.BOLD}ARIA Mobile v9.1 - Completato!{C.RESET}\n")
     except KeyboardInterrupt:
         print(f"\n{C.WARN}Interrotto.{C.RESET}")
         sys.exit(0)
