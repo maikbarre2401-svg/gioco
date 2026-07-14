@@ -7,6 +7,16 @@ Desktop/AriaMobile e tenta la compilazione (gradlew assembleDebug)
 usando il JDK e l'Android SDK già presenti sul sistema (Android Studio
 installato).
 
+NOVITÀ v10.0 (VOICE MODE - HUD STILE JARVIS):
+- VOICE MODE a tutto schermo: tocca l'icona onde in alto nella chat.
+  La sfera 3D gigante REAGISCE IN TEMPO REALE alla tua voce (le onde
+  crescono con l'ampiezza del microfono).
+- CONVERSAZIONE A MANI LIBERE: ascolta -> pensa -> risponde a voce ->
+  riascolta da sola, in loop. Tocca la sfera per pausa/riprendi.
+- Sottotitoli live: vedi cosa hai detto e cosa risponde ARIA.
+- Esegue anche i comandi al telefono a voce (apri app, messaggi...).
+- La sfera ora accetta un parametro 'amplitude' per reagire all'audio.
+
 NOVITÀ v9.2 (MESSAGGI PER NOME CONTATTO):
 - MESSAGGI WHATSAPP/SMS E CHIAMATE PER NOME: di' o scrivi "scrivi a
   Mario ciao", "manda un whatsapp a mamma dicendo arrivo", "chiama
@@ -235,8 +245,8 @@ android {
         applicationId "com.aria.mobile"
         minSdk 26
         targetSdk 34
-        versionCode 14
-        versionName "9.2.0"
+        versionCode 15
+        versionName "10.0.0"
         multiDexEnabled true
     }
 
@@ -392,6 +402,8 @@ MANIFEST = """\
 
         <activity android:name=".ui.SettingsActivity" android:exported="false"/>
         <activity android:name=".ui.HistoryActivity" android:exported="false"/>
+        <activity android:name=".ui.VoiceActivity" android:exported="false"
+            android:theme="@style/Theme.Aria"/>
 
         <service android:name=".voice.WakeWordService"
             android:exported="false"
@@ -456,7 +468,7 @@ object AppConfig {
     const val PREF_ACTIONS_ENABLED = "actions_enabled"
 
     const val CREATOR = "MaikGost"
-    const val VERSION = "9.2.0"
+    const val VERSION = "10.0.0"
 
     const val COLOR_BG = 0xFF0A0E1A.toInt()
     const val COLOR_SURFACE = 0xFF121826.toInt()
@@ -1619,6 +1631,7 @@ private fun wireframePoints(lat: Int, lon: Int, perLine: Int): List<OrbPoint> {
 fun AriaOrb3D(
     mood: OrbMood,
     modifier: Modifier = Modifier,
+    amplitude: Float = 0f,
     onTap: () -> Unit = {}
 ) {
     val haptic = LocalHapticFeedback.current
@@ -1702,7 +1715,7 @@ fun AriaOrb3D(
         val cx = size.width / 2f
         val cy = size.height / 2f + sin(time * 0.9f) * size.height * 0.028f
         val breathe = 1f + (0.028f + energy * 0.03f) * sin(time * 1.6f)
-        val r = size.minDimension * 0.30f * breathe
+        val r = size.minDimension * 0.30f * breathe * (1f + amplitude * 0.18f)
         val focal = r * 2.9f
 
         val aY = angle * PI.toFloat() / 180f
@@ -1747,6 +1760,17 @@ fun AriaOrb3D(
                 radius = r * (1f + k * 0.20f) * (1f + energy * 0.05f * sin(time * 1.8f)),
                 center = Offset(cx, cy),
                 alpha = (glow * 0.13f / k).coerceIn(0f, 1f)
+            )
+        }
+
+        // ---- anello reattivo alla voce (ampiezza microfono) ----
+        if (amplitude > 0.02f) {
+            drawCircle(
+                color = mainColor,
+                radius = r * (1.12f + amplitude * 0.55f),
+                center = Offset(cx, cy),
+                alpha = (amplitude * 0.4f * (0.5f + glow * 0.5f)).coerceIn(0f, 1f),
+                style = Stroke(width = 3f)
             )
         }
 
@@ -1916,6 +1940,316 @@ fun AriaOrb3D(
                 center = Offset(head[0], head[1]),
                 alpha = (0.95f * glow).coerceIn(0f, 1f)
             )
+        }
+    }
+}
+"""
+
+VOICE_ACTIVITY = r"""package com.aria.mobile.ui
+
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Bundle
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
+import com.aria.mobile.core.AppConfig
+import com.aria.mobile.core.AriaBrain
+import com.aria.mobile.core.PhoneActions
+import java.util.Locale
+
+enum class VoiceState { IDLE, LISTENING, THINKING, SPEAKING }
+
+/**
+ * VOICE MODE - HUD a tutto schermo stile Jarvis: la sfera 3D gigante
+ * reagisce in tempo reale alla tua voce (ampiezza del microfono) e la
+ * conversazione e' a MANI LIBERE (ascolta -> pensa -> risponde ->
+ * riascolta). Tocca la sfera per mettere in pausa/riprendere.
+ */
+class VoiceActivity : ComponentActivity() {
+
+    private lateinit var brain: AriaBrain
+    private var tts: TextToSpeech? = null
+    private var ttsReady = false
+    private var recognizer: SpeechRecognizer? = null
+
+    private val state = mutableStateOf(VoiceState.IDLE)
+    private val amplitude = mutableStateOf(0f)
+    private val userText = mutableStateOf("")
+    private val ariaText = mutableStateOf("Tocca la sfera e parlami")
+    private var active = false
+
+    private val micPerm = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) { active = true; startListening() }
+        else ariaText.value = "Serve il permesso microfono"
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        brain = AriaBrain(applicationContext)
+        tts = TextToSpeech(this) { st ->
+            if (st == TextToSpeech.SUCCESS) {
+                val r = tts?.setLanguage(Locale.ITALIAN) ?: TextToSpeech.LANG_MISSING_DATA
+                if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
+                    tts?.language = Locale.getDefault()
+                }
+                tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                    override fun onStart(u: String?) {}
+                    override fun onDone(u: String?) { runOnUiThread { afterSpeak() } }
+                    @Deprecated("deprecated in API level 21")
+                    override fun onError(u: String?) { runOnUiThread { afterSpeak() } }
+                    override fun onError(u: String?, c: Int) { runOnUiThread { afterSpeak() } }
+                })
+                ttsReady = true
+            }
+        }
+        setContent {
+            AriaTheme {
+                VoiceScreen(
+                    state = state.value,
+                    amplitude = amplitude.value,
+                    userText = userText.value,
+                    ariaText = ariaText.value,
+                    onOrbTap = { toggle() },
+                    onClose = { finish() }
+                )
+            }
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        if (!active) {
+            if (hasMic()) { active = true; startListening() }
+            else micPerm.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        active = false
+        try { recognizer?.cancel() } catch (_: Exception) {}
+        tts?.stop()
+        state.value = VoiceState.IDLE
+    }
+
+    override fun onDestroy() {
+        try { recognizer?.destroy() } catch (_: Exception) {}
+        try { tts?.stop(); tts?.shutdown() } catch (_: Exception) {}
+        super.onDestroy()
+    }
+
+    private fun hasMic() = ContextCompat.checkSelfPermission(
+        this, Manifest.permission.RECORD_AUDIO
+    ) == PackageManager.PERMISSION_GRANTED
+
+    private fun toggle() {
+        when (state.value) {
+            VoiceState.LISTENING -> {
+                active = false
+                try { recognizer?.cancel() } catch (_: Exception) {}
+                amplitude.value = 0f
+                state.value = VoiceState.IDLE
+                ariaText.value = "In pausa. Tocca per riprendere."
+            }
+            VoiceState.SPEAKING -> { tts?.stop(); afterSpeak() }
+            else -> {
+                active = true
+                if (hasMic()) startListening() else micPerm.launch(Manifest.permission.RECORD_AUDIO)
+            }
+        }
+    }
+
+    private fun ensureRec(): SpeechRecognizer {
+        if (recognizer == null) {
+            recognizer = SpeechRecognizer.createSpeechRecognizer(this)
+            recognizer?.setRecognitionListener(listener)
+        }
+        return recognizer!!
+    }
+
+    private fun startListening() {
+        if (!active) return
+        state.value = VoiceState.LISTENING
+        userText.value = ""
+        val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "it-IT")
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+        }
+        try { ensureRec().startListening(i) } catch (e: Exception) { state.value = VoiceState.IDLE }
+    }
+
+    private val listener = object : RecognitionListener {
+        override fun onReadyForSpeech(p: Bundle?) {}
+        override fun onBeginningOfSpeech() {}
+        override fun onRmsChanged(rms: Float) {
+            amplitude.value = ((rms + 2f) / 12f).coerceIn(0f, 1f)
+        }
+        override fun onBufferReceived(b: ByteArray?) {}
+        override fun onEndOfSpeech() { amplitude.value = 0f }
+        override fun onError(e: Int) {
+            amplitude.value = 0f
+            if (active) startListening()
+        }
+        override fun onResults(res: Bundle?) {
+            amplitude.value = 0f
+            val t = res?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: ""
+            if (t.isBlank()) { if (active) startListening(); return }
+            userText.value = t
+            process(t)
+        }
+        override fun onPartialResults(p: Bundle?) {
+            val t = p?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
+            if (!t.isNullOrBlank()) userText.value = t
+        }
+        override fun onEvent(i: Int, b: Bundle?) {}
+    }
+
+    private fun process(text: String) {
+        state.value = VoiceState.THINKING
+        val actionsEnabled = getSharedPreferences(AppConfig.PREFS, MODE_PRIVATE)
+            .getBoolean(AppConfig.PREF_ACTIONS_ENABLED, true)
+        val nat = if (actionsEnabled) PhoneActions.parseNatural(text) else null
+        if (nat != null) {
+            PhoneActions.execute(this, nat)
+            speak(PhoneActions.describe(nat))
+            return
+        }
+        brain.sendMessage(
+            text = text,
+            onResult = { resp ->
+                val (clean, actions) = PhoneActions.parseMarkers(resp)
+                if (actionsEnabled) for (a in actions) PhoneActions.execute(this, a)
+                speak(clean.ifBlank { "Fatto" })
+            },
+            onError = { err -> speak("Errore: $err") }
+        )
+    }
+
+    private fun speak(text: String) {
+        ariaText.value = text
+        state.value = VoiceState.SPEAKING
+        if (ttsReady) tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "voice")
+        else afterSpeak()
+    }
+
+    private fun afterSpeak() {
+        if (active) startListening() else state.value = VoiceState.IDLE
+    }
+}
+
+@Composable
+fun VoiceScreen(
+    state: VoiceState,
+    amplitude: Float,
+    userText: String,
+    ariaText: String,
+    onOrbTap: () -> Unit,
+    onClose: () -> Unit
+) {
+    val mood = when (state) {
+        VoiceState.THINKING -> OrbMood.THINKING
+        VoiceState.SPEAKING -> OrbMood.SPEAKING
+        else -> OrbMood.IDLE
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    listOf(Color(0xFF05070F), Color(AppConfig.COLOR_BG), Color(0xFF120A2E))
+                )
+            )
+    ) {
+        IconButton(
+            onClick = onClose,
+            modifier = Modifier.align(Alignment.TopEnd).padding(12.dp)
+        ) {
+            Icon(Icons.Filled.Close, contentDescription = "Chiudi", tint = Color(AppConfig.COLOR_TEXT_DIM))
+        }
+        Text(
+            "V O I C E   M O D E",
+            color = Color(AppConfig.COLOR_TEXT_DIM),
+            fontSize = 12.sp,
+            letterSpacing = 3.sp,
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = 20.dp)
+        )
+
+        AriaOrb3D(
+            mood = mood,
+            amplitude = if (state == VoiceState.LISTENING) amplitude else 0f,
+            modifier = Modifier
+                .align(Alignment.Center)
+                .fillMaxWidth()
+                .height(380.dp),
+            onTap = onOrbTap
+        )
+
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            if (userText.isNotBlank()) {
+                Text(
+                    "\"$userText\"",
+                    color = Color(AppConfig.COLOR_TEXT),
+                    fontSize = 14.sp,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+            }
+            Text(
+                ariaText,
+                color = Color(AppConfig.COLOR_ACCENT),
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Medium,
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(14.dp))
+            val status = when (state) {
+                VoiceState.LISTENING -> "Ti ascolto..."
+                VoiceState.THINKING -> "Sto pensando..."
+                VoiceState.SPEAKING -> "Sto parlando..."
+                VoiceState.IDLE -> "Tocca la sfera per parlare"
+            }
+            Text(status, color = Color(AppConfig.COLOR_TEXT_DIM), fontSize = 12.sp)
         }
     }
 }
@@ -2160,6 +2494,7 @@ import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreVert
@@ -2306,6 +2641,7 @@ class MainActivity : ComponentActivity() {
                     speaking = speaking.value,
                     aiModeLabel = aiModeLabel.value,
                     hasApiKey = hasApiKey.value,
+                    onOpenVoice = { startActivity(Intent(this, VoiceActivity::class.java)) },
                     onToggleVoice = { toggleVoice() },
                     onVoiceInput = { startVoiceInput() },
                     onSpeak = { speak(it) },
@@ -2445,6 +2781,7 @@ fun ChatScreen(
     speaking: Boolean,
     aiModeLabel: String,
     hasApiKey: Boolean,
+    onOpenVoice: () -> Unit,
     onToggleVoice: () -> Unit,
     onVoiceInput: () -> Unit,
     onSpeak: (String) -> Unit,
@@ -2543,6 +2880,13 @@ fun ChatScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = onOpenVoice) {
+                        Icon(
+                            Icons.Filled.GraphicEq,
+                            contentDescription = "Voice Mode",
+                            tint = Color(AppConfig.COLOR_PRIMARY_LIGHT)
+                        )
+                    }
                     IconButton(onClick = onToggleVoice) {
                         Icon(
                             if (voiceEnabled) Icons.AutoMirrored.Filled.VolumeUp
@@ -4201,7 +4545,7 @@ LAYOUT_SETTINGS = """\
         android:textStyle="bold"/>
 
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="Creator: MaikGost  •  ARIA Mobile v9.2"
+        android:text="Creator: MaikGost  •  ARIA Mobile v10.0"
         android:textColor="#5A7A99" android:textSize="12sp"
         android:gravity="center" android:layout_marginTop="24dp"/>
 </LinearLayout>
@@ -4309,6 +4653,7 @@ def build_kotlin_file_map():
         f"{PKG_UI}/AriaViewModel.kt":                  ARIA_VIEWMODEL,
         f"{PKG_UI}/AriaOrb.kt":                         ARIA_ORB,
         f"{PKG_UI}/SplashActivity.kt":                 SPLASH_ACTIVITY,
+        f"{PKG_UI}/VoiceActivity.kt":                   VOICE_ACTIVITY,
         f"{PKG_UI}/MainActivity.kt":                   MAIN_ACTIVITY,
         f"{PKG_UI}/SettingsActivity.kt":                SETTINGS_ACTIVITY,
         f"{PKG_UI}/HistoryActivity.kt":                 HISTORY_ACTIVITY,
@@ -4317,7 +4662,7 @@ def build_kotlin_file_map():
     }
 
 def create_project(java_path):
-    title("STEP 1 - Creazione progetto ARIA Mobile v9.2")
+    title("STEP 1 - Creazione progetto ARIA Mobile v10.0")
     if PROJECT_DIR.exists():
         answer = input(f"\n  Directory {PROJECT_DIR.name} esiste. Sovrascrivere? (y/N): ").strip().lower()
         if answer == "y":
@@ -4435,7 +4780,7 @@ def build_apk(java_path):
 
 def summarise(apk):
     title("STEP 3 - Output")
-    dest = DESKTOP / "ARIA-Mobile-v9.2.apk"
+    dest = DESKTOP / "ARIA-Mobile-v10.0.apk"
     if apk and apk.exists():
         shutil.copy2(apk, dest)
         print(f"\n{C.BOLD}{'='*60}")
@@ -4448,7 +4793,7 @@ def summarise(apk):
         info(str(PROJECT_DIR))
 
     print(f"\n{C.BOLD}SETUP:{C.RESET}")
-    info("1. Installa ARIA-Mobile-v9.2.apk sul telefono")
+    info("1. Installa ARIA-Mobile-v10.0.apk sul telefono")
     info("2. All'avvio vedrai la splash 3D con 'Creator: MaikGost'")
     info("3. In chat tocca l'INGRANAGGIO in alto -> inserisci la Groq API key")
     info("   (usa 'Prova connessione' per verificare che funzioni)")
@@ -4482,13 +4827,15 @@ def summarise(apk):
     info("    l'ascolto 'Hey Maik' non viene chiuso da Android e riparte al reboot.")
     info("16. MESSAGGI PER NOME: 'scrivi a Mario ciao', 'manda un whatsapp a")
     info("    mamma dicendo arrivo', 'chiama papa'' (concedi i Contatti).")
+    info("17. VOICE MODE: tocca l'icona onde in alto: parla a mani libere con")
+    info("    la sfera 3D che reagisce alla tua voce (come Jarvis).")
     print()
 
 def main():
     if platform.system() == "Windows":
         os.system("color")
     print(f"\n{C.BOLD}{C.CYAN}{'='*60}")
-    print("  ARIA Mobile v9.2 - Builder Android (Kotlin + Compose)")
+    print("  ARIA Mobile v10.0 - Builder Android (Kotlin + Compose)")
     print("  Creator: MaikGost")
     print(f"{'='*60}{C.RESET}\n")
 
@@ -4509,7 +4856,7 @@ def main():
         create_project(java)
         apk = build_apk(java)
         summarise(apk)
-        print(f"{C.OK}{C.BOLD}ARIA Mobile v9.2 - Completato!{C.RESET}\n")
+        print(f"{C.OK}{C.BOLD}ARIA Mobile v10.0 - Completato!{C.RESET}\n")
     except KeyboardInterrupt:
         print(f"\n{C.WARN}Interrotto.{C.RESET}")
         sys.exit(0)
