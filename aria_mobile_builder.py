@@ -7,6 +7,15 @@ Desktop/AriaMobile e tenta la compilazione (gradlew assembleDebug)
 usando il JDK e l'Android SDK già presenti sul sistema (Android Studio
 installato).
 
+NOVITÀ v9.2 (MESSAGGI PER NOME CONTATTO):
+- MESSAGGI WHATSAPP/SMS E CHIAMATE PER NOME: di' o scrivi "scrivi a
+  Mario ciao", "manda un whatsapp a mamma dicendo arrivo", "chiama
+  papa'". ARIA cerca il contatto in rubrica e apre WhatsApp/SMS/telefono
+  gia' pronti col destinatario e il testo (premi tu Invia).
+- Puoi ancora usare i numeri diretti; l'AI capisce sia nome che numero.
+- Permesso Contatti richiesto solo al primo messaggio per nome; se lo
+  neghi, ARIA apre comunque l'app e scegli tu il contatto.
+
 NOVITÀ v9.1 (ASCOLTO CHE DURA NEL TEMPO):
 - PULSANTE '🔋 Escludi dal risparmio batteria': con un tocco chiedi ad
   Android di non chiudere ARIA. Senza questo, il telefono uccide il
@@ -226,8 +235,8 @@ android {
         applicationId "com.aria.mobile"
         minSdk 26
         targetSdk 34
-        versionCode 13
-        versionName "9.1.0"
+        versionCode 14
+        versionName "9.2.0"
         multiDexEnabled true
     }
 
@@ -333,6 +342,7 @@ MANIFEST = """\
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
+    <uses-permission android:name="android.permission.READ_CONTACTS"/>
 
     <queries>
         <intent><action android:name="android.intent.action.VIEW"/>
@@ -446,7 +456,7 @@ object AppConfig {
     const val PREF_ACTIONS_ENABLED = "actions_enabled"
 
     const val CREATOR = "MaikGost"
-    const val VERSION = "9.1.0"
+    const val VERSION = "9.2.0"
 
     const val COLOR_BG = 0xFF0A0E1A.toInt()
     const val COLOR_SURFACE = 0xFF121826.toInt()
@@ -740,9 +750,10 @@ class AriaBrain(private val context: Context) {
         sb.append("aggiungi ALLA FINE della risposta un marcatore nel formato ")
         sb.append("[[DO:TIPO|arg1|arg2]] e scrivi anche una breve frase di conferma. ")
         sb.append("Tipi disponibili: OPEN_APP|nome, SEARCH|testo, WEB|url, YOUTUBE|testo, ")
-        sb.append("CALL|numero, SMS|numero|testo, WHATSAPP|numero|testo, ")
+        sb.append("CALL|numero_o_nome, SMS|numero_o_nome|testo, WHATSAPP|numero_o_nome|testo, ")
         sb.append("EMAIL|indirizzo|oggetto|corpo, MAPS|luogo, TIMER|secondi, ")
         sb.append("ALARM|ora|minuti, TORCH|on, TORCH|off, CAMERA, SETTINGS, WIFI, BLUETOOTH. ")
+        sb.append("Per messaggi/chiamate puoi indicare il NOME del contatto (es. WHATSAPP|Mario|arrivo) oppure il numero. ")
         sb.append("Usa il marcatore SOLO quando l'utente chiede davvero un'azione sul telefono.")
         if (userName.isNotBlank()) {
             sb.append(" L'utente si chiama $userName: chiamalo per nome quando risulta naturale.")
@@ -1013,6 +1024,7 @@ import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.net.Uri
 import android.provider.AlarmClock
+import android.provider.ContactsContract
 import android.provider.MediaStore
 import android.provider.Settings
 import java.util.Locale
@@ -1072,6 +1084,17 @@ object PhoneActions {
             for (x in p) if (t.startsWith(x)) return raw.trim().substring(x.length).trim()
             return null
         }
+        after("manda un whatsapp a ", "mandagli un whatsapp ", "scrivi su whatsapp a ",
+            "whatsapp a ")?.let {
+            val (name, txt) = splitNameText(it); return AriaAction("WHATSAPP", listOf(name, txt))
+        }
+        after("manda un sms a ", "manda un messaggio a ", "invia un messaggio a ",
+            "invia messaggio a ", "scrivi un sms a ")?.let {
+            val (name, txt) = splitNameText(it); return AriaAction("SMS", listOf(name, txt))
+        }
+        after("scrivi a ", "manda un messaggio ")?.let {
+            val (name, txt) = splitNameText(it); return AriaAction("WHATSAPP", listOf(name, txt))
+        }
         after("cerca su google ", "cercami ", "cerca ")?.let { return AriaAction("SEARCH", listOf(it)) }
         after("cerca su youtube ", "su youtube ", "youtube ")?.let { return AriaAction("YOUTUBE", listOf(it)) }
         after("vai sul sito ", "apri il sito ", "vai su ")?.let { return AriaAction("WEB", listOf(it)) }
@@ -1099,9 +1122,9 @@ object PhoneActions {
             "SEARCH" -> "Cerco \"$arg\" su Google."
             "WEB" -> "Apro $arg."
             "YOUTUBE" -> "Cerco \"$arg\" su YouTube."
-            "CALL" -> "Apro il telefono per chiamare $arg."
-            "SMS" -> "Preparo un messaggio per $arg."
-            "WHATSAPP" -> "Apro WhatsApp con il messaggio pronto."
+            "CALL" -> "Chiamo $arg."
+            "SMS" -> "Scrivo a $arg via SMS."
+            "WHATSAPP" -> if (arg.isBlank()) "Apro WhatsApp." else "Scrivo a $arg su WhatsApp."
             "EMAIL" -> "Preparo un'email."
             "MAPS" -> "Apro le mappe verso $arg."
             "TIMER" -> "Imposto il timer."
@@ -1128,18 +1151,22 @@ object PhoneActions {
                 }
                 "YOUTUBE" -> view(context, "https://www.youtube.com/results?search_query=" + Uri.encode(a.args.getOrElse(0) { "" }))
                 "CALL" -> {
-                    val num = a.args.getOrElse(0) { "" }.filter { it.isDigit() || it == '+' }
+                    val num = resolveTarget(context, a.args.getOrElse(0) { "" })
+                        ?: return "Contatto non trovato: ${a.args.getOrElse(0) { "" }}"
                     launch(context, Intent(Intent.ACTION_DIAL, Uri.parse("tel:$num")))
                 }
                 "SMS" -> {
-                    val i = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:" + a.args.getOrElse(0) { "" }))
+                    val num = resolveTarget(context, a.args.getOrElse(0) { "" }) ?: ""
+                    val i = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$num"))
                     i.putExtra("sms_body", a.args.getOrElse(1) { "" })
                     launch(context, i)
                 }
                 "WHATSAPP" -> {
-                    val num = a.args.getOrElse(0) { "" }.filter { it.isDigit() || it == '+' }.trimStart('+')
+                    val num = resolveTarget(context, a.args.getOrElse(0) { "" })
+                        ?.filter { it.isDigit() }
                     val body = Uri.encode(a.args.getOrElse(1) { "" })
-                    val url = if (num.isBlank()) "https://wa.me/?text=$body" else "https://wa.me/$num?text=$body"
+                    val url = if (num.isNullOrBlank()) "https://wa.me/?text=$body"
+                              else "https://wa.me/$num?text=$body"
                     view(context, url)
                 }
                 "EMAIL" -> {
@@ -1171,6 +1198,48 @@ object PhoneActions {
         } catch (e: Exception) {
             "Non riesco a eseguire (${a.type}): ${e.message}"
         }
+    }
+
+    /** Se il target ha abbastanza cifre lo tratta da numero, altrimenti
+     *  cerca il contatto per nome nella rubrica (serve permesso Contatti). */
+    private fun resolveTarget(context: Context, target: String): String? {
+        val t = target.trim()
+        if (t.isBlank()) return null
+        val digits = t.filter { it.isDigit() || it == '+' }
+        if (digits.count { it.isDigit() } >= 6) return digits
+        return resolveContact(context, t)
+    }
+
+    private fun resolveContact(context: Context, name: String): String? {
+        return try {
+            val uri = ContactsContract.CommonDataKinds.Phone.CONTENT_URI
+            val proj = arrayOf(
+                ContactsContract.CommonDataKinds.Phone.NUMBER,
+                ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME
+            )
+            val sel = ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " LIKE ?"
+            val args = arrayOf("%" + name.trim() + "%")
+            context.contentResolver.query(uri, proj, sel, args, null)?.use { c ->
+                if (c.moveToFirst()) {
+                    return c.getString(0)?.replace(" ", "")?.replace("-", "")
+                }
+            }
+            null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun splitNameText(rest: String): Pair<String, String> {
+        val seps = listOf(" dicendo ", " digli che ", " digli ", " scrivendo ",
+            " che dice ", " messaggio ", " : ", ": ")
+        for (sep in seps) {
+            val idx = rest.indexOf(sep)
+            if (idx > 0) return rest.substring(0, idx).trim() to rest.substring(idx + sep.length).trim()
+        }
+        val parts = rest.trim().split(" ")
+        return if (parts.size >= 2) parts[0] to parts.drop(1).joinToString(" ")
+        else rest.trim() to ""
     }
 
     private fun openApp(context: Context, name: String): String? {
@@ -2049,8 +2118,13 @@ import android.speech.tts.UtteranceProgressListener
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import android.Manifest
+import android.content.pm.PackageManager
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.core.content.ContextCompat
+import com.aria.mobile.core.AriaAction
+import com.aria.mobile.core.PhoneActions
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.StartOffset
 import androidx.compose.animation.core.animateFloat
@@ -2145,6 +2219,24 @@ class MainActivity : ComponentActivity() {
     private val speaking = mutableStateOf(false)
     private val aiModeLabel = mutableStateOf("AI auto")
     private val hasApiKey = mutableStateOf(false)
+    private var pendingActions: List<AriaAction>? = null
+
+    private val contactsPermLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val acts = pendingActions
+        pendingActions = null
+        if (acts != null) {
+            if (!granted) {
+                Toast.makeText(
+                    this,
+                    "Senza accesso ai contatti apro l'app: scegli tu il destinatario",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+            runActions(acts)
+        }
+    }
 
     private val speechLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -2194,11 +2286,11 @@ class MainActivity : ComponentActivity() {
             }
         }
         viewModel.onActions = { actions ->
-            for (a in actions) {
-                val err = com.aria.mobile.core.PhoneActions.execute(this, a)
-                if (err != null) {
-                    Toast.makeText(this, err, Toast.LENGTH_LONG).show()
-                }
+            if (needsContacts(actions) && !hasContactsPerm()) {
+                pendingActions = actions
+                contactsPermLauncher.launch(Manifest.permission.READ_CONTACTS)
+            } else {
+                runActions(actions)
             }
         }
         viewModel.onAssistantResponse = { text ->
@@ -2292,6 +2384,23 @@ class MainActivity : ComponentActivity() {
             putExtra(Intent.EXTRA_TEXT, text)
         }
         startActivity(Intent.createChooser(intent, "Condividi conversazione"))
+    }
+
+    private fun needsContacts(actions: List<AriaAction>): Boolean = actions.any {
+        (it.type == "WHATSAPP" || it.type == "SMS" || it.type == "CALL") &&
+            it.args.getOrElse(0) { "" }.isNotBlank() &&
+            it.args.getOrElse(0) { "" }.count { c -> c.isDigit() } < 6
+    }
+
+    private fun hasContactsPerm(): Boolean =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) ==
+            PackageManager.PERMISSION_GRANTED
+
+    private fun runActions(actions: List<AriaAction>) {
+        for (a in actions) {
+            val err = PhoneActions.execute(this, a)
+            if (err != null) Toast.makeText(this, err, Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun startVoiceInput() {
@@ -4092,7 +4201,7 @@ LAYOUT_SETTINGS = """\
         android:textStyle="bold"/>
 
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="Creator: MaikGost  •  ARIA Mobile v9.1"
+        android:text="Creator: MaikGost  •  ARIA Mobile v9.2"
         android:textColor="#5A7A99" android:textSize="12sp"
         android:gravity="center" android:layout_marginTop="24dp"/>
 </LinearLayout>
@@ -4208,7 +4317,7 @@ def build_kotlin_file_map():
     }
 
 def create_project(java_path):
-    title("STEP 1 - Creazione progetto ARIA Mobile v9.1")
+    title("STEP 1 - Creazione progetto ARIA Mobile v9.2")
     if PROJECT_DIR.exists():
         answer = input(f"\n  Directory {PROJECT_DIR.name} esiste. Sovrascrivere? (y/N): ").strip().lower()
         if answer == "y":
@@ -4326,7 +4435,7 @@ def build_apk(java_path):
 
 def summarise(apk):
     title("STEP 3 - Output")
-    dest = DESKTOP / "ARIA-Mobile-v9.1.apk"
+    dest = DESKTOP / "ARIA-Mobile-v9.2.apk"
     if apk and apk.exists():
         shutil.copy2(apk, dest)
         print(f"\n{C.BOLD}{'='*60}")
@@ -4339,7 +4448,7 @@ def summarise(apk):
         info(str(PROJECT_DIR))
 
     print(f"\n{C.BOLD}SETUP:{C.RESET}")
-    info("1. Installa ARIA-Mobile-v9.1.apk sul telefono")
+    info("1. Installa ARIA-Mobile-v9.2.apk sul telefono")
     info("2. All'avvio vedrai la splash 3D con 'Creator: MaikGost'")
     info("3. In chat tocca l'INGRANAGGIO in alto -> inserisci la Groq API key")
     info("   (usa 'Prova connessione' per verificare che funzioni)")
@@ -4371,13 +4480,15 @@ def summarise(apk):
     info("    (anche con 'Hey Maik ...'). Disattivabile dalle impostazioni.")
     info("15. AFFIDABILITA': tocca '🔋 Escludi dal risparmio batteria' cosi'")
     info("    l'ascolto 'Hey Maik' non viene chiuso da Android e riparte al reboot.")
+    info("16. MESSAGGI PER NOME: 'scrivi a Mario ciao', 'manda un whatsapp a")
+    info("    mamma dicendo arrivo', 'chiama papa'' (concedi i Contatti).")
     print()
 
 def main():
     if platform.system() == "Windows":
         os.system("color")
     print(f"\n{C.BOLD}{C.CYAN}{'='*60}")
-    print("  ARIA Mobile v9.1 - Builder Android (Kotlin + Compose)")
+    print("  ARIA Mobile v9.2 - Builder Android (Kotlin + Compose)")
     print("  Creator: MaikGost")
     print(f"{'='*60}{C.RESET}\n")
 
@@ -4398,7 +4509,7 @@ def main():
         create_project(java)
         apk = build_apk(java)
         summarise(apk)
-        print(f"{C.OK}{C.BOLD}ARIA Mobile v9.1 - Completato!{C.RESET}\n")
+        print(f"{C.OK}{C.BOLD}ARIA Mobile v9.2 - Completato!{C.RESET}\n")
     except KeyboardInterrupt:
         print(f"\n{C.WARN}Interrotto.{C.RESET}")
         sys.exit(0)
