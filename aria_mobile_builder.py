@@ -7,6 +7,15 @@ Desktop/AriaMobile e tenta la compilazione (gradlew assembleDebug)
 usando il JDK e l'Android SDK già presenti sul sistema (Android Studio
 installato).
 
+NOVITÀ v11.0 (VOICE MODE ANCORA PIU' FICO):
+- RETICOLO HUD SCI-FI: attorno alla sfera girano due anelli di tacche
+  (stile radar/mirino) in prospettiva, per il vero look da assistente
+  futuristico.
+- EQUALIZZATORE A BARRE: 26 barre che ballano con la tua voce sotto la
+  sfera (e con onda idle quando sei in ascolto).
+- LA SFERA PULSA MENTRE ARIA PARLA: onda sintetica durante il TTS, cosi'
+  reagisce anche quando risponde, non solo quando parli tu.
+
 NOVITÀ v10.0 (VOICE MODE - HUD STILE JARVIS):
 - VOICE MODE a tutto schermo: tocca l'icona onde in alto nella chat.
   La sfera 3D gigante REAGISCE IN TEMPO REALE alla tua voce (le onde
@@ -245,8 +254,8 @@ android {
         applicationId "com.aria.mobile"
         minSdk 26
         targetSdk 34
-        versionCode 15
-        versionName "10.0.0"
+        versionCode 16
+        versionName "11.0.0"
         multiDexEnabled true
     }
 
@@ -468,7 +477,7 @@ object AppConfig {
     const val PREF_ACTIONS_ENABLED = "actions_enabled"
 
     const val CREATOR = "MaikGost"
-    const val VERSION = "10.0.0"
+    const val VERSION = "11.0.0"
 
     const val COLOR_BG = 0xFF0A0E1A.toInt()
     const val COLOR_SURFACE = 0xFF121826.toInt()
@@ -1632,6 +1641,7 @@ fun AriaOrb3D(
     mood: OrbMood,
     modifier: Modifier = Modifier,
     amplitude: Float = 0f,
+    hud: Boolean = false,
     onTap: () -> Unit = {}
 ) {
     val haptic = LocalHapticFeedback.current
@@ -1941,6 +1951,38 @@ fun AriaOrb3D(
                 alpha = (0.95f * glow).coerceIn(0f, 1f)
             )
         }
+
+        // ---- reticolo HUD sci-fi (radar/mirino) attorno alla sfera ----
+        if (hud) {
+            val hudR = r * 1.95f
+            val rot = time * 0.20f
+            for (i in 0 until 72) {
+                val ang = rot + i * (2f * PI.toFloat() / 72f)
+                val longTick = i % 6 == 0
+                val cA = cos(ang); val sA = sin(ang)
+                val r2 = hudR + (if (longTick) 16f else 8f)
+                drawLine(
+                    color = ringColor,
+                    start = Offset(cx + cA * hudR, cy + sA * hudR * 0.42f),
+                    end = Offset(cx + cA * r2, cy + sA * r2 * 0.42f),
+                    strokeWidth = if (longTick) 2.5f else 1.2f,
+                    alpha = ((if (longTick) 0.5f else 0.22f) * glow).coerceIn(0f, 1f)
+                )
+            }
+            val rot2 = -time * 0.12f
+            val rr = r * 2.28f
+            for (i in 0 until 96) {
+                val ang = rot2 + i * (2f * PI.toFloat() / 96f)
+                val cA = cos(ang); val sA = sin(ang)
+                drawLine(
+                    color = mainColor,
+                    start = Offset(cx + cA * rr, cy + sA * rr * 0.42f),
+                    end = Offset(cx + cA * (rr + 4f), cy + sA * (rr + 4f) * 0.42f),
+                    strokeWidth = 1f,
+                    alpha = (0.14f * glow).coerceIn(0f, 1f)
+                )
+            }
+        }
     }
 }
 """
@@ -1959,14 +2001,24 @@ import android.speech.tts.UtteranceProgressListener
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Icon
@@ -2186,6 +2238,17 @@ fun VoiceScreen(
         VoiceState.SPEAKING -> OrbMood.SPEAKING
         else -> OrbMood.IDLE
     }
+    // mentre ARIA parla la sfera pulsa da sola (onda sintetica)
+    val inf = rememberInfiniteTransition(label = "voice")
+    val speakWave by inf.animateFloat(
+        initialValue = 0.18f, targetValue = 0.62f,
+        animationSpec = infiniteRepeatable(tween(340), RepeatMode.Reverse), label = "sw"
+    )
+    val effAmp = when (state) {
+        VoiceState.LISTENING -> amplitude
+        VoiceState.SPEAKING -> speakWave
+        else -> 0f
+    }
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -2211,7 +2274,8 @@ fun VoiceScreen(
 
         AriaOrb3D(
             mood = mood,
-            amplitude = if (state == VoiceState.LISTENING) amplitude else 0f,
+            amplitude = effAmp,
+            hud = true,
             modifier = Modifier
                 .align(Alignment.Center)
                 .fillMaxWidth()
@@ -2226,6 +2290,8 @@ fun VoiceScreen(
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            WaveBars(effAmp)
+            Spacer(modifier = Modifier.height(16.dp))
             if (userText.isNotBlank()) {
                 Text(
                     "\"$userText\"",
@@ -2250,6 +2316,34 @@ fun VoiceScreen(
                 VoiceState.IDLE -> "Tocca la sfera per parlare"
             }
             Text(status, color = Color(AppConfig.COLOR_TEXT_DIM), fontSize = 12.sp)
+        }
+    }
+}
+
+@Composable
+private fun WaveBars(amplitude: Float) {
+    val inf = rememberInfiniteTransition(label = "bars")
+    val t by inf.animateFloat(
+        initialValue = 0f, targetValue = (2f * Math.PI).toFloat(),
+        animationSpec = infiniteRepeatable(tween(1100, easing = LinearEasing)), label = "t"
+    )
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(3.dp)
+    ) {
+        for (i in 0 until 26) {
+            val amp = amplitude * 46f + 6f
+            val h = (8f + amp * kotlin.math.abs(kotlin.math.sin(t + i * 0.5f)))
+                .coerceIn(6f, 64f)
+            Box(
+                modifier = Modifier
+                    .width(4.dp)
+                    .height(h.dp)
+                    .background(
+                        Color(AppConfig.COLOR_ACCENT).copy(alpha = 0.3f + 0.5f * (h / 64f)),
+                        RoundedCornerShape(2.dp)
+                    )
+            )
         }
     }
 }
@@ -4545,7 +4639,7 @@ LAYOUT_SETTINGS = """\
         android:textStyle="bold"/>
 
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="Creator: MaikGost  •  ARIA Mobile v10.0"
+        android:text="Creator: MaikGost  •  ARIA Mobile v11.0"
         android:textColor="#5A7A99" android:textSize="12sp"
         android:gravity="center" android:layout_marginTop="24dp"/>
 </LinearLayout>
@@ -4662,7 +4756,7 @@ def build_kotlin_file_map():
     }
 
 def create_project(java_path):
-    title("STEP 1 - Creazione progetto ARIA Mobile v10.0")
+    title("STEP 1 - Creazione progetto ARIA Mobile v11.0")
     if PROJECT_DIR.exists():
         answer = input(f"\n  Directory {PROJECT_DIR.name} esiste. Sovrascrivere? (y/N): ").strip().lower()
         if answer == "y":
@@ -4780,7 +4874,7 @@ def build_apk(java_path):
 
 def summarise(apk):
     title("STEP 3 - Output")
-    dest = DESKTOP / "ARIA-Mobile-v10.0.apk"
+    dest = DESKTOP / "ARIA-Mobile-v11.0.apk"
     if apk and apk.exists():
         shutil.copy2(apk, dest)
         print(f"\n{C.BOLD}{'='*60}")
@@ -4793,7 +4887,7 @@ def summarise(apk):
         info(str(PROJECT_DIR))
 
     print(f"\n{C.BOLD}SETUP:{C.RESET}")
-    info("1. Installa ARIA-Mobile-v10.0.apk sul telefono")
+    info("1. Installa ARIA-Mobile-v11.0.apk sul telefono")
     info("2. All'avvio vedrai la splash 3D con 'Creator: MaikGost'")
     info("3. In chat tocca l'INGRANAGGIO in alto -> inserisci la Groq API key")
     info("   (usa 'Prova connessione' per verificare che funzioni)")
@@ -4828,14 +4922,14 @@ def summarise(apk):
     info("16. MESSAGGI PER NOME: 'scrivi a Mario ciao', 'manda un whatsapp a")
     info("    mamma dicendo arrivo', 'chiama papa'' (concedi i Contatti).")
     info("17. VOICE MODE: tocca l'icona onde in alto: parla a mani libere con")
-    info("    la sfera 3D che reagisce alla tua voce (come Jarvis).")
+    info("    la sfera 3D con reticolo HUD, equalizzatore e reazione alla voce.")
     print()
 
 def main():
     if platform.system() == "Windows":
         os.system("color")
     print(f"\n{C.BOLD}{C.CYAN}{'='*60}")
-    print("  ARIA Mobile v10.0 - Builder Android (Kotlin + Compose)")
+    print("  ARIA Mobile v11.0 - Builder Android (Kotlin + Compose)")
     print("  Creator: MaikGost")
     print(f"{'='*60}{C.RESET}\n")
 
@@ -4856,7 +4950,7 @@ def main():
         create_project(java)
         apk = build_apk(java)
         summarise(apk)
-        print(f"{C.OK}{C.BOLD}ARIA Mobile v10.0 - Completato!{C.RESET}\n")
+        print(f"{C.OK}{C.BOLD}ARIA Mobile v11.0 - Completato!{C.RESET}\n")
     except KeyboardInterrupt:
         print(f"\n{C.WARN}Interrotto.{C.RESET}")
         sys.exit(0)
