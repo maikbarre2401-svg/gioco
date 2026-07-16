@@ -95,7 +95,13 @@
 
 <div id="bubble"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/three@0.150.1/build/three.min.js"></script>
+<script src="./three.min.js"></script>
+<script>
+// se la copia locale manca (es. file scaricato da solo), usa il CDN
+if (typeof THREE === 'undefined') {
+  document.write('<script src="https://cdn.jsdelivr.net/npm/three@0.150.1/build/three.min.js"><\/script>');
+}
+</script>
 <script>
 /* ============================================================
    ZEPH — personaggio 3D che cammina e parla (Three.js)

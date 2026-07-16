@@ -6,7 +6,7 @@ Un personaggio 3D a corpo intero che vive nel browser: **cammina, salta, balla e
 
 1. Scarica il repository (pulsante verde **Code → Download ZIP**) oppure clonalo.
 2. Fai **doppio clic su `index.html`**: si apre nel browser (Chrome o Edge consigliati per la voce).
-3. Serve la connessione a internet (la pagina scarica la libreria Three.js).
+3. Non serve installare niente: la libreria Three.js è inclusa (`three.min.js`), funziona anche senza internet.
 
 In alternativa puoi pubblicarlo con GitHub Pages (Settings → Pages → branch) e aprirlo da qualsiasi dispositivo, anche dal telefono.
 
@@ -28,4 +28,4 @@ Prova a scrivergli: *ciao*, *come stai?*, *chi sei?*, *vieni qui*, *canta*, *fer
 - Personaggio costruito proceduralmente (niente modelli esterni): scheletro articolato con spalle, gomiti, anche, ginocchia, piedi, testa e occhi animati.
 - Animazioni procedurali: ciclo di camminata, respiro, sbattito di palpebre, sguardo che vaga, gesti sincronizzati col parlato, bocca in sincrono con la voce.
 - Voce tramite **Web Speech API** (`speechSynthesis`) con voce italiana; se la voce non è disponibile compare comunque il fumetto di testo.
-- Nessuna dipendenza oltre a Three.js (r150, caricato da CDN).
+- Nessuna dipendenza oltre a Three.js (r150, inclusa nel repository con fallback al CDN).
