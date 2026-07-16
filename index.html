@@ -1,0 +1,898 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Zeph — il tuo compagno 3D</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; overflow:hidden; background:#87b8e8;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  #scene3d { position:fixed; inset:0; touch-action:none; }
+  #scene3d canvas { display:block; }
+
+  .panel { position:fixed; z-index:10; background:rgba(13,22,38,.78);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    border:1px solid rgba(255,255,255,.12); border-radius:16px; color:#eaf2ff; }
+
+  #brand { top:14px; left:14px; padding:12px 16px; max-width:280px; }
+  #brand h1 { font-size:20px; letter-spacing:2px; color:#5eead4; }
+  #brand h1 span { color:#eaf2ff; font-weight:300; }
+  #brand .sub { font-size:11.5px; opacity:.75; margin-top:2px; }
+  #status { margin-top:8px; font-size:13px; display:flex; align-items:center; gap:7px; }
+  #status .dot { width:8px; height:8px; border-radius:50%; background:#5eead4;
+    box-shadow:0 0 8px #5eead4; flex:none; animation:pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity:.35; } }
+  #hints { margin-top:8px; font-size:10.5px; line-height:1.7; opacity:.62; }
+
+  #chatbar { bottom:14px; left:50%; transform:translateX(-50%); width:min(560px, calc(100% - 20px));
+    padding:10px; display:flex; flex-direction:column; gap:8px; }
+  #chips { display:flex; gap:6px; flex-wrap:wrap; }
+  .chip { border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.07);
+    color:#eaf2ff; border-radius:999px; padding:6px 12px; font-size:12.5px; cursor:pointer;
+    transition:background .15s, transform .05s; user-select:none; }
+  .chip:hover { background:rgba(94,234,212,.22); }
+  .chip:active { transform:scale(.96); }
+  .chip.on { background:#14b8a6; border-color:#14b8a6; color:#04222c; font-weight:600; }
+  #inputrow { display:flex; gap:8px; }
+  #msg { flex:1; border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.08);
+    color:#fff; border-radius:12px; padding:11px 14px; font-size:14px; outline:none; }
+  #msg::placeholder { color:rgba(255,255,255,.45); }
+  #msg:focus { border-color:#5eead4; }
+  #send { border:none; background:#14b8a6; color:#04222c; font-weight:700; font-size:14px;
+    border-radius:12px; padding:0 20px; cursor:pointer; transition:filter .15s; }
+  #send:hover { filter:brightness(1.15); }
+
+  #bubble { position:fixed; z-index:9; max-width:260px; background:#fff; color:#1e293b;
+    border-radius:14px; padding:10px 14px; font-size:14px; line-height:1.45;
+    box-shadow:0 6px 24px rgba(0,0,0,.25); opacity:0; transform:translate(-50%,-100%) scale(.85);
+    transition:opacity .18s, transform .18s; pointer-events:none; }
+  #bubble.show { opacity:1; transform:translate(-50%,-100%) scale(1); }
+  #bubble::after { content:""; position:absolute; left:50%; bottom:-7px; margin-left:-7px;
+    border-left:7px solid transparent; border-right:7px solid transparent; border-top:8px solid #fff; }
+
+  #mutebtn { top:14px; right:14px; padding:9px 12px; font-size:17px; cursor:pointer;
+    user-select:none; transition:background .15s; }
+  #mutebtn:hover { background:rgba(13,22,38,.95); }
+
+  @media (max-width:600px) {
+    #brand { max-width:210px; padding:10px 12px; }
+    #brand h1 { font-size:16px; }
+    #hints { display:none; }
+  }
+</style>
+</head>
+<body>
+<div id="scene3d"></div>
+
+<div class="panel" id="brand">
+  <h1>ZEPH <span>· 3D</span></h1>
+  <div class="sub">Il tuo compagno virtuale che parla e cammina</div>
+  <div id="status"><div class="dot"></div><span id="statustext">Sto arrivando…</span></div>
+  <div id="hints">
+    🖱️ Clic sul prato → cammina lì<br>
+    ⌨️ WASD / frecce → guidalo tu<br>
+    ✋ Trascina → ruota la visuale · rotella → zoom<br>
+    💬 Scrivigli in basso: ti risponde a voce!
+  </div>
+</div>
+
+<div class="panel" id="mutebtn" title="Attiva/disattiva la voce">🔊</div>
+
+<div class="panel" id="chatbar">
+  <div id="chips">
+    <div class="chip" data-cmd="saluta">👋 Saluta</div>
+    <div class="chip" data-cmd="balla">💃 Balla</div>
+    <div class="chip" data-cmd="salta">🦘 Salta</div>
+    <div class="chip" data-cmd="barzelletta">😂 Barzelletta</div>
+    <div class="chip" id="wanderchip">🚶 Passeggia da solo</div>
+  </div>
+  <div id="inputrow">
+    <input id="msg" type="text" placeholder="Scrivi qualcosa a Zeph… (es. «ciao», «come stai?», «balla!»)" autocomplete="off">
+    <button id="send">Invia</button>
+  </div>
+</div>
+
+<div id="bubble"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.150.1/build/three.min.js"></script>
+<script>
+/* ============================================================
+   ZEPH — personaggio 3D che cammina e parla (Three.js)
+   Corpo intero con scheletro articolato, camminata procedurale,
+   gesti mentre parla, voce italiana via Web Speech API.
+   ============================================================ */
+(function () {
+'use strict';
+
+// ---------- Scena base ----------
+const container = document.getElementById('scene3d');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputEncoding = THREE.sRGBEncoding;
+container.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x9fd0f5);
+scene.fog = new THREE.Fog(0x9fd0f5, 26, 60);
+
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 200);
+
+const hemi = new THREE.HemisphereLight(0xcfe8ff, 0x6fae54, 0.85);
+scene.add(hemi);
+const sun = new THREE.DirectionalLight(0xfff1d6, 1.0);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -9; sun.shadow.camera.right = 9;
+sun.shadow.camera.top = 9;   sun.shadow.camera.bottom = -9;
+sun.shadow.camera.near = 1;  sun.shadow.camera.far = 40;
+sun.shadow.bias = -0.002;
+scene.add(sun); scene.add(sun.target);
+
+// ---------- Terreno ed elementi di contorno ----------
+function grassTexture() {
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const g = c.getContext('2d');
+  g.fillStyle = '#6fae54'; g.fillRect(0, 0, 256, 256);
+  const shades = ['#7cbf60', '#659e4b', '#86c96a', '#5d9445', '#74b35a'];
+  for (let i = 0; i < 1400; i++) {
+    g.fillStyle = shades[(Math.random() * shades.length) | 0];
+    g.fillRect(Math.random() * 256, Math.random() * 256, 1 + Math.random() * 2, 1 + Math.random() * 2);
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(12, 12);
+  t.encoding = THREE.sRGBEncoding;
+  return t;
+}
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(34, 48),
+  new THREE.MeshStandardMaterial({ map: grassTexture(), roughness: 1 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// generatore pseudo-casuale con seme fisso: scenografia sempre uguale
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const rng = mulberry32(20260716);
+
+function addTree(x, z, s) {
+  const tree = new THREE.Group();
+  const trunk = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.14 * s, 0.2 * s, 1.1 * s, 7),
+    new THREE.MeshStandardMaterial({ color: 0x7a5236, roughness: 1 })
+  );
+  trunk.position.y = 0.55 * s; trunk.castShadow = true;
+  tree.add(trunk);
+  const leafMat = new THREE.MeshStandardMaterial({ color: 0x3e8948, roughness: 1 });
+  [[0, 1.55, 0, 0.75], [0.42, 1.25, 0.1, 0.5], [-0.38, 1.3, -0.15, 0.45]].forEach(p => {
+    const leaf = new THREE.Mesh(new THREE.SphereGeometry(p[3] * s, 10, 8), leafMat);
+    leaf.position.set(p[0] * s, p[1] * s, p[2] * s);
+    leaf.castShadow = true;
+    tree.add(leaf);
+  });
+  tree.position.set(x, 0, z);
+  scene.add(tree);
+}
+function addRock(x, z, s) {
+  const rock = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(s, 0),
+    new THREE.MeshStandardMaterial({ color: 0x9aa0a8, roughness: 1 })
+  );
+  rock.position.set(x, s * 0.4, z);
+  rock.scale.y = 0.62;
+  rock.rotation.y = rng() * Math.PI;
+  rock.castShadow = true;
+  scene.add(rock);
+}
+for (let i = 0; i < 11; i++) {
+  const a = rng() * Math.PI * 2, r = 9 + rng() * 21;
+  addTree(Math.sin(a) * r, Math.cos(a) * r, 0.85 + rng() * 0.7);
+}
+for (let i = 0; i < 7; i++) {
+  const a = rng() * Math.PI * 2, r = 6 + rng() * 22;
+  addRock(Math.sin(a) * r, Math.cos(a) * r, 0.25 + rng() * 0.4);
+}
+const clouds = [];
+const cloudMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 });
+for (let i = 0; i < 6; i++) {
+  const cl = new THREE.Group();
+  for (let j = 0; j < 3; j++) {
+    const puff = new THREE.Mesh(new THREE.SphereGeometry(1.1 + rng() * 0.9, 8, 6), cloudMat);
+    puff.position.set(j * 1.5 - 1.5, rng() * 0.4, rng() * 0.8);
+    puff.scale.y = 0.55;
+    cl.add(puff);
+  }
+  cl.position.set(rng() * 70 - 35, 12 + rng() * 5, rng() * 60 - 30);
+  scene.add(cl); clouds.push(cl);
+}
+
+// ---------- Costruzione di Zeph ----------
+function mat(color) { return new THREE.MeshStandardMaterial({ color, roughness: 0.85, metalness: 0 }); }
+const M = {
+  skin: mat(0xf2c59c), skinDark: mat(0xe0af85), hair: mat(0x4a3628),
+  shirt: mat(0x14b8a6), shirtDark: mat(0x0e8b7e), pants: mat(0x30415f),
+  shoe: mat(0xf3f4f6), sole: mat(0xc9ccd1), white: mat(0xffffff),
+  pupil: mat(0x27221f), mouth: mat(0x83372f), blush: mat(0xf0a08a),
+};
+M.white.roughness = 0.4; M.pupil.roughness = 0.35;
+
+function capsule(r, len, material) {
+  const m = new THREE.Mesh(new THREE.CapsuleGeometry(r, len, 6, 14), material);
+  m.castShadow = true;
+  return m;
+}
+function sphere(r, material, sx, sy, sz) {
+  const m = new THREE.Mesh(new THREE.SphereGeometry(r, 18, 14), material);
+  m.scale.set(sx || 1, sy || 1, sz || 1);
+  m.castShadow = true;
+  return m;
+}
+
+const HIP_Y = 0.92;
+const zeph = { root: new THREE.Group() };
+{
+  const B = zeph; // ossa
+  B.body = new THREE.Group(); B.body.position.y = HIP_Y; B.root.add(B.body);
+
+  const pelvis = capsule(0.165, 0.1, M.pants);
+  pelvis.scale.z = 0.72; pelvis.position.y = 0.0;
+  B.body.add(pelvis);
+
+  // --- busto ---
+  B.spine = new THREE.Group(); B.spine.position.y = 0.11; B.body.add(B.spine);
+  const chest = capsule(0.185, 0.24, M.shirt);
+  chest.scale.z = 0.72; chest.position.y = 0.16;
+  B.spine.add(chest);
+  const zip = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.27, 0.012), M.shirtDark);
+  zip.position.set(0, 0.15, 0.135); B.spine.add(zip);
+  const collar = new THREE.Mesh(new THREE.TorusGeometry(0.105, 0.038, 8, 18, Math.PI), M.shirtDark);
+  collar.position.set(0, 0.325, -0.02);
+  collar.rotation.set(-1.25, 0, 0); collar.castShadow = true;
+  B.spine.add(collar);
+
+  // --- testa ---
+  const neck = capsule(0.055, 0.06, M.skin); neck.position.y = 0.36; B.spine.add(neck);
+  B.head = new THREE.Group(); B.head.position.y = 0.41; B.spine.add(B.head);
+  const skull = sphere(0.19, M.skin, 1, 1.08, 0.97); skull.position.y = 0.155; B.head.add(skull);
+  const hairGeo = new THREE.SphereGeometry(0.202, 18, 12, 0, Math.PI * 2, 0, Math.PI * 0.46);
+  const hair = new THREE.Mesh(hairGeo, M.hair);
+  hair.position.y = 0.175; hair.scale.set(1.03, 1.02, 1.03);
+  hair.rotation.x = -0.34; hair.castShadow = true;
+  B.head.add(hair);
+  const tuft = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.1, 7), M.hair);
+  tuft.position.set(0.02, 0.37, 0.02); tuft.rotation.z = -0.5;
+  B.head.add(tuft);
+
+  B.eyeL = sphere(0.034, M.white, 1, 1, 0.6); B.eyeL.position.set(0.068, 0.185, 0.155);
+  B.eyeR = B.eyeL.clone(); B.eyeR.position.x = -0.068;
+  B.pupilL = sphere(0.016, M.pupil, 1, 1, 0.6); B.pupilL.position.set(0, 0, 0.022);
+  B.pupilR = B.pupilL.clone();
+  B.eyeL.add(B.pupilL); B.eyeR.add(B.pupilR);
+  B.head.add(B.eyeL, B.eyeR);
+
+  B.browL = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.014, 0.016), M.hair);
+  B.browL.position.set(0.068, 0.235, 0.168); B.browL.rotation.z = 0.12;
+  B.browR = B.browL.clone(); B.browR.position.x = -0.068; B.browR.rotation.z = -0.12;
+  B.head.add(B.browL, B.browR);
+
+  const nose = sphere(0.02, M.skinDark, 1, 0.85, 0.8); nose.position.set(0, 0.13, 0.19); B.head.add(nose);
+  B.mouth = sphere(0.036, M.mouth, 1, 0.25, 0.5); B.mouth.position.set(0, 0.072, 0.172); B.head.add(B.mouth);
+  const cheekL = sphere(0.022, M.blush, 1, 0.6, 0.5); cheekL.position.set(0.105, 0.105, 0.148);
+  const cheekR = cheekL.clone(); cheekR.position.x = -0.105;
+  B.head.add(cheekL, cheekR);
+  const earL = sphere(0.032, M.skin, 0.55, 1, 0.8); earL.position.set(0.185, 0.155, 0.01);
+  const earR = earL.clone(); earR.position.x = -0.185;
+  B.head.add(earL, earR);
+
+  // --- braccia ---
+  function makeArm(side) { // side: +1 sinistro (+x), -1 destro (-x)
+    const sh = new THREE.Group(); sh.position.set(0.245 * side, 0.28, 0); B.spine.add(sh);
+    const pad = sphere(0.085, M.shirt); pad.position.y = 0.01; sh.add(pad);
+    const upper = capsule(0.062, 0.2, M.shirt); upper.position.y = -0.16; sh.add(upper);
+    const el = new THREE.Group(); el.position.y = -0.31; sh.add(el);
+    const fore = capsule(0.052, 0.17, M.skin); fore.position.y = -0.12; el.add(fore);
+    const hand = sphere(0.068, M.skin, 0.85, 1.05, 0.72); hand.position.y = -0.285; el.add(hand);
+    return { sh, el };
+  }
+  const armL = makeArm(1), armR = makeArm(-1);
+  B.shL = armL.sh; B.elL = armL.el; B.shR = armR.sh; B.elR = armR.el;
+
+  // --- gambe ---
+  function makeLeg(side) {
+    const hip = new THREE.Group(); hip.position.set(0.1 * side, -0.03, 0); B.body.add(hip);
+    const upper = capsule(0.082, 0.24, M.pants); upper.position.y = -0.17; hip.add(upper);
+    const knee = new THREE.Group(); knee.position.y = -0.4; hip.add(knee);
+    const lower = capsule(0.068, 0.2, M.pants); lower.position.y = -0.15; knee.add(lower);
+    const foot = new THREE.Group(); foot.position.y = -0.36; knee.add(foot);
+    const shoe = new THREE.Mesh(new THREE.BoxGeometry(0.145, 0.1, 0.27), M.shoe);
+    shoe.position.set(0, -0.08, 0.055); shoe.castShadow = true;
+    const soleM = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.035, 0.28), M.sole);
+    soleM.position.set(0, -0.115, 0.055);
+    foot.add(shoe, soleM);
+    return { hip, knee, foot };
+  }
+  const legL = makeLeg(1), legR = makeLeg(-1);
+  B.hipL = legL.hip; B.kneeL = legL.knee; B.footL = legL.foot;
+  B.hipR = legR.hip; B.kneeR = legR.knee; B.footR = legR.foot;
+}
+scene.add(zeph.root);
+
+// ---------- Sistema di posa (tutta animazione procedurale) ----------
+function newPose() {
+  return {
+    rootY: 0,
+    body: { x: 0, y: 0, z: 0 }, spine: { x: 0, y: 0, z: 0 }, head: { x: 0, y: 0, z: 0 },
+    shL: { x: 0, y: 0, z: 0.1 }, shR: { x: 0, y: 0, z: -0.1 },
+    elL: { x: -0.25, z: 0 }, elR: { x: -0.25, z: 0 },
+    legL: { x: 0, z: 0.03 }, legR: { x: 0, z: -0.03 },
+    kneeL: 0.05, kneeR: 0.05, footL: 0, footR: 0,
+    mouth: 0, brow: 0,
+  };
+}
+
+const state = {
+  pos: new THREE.Vector3(0, 0, 2),
+  heading: Math.PI,          // guarda verso la camera all'avvio
+  speed: 0, phase: 0,
+  target: null,              // punto cliccato verso cui camminare
+  keys: {},
+  talking: false, talkW: 0, mouthPulse: 0, mouthSmooth: 0,
+  gestureLead: 1, action: null,
+  wander: false, nextWanderAt: 4,
+  blinkAt: 2.5, blinkT: -1,
+  lookYaw: 0, lookPitch: 0, lookTYaw: 0, lookTPitch: 0, nextLookAt: 2,
+  interacted: false, muted: false,
+};
+const WALK_SPEED = 2.0;
+const ACTIONS = { wave: 2.2, dance: 6.0, jump: 0.95 };
+
+function startAction(name) {
+  if (name === 'dance' || name === 'jump') state.target = null;
+  state.action = { name, t: 0, dur: ACTIONS[name] };
+}
+
+function envelope(t, dur) { // rampa morbida dentro/fuori
+  return Math.min(1, t / 0.25) * Math.min(1, Math.max(0, (dur - t) / 0.35));
+}
+function clamp01(v) { return Math.min(1, Math.max(0, v)); }
+function lerpAngle(a, b, k) {
+  let d = (b - a) % (Math.PI * 2);
+  if (d > Math.PI) d -= Math.PI * 2;
+  if (d < -Math.PI) d += Math.PI * 2;
+  return a + d * k;
+}
+
+function armGesture(P, sh, el, t, side, w) {
+  if (w <= 0) return;
+  sh.x += (-0.85 + Math.sin(t * 3.7) * 0.28 + Math.sin(t * 1.3) * 0.12) * w;
+  sh.z += side * -(0.3 + Math.sin(t * 2.5) * 0.16) * w;
+  el.x += (-0.72 + Math.sin(t * 4.4) * 0.3) * w;
+}
+
+function updatePose(t, dt) {
+  const P = newPose();
+  const walkW = clamp01(state.speed / WALK_SPEED);
+  state.talkW += ((state.talking ? 1 : 0) - state.talkW) * Math.min(1, dt * 5);
+
+  // --- respiro e vita da fermo ---
+  const breath = Math.sin(t * 1.7);
+  P.spine.x += 0.03 + breath * 0.016 * (1 - walkW);
+  P.shL.z += breath * 0.014; P.shR.z -= breath * 0.014;
+  const shift = Math.sin(t * 0.45);
+  P.body.z += shift * 0.02 * (1 - walkW);
+  P.spine.z -= shift * 0.02 * (1 - walkW);
+
+  // sguardo che vaga
+  if (t > state.nextLookAt) {
+    state.nextLookAt = t + 2 + Math.random() * 4;
+    state.lookTYaw = (Math.random() - 0.5) * 0.7;
+    state.lookTPitch = (Math.random() - 0.5) * 0.25;
+  }
+  state.lookYaw += (state.lookTYaw - state.lookYaw) * Math.min(1, dt * 3);
+  state.lookPitch += (state.lookTPitch - state.lookPitch) * Math.min(1, dt * 3);
+  const lookW = (1 - state.talkW) * (1 - walkW * 0.7);
+  P.head.y += state.lookYaw * lookW;
+  P.head.x += state.lookPitch * lookW;
+  zeph.pupilL.position.x = state.lookYaw * 0.02 * lookW;
+  zeph.pupilR.position.x = state.lookYaw * 0.02 * lookW;
+
+  // --- camminata ---
+  if (walkW > 0.001) {
+    const w = walkW, ph = state.phase;
+    const swing = Math.sin(ph);
+    P.legL.x += -swing * 0.55 * w;
+    P.legR.x += swing * 0.55 * w;
+    P.kneeL += Math.max(0, Math.cos(ph + 0.7)) * 0.85 * w;
+    P.kneeR += Math.max(0, -Math.cos(ph + 0.7)) * 0.85 * w;
+    P.footL += (swing * 0.25 + 0.1) * w;
+    P.footR += (-swing * 0.25 + 0.1) * w;
+    P.shL.x += swing * 0.42 * w;
+    P.shR.x += -swing * 0.42 * w;
+    P.elL.x += -0.15 * w; P.elR.x += -0.15 * w;
+    P.rootY += (Math.abs(Math.cos(ph)) * 0.04 - 0.02) * w;
+    P.spine.x += 0.09 * w;
+    P.body.y += swing * 0.08 * w;
+    P.spine.y += -swing * 0.1 * w;
+  }
+
+  // --- parlato: testa e gesti ---
+  const tw = state.talkW;
+  if (tw > 0.001) {
+    P.head.x += (Math.sin(t * 3.3) * 0.05 + Math.sin(t * 1.3) * 0.035) * tw;
+    P.head.y += Math.sin(t * 1.9) * 0.09 * tw;
+    P.head.z += Math.sin(t * 1.1) * 0.04 * tw;
+    P.spine.y += Math.sin(t * 1.15) * 0.045 * tw;
+    P.brow += 0.008 * tw;
+    const actW = state.action ? envelope(state.action.t, state.action.dur) : 0;
+    const gA = tw * (1 - 0.65 * walkW) * (1 - actW);
+    const lead = state.gestureLead > 0;
+    armGesture(P, P.shR, P.elR, t, -1, gA * (lead ? 1 : 0.4));
+    armGesture(P, P.shL, P.elL, t + 1.7, 1, gA * (lead ? 0.4 : 1));
+  }
+
+  // --- bocca (sincronizzata col parlato) ---
+  state.mouthPulse = Math.max(0, state.mouthPulse - dt * 5);
+  let mouthTarget = 0;
+  if (state.talking) {
+    mouthTarget = 0.3 + 0.7 * Math.abs(Math.sin(t * 10.5) * Math.sin(t * 6.7)) + state.mouthPulse * 0.5;
+  }
+  state.mouthSmooth += (Math.min(1.1, mouthTarget) - state.mouthSmooth) * Math.min(1, dt * 16);
+  P.mouth = state.mouthSmooth;
+
+  // --- azioni speciali ---
+  if (state.action) {
+    const a = state.action;
+    a.t += dt;
+    if (a.t >= a.dur) state.action = null;
+    else {
+      const w = envelope(a.t, a.dur);
+      if (a.name === 'wave') {
+        P.shR.x += -0.45 * w; P.shR.z += -1.95 * w;
+        P.elR.x += -0.35 * w; P.elR.z += Math.sin(t * 9.5) * 0.55 * w;
+        P.head.z += 0.13 * w;
+        P.mouth = Math.max(P.mouth, 0.28 * w);
+      } else if (a.name === 'dance') {
+        const b = t * 6.0;
+        P.body.y += Math.sin(b) * 0.4 * w;
+        P.rootY += (Math.abs(Math.sin(b)) * 0.07 - 0.05) * w;
+        P.legL.x += -0.15 * w; P.legR.x += -0.15 * w;
+        P.kneeL += (0.3 + Math.max(0, Math.sin(b)) * 0.25) * w;
+        P.kneeR += (0.3 + Math.max(0, -Math.sin(b)) * 0.25) * w;
+        P.shL.z += (1.75 + Math.sin(b) * 0.75) * w;
+        P.shR.z += (-1.75 + Math.sin(b) * 0.75) * w;
+        P.elL.x += -0.55 * w; P.elR.x += -0.55 * w;
+        P.elL.z += Math.sin(b * 2) * 0.45 * w;
+        P.elR.z += Math.sin(b * 2) * 0.45 * w;
+        P.head.y += Math.sin(b) * 0.22 * w;
+        P.head.x += Math.sin(b * 2) * 0.07 * w;
+        P.mouth = Math.max(P.mouth, (0.3 + 0.2 * Math.sin(b * 2)) * w);
+      } else if (a.name === 'jump') {
+        const jt = a.t / a.dur;
+        let crouch = 0, air = 0;
+        if (jt < 0.24) crouch = jt / 0.24;
+        else if (jt < 0.74) {
+          const u = (jt - 0.24) / 0.5;
+          air = Math.sin(u * Math.PI);
+          crouch = Math.max(0, 1 - u * 3.5);
+        } else crouch = (1 - (jt - 0.74) / 0.26) * 0.55;
+        P.rootY += -0.14 * crouch + 0.62 * air;
+        P.kneeL += 1.0 * crouch + 0.85 * air; P.kneeR += 1.0 * crouch + 0.85 * air;
+        P.legL.x += -0.5 * crouch - 0.45 * air; P.legR.x += -0.5 * crouch - 0.45 * air;
+        P.footL += 0.35 * air; P.footR += 0.35 * air;
+        P.spine.x += 0.24 * crouch - 0.05 * air;
+        P.shL.x += 0.5 * crouch - 0.9 * air; P.shR.x += 0.5 * crouch - 0.9 * air;
+        P.shL.z += 0.25 * crouch + 1.15 * air; P.shR.z += -0.25 * crouch - 1.15 * air;
+        P.mouth = Math.max(P.mouth, 0.5 * air);
+      }
+    }
+  }
+
+  // --- sbattito di palpebre ---
+  if (t > state.blinkAt) { state.blinkAt = t + 2 + Math.random() * 3.5; state.blinkT = 0; }
+  let eyeScale = 1;
+  if (state.blinkT >= 0) {
+    state.blinkT += dt;
+    if (state.blinkT > 0.14) state.blinkT = -1;
+    else eyeScale = 0.08 + 0.92 * Math.abs(state.blinkT / 0.07 - 1);
+  }
+  zeph.eyeL.scale.y = eyeScale; zeph.eyeR.scale.y = eyeScale;
+
+  applyPose(P);
+}
+
+function applyPose(P) {
+  const B = zeph;
+  B.body.position.y = HIP_Y + P.rootY;
+  B.body.rotation.set(P.body.x, P.body.y, P.body.z);
+  B.spine.rotation.set(P.spine.x, P.spine.y, P.spine.z);
+  B.head.rotation.set(P.head.x, P.head.y, P.head.z);
+  B.shL.rotation.set(P.shL.x, P.shL.y, P.shL.z);
+  B.shR.rotation.set(P.shR.x, P.shR.y, P.shR.z);
+  B.elL.rotation.set(P.elL.x, 0, P.elL.z);
+  B.elR.rotation.set(P.elR.x, 0, P.elR.z);
+  B.hipL.rotation.set(P.legL.x, 0, P.legL.z);
+  B.hipR.rotation.set(P.legR.x, 0, P.legR.z);
+  B.kneeL.rotation.x = P.kneeL; B.kneeR.rotation.x = P.kneeR;
+  B.footL.rotation.x = P.footL - (P.legL.x + P.kneeL) * 0.55;
+  B.footR.rotation.x = P.footR - (P.legR.x + P.kneeR) * 0.55;
+  B.mouth.scale.set(1 + P.mouth * 0.25, 0.25 + P.mouth * 1.05, 0.5);
+  B.mouth.position.y = 0.072 - P.mouth * 0.014;
+  B.browL.position.y = 0.235 + P.brow; B.browR.position.y = 0.235 + P.brow;
+}
+
+// ---------- Movimento ----------
+function updateMovement(dt) {
+  let dir = null;
+
+  const k = state.keys;
+  let kx = (k.KeyD || k.ArrowRight ? 1 : 0) - (k.KeyA || k.ArrowLeft ? 1 : 0);
+  let kz = (k.KeyW || k.ArrowUp ? 1 : 0) - (k.KeyS || k.ArrowDown ? 1 : 0);
+  if (kx || kz) {
+    state.target = null;
+    // direzione relativa alla camera
+    const f = new THREE.Vector3(-Math.sin(cam.yaw), 0, -Math.cos(cam.yaw));
+    const r = new THREE.Vector3(Math.cos(cam.yaw), 0, -Math.sin(cam.yaw));
+    dir = f.multiplyScalar(kz).add(r.multiplyScalar(kx)).normalize();
+  } else if (state.target) {
+    const d = new THREE.Vector3().subVectors(state.target, state.pos); d.y = 0;
+    if (d.length() < 0.14) state.target = null;
+    else dir = d.normalize();
+  }
+
+  const blocked = state.action && state.action.name !== 'wave';
+  const targetSpeed = (dir && !blocked) ? WALK_SPEED : 0;
+  state.speed += (targetSpeed - state.speed) * Math.min(1, dt * 6);
+  if (state.speed < 0.01) state.speed = 0;
+
+  if (dir && !blocked) {
+    state.heading = lerpAngle(state.heading, Math.atan2(dir.x, dir.z), Math.min(1, dt * 8));
+  } else if ((state.talking || (state.action && state.action.name === 'wave')) && state.speed < 0.2) {
+    // si gira verso di te quando parla o saluta
+    const toCam = Math.atan2(camera.position.x - state.pos.x, camera.position.z - state.pos.z);
+    state.heading = lerpAngle(state.heading, toCam, Math.min(1, dt * 3));
+  }
+
+  if (state.speed > 0.01) {
+    state.pos.x += Math.sin(state.heading) * state.speed * dt;
+    state.pos.z += Math.cos(state.heading) * state.speed * dt;
+    const rad = Math.hypot(state.pos.x, state.pos.z);
+    if (rad > 26) { state.pos.x *= 26 / rad; state.pos.z *= 26 / rad; state.target = null; }
+    state.phase += state.speed * dt * (Math.PI / 0.72);
+  }
+
+  zeph.root.position.copy(state.pos);
+  zeph.root.rotation.y = state.heading;
+}
+
+// passeggiata autonoma
+function updateWander(t) {
+  if (!state.wander || state.target || state.speed > 0.1 || state.talking || state.action) return;
+  if (t > state.nextWanderAt) {
+    const a = Math.random() * Math.PI * 2, r = 3 + Math.random() * 14;
+    state.target = new THREE.Vector3(Math.sin(a) * r, 0, Math.cos(a) * r);
+    state.nextWanderAt = t + 4 + Math.random() * 5;
+    if (state.interacted && Math.random() < 0.35) {
+      speak(FRASI_PASSEGGIO[(Math.random() * FRASI_PASSEGGIO.length) | 0]);
+    }
+  }
+}
+
+// ---------- Camera ----------
+const cam = { yaw: 0, pitch: 0.42, dist: 5.2, focus: new THREE.Vector3() };
+function updateCamera(dt) {
+  const targetFocus = new THREE.Vector3(state.pos.x, 1.05, state.pos.z);
+  cam.focus.lerp(targetFocus, Math.min(1, dt * 5));
+  const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
+  camera.position.set(
+    cam.focus.x + Math.sin(cam.yaw) * cp * cam.dist,
+    cam.focus.y + sp * cam.dist,
+    cam.focus.z + Math.cos(cam.yaw) * cp * cam.dist
+  );
+  camera.lookAt(cam.focus);
+  sun.position.set(state.pos.x + 7, 13, state.pos.z + 5);
+  sun.target.position.set(state.pos.x, 0, state.pos.z);
+}
+
+// ---------- Input: trascina per ruotare, clic per camminare ----------
+const raycaster = new THREE.Raycaster();
+const pt = { down: false, dragged: false, x: 0, y: 0, id: -1 };
+const el = renderer.domElement;
+
+el.addEventListener('pointerdown', e => {
+  state.interacted = true;
+  pt.down = true; pt.dragged = false; pt.x = e.clientX; pt.y = e.clientY; pt.id = e.pointerId;
+  el.setPointerCapture(e.pointerId);
+});
+el.addEventListener('pointermove', e => {
+  if (!pt.down || e.pointerId !== pt.id) return;
+  const dx = e.clientX - pt.x, dy = e.clientY - pt.y;
+  if (Math.abs(e.clientX - pt.x) + Math.abs(e.clientY - pt.y) > 6) pt.dragged = true;
+  if (pt.dragged) {
+    cam.yaw -= dx * 0.0055;
+    cam.pitch = Math.min(1.25, Math.max(0.08, cam.pitch + dy * 0.004));
+    pt.x = e.clientX; pt.y = e.clientY;
+  }
+});
+el.addEventListener('pointerup', e => {
+  if (e.pointerId !== pt.id) return;
+  pt.down = false;
+  if (!pt.dragged) {
+    const v = new THREE.Vector2(
+      (e.clientX / window.innerWidth) * 2 - 1,
+      -(e.clientY / window.innerHeight) * 2 + 1
+    );
+    raycaster.setFromCamera(v, camera);
+    const hit = raycaster.intersectObject(ground)[0];
+    if (hit) {
+      const p = hit.point.clone(); p.y = 0;
+      const rad = Math.hypot(p.x, p.z);
+      if (rad > 25) { p.x *= 25 / rad; p.z *= 25 / rad; }
+      state.target = p;
+      if (state.action && state.action.name !== 'wave') state.action = null;
+    }
+  }
+});
+el.addEventListener('wheel', e => {
+  e.preventDefault();
+  cam.dist = Math.min(11, Math.max(2.2, cam.dist + e.deltaY * 0.004));
+}, { passive: false });
+
+// pizzico per zoom su touch
+let pinchDist = 0;
+el.addEventListener('touchmove', e => {
+  if (e.touches.length === 2) {
+    const d = Math.hypot(
+      e.touches[0].clientX - e.touches[1].clientX,
+      e.touches[0].clientY - e.touches[1].clientY
+    );
+    if (pinchDist) cam.dist = Math.min(11, Math.max(2.2, cam.dist - (d - pinchDist) * 0.015));
+    pinchDist = d;
+  }
+}, { passive: true });
+el.addEventListener('touchend', () => { pinchDist = 0; });
+
+window.addEventListener('keydown', e => {
+  if (document.activeElement === msgInput) return;
+  state.interacted = true;
+  state.keys[e.code] = true;
+});
+window.addEventListener('keyup', e => { state.keys[e.code] = false; });
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ---------- Voce e fumetto ----------
+const bubble = document.getElementById('bubble');
+let bubbleTimer = null, fakeTalkTimer = null, watchdog = null;
+let voice = null;
+
+function pickVoice() {
+  if (!window.speechSynthesis) return;
+  const vs = speechSynthesis.getVoices();
+  voice =
+    vs.find(v => /it[-_]IT/i.test(v.lang) && /google/i.test(v.name)) ||
+    vs.find(v => /it[-_]IT/i.test(v.lang)) ||
+    vs.find(v => /^it/i.test(v.lang)) || null;
+}
+if (window.speechSynthesis) {
+  pickVoice();
+  speechSynthesis.onvoiceschanged = pickVoice;
+}
+
+function showBubble(text) {
+  bubble.textContent = text;
+  bubble.classList.add('show');
+  clearTimeout(bubbleTimer);
+}
+function hideBubble(delay) {
+  clearTimeout(bubbleTimer);
+  bubbleTimer = setTimeout(() => bubble.classList.remove('show'), delay || 250);
+}
+function stopTalkVisuals() {
+  state.talking = false;
+  hideBubble(350);
+}
+function fallbackTalk(text) {
+  state.talking = true;
+  clearTimeout(fakeTalkTimer);
+  const dur = Math.min(8000, Math.max(1600, 900 + text.length * 62));
+  fakeTalkTimer = setTimeout(stopTalkVisuals, dur);
+}
+
+function speak(text) {
+  state.gestureLead = Math.random() < 0.5 ? -1 : 1;
+  showBubble(text);
+  clearTimeout(fakeTalkTimer);
+  clearTimeout(watchdog);
+
+  const canTTS = window.speechSynthesis && !state.muted && state.interacted;
+  if (!canTTS) { fallbackTalk(text); return; }
+
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text.replace(/[👋💃🦘😂🎵❤️😄🌳]/g, ''));
+  u.lang = 'it-IT';
+  if (voice) u.voice = voice;
+  u.rate = 1.04; u.pitch = 1.08;
+  let started = false;
+  u.onstart = () => { started = true; clearTimeout(watchdog); state.talking = true; };
+  u.onboundary = () => { state.mouthPulse = 1; };
+  u.onend = stopTalkVisuals;
+  u.onerror = stopTalkVisuals;
+  speechSynthesis.speak(u);
+  // se il TTS non parte (bloccato/non disponibile), anima comunque
+  watchdog = setTimeout(() => { if (!started) fallbackTalk(text); }, 800);
+}
+
+function updateBubblePosition() {
+  if (!bubble.classList.contains('show')) return;
+  const p = new THREE.Vector3(state.pos.x, 2.15 + (zeph.body.position.y - HIP_Y), state.pos.z);
+  p.project(camera);
+  if (p.z > 1) { bubble.style.opacity = '0'; return; }
+  bubble.style.opacity = '';
+  bubble.style.left = ((p.x * 0.5 + 0.5) * window.innerWidth) + 'px';
+  bubble.style.top = ((-p.y * 0.5 + 0.5) * window.innerHeight - 8) + 'px';
+}
+
+// ---------- Il "cervello" di Zeph (risposte in italiano) ----------
+function pick(arr) { return arr[(Math.random() * arr.length) | 0]; }
+
+const FRASI_PASSEGGIO = [
+  'Che bella giornata oggi!',
+  'Mi piace un sacco passeggiare qui.',
+  'Hai visto che nuvole soffici?',
+  'Un po’ di movimento fa sempre bene!',
+  'La la la… lalala…',
+  'Secondo me quell’albero mi ha appena salutato. 🌳',
+];
+const BARZELLETTE = [
+  'Perché i pesci non usano il computer? Perché hanno paura della rete! 😂',
+  'Cosa dice uno spazzolino a un altro spazzolino? Oggi mi sento un po’ giù di dente!',
+  'Qual è il colmo per un giardiniere? Piantare tutto e andarsene!',
+  'Perché il libro di matematica è triste? Perché ha troppi problemi!',
+  'Cosa fa una fragola sopra una moto? Va alla frutta e verdura… anzi no, sfreccia!',
+];
+const DEFAULT_REPLIES = [
+  'Interessante! Dimmi di più…',
+  'Ah sì? Non ci avevo mai pensato!',
+  'Capito, capito… più o meno! 😄',
+  'Mi piace tantissimo parlare con te!',
+  'Uhm… fammi pensare… sì, sono d’accordo!',
+  'Bella questa! Raccontamene un’altra.',
+];
+
+const RULES = [
+  { re: /(barzellett|scherz|fammi ridere|divertent|joke)/, fn: () => ({ say: pick(BARZELLETTE) }) },
+  { re: /(balla|danza|ballare|dance)/, fn: () => ({ say: pick(['E vaiii! Guarda che mosse! 💃', 'Musica, maestro! Si balla!', 'Questa è la mia specialità!']), action: 'dance' }) },
+  { re: /(salta|salto|jump)/, fn: () => ({ say: pick(['Uuup! Hai visto che salto?', 'Guarda quanto vado in alto!']), action: 'jump' }) },
+  { re: /(canta|canzone|canzoncina)/, fn: () => ({ say: '🎵 Laaa la la làààà… Zeph è il mio nome, camminare è la mia passioneee! 🎵', action: 'dance' }) },
+  { re: /(vieni|avvicinati|qui da me)/, fn: () => ({ say: 'Arrivo subitooo!', come: true }) },
+  { re: /(fermo|fermati|stop|basta)/, fn: () => ({ say: 'Ok ok, mi fermo qui!', stop: true }) },
+  { re: /(cammina|passeggia|vai in giro|muoviti|esplora)/, fn: () => ({ say: 'Ottima idea, mi faccio un giretto!', wander: true }) },
+  { re: /(come stai|come va|tutto bene)/, fn: () => ({ say: pick(['Benissimo! Le mie gambe 3D oggi sono al top! E tu?', 'Alla grande! Un po’ di poligoni scricchiolano ma va bene così. 😄', 'Molto bene, grazie! Si sta da re in questo prato.']) }) },
+  { re: /(chi sei|come ti chiami|il tuo nome|cosa sei)/, fn: () => ({ say: 'Sono Zeph! Un personaggio 3D fatto di poligoni e simpatia. Vivo qui nel tuo browser!', action: 'wave' }) },
+  { re: /(quanti anni)/, fn: () => ({ say: 'Sono nato pochi secondi fa, quando hai aperto questa pagina! Quindi… sono giovanissimo.' }) },
+  { re: /(cosa sai fare|aiuto|help|comandi|istruzioni)/, fn: () => ({ say: 'So camminare dove clicchi, ballare, saltare, salutare e raccontare barzellette! Prova a scrivermi «balla» o «vieni qui»!' }) },
+  { re: /(grazie|gentile)/, fn: () => ({ say: pick(['Prego! È un piacere!', 'Figurati! Per te, sempre!']) }) },
+  { re: /(ti voglio bene|ti amo|sei bello|sei forte|bravo)/, fn: () => ({ say: 'Ooh, grazie! Anche tu sei il mio umano preferito! ❤️', action: 'wave' }) },
+  { re: /(buonanotte|vado a dormire|a domani)/, fn: () => ({ say: 'Buonanotte! Io resto qui a contare le nuvole. A presto!' , action: 'wave' }) },
+  { re: /(ciao|salve|ehi|hey|hola|buongiorno|buonasera|weil|we)\b/, fn: () => ({ say: pick(['Ciao! Che bello vederti! 👋', 'Ehilà! Come va?', 'Ciao ciao! Sono contento che tu sia qui!']), action: 'wave' }) },
+];
+
+function botRespond(text) {
+  const t = text.toLowerCase().trim();
+  if (!t) return;
+  let out = null;
+  for (const r of RULES) { if (r.re.test(t)) { out = r.fn(); break; } }
+  if (!out) out = { say: pick(DEFAULT_REPLIES) };
+
+  if (out.stop) { state.wander = false; state.target = null; syncWanderChip(); }
+  if (out.wander) { state.wander = true; syncWanderChip(); }
+  if (out.come) {
+    const d = new THREE.Vector3(state.pos.x - camera.position.x, 0, state.pos.z - camera.position.z);
+    const len = d.length() || 1;
+    state.target = new THREE.Vector3(
+      camera.position.x + (d.x / len) * 1.8, 0,
+      camera.position.z + (d.z / len) * 1.8
+    );
+  }
+  if (out.action) startAction(out.action);
+  speak(out.say);
+}
+
+// ---------- Interfaccia ----------
+const msgInput = document.getElementById('msg');
+const statusText = document.getElementById('statustext');
+const wanderChip = document.getElementById('wanderchip');
+const muteBtn = document.getElementById('mutebtn');
+
+document.getElementById('send').addEventListener('click', sendMsg);
+msgInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendMsg(); });
+function sendMsg() {
+  state.interacted = true;
+  const t = msgInput.value;
+  msgInput.value = '';
+  botRespond(t);
+}
+
+document.querySelectorAll('.chip[data-cmd]').forEach(chip => {
+  chip.addEventListener('click', () => {
+    state.interacted = true;
+    botRespond(chip.dataset.cmd);
+  });
+});
+function syncWanderChip() { wanderChip.classList.toggle('on', state.wander); }
+wanderChip.addEventListener('click', () => {
+  state.interacted = true;
+  state.wander = !state.wander;
+  syncWanderChip();
+  if (state.wander) speak('Vado a farmi una passeggiata! Chiamami se ti servo.');
+  else { state.target = null; speak('Ok, resto qui con te!'); }
+});
+muteBtn.addEventListener('click', () => {
+  state.muted = !state.muted;
+  muteBtn.textContent = state.muted ? '🔇' : '🔊';
+  if (state.muted && window.speechSynthesis) speechSynthesis.cancel();
+});
+
+let lastStatus = '';
+function updateStatus() {
+  let s;
+  if (state.talking) s = '💬 Sta parlando…';
+  else if (state.action && state.action.name === 'dance') s = '💃 Sta ballando!';
+  else if (state.action && state.action.name === 'jump') s = '🦘 Sta saltando!';
+  else if (state.speed > 0.2) s = '🚶 Sta camminando…';
+  else if (state.wander) s = '🌼 Si gode il panorama…';
+  else s = '👂 Ti ascolta: scrivigli qualcosa!';
+  if (s !== lastStatus) { lastStatus = s; statusText.textContent = s; }
+}
+
+// ---------- Loop principale ----------
+const clock = new THREE.Clock();
+function tick() {
+  requestAnimationFrame(tick);
+  const dt = Math.min(0.05, clock.getDelta());
+  const t = clock.elapsedTime;
+
+  updateMovement(dt);
+  updateWander(t);
+  updatePose(t, dt);
+  updateCamera(dt);
+  updateBubblePosition();
+  updateStatus();
+
+  for (const cl of clouds) {
+    cl.position.x += dt * 0.35;
+    if (cl.position.x > 42) cl.position.x = -42;
+  }
+  renderer.render(scene, camera);
+}
+tick();
+
+// saluto iniziale (solo fumetto: la voce parte dopo la prima interazione)
+setTimeout(() => {
+  startAction('wave');
+  showBubble('Ciao! Sono Zeph 👋 Scrivimi qui sotto e ti rispondo a voce!');
+  hideBubble(5200);
+}, 700);
+
+// piccolo gancio per debug/test
+window.zeph = { state, startAction, speak, botRespond, cam };
+})();
+</script>
+</body>
+</html>
