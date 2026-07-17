@@ -56,8 +56,35 @@ const blob = new THREE.Mesh(
 blob.position.y = 0.02;
 scene.add(blob);
 
-// ---------- Stato e movimento (solo lungo x) ----------
+// ---------- Avatar personalizzato (avatar.glb) ----------
 const anim = new ZephCore.Animator(zeph);
+const actor = { obj: zeph.root };
+let avatarDriver = null;
+
+function setAvatarScene(avScene) {
+  try {
+    const driver = ZephCore.createAvatarDriver(THREE, avScene, { height: 1.75 });
+    if (avatarDriver) scene.remove(avatarDriver.root);
+    avatarDriver = driver;
+    zeph.root.visible = false;
+    driver.root.position.x = state.x;
+    scene.add(driver.root);
+    anim.avatar = driver;
+    actor.obj = driver.root;
+  } catch (e) { console.error('Avatar non utilizzabile:', e); }
+}
+function tryLoadAvatar() {
+  if (typeof THREE.GLTFLoader !== 'function') return;
+  if (bridge && bridge.loadAvatar) {
+    const ab = bridge.loadAvatar();
+    if (ab && ab.byteLength) {
+      new THREE.GLTFLoader().parse(ab, '', g => setAvatarScene(g.scene),
+        err => console.error('avatar.glb non leggibile:', err));
+    }
+  }
+}
+
+// ---------- Stato e movimento (solo lungo x) ----------
 const state = {
   x: 0, heading: 0, speed: 0,
   targetX: null,
@@ -102,8 +129,8 @@ function updateMovement(dt) {
   }
   anim.state.speedRatio = state.speed / WALK_SPEED;
 
-  zeph.root.position.x = state.x;
-  zeph.root.rotation.y = state.heading;
+  actor.obj.position.x = state.x;
+  actor.obj.rotation.y = state.heading;
 
   // ombra finta: segue Zeph e si restringe quando salta
   const air = anim.state.jumpAir || 0;
@@ -208,7 +235,7 @@ function speak(text) {
 
 function updateBubblePosition() {
   if (!bubble.classList.contains('show')) return;
-  const p = new THREE.Vector3(state.x, 1.95 + (zeph.body.position.y - ZephCore.HIP_Y), 0);
+  const p = new THREE.Vector3(state.x, 1.95 + anim.state.lastRootY, 0);
   p.project(camera);
   let bx = (p.x * 0.5 + 0.5) * W();
   bx = Math.max(130, Math.min(W() - 130, bx));
@@ -253,7 +280,7 @@ let interactive = false;
 function cursorOverZeph(mx, my) {
   const v = new THREE.Vector2((mx / W()) * 2 - 1, -(my / H()) * 2 + 1);
   raycaster.setFromCamera(v, camera);
-  return raycaster.intersectObject(zeph.root, true).length > 0;
+  return raycaster.intersectObject(actor.obj, true).length > 0;
 }
 
 window.addEventListener('mousemove', e => {
@@ -305,6 +332,9 @@ function tick() {
 }
 tick();
 
+// avatar personalizzato, se presente
+tryLoadAvatar();
+
 // saluto di benvenuto
 setTimeout(() => {
   anim.startAction('wave');
@@ -312,5 +342,8 @@ setTimeout(() => {
 }, 1200);
 
 // gancio per test
-window.zephDesktop = { state, anim, speak, botRespond };
+window.zephDesktop = {
+  state, anim, speak, botRespond, setAvatarScene,
+  loadAvatarUrl: url => { if (typeof THREE.GLTFLoader === 'function') new THREE.GLTFLoader().load(url, g => setAvatarScene(g.scene)); },
+};
 })();

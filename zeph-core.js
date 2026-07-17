@@ -120,6 +120,22 @@ function build(THREE) {
   B.hipL = legL.hip; B.kneeL = legL.knee; B.footL = legL.foot;
   B.hipR = legR.hip; B.kneeR = legR.knee; B.footR = legR.foot;
 
+  // marcatori usati dal retargeting sugli avatar esterni
+  function marker(parent, x, y, z) {
+    const m = new THREE.Object3D(); m.position.set(x, y, z); parent.add(m); return m;
+  }
+  B.markers = {
+    wristL: marker(B.elL, 0, -0.3, 0), wristR: marker(B.elR, 0, -0.3, 0),
+    toeL: marker(B.footL, 0, -0.07, 0.16), toeR: marker(B.footR, 0, -0.07, 0.16),
+  };
+
+  // applica una posa calcolata dall'Animator a questo rig
+  B.apply = function (P, s) {
+    applyPose(B, P);
+    B.eyeL.scale.y = s.eyeScale; B.eyeR.scale.y = s.eyeScale;
+    B.pupilL.position.x = s.pupilX || 0; B.pupilR.position.x = s.pupilX || 0;
+  };
+
   // per il raycasting dei clic
   B.root.traverse(o => { o.userData.zeph = true; });
 
@@ -146,14 +162,17 @@ function newPose() {
   };
 }
 
-function Animator(B) {
-  this.B = B;
+// `avatar` è un oggetto con un metodo apply(P, state): il rig di Zeph
+// creato da build(), oppure un driver creato da createAvatarDriver().
+function Animator(avatar) {
+  this.avatar = avatar;
   this.state = {
     speedRatio: 0, phase: 0,
     talking: false, talkW: 0, mouthPulse: 0, mouthSmooth: 0, gestureLead: 1,
     action: null,
     blinkAt: 2.5, blinkT: -1,
     lookYaw: 0, lookPitch: 0, lookTYaw: 0, lookTPitch: 0, nextLookAt: 2,
+    eyeScale: 1, pupilX: 0, lastRootY: 0,
   };
 }
 
@@ -162,7 +181,7 @@ Animator.prototype.startAction = function (name) {
 };
 
 Animator.prototype.update = function (t, dt) {
-  const s = this.state, B = this.B;
+  const s = this.state;
   const P = newPose();
   const walkW = clamp01(s.speedRatio);
   s.talkW += ((s.talking ? 1 : 0) - s.talkW) * Math.min(1, dt * 5);
@@ -186,8 +205,7 @@ Animator.prototype.update = function (t, dt) {
   const lookW = (1 - s.talkW) * (1 - walkW * 0.7);
   P.head.y += s.lookYaw * lookW;
   P.head.x += s.lookPitch * lookW;
-  B.pupilL.position.x = s.lookYaw * 0.012 * lookW;
-  B.pupilR.position.x = s.lookYaw * 0.012 * lookW;
+  s.pupilX = s.lookYaw * 0.012 * lookW;
 
   // camminata
   if (walkW > 0.001) {
@@ -291,9 +309,10 @@ Animator.prototype.update = function (t, dt) {
     if (s.blinkT > 0.14) s.blinkT = -1;
     else eyeScale = 0.08 + 0.92 * Math.abs(s.blinkT / 0.07 - 1);
   }
-  B.eyeL.scale.y = eyeScale; B.eyeR.scale.y = eyeScale;
+  s.eyeScale = eyeScale;
 
-  applyPose(B, P);
+  s.lastRootY = P.rootY;
+  this.avatar.apply(P, s);
   return P;
 };
 
@@ -321,6 +340,219 @@ function applyPose(B, P) {
   B.mouth.scale.set(1.15 + P.mouth * 0.2, 0.22 + P.mouth * 0.85, 0.42);
   B.mouth.position.y = 0.03 - P.mouth * 0.011;
   B.browL.position.y = 0.138 + P.brow; B.browR.position.y = 0.138 + P.brow;
+}
+
+// ---------- Driver per avatar GLB esterni (ReadyPlayerMe, Mixamo, ecc.) ----------
+// Mappa le ossa per nome e vi ritrasferisce le pose procedurali di Zeph.
+// Braccia e gambe usano l'allineamento direzionale (funziona anche se
+// l'avatar è in T-pose); busto e testa usano delta di rotazione.
+const BONE_DEFS = [
+  { key: 'hips', re: /hips$|pelvis/ },
+  { key: 'spine', re: /spine$/ },
+  { key: 'spine1', re: /spine1$/ },
+  { key: 'spine2', re: /spine2$|chest$/ },
+  { key: 'neck', re: /neck$/ },
+  { key: 'head', re: /head$/ },
+  { key: 'jaw', re: /jaw$/ },
+  { key: 'armL', re: /leftarm$|upperarml$|leftupperarm$/ },
+  { key: 'forearmL', re: /leftforearm$|forearml$|lowerarml$|leftlowerarm$/ },
+  { key: 'handL', re: /lefthand$|handl$/ },
+  { key: 'armR', re: /rightarm$|upperarmr$|rightupperarm$/ },
+  { key: 'forearmR', re: /rightforearm$|forearmr$|lowerarmr$|rightlowerarm$/ },
+  { key: 'handR', re: /righthand$|handr$/ },
+  { key: 'uplegL', re: /leftupleg$|thighl$|uplegl$|leftthigh$|leftupperleg$/ },
+  { key: 'legL', re: /leftleg$|calfl$|shinl$|lowerlegl$|leftlowerleg$/ },
+  { key: 'footL', re: /leftfoot$|footl$/ },
+  { key: 'toeL', re: /lefttoebase$|toebasel$|lefttoe$|toel$/ },
+  { key: 'uplegR', re: /rightupleg$|thighr$|uplegr$|rightthigh$|rightupperleg$/ },
+  { key: 'legR', re: /rightleg$|calfr$|shinr$|lowerlegr$|rightlowerleg$/ },
+  { key: 'footR', re: /rightfoot$|footr$/ },
+  { key: 'toeR', re: /righttoebase$|toebaser$|righttoe$|toer$/ },
+];
+
+function createAvatarDriver(THREE, avatarScene, opts) {
+  opts = opts || {};
+  const height = opts.height || 1.75;
+
+  const root = new THREE.Group();
+  const inner = new THREE.Group();
+  root.add(inner); inner.add(avatarScene);
+
+  avatarScene.updateMatrixWorld(true);
+  const bbox = new THREE.Box3().setFromObject(avatarScene);
+  const rawH = Math.max(0.01, bbox.max.y - bbox.min.y);
+  const k = height / rawH;
+  inner.scale.setScalar(k);
+  const baseY = -bbox.min.y * k;
+  inner.position.y = baseY;
+
+  avatarScene.traverse(o => {
+    if (o.isMesh || o.isSkinnedMesh) { o.castShadow = true; o.frustumCulled = false; }
+  });
+
+  // --- ricerca delle ossa per nome ---
+  const bones = {};
+  avatarScene.traverse(o => {
+    if (!o.name) return;
+    const n = o.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+    for (const d of BONE_DEFS) {
+      if (!bones[d.key] && d.re.test(n)) { bones[d.key] = o; break; }
+    }
+  });
+  const need = ['hips', 'armL', 'forearmL', 'armR', 'forearmR', 'uplegL', 'legL', 'uplegR', 'legR'];
+  const hasRig = need.every(kk => bones[kk]);
+
+  // --- morph facciali (bocca e palpebre), se presenti ---
+  const mouthMorphs = [], blinkMorphs = [];
+  avatarScene.traverse(o => {
+    if (o.morphTargetDictionary && o.morphTargetInfluences) {
+      for (const key in o.morphTargetDictionary) {
+        const kn = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (/mouthopen|jawopen|visemeaa/.test(kn)) mouthMorphs.push({ m: o, i: o.morphTargetDictionary[key] });
+        else if (/blink|eyesclosed/.test(kn)) blinkMorphs.push({ m: o, i: o.morphTargetDictionary[key] });
+      }
+    }
+  });
+  function applyMorphs(P, s) {
+    const open = Math.min(1, P.mouth * 0.85);
+    for (const mm of mouthMorphs) mm.m.morphTargetInfluences[mm.i] = open;
+    const blink = Math.min(1, Math.max(0, (1 - s.eyeScale) * 1.1));
+    for (const bm of blinkMorphs) bm.m.morphTargetInfluences[bm.i] = blink;
+  }
+
+  const driver = { root, inner, bones, hasRig, isAvatarDriver: true };
+
+  if (!hasRig) {
+    // niente scheletro riconoscibile: modalità "statuetta" (dondola e salta)
+    driver.apply = function (P, s) {
+      inner.position.y = baseY + P.rootY;
+      inner.rotation.x = P.spine.x * 0.4;
+      inner.rotation.z = P.body.z * 0.6;
+      inner.rotation.y = P.body.y * 0.5;
+      applyMorphs(P, s);
+    };
+    return driver;
+  }
+
+  // rig di riferimento invisibile: genera le pose da copiare
+  const ref = build(THREE);
+  ref.root.updateMatrixWorld(true);
+
+  // dati di riposo per ogni osso mappato
+  avatarScene.updateMatrixWorld(true);
+  const rest = new Map();
+  const qw = new THREE.Quaternion();
+  for (const kk in bones) {
+    const b = bones[kk];
+    b.getWorldQuaternion(qw);
+    rest.set(b, { local: b.quaternion.clone(), worldInv: qw.clone().invert() });
+  }
+
+  // direzione (nel sistema locale a riposo dell'osso) verso l'articolazione figlia
+  const vtmp = new THREE.Vector3(), vtmp2 = new THREE.Vector3();
+  function restDir(boneKey, childKey) {
+    const b = bones[boneKey], c = bones[childKey];
+    if (!b || !c) return null;
+    b.getWorldPosition(vtmp); c.getWorldPosition(vtmp2);
+    const d = vtmp2.sub(vtmp);
+    if (d.lengthSq() < 1e-8) return null;
+    return d.applyQuaternion(rest.get(b).worldInv).normalize().clone();
+  }
+  const segs = [
+    ['armL', 'forearmL'], ['forearmL', 'handL'],
+    ['armR', 'forearmR'], ['forearmR', 'handR'],
+    ['uplegL', 'legL'], ['legL', 'footL'], ['footL', 'toeL'],
+    ['uplegR', 'legR'], ['legR', 'footR'], ['footR', 'toeR'],
+  ];
+  const dirs = {};
+  for (const sg of segs) dirs[sg[0]] = restDir(sg[0], sg[1]);
+  // se manca la mano/punta, assumiamo il proseguimento dell'osso precedente
+  if (!dirs.forearmL && dirs.armL) dirs.forearmL = dirs.armL.clone();
+  if (!dirs.forearmR && dirs.armR) dirs.forearmR = dirs.armR.clone();
+  if (!dirs.legL && dirs.uplegL) dirs.legL = dirs.uplegL.clone();
+  if (!dirs.legR && dirs.uplegR) dirs.legR = dirs.uplegR.clone();
+
+  const q1 = new THREE.Quaternion(), q2 = new THREE.Quaternion(),
+        q3 = new THREE.Quaternion(), q4 = new THREE.Quaternion(),
+        qRoot = new THREE.Quaternion(), qRootInv = new THREE.Quaternion();
+  const e1 = new THREE.Euler();
+  const va = new THREE.Vector3(), vb = new THREE.Vector3();
+
+  // ruota l'osso in modo che il suo segmento punti come dirChar (spazio personaggio)
+  function alignBone(boneKey, dirChar) {
+    const b = bones[boneKey], localDir = dirs[boneKey];
+    if (!b || !localDir) return;
+    const r = rest.get(b);
+    const pW = b.parent.getWorldQuaternion(q1);
+    va.copy(localDir).applyQuaternion(q2.copy(pW).multiply(r.local)).normalize();
+    vb.copy(dirChar).applyQuaternion(qRoot).normalize();
+    q3.setFromUnitVectors(va, vb);
+    b.quaternion.copy(q4.copy(pW).invert()).multiply(q3).multiply(pW).multiply(r.local);
+  }
+  // applica una rotazione (euler, spazio personaggio) sopra la posa di riposo
+  function rotateBone(boneKey, ex, ey, ez) {
+    const b = bones[boneKey];
+    if (!b) return;
+    const r = rest.get(b);
+    const pW = b.parent.getWorldQuaternion(q1);
+    q2.setFromEuler(e1.set(ex, ey, ez, 'XYZ'));
+    q3.copy(qRoot).multiply(q2).multiply(qRootInv);
+    b.quaternion.copy(q4.copy(pW).invert()).multiply(q3).multiply(pW).multiply(r.local);
+  }
+
+  // pesi per distribuire la rotazione del busto sulle ossa disponibili
+  const spineChain = ['spine', 'spine1', 'spine2'].filter(kk => bones[kk]);
+  const spineW = spineChain.length === 3 ? [0.45, 0.3, 0.25]
+    : spineChain.length === 2 ? [0.6, 0.4]
+    : spineChain.length === 1 ? [1] : [];
+
+  const mpos = {};
+  function mp(obj, name) {
+    (mpos[name] = mpos[name] || new THREE.Vector3());
+    return obj.getWorldPosition(mpos[name]);
+  }
+
+  driver.apply = function (P, s) {
+    // 1. aggiorna il rig di riferimento (in spazio personaggio: root identità)
+    ref.apply(P, s);
+    ref.root.updateMatrixWorld(true);
+
+    root.getWorldQuaternion(qRoot);
+    qRootInv.copy(qRoot).invert();
+
+    // 2. bacino e busto
+    rotateBone('hips', P.body.x, P.body.y, P.body.z);
+    for (let i = 0; i < spineChain.length; i++) {
+      const f = spineW[i];
+      rotateBone(spineChain[i], P.spine.x * f, P.spine.y * f, P.spine.z * f);
+    }
+    if (bones.neck) {
+      rotateBone('neck', P.head.x * 0.35, P.head.y * 0.35, P.head.z * 0.35);
+      rotateBone('head', P.head.x * 0.65, P.head.y * 0.65, P.head.z * 0.65);
+    } else {
+      rotateBone('head', P.head.x, P.head.y, P.head.z);
+    }
+    if (bones.jaw && !mouthMorphs.length) rotateBone('jaw', P.mouth * 0.3, 0, 0);
+
+    // 3. arti per allineamento direzionale (robusto anche in T-pose)
+    const M = ref.markers;
+    alignBone('armL', mp(ref.elL, 'elL').clone().sub(mp(ref.shL, 'shL')));
+    alignBone('forearmL', mp(M.wristL, 'wrL').clone().sub(mp(ref.elL, 'elL2')));
+    alignBone('armR', mp(ref.elR, 'elR').clone().sub(mp(ref.shR, 'shR')));
+    alignBone('forearmR', mp(M.wristR, 'wrR').clone().sub(mp(ref.elR, 'elR2')));
+    alignBone('uplegL', mp(ref.kneeL, 'knL').clone().sub(mp(ref.hipL, 'hpL')));
+    alignBone('legL', mp(ref.footL, 'ftL').clone().sub(mp(ref.kneeL, 'knL2')));
+    alignBone('footL', mp(M.toeL, 'toL').clone().sub(mp(ref.footL, 'ftL2')));
+    alignBone('uplegR', mp(ref.kneeR, 'knR').clone().sub(mp(ref.hipR, 'hpR')));
+    alignBone('legR', mp(ref.footR, 'ftR').clone().sub(mp(ref.kneeR, 'knR2')));
+    alignBone('footR', mp(M.toeR, 'toR').clone().sub(mp(ref.footR, 'ftR2')));
+
+    // 4. saltelli/molleggio e faccia
+    inner.position.y = baseY + P.rootY;
+    applyMorphs(P, s);
+  };
+
+  return driver;
 }
 
 // ---------- Il "cervello": risposte in italiano ----------
@@ -385,7 +617,7 @@ function botReply(text) {
 }
 
 global.ZephCore = {
-  build, Animator, botReply, pick,
+  build, Animator, botReply, pick, createAvatarDriver,
   FRASI_PASSEGGIO, FRASI_DESKTOP, BARZELLETTE,
   HIP_Y, HEIGHT: 1.75,
 };

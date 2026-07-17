@@ -6,7 +6,7 @@
 <title>Zeph — il tuo compagno 3D</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
-  html, body { width:100%; height:100%; overflow:hidden; background:#87b8e8;
+  html, body { width:100%; height:100%; overflow:hidden; background:#cfe6f5;
     font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   #scene3d { position:fixed; inset:0; touch-action:none; }
   #scene3d canvas { display:block; }
@@ -15,7 +15,7 @@
     backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
     border:1px solid rgba(255,255,255,.12); border-radius:16px; color:#eaf2ff; }
 
-  #brand { top:14px; left:14px; padding:12px 16px; max-width:280px; }
+  #brand { top:14px; left:14px; padding:12px 16px; max-width:290px; }
   #brand h1 { font-size:20px; letter-spacing:2px; color:#5eead4; }
   #brand h1 span { color:#eaf2ff; font-weight:300; }
   #brand .sub { font-size:11.5px; opacity:.75; margin-top:2px; }
@@ -25,7 +25,7 @@
   @keyframes pulse { 50% { opacity:.35; } }
   #hints { margin-top:8px; font-size:10.5px; line-height:1.7; opacity:.62; }
 
-  #chatbar { bottom:14px; left:50%; transform:translateX(-50%); width:min(560px, calc(100% - 20px));
+  #chatbar { bottom:14px; left:50%; transform:translateX(-50%); width:min(600px, calc(100% - 20px));
     padding:10px; display:flex; flex-direction:column; gap:8px; }
   #chips { display:flex; gap:6px; flex-wrap:wrap; }
   .chip { border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.07);
@@ -55,8 +55,13 @@
     user-select:none; transition:background .15s; }
   #mutebtn:hover { background:rgba(13,22,38,.95); }
 
+  #droptip { position:fixed; inset:0; z-index:30; display:none; align-items:center;
+    justify-content:center; background:rgba(13,22,38,.72); color:#fff; font-size:22px;
+    border:3px dashed #5eead4; pointer-events:none; }
+  #droptip.show { display:flex; }
+
   @media (max-width:600px) {
-    #brand { max-width:210px; padding:10px 12px; }
+    #brand { max-width:220px; padding:10px 12px; }
     #brand h1 { font-size:16px; }
     #hints { display:none; }
   }
@@ -70,10 +75,11 @@
   <div class="sub">Il tuo compagno virtuale che parla e cammina</div>
   <div id="status"><div class="dot"></div><span id="statustext">Sto arrivando…</span></div>
   <div id="hints">
-    🖱️ Clic sul prato → cammina lì<br>
+    🖱️ Clic sul terreno → cammina lì<br>
     ⌨️ WASD / frecce → guidalo tu<br>
     ✋ Trascina → ruota la visuale · rotella → zoom<br>
-    💬 Scrivigli in basso: ti risponde a voce!
+    💬 Scrivigli in basso: ti risponde a voce!<br>
+    🧑 Trascina qui un file .glb per usare il TUO avatar
   </div>
 </div>
 
@@ -86,32 +92,37 @@
     <div class="chip" data-cmd="salta">🦘 Salta</div>
     <div class="chip" data-cmd="barzelletta">😂 Barzelletta</div>
     <div class="chip" id="wanderchip">🚶 Passeggia da solo</div>
+    <div class="chip" id="avatarchip">🧑 Il tuo avatar</div>
   </div>
   <div id="inputrow">
-    <input id="msg" type="text" placeholder="Scrivi qualcosa a Zeph… (es. «ciao», «come stai?», «balla!»)" autocomplete="off">
+    <input id="msg" type="text" placeholder="Scrivi qualcosa… (es. «ciao», «come stai?», «balla!»)" autocomplete="off">
     <button id="send">Invia</button>
   </div>
 </div>
 
 <div id="bubble"></div>
+<div id="droptip">Rilascia qui il tuo avatar .glb 🧑</div>
+<input id="avatarfile" type="file" accept=".glb,.gltf,model/gltf-binary" style="display:none">
 
 <script src="./three.min.js"></script>
 <script>
 // se la copia locale manca (es. file scaricato da solo), usa il CDN
 if (typeof THREE === 'undefined') {
-  document.write('<script src="https://cdn.jsdelivr.net/npm/three@0.150.1/build/three.min.js"><\/script>');
+  document.write('<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js"><\/script>');
 }
 </script>
+<script src="./gltf-loader.js"></script>
 <script src="./zeph-core.js"></script>
 <script>
 /* ============================================================
-   ZEPH nel browser — scena, movimento, camera, voce e chat.
+   ZEPH nel browser — mondo naturale avanzato, avatar GLB
+   personalizzato, movimento, camera, voce e chat.
    Il personaggio e le animazioni vivono in zeph-core.js.
    ============================================================ */
 (function () {
 'use strict';
 
-// ---------- Scena base ----------
+// ---------- Renderer e scena ----------
 const container = document.getElementById('scene3d');
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -119,49 +130,108 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+renderer.setClearColor(0xcfe6f5);
 container.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x9fd0f5);
-scene.fog = new THREE.Fog(0x9fd0f5, 26, 60);
+scene.fog = new THREE.Fog(0xcfe6f5, 33, 135);
 
-const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 200);
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 300);
 
-const hemi = new THREE.HemisphereLight(0xcfe8ff, 0x6fae54, 0.8);
+// ---------- Luci ----------
+const sunDir = new THREE.Vector3(0.5, 0.42, 0.3).normalize();
+const hemi = new THREE.HemisphereLight(0xbfd9f2, 0x6d9a52, 0.42);
 scene.add(hemi);
-const sun = new THREE.DirectionalLight(0xfff1d6, 1.0);
+const sun = new THREE.DirectionalLight(0xfff0d8, 1.25);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
-sun.shadow.camera.left = -9; sun.shadow.camera.right = 9;
-sun.shadow.camera.top = 9;   sun.shadow.camera.bottom = -9;
-sun.shadow.camera.near = 1;  sun.shadow.camera.far = 40;
-sun.shadow.bias = -0.002;
+sun.shadow.camera.left = -11; sun.shadow.camera.right = 11;
+sun.shadow.camera.top = 11;   sun.shadow.camera.bottom = -11;
+sun.shadow.camera.near = 1;   sun.shadow.camera.far = 80;
+sun.shadow.bias = -0.0018;
 scene.add(sun); scene.add(sun.target);
-const rim = new THREE.DirectionalLight(0xbcd7ff, 0.35);
+const rim = new THREE.DirectionalLight(0xbcd7ff, 0.3);
 rim.position.set(-4, 6, -6);
 scene.add(rim);
 
-// ---------- Terreno ed elementi di contorno ----------
+// ---------- Cielo con sole ----------
+const sky = new THREE.Mesh(
+  new THREE.SphereGeometry(190, 32, 16),
+  new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false, fog: false,
+    uniforms: {
+      topColor: { value: new THREE.Color(0x2e6cbe) },
+      horizonColor: { value: new THREE.Color(0xcfe6f5) },
+      sunDirection: { value: sunDir },
+      sunColor: { value: new THREE.Color(0xfff3d0) },
+    },
+    vertexShader:
+      'varying vec3 vDir;\n' +
+      'void main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+    fragmentShader:
+      'varying vec3 vDir;\n' +
+      'uniform vec3 topColor; uniform vec3 horizonColor; uniform vec3 sunDirection; uniform vec3 sunColor;\n' +
+      'void main(){\n' +
+      '  float h = clamp(vDir.y, 0.0, 1.0);\n' +
+      '  vec3 col = mix(horizonColor, topColor, pow(h, 0.55));\n' +
+      '  float s = clamp(dot(normalize(vDir), normalize(sunDirection)), 0.0, 1.0);\n' +
+      '  col += sunColor * (pow(s, 400.0) * 1.35 + pow(s, 12.0) * 0.16);\n' +
+      '  gl_FragColor = vec4(col, 1.0);\n' +
+      '}',
+  })
+);
+sky.renderOrder = -10;
+scene.add(sky);
+
+// ---------- Terreno collinare ----------
+function terrainH(x, z) {
+  const r = Math.hypot(x, z);
+  const flat = Math.min(1, Math.max(0, (r - 9) / 14)); // pianeggiante al centro
+  const n =
+    Math.sin(x * 0.16) * Math.cos(z * 0.13) * 0.55 +
+    Math.sin(x * 0.055 + 1.7) * Math.cos(z * 0.07 - 0.6) * 1.35 +
+    Math.sin((x + z) * 0.21) * 0.22;
+  return n * flat;
+}
+
 function grassTexture() {
-  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const c = document.createElement('canvas'); c.width = c.height = 512;
   const g = c.getContext('2d');
-  g.fillStyle = '#6fae54'; g.fillRect(0, 0, 256, 256);
-  const shades = ['#7cbf60', '#659e4b', '#86c96a', '#5d9445', '#74b35a'];
-  for (let i = 0; i < 1400; i++) {
+  g.fillStyle = '#5d9a47'; g.fillRect(0, 0, 512, 512);
+  // chiazze grandi per variare il colore del manto
+  for (let i = 0; i < 26; i++) {
+    const x = Math.random() * 512, y = Math.random() * 512, r = 50 + Math.random() * 110;
+    const grad = g.createRadialGradient(x, y, 0, x, y, r);
+    const col = ['#5f9c48', '#74b45c', '#639f4e', '#7cba62'][(Math.random() * 4) | 0];
+    grad.addColorStop(0, col + 'aa'); grad.addColorStop(1, col + '00');
+    g.fillStyle = grad; g.fillRect(0, 0, 512, 512);
+  }
+  const shades = ['#7cbf60', '#5d9445', '#86c96a', '#548a3e', '#74b35a', '#90cc74'];
+  for (let i = 0; i < 5200; i++) {
     g.fillStyle = shades[(Math.random() * shades.length) | 0];
-    g.fillRect(Math.random() * 256, Math.random() * 256, 1 + Math.random() * 2, 1 + Math.random() * 2);
+    g.fillRect(Math.random() * 512, Math.random() * 512, 1 + Math.random() * 2, 1 + Math.random() * 3);
   }
   const t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  t.repeat.set(12, 12);
+  t.repeat.set(26, 26);
   t.encoding = THREE.sRGBEncoding;
+  t.anisotropy = 4;
   return t;
 }
+
+const terrainGeo = new THREE.PlaneGeometry(240, 240, 120, 120);
+terrainGeo.rotateX(-Math.PI / 2);
+{
+  const p = terrainGeo.attributes.position;
+  for (let i = 0; i < p.count; i++) p.setY(i, terrainH(p.getX(i), p.getZ(i)));
+  terrainGeo.computeVertexNormals();
+}
 const ground = new THREE.Mesh(
-  new THREE.CircleGeometry(34, 48),
+  terrainGeo,
   new THREE.MeshStandardMaterial({ map: grassTexture(), roughness: 1 })
 );
-ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
 scene.add(ground);
 
@@ -174,64 +244,175 @@ function mulberry32(a) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
-const rng = mulberry32(20260716);
+const rng = mulberry32(20260717);
 
-function addTree(x, z, s) {
+// ---------- Vegetazione e rocce ----------
+const trunkMat = new THREE.MeshStandardMaterial({ color: 0x6e4a30, roughness: 1 });
+const trunkMat2 = new THREE.MeshStandardMaterial({ color: 0x7d5a3d, roughness: 1 });
+function leafMat(base) {
+  const c = new THREE.Color(base);
+  c.offsetHSL((rng() - 0.5) * 0.05, (rng() - 0.5) * 0.12, (rng() - 0.5) * 0.08);
+  return new THREE.MeshStandardMaterial({ color: c, roughness: 1 });
+}
+
+function addLeafyTree(x, z, s) {
+  const y = terrainH(x, z);
   const tree = new THREE.Group();
-  const trunk = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.14 * s, 0.2 * s, 1.1 * s, 7),
-    new THREE.MeshStandardMaterial({ color: 0x7a5236, roughness: 1 })
-  );
-  trunk.position.y = 0.55 * s; trunk.castShadow = true;
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.09 * s, 0.16 * s, 1.3 * s, 7), rng() < 0.5 ? trunkMat : trunkMat2);
+  trunk.position.y = 0.6 * s; trunk.castShadow = true;
   tree.add(trunk);
-  const leafMat = new THREE.MeshStandardMaterial({ color: 0x3e8948, roughness: 1 });
-  [[0, 1.55, 0, 0.75], [0.42, 1.25, 0.1, 0.5], [-0.38, 1.3, -0.15, 0.45]].forEach(p => {
-    const leaf = new THREE.Mesh(new THREE.SphereGeometry(p[3] * s, 10, 8), leafMat);
-    leaf.position.set(p[0] * s, p[1] * s, p[2] * s);
+  const lm = leafMat(0x468c39);
+  const blobs = 3 + (rng() * 3 | 0);
+  for (let j = 0; j < blobs; j++) {
+    const r = (0.5 + rng() * 0.35) * s;
+    const leaf = new THREE.Mesh(new THREE.SphereGeometry(r, 9, 7), lm);
+    leaf.position.set((rng() - 0.5) * 0.9 * s, (1.35 + rng() * 0.75) * s, (rng() - 0.5) * 0.9 * s);
+    leaf.scale.y = 0.85;
     leaf.castShadow = true;
     tree.add(leaf);
-  });
-  tree.position.set(x, 0, z);
+  }
+  tree.position.set(x, y, z);
+  tree.rotation.y = rng() * Math.PI * 2;
   scene.add(tree);
 }
+function addConifer(x, z, s) {
+  const y = terrainH(x, z);
+  const tree = new THREE.Group();
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.08 * s, 0.13 * s, 0.9 * s, 7), trunkMat);
+  trunk.position.y = 0.4 * s; trunk.castShadow = true;
+  tree.add(trunk);
+  const lm = leafMat(0x2d6338);
+  const tiers = [[1.0, 1.05, 0.95], [0.75, 1.75, 0.8], [0.5, 2.35, 0.65]];
+  for (const tr of tiers) {
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(tr[0] * s * 0.85, tr[2] * s * 1.25, 8), lm);
+    cone.position.y = tr[1] * s;
+    cone.castShadow = true;
+    tree.add(cone);
+  }
+  tree.position.set(x, y, z);
+  scene.add(tree);
+}
+function addBush(x, z, s) {
+  const y = terrainH(x, z);
+  const lm = leafMat(0x548a3e);
+  const bush = new THREE.Group();
+  for (let j = 0; j < 3; j++) {
+    const b = new THREE.Mesh(new THREE.SphereGeometry((0.22 + rng() * 0.16) * s, 8, 6), lm);
+    b.position.set((rng() - 0.5) * 0.4 * s, 0.16 * s, (rng() - 0.5) * 0.4 * s);
+    b.scale.y = 0.7;
+    b.castShadow = true;
+    bush.add(b);
+  }
+  bush.position.set(x, y, z);
+  scene.add(bush);
+}
+const flowerColors = [0xffffff, 0xffd23e, 0xef6461, 0xb086d8, 0xff9ecb];
+function addFlower(x, z) {
+  const y = terrainH(x, z);
+  const f = new THREE.Group();
+  const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.011, 0.16, 5),
+    new THREE.MeshStandardMaterial({ color: 0x3f7a33, roughness: 1 }));
+  stem.position.y = 0.08;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.035, 7, 6),
+    new THREE.MeshStandardMaterial({ color: flowerColors[(rng() * flowerColors.length) | 0], roughness: 0.7 }));
+  head.position.y = 0.17; head.scale.y = 0.75;
+  f.add(stem, head);
+  f.position.set(x, y, z);
+  scene.add(f);
+}
 function addRock(x, z, s) {
+  const y = terrainH(x, z);
   const rock = new THREE.Mesh(
     new THREE.IcosahedronGeometry(s, 0),
-    new THREE.MeshStandardMaterial({ color: 0x9aa0a8, roughness: 1 })
+    new THREE.MeshStandardMaterial({ color: 0x8f979f, roughness: 1, flatShading: true })
   );
-  rock.position.set(x, s * 0.4, z);
-  rock.scale.y = 0.62;
+  rock.position.set(x, y + s * 0.32, z);
+  rock.scale.y = 0.6;
   rock.rotation.y = rng() * Math.PI;
   rock.castShadow = true;
   scene.add(rock);
 }
-for (let i = 0; i < 11; i++) {
-  const a = rng() * Math.PI * 2, r = 9 + rng() * 21;
-  addTree(Math.sin(a) * r, Math.cos(a) * r, 0.85 + rng() * 0.7);
+
+for (let i = 0; i < 30; i++) {
+  const a = rng() * Math.PI * 2, r = 11 + rng() * 46;
+  const x = Math.sin(a) * r, z = Math.cos(a) * r, s = 0.9 + rng() * 0.9;
+  if (rng() < 0.35) addConifer(x, z, s); else addLeafyTree(x, z, s);
 }
-for (let i = 0; i < 7; i++) {
-  const a = rng() * Math.PI * 2, r = 6 + rng() * 22;
-  addRock(Math.sin(a) * r, Math.cos(a) * r, 0.25 + rng() * 0.4);
+for (let i = 0; i < 16; i++) {
+  const a = rng() * Math.PI * 2, r = 6 + rng() * 40;
+  addBush(Math.sin(a) * r, Math.cos(a) * r, 0.9 + rng() * 0.9);
 }
+for (let i = 0; i < 46; i++) {
+  const a = rng() * Math.PI * 2, r = 3 + rng() * 30;
+  addFlower(Math.sin(a) * r, Math.cos(a) * r);
+}
+for (let i = 0; i < 9; i++) {
+  const a = rng() * Math.PI * 2, r = 7 + rng() * 42;
+  addRock(Math.sin(a) * r, Math.cos(a) * r, 0.22 + rng() * 0.5);
+}
+
+// ---------- Montagne all'orizzonte ----------
+for (let i = 0; i < 15; i++) {
+  const a = (i / 15) * Math.PI * 2 + rng() * 0.35;
+  const r = 80 + rng() * 22;
+  const h = 15 + rng() * 17;
+  const base = 11 + rng() * 13;
+  const col = new THREE.Color(0x74899f);
+  col.offsetHSL(0, 0, (rng() - 0.5) * 0.08);
+  const m = new THREE.Mesh(
+    new THREE.ConeGeometry(base, h, 6),
+    new THREE.MeshStandardMaterial({ color: col, roughness: 1, flatShading: true })
+  );
+  m.position.set(Math.sin(a) * r, h / 2 - 2, Math.cos(a) * r);
+  m.rotation.y = rng() * Math.PI;
+  scene.add(m);
+  const cap = new THREE.Mesh(
+    new THREE.ConeGeometry(base * 0.34, h * 0.3, 6),
+    new THREE.MeshStandardMaterial({ color: 0xf4f7fa, roughness: 0.9, flatShading: true })
+  );
+  cap.position.set(Math.sin(a) * r, h * 0.85 - 2 + h * 0.01, Math.cos(a) * r);
+  cap.rotation.y = m.rotation.y;
+  scene.add(cap);
+}
+
+// ---------- Nuvole e farfalle ----------
 const clouds = [];
 const cloudMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 });
-for (let i = 0; i < 6; i++) {
+for (let i = 0; i < 8; i++) {
   const cl = new THREE.Group();
-  for (let j = 0; j < 3; j++) {
-    const puff = new THREE.Mesh(new THREE.SphereGeometry(1.1 + rng() * 0.9, 8, 6), cloudMat);
-    puff.position.set(j * 1.5 - 1.5, rng() * 0.4, rng() * 0.8);
-    puff.scale.y = 0.55;
+  const puffs = 3 + (rng() * 3 | 0);
+  for (let j = 0; j < puffs; j++) {
+    const puff = new THREE.Mesh(new THREE.SphereGeometry(1.2 + rng() * 1.4, 8, 6), cloudMat);
+    puff.position.set(j * (1.6 + rng()), rng() * 0.6, rng() * 1.2);
+    puff.scale.y = 0.5;
     cl.add(puff);
   }
-  cl.position.set(rng() * 70 - 35, 12 + rng() * 5, rng() * 60 - 30);
+  cl.position.set(rng() * 120 - 60, 16 + rng() * 9, rng() * 100 - 50);
   scene.add(cl); clouds.push(cl);
 }
 
-// ---------- Zeph ----------
+const butterflies = [];
+const bfColors = [0xffa62b, 0x9dd9f3, 0xf27ba5, 0xd8e26a];
+for (let i = 0; i < 7; i++) {
+  const b = new THREE.Group();
+  const m = new THREE.MeshBasicMaterial({ color: bfColors[i % bfColors.length], side: THREE.DoubleSide });
+  const wingGeo = new THREE.CircleGeometry(0.075, 6);
+  const pL = new THREE.Group(), pR = new THREE.Group();
+  const wL = new THREE.Mesh(wingGeo, m); wL.position.x = 0.06; pL.add(wL);
+  const wR = new THREE.Mesh(wingGeo, m); wR.position.x = -0.06; pR.add(wR);
+  b.add(pL, pR);
+  const cx = (rng() - 0.5) * 30, cz = (rng() - 0.5) * 30;
+  b.userData = { pL, pR, seed: rng() * 100, cx, cz, rx: 2.5 + rng() * 5, rz: 2.5 + rng() * 5, sp: 0.25 + rng() * 0.3 };
+  scene.add(b); butterflies.push(b);
+}
+
+// ---------- Zeph e avatar ----------
 const zeph = ZephCore.build(THREE);
 const anim = new ZephCore.Animator(zeph);
 scene.add(zeph.root);
-const HIP_Y = ZephCore.HIP_Y;
+let avatarDriver = null;
+
+const actor = { obj: zeph.root }; // ciò che si muove nel mondo
 
 const state = {
   pos: new THREE.Vector3(0, 0, 2),
@@ -243,6 +424,75 @@ const state = {
   interacted: false, muted: false,
 };
 const WALK_SPEED = 2.0;
+state.pos.y = terrainH(state.pos.x, state.pos.z);
+
+// ---------- Caricamento avatar GLB ----------
+const gltfLoader = (typeof THREE.GLTFLoader === 'function') ? new THREE.GLTFLoader() : null;
+const avatarChip = document.getElementById('avatarchip');
+const avatarFile = document.getElementById('avatarfile');
+const droptip = document.getElementById('droptip');
+
+function setAvatar(gltfScene, opts) {
+  opts = opts || {};
+  const driver = ZephCore.createAvatarDriver(THREE, gltfScene, { height: 1.78 });
+  if (avatarDriver) scene.remove(avatarDriver.root);
+  avatarDriver = driver;
+  zeph.root.visible = false;
+  driver.root.position.copy(state.pos);
+  driver.root.rotation.y = state.heading;
+  scene.add(driver.root);
+  anim.avatar = driver;
+  actor.obj = driver.root;
+  avatarChip.textContent = '↩︎ Torna a Zeph';
+  if (!opts.quiet) {
+    speak(driver.hasRig
+      ? 'Wow, guardami! Questo è il tuo avatar, e adesso cammino io per lui!'
+      : 'Nuovo look! Questo modello non ha uno scheletro che conosco, quindi lo porto in giro così com’è!');
+  }
+}
+function backToZeph() {
+  if (!avatarDriver) return;
+  scene.remove(avatarDriver.root);
+  avatarDriver = null;
+  zeph.root.visible = true;
+  zeph.root.position.copy(state.pos);
+  anim.avatar = zeph;
+  actor.obj = zeph.root;
+  avatarChip.textContent = '🧑 Il tuo avatar';
+  speak('Rieccomi! Però il tuo avatar mi piaceva, eh!');
+}
+function loadAvatarFile(file) {
+  if (!gltfLoader || !file) return;
+  const url = URL.createObjectURL(file);
+  gltfLoader.load(url,
+    g => { URL.revokeObjectURL(url); setAvatar(g.scene); },
+    undefined,
+    err => { console.error(err); URL.revokeObjectURL(url); speak('Uhm, non riesco a leggere questo file… è un .glb valido?'); });
+}
+function loadAvatarUrl(url, quiet) {
+  if (!gltfLoader) return;
+  gltfLoader.load(url,
+    g => setAvatar(g.scene, { quiet }),
+    undefined,
+    err => { if (!quiet) { console.error(err); speak('Non riesco a caricare quell’avatar…'); } });
+}
+avatarChip.addEventListener('click', () => {
+  state.interacted = true;
+  if (avatarDriver) backToZeph();
+  else if (gltfLoader) avatarFile.click();
+});
+avatarFile.addEventListener('change', () => { state.interacted = true; loadAvatarFile(avatarFile.files[0]); avatarFile.value = ''; });
+window.addEventListener('dragover', e => { e.preventDefault(); droptip.classList.add('show'); });
+window.addEventListener('dragleave', e => { if (!e.relatedTarget) droptip.classList.remove('show'); });
+window.addEventListener('drop', e => {
+  e.preventDefault();
+  droptip.classList.remove('show');
+  state.interacted = true;
+  const f = e.dataTransfer.files && e.dataTransfer.files[0];
+  if (f && /\.(glb|gltf)$/i.test(f.name)) loadAvatarFile(f);
+});
+// se la pagina è servita via web (es. GitHub Pages), carica in automatico avatars/avatar.glb
+if (location.protocol.indexOf('http') === 0) loadAvatarUrl('avatars/avatar.glb', true);
 
 // ---------- Movimento ----------
 function updateMovement(dt) {
@@ -253,12 +503,11 @@ function updateMovement(dt) {
   let kz = (k.KeyW || k.ArrowUp ? 1 : 0) - (k.KeyS || k.ArrowDown ? 1 : 0);
   if (kx || kz) {
     state.target = null;
-    // direzione relativa alla camera
     const f = new THREE.Vector3(-Math.sin(cam.yaw), 0, -Math.cos(cam.yaw));
     const r = new THREE.Vector3(Math.cos(cam.yaw), 0, -Math.sin(cam.yaw));
     dir = f.multiplyScalar(kz).add(r.multiplyScalar(kx)).normalize();
   } else if (state.target) {
-    const d = new THREE.Vector3().subVectors(state.target, state.pos); d.y = 0;
+    const d = new THREE.Vector3(state.target.x - state.pos.x, 0, state.target.z - state.pos.z);
     if (d.length() < 0.14) state.target = null;
     else dir = d.normalize();
   }
@@ -272,7 +521,6 @@ function updateMovement(dt) {
   if (dir && !blocked) {
     state.heading = lerpAngle(state.heading, Math.atan2(dir.x, dir.z), Math.min(1, dt * 8));
   } else if ((anim.state.talking || (act && act.name === 'wave')) && state.speed < 0.2) {
-    // si gira verso di te quando parla o saluta
     const toCam = Math.atan2(camera.position.x - state.pos.x, camera.position.z - state.pos.z);
     state.heading = lerpAngle(state.heading, toCam, Math.min(1, dt * 3));
   }
@@ -281,13 +529,14 @@ function updateMovement(dt) {
     state.pos.x += Math.sin(state.heading) * state.speed * dt;
     state.pos.z += Math.cos(state.heading) * state.speed * dt;
     const rad = Math.hypot(state.pos.x, state.pos.z);
-    if (rad > 26) { state.pos.x *= 26 / rad; state.pos.z *= 26 / rad; state.target = null; }
+    if (rad > 55) { state.pos.x *= 55 / rad; state.pos.z *= 55 / rad; state.target = null; }
     anim.state.phase += state.speed * dt * (Math.PI / 0.7);
   }
+  state.pos.y = terrainH(state.pos.x, state.pos.z);
   anim.state.speedRatio = state.speed / WALK_SPEED;
 
-  zeph.root.position.copy(state.pos);
-  zeph.root.rotation.y = state.heading;
+  actor.obj.position.copy(state.pos);
+  actor.obj.rotation.y = state.heading;
 }
 
 function lerpAngle(a, b, k) {
@@ -301,9 +550,9 @@ function lerpAngle(a, b, k) {
 function updateWander(t) {
   if (!state.wander || state.target || state.speed > 0.1 || anim.state.talking || anim.state.action) return;
   if (t > state.nextWanderAt) {
-    const a = Math.random() * Math.PI * 2, r = 3 + Math.random() * 14;
+    const a = Math.random() * Math.PI * 2, r = 4 + Math.random() * 26;
     state.target = new THREE.Vector3(Math.sin(a) * r, 0, Math.cos(a) * r);
-    state.nextWanderAt = t + 4 + Math.random() * 5;
+    state.nextWanderAt = t + 4 + Math.random() * 6;
     if (state.interacted && Math.random() < 0.35) {
       speak(ZephCore.pick(ZephCore.FRASI_PASSEGGIO));
     }
@@ -311,9 +560,9 @@ function updateWander(t) {
 }
 
 // ---------- Camera ----------
-const cam = { yaw: 0, pitch: 0.4, dist: 4.8, focus: new THREE.Vector3() };
+const cam = { yaw: 0, pitch: 0.38, dist: 4.8, focus: new THREE.Vector3(0, 1, 0) };
 function updateCamera(dt) {
-  const targetFocus = new THREE.Vector3(state.pos.x, 1.0, state.pos.z);
+  const targetFocus = new THREE.Vector3(state.pos.x, state.pos.y + 1.0, state.pos.z);
   cam.focus.lerp(targetFocus, Math.min(1, dt * 5));
   const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
   camera.position.set(
@@ -321,9 +570,14 @@ function updateCamera(dt) {
     cam.focus.y + sp * cam.dist,
     cam.focus.z + Math.cos(cam.yaw) * cp * cam.dist
   );
+  // la camera non scende sotto il terreno
+  const gY = terrainH(camera.position.x, camera.position.z) + 0.35;
+  if (camera.position.y < gY) camera.position.y = gY;
   camera.lookAt(cam.focus);
-  sun.position.set(state.pos.x + 7, 13, state.pos.z + 5);
-  sun.target.position.set(state.pos.x, 0, state.pos.z);
+
+  sun.position.copy(state.pos).addScaledVector(sunDir, 38);
+  sun.target.position.copy(state.pos);
+  sky.position.set(cam.focus.x, 0, cam.focus.z);
 }
 
 // ---------- Input: trascina per ruotare, clic per camminare ----------
@@ -342,7 +596,7 @@ el.addEventListener('pointermove', e => {
   if (Math.abs(e.clientX - pt.x) + Math.abs(e.clientY - pt.y) > 6) pt.dragged = true;
   if (pt.dragged) {
     cam.yaw -= dx * 0.0055;
-    cam.pitch = Math.min(1.25, Math.max(0.08, cam.pitch + dy * 0.004));
+    cam.pitch = Math.min(1.25, Math.max(0.06, cam.pitch + dy * 0.004));
     pt.x = e.clientX; pt.y = e.clientY;
   }
 });
@@ -357,9 +611,9 @@ el.addEventListener('pointerup', e => {
     raycaster.setFromCamera(v, camera);
     const hit = raycaster.intersectObject(ground)[0];
     if (hit) {
-      const p = hit.point.clone(); p.y = 0;
+      const p = hit.point.clone();
       const rad = Math.hypot(p.x, p.z);
-      if (rad > 25) { p.x *= 25 / rad; p.z *= 25 / rad; }
+      if (rad > 54) { p.x *= 54 / rad; p.z *= 54 / rad; }
       state.target = p;
       const act = anim.state.action;
       if (act && act.name !== 'wave') anim.state.action = null;
@@ -368,10 +622,9 @@ el.addEventListener('pointerup', e => {
 });
 el.addEventListener('wheel', e => {
   e.preventDefault();
-  cam.dist = Math.min(11, Math.max(2.0, cam.dist + e.deltaY * 0.004));
+  cam.dist = Math.min(14, Math.max(2.0, cam.dist + e.deltaY * 0.004));
 }, { passive: false });
 
-// pizzico per zoom su touch
 let pinchDist = 0;
 el.addEventListener('touchmove', e => {
   if (e.touches.length === 2) {
@@ -379,7 +632,7 @@ el.addEventListener('touchmove', e => {
       e.touches[0].clientX - e.touches[1].clientX,
       e.touches[0].clientY - e.touches[1].clientY
     );
-    if (pinchDist) cam.dist = Math.min(11, Math.max(2.0, cam.dist - (d - pinchDist) * 0.015));
+    if (pinchDist) cam.dist = Math.min(14, Math.max(2.0, cam.dist - (d - pinchDist) * 0.015));
     pinchDist = d;
   }
 }, { passive: true });
@@ -449,7 +702,7 @@ function speak(text) {
   if (!canTTS) { fallbackTalk(text); return; }
 
   speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(text.replace(/[👋💃🦘😂🎵❤️😄🌳]/g, ''));
+  const u = new SpeechSynthesisUtterance(text.replace(/[👋💃🦘😂🎵❤️😄🌳🧑]/g, ''));
   u.lang = 'it-IT';
   if (voice) u.voice = voice;
   u.rate = 1.04; u.pitch = 1.05;
@@ -457,7 +710,6 @@ function speak(text) {
   u.onstart = () => { if (id !== speakSeq) return; started = true; clearTimeout(watchdog); anim.state.talking = true; };
   u.onboundary = () => { if (id === speakSeq) anim.state.mouthPulse = 1; };
   u.onend = () => { if (id === speakSeq) stopTalkVisuals(); };
-  // se il TTS fallisce senza essere mai partito (es. nessuna voce), anima comunque
   u.onerror = () => {
     if (id !== speakSeq) return;
     if (!started) fallbackTalk(text); else stopTalkVisuals();
@@ -468,7 +720,7 @@ function speak(text) {
 
 function updateBubblePosition() {
   if (!bubble.classList.contains('show')) return;
-  const p = new THREE.Vector3(state.pos.x, 2.0 + (zeph.body.position.y - HIP_Y), state.pos.z);
+  const p = new THREE.Vector3(state.pos.x, state.pos.y + 2.05 + anim.state.lastRootY, state.pos.z);
   p.project(camera);
   if (p.z > 1) { bubble.style.opacity = '0'; return; }
   bubble.style.opacity = '';
@@ -558,9 +810,22 @@ function tick() {
   updateStatus();
 
   for (const cl of clouds) {
-    cl.position.x += dt * 0.35;
-    if (cl.position.x > 42) cl.position.x = -42;
+    cl.position.x += dt * 0.4;
+    if (cl.position.x > 70) cl.position.x = -70;
   }
+  for (const b of butterflies) {
+    const u = b.userData;
+    const tt = t * u.sp + u.seed;
+    b.position.set(
+      u.cx + Math.sin(tt) * u.rx,
+      terrainH(b.position.x, b.position.z) + 1.15 + Math.sin(tt * 2.3) * 0.35,
+      u.cz + Math.cos(tt * 0.8) * u.rz
+    );
+    const flap = Math.sin(t * 14 + u.seed) * 1.05;
+    u.pL.rotation.y = flap; u.pR.rotation.y = -flap;
+    b.rotation.y = Math.atan2(Math.cos(tt) * u.rx, -Math.sin(tt * 0.8) * u.rz * 0.8);
+  }
+
   renderer.render(scene, camera);
 }
 tick();
@@ -568,12 +833,12 @@ tick();
 // saluto iniziale (solo fumetto: la voce parte dopo la prima interazione)
 setTimeout(() => {
   anim.startAction('wave');
-  showBubble('Ciao! Sono Zeph 👋 Scrivimi qui sotto e ti rispondo a voce!');
-  hideBubble(5200);
+  showBubble('Ciao! Sono Zeph 👋 Scrivimi qui sotto, oppure trascina qui il tuo avatar .glb!');
+  hideBubble(5600);
 }, 700);
 
 // piccolo gancio per debug/test
-window.zeph = { state, anim, startAction: n => anim.startAction(n), speak, botRespond, cam };
+window.zeph = { state, anim, startAction: n => anim.startAction(n), speak, botRespond, cam, loadAvatarUrl, backToZeph };
 })();
 </script>
 </body>

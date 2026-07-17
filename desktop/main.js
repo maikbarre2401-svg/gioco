@@ -36,6 +36,7 @@ function createZephWindow() {
     alwaysOnTop: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
+      sandbox: false, // il preload legge avatar.glb dal disco
     },
   });
   win.setAlwaysOnTop(true, 'screen-saver');
@@ -63,6 +64,7 @@ function createChatWindow() {
     title: 'Parla con Zeph',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
+      sandbox: false,
     },
   });
   chatWin.setMenuBarVisibility(false);

@@ -1,42 +1,52 @@
 # gioco — Zeph, il tuo compagno 3D 🕺
 
-Zeph è un personaggio 3D a corpo intero con proporzioni realistiche che **cammina, salta, balla e ti parla a voce in italiano**, gesticolando mentre lo fa. Esiste in due versioni:
+Zeph è un personaggio 3D a corpo intero che **cammina, salta, balla e ti parla a voce in italiano**, gesticolando mentre lo fa. Può anche **trasformarsi nel TUO avatar** (file `.glb`, per esempio da ReadyPlayerMe). Esiste in due versioni:
 
 1. **🖥️ Sul desktop (stile Desktop Goose)** — cammina sul bordo dello schermo, sopra le tue finestre
-2. **🌐 Nel browser** — nel suo prato 3D, basta un doppio clic
+2. **🌐 Nel browser** — in un mondo naturale con colline, montagne, alberi e farfalle
 
-## 🖥️ Versione desktop — Zeph sullo schermo
+## 🧑 Usa il TUO avatar (.glb)
 
-Zeph passeggia lungo il bordo inferiore dello schermo in una striscia trasparente sempre in primo piano: i clic passano attraverso (non disturba il lavoro), ma se clicchi proprio su di lui reagisce e ti parla. Può anche **seguire il mouse** come un'ochetta.
+1. Creati un avatar gratis su [readyplayer.me](https://readyplayer.me) e scarica il file **.glb** (va bene anche qualsiasi modello con scheletro umanoide in stile Mixamo).
+2. **Nel browser:** premi «🧑 Il tuo avatar» e scegli il file, oppure **trascinalo dentro la pagina**.
+3. **Sul desktop:** salva il file come `avatars/avatar.glb` nella cartella del progetto e riavvia Zeph: lo carica da solo.
+4. Per provare subito c'è un avatar di esempio: `avatars/esempio.glb`.
+
+L'avatar eredita tutto: camminata, salti, balli, gesti mentre parla, e — se il modello ha i morph facciali (ReadyPlayerMe li ha) — anche bocca e palpebre animate. Se il modello non ha uno scheletro riconoscibile, viene portato in giro «rigido» ma funziona comunque.
+
+## 🖥️ Versione desktop — sullo schermo
+
+Zeph (o il tuo avatar) passeggia lungo il bordo inferiore dello schermo in una striscia trasparente sempre in primo piano: i clic passano attraverso, ma se clicchi proprio su di lui reagisce e ti parla. Può anche **seguire il mouse**.
 
 **Come si avvia (Windows):**
 
 1. Installa [Node.js](https://nodejs.org) (versione LTS, gratis) — serve solo la prima volta.
 2. Scarica questo repository (**Code → Download ZIP**) ed estrailo.
-3. Apri la cartella `desktop` e fai **doppio clic su `avvia.bat`**. La prima volta scarica i componenti (circa un minuto), poi Zeph appare sullo schermo.
+3. Apri la cartella `desktop` e fai **doppio clic su `avvia.bat`**.
 
 Su macOS/Linux: `cd desktop && npm install && npm start`.
 
-**Comandi:** clicca l'**icona di Zeph vicino all'orologio** (area di notifica) per il menu: 💬 Parla con Zeph (chat: lui risponde a voce), Saluta, Balla, Salta, Barzelletta, 🚶 Passeggia da solo, 🖱️ Segui il mouse, 🔊 Voce, ❌ Chiudi.
+**Comandi:** icona di Zeph vicino all'orologio → 💬 Parla con Zeph (chat, risponde a voce), Saluta, Balla, Salta, Barzelletta, 🚶 Passeggia da solo, 🖱️ Segui il mouse, 🔊 Voce, ❌ Chiudi.
 
 ## 🌐 Versione browser
 
-Fai **doppio clic su `index.html`** (Chrome o Edge consigliati per la voce). Non serve internet né installare nulla: Three.js è incluso.
+Fai **doppio clic su `index.html`** (Chrome o Edge consigliati per la voce). Non serve internet: è tutto incluso.
 
 | Azione | Come |
 |---|---|
-| 🚶 Camminare dove vuoi tu | Clicca un punto sul prato, oppure guidalo con **WASD / frecce** |
-| 🗣️ Parlarti a voce | Scrivigli nella barra in basso: risponde con la voce italiana del browser |
-| 👋 Salutare, 💃 ballare, 🦘 saltare | Pulsanti rapidi, oppure scriviglielo («balla!», «salta!») |
-| 🌼 Passeggiare da solo | Attiva «Passeggia da solo» |
-| 🎥 Visuale libera | Trascina per ruotare la camera, rotella/pizzico per lo zoom |
+| 🚶 Camminare dove vuoi tu | Clicca un punto sul terreno, oppure guidalo con **WASD / frecce** |
+| 🗣️ Parlarti a voce | Scrivigli nella barra in basso |
+| 👋💃🦘😂 Azioni | Pulsanti rapidi o a parole («balla!», «salta!») |
+| 🧑 Avatar personalizzato | Pulsante «Il tuo avatar» o trascina il .glb |
+| 🎥 Visuale libera | Trascina per ruotare, rotella/pizzico per lo zoom |
 
 Prova a scrivergli: *ciao*, *come stai?*, *chi sei?*, *vieni qui*, *canta*, *barzelletta*, *fermati*, *seguimi*…
 
 ## Note tecniche
 
-- `zeph-core.js` — il personaggio condiviso: costruito proceduralmente (niente modelli esterni), scheletro articolato (spalle, gomiti, anche, ginocchia, piedi, collo, occhi con iridi e palpebre), proporzioni umane realistiche (~7 teste).
-- Animazioni procedurali: ciclo di camminata con appoggio del tallone, respiro, sbattito di palpebre, sguardo che vaga, gesti sincronizzati col parlato, bocca in sincrono con la voce.
-- Voce tramite **Web Speech API** con voce italiana di sistema; se la voce non è disponibile resta il fumetto di testo.
-- Versione desktop: **Electron** con finestra trasparente click-through sempre in primo piano (`setIgnoreMouseEvents` + hit-test sul personaggio), icona nell'area di notifica, chat in finestra separata.
-- Un'onesta precisazione: il fotorealismo da film non è ottenibile in tempo reale con questa tecnica — lo stile è «realistico da videogioco», leggero abbastanza da girare fluido ovunque.
+- `zeph-core.js` — personaggio procedurale condiviso (scheletro articolato, ~7 teste), animazioni procedurali (camminata, respiro, palpebre, sguardo, gesti sincronizzati col parlato) e **retargeting su avatar GLB**: le ossa vengono riconosciute per nome (Mixamo/ReadyPlayerMe), gli arti sono guidati per allineamento direzionale (funziona anche con modelli in T-pose), bocca e palpebre via morph target.
+- Mondo: terreno collinare generato con rumore, cielo shader con sole, montagne innevate all'orizzonte, due specie di alberi, cespugli, fiori, rocce, nuvole e farfalle animate, tone mapping ACES.
+- Voce tramite **Web Speech API** con voce italiana di sistema; fumetto di testo come riserva.
+- Desktop: **Electron** con finestra trasparente click-through sempre in primo piano, icona nell'area di notifica, chat separata.
+- Librerie incluse: Three.js r147 (`three.min.js`) + `gltf-loader.js` — nessun download necessario.
+- Onestà tecnica: il fotorealismo da film non è ottenibile in tempo reale nel browser; lo stile è «realistico da videogioco», leggero e fluido ovunque.
