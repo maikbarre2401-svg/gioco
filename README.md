@@ -12,7 +12,20 @@ Zeph è un personaggio 3D a corpo intero che **cammina, salta, balla e ti parla 
 3. **Sul desktop:** salva il file come `avatars/avatar.glb` nella cartella del progetto e riavvia Zeph: lo carica da solo.
 4. Per provare subito c'è un avatar di esempio: `avatars/esempio.glb`.
 
-L'avatar eredita tutto: camminata, salti, balli, gesti mentre parla, e — se il modello ha i morph facciali (ReadyPlayerMe li ha) — anche bocca e palpebre animate. Se il modello non ha uno scheletro riconoscibile, viene portato in giro «rigido» ma funziona comunque.
+L'avatar eredita tutto: camminata, salti, balli, gesti mentre parla, e — se il modello ha i morph facciali (ReadyPlayerMe li ha) — anche bocca e palpebre animate. Se il modello non ha uno scheletro riconoscibile, viene portato in giro «rigido» ma funziona comunque. Nel browser l'avatar scelto viene **ricordato** per la volta successiva.
+
+## 🚀 Zeph assistente: apre app, siti, messaggi e promemoria
+
+Scrivigli (in chat, browser o desktop):
+
+- **«apri youtube»** / google, gmail, maps, wikipedia, netflix, spotify… — apre il sito (nel desktop, nel tuo browser predefinito)
+- **«apri calcolatrice»** / blocco note, paint, esplora file — apre l'app del PC (solo versione desktop)
+- **«cerca ricette veloci»** — cerca su Google
+- **«manda messaggio arrivo tra 10 minuti»** — prepara il messaggio su WhatsApp: *tu premi invia* (Zeph non manda mai nulla da solo)
+- **«scrivi una mail a nome@esempio.it dicendo ci vediamo domani»** — apre la mail già compilata
+- **«ricordami tra 5 minuti della pizza»** — al momento giusto salta, te lo dice a voce e (sul desktop) manda una notifica
+- **«che ore sono?»**, **«che giorno è?»**
+- **«salto mortale»** 🤸, **«piroetta»** 🌀 — le nuove acrobazie, con scintille all'atterraggio ✨
 
 ## 🖥️ Versione desktop — sullo schermo
 

@@ -253,6 +253,19 @@ function botRespond(text) {
   if (out.come && state.mouseX !== null) {
     state.targetX = Math.max(-maxX(), Math.min(maxX(), (state.mouseX / W() * 2 - 1) * worldHalfWidth()));
   }
+  if (out.open) {
+    if (bridge) bridge.doAction({ type: 'url', url: out.open });
+    else window.open(out.open, '_blank');
+  }
+  if (out.app && bridge) bridge.doAction({ type: 'app', id: out.app });
+  if (out.remind) {
+    const r = out.remind;
+    setTimeout(() => {
+      anim.startAction('jump');
+      speak('Ehi! Promemoria: ' + r.text);
+      try { new Notification('Zeph ⏰', { body: r.text }); } catch (e) { /* niente notifiche */ }
+    }, r.seconds * 1000);
+  }
   if (out.action) anim.startAction(out.action);
   speak(out.say);
 }
@@ -262,6 +275,8 @@ if (bridge) {
     if (cmd === 'saluta') botRespond('ciao');
     else if (cmd === 'balla') botRespond('balla');
     else if (cmd === 'salta') botRespond('salta');
+    else if (cmd === 'flip') botRespond('salto mortale');
+    else if (cmd === 'spin') botRespond('piroetta');
     else if (cmd === 'barzelletta') botRespond('barzelletta');
     else if (cmd === 'wander:on') { state.wander = true; }
     else if (cmd === 'wander:off') { state.wander = false; state.targetX = null; }
@@ -316,6 +331,10 @@ window.addEventListener('resize', () => {
 });
 
 // ---------- Loop ----------
+const sparkles = ZephCore.createSparkles(THREE, scene);
+let prevActionName = null;
+let nextStretchAt = 40;
+
 const clock = new THREE.Clock();
 function tick() {
   requestAnimationFrame(tick);
@@ -327,6 +346,24 @@ function tick() {
   updateChatter(t);
   anim.update(t, dt);
   updateBubblePosition();
+
+  // scintille su balli, piroette e atterraggi
+  const act = anim.state.action;
+  if (act && (act.name === 'dance' || act.name === 'spin') && Math.random() < dt * 7) {
+    sparkles.burst(state.x + (Math.random() - 0.5) * 0.9, 0.9 + Math.random() * 0.7, (Math.random() - 0.5) * 0.4, 2);
+  }
+  const actName = act ? act.name : null;
+  if (!actName && (prevActionName === 'jump' || prevActionName === 'flip')) {
+    sparkles.burst(state.x, 0.12, 0, 12);
+  }
+  prevActionName = actName;
+  sparkles.update(dt, camera);
+
+  // ogni tanto, da fermo, si stiracchia
+  if (t > nextStretchAt) {
+    nextStretchAt = t + 30 + Math.random() * 30;
+    if (!act && !anim.state.talking && state.speed < 0.1 && !state.follow) anim.startAction('stretch');
+  }
 
   renderer.render(scene, camera);
 }

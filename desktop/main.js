@@ -3,7 +3,8 @@
    inferiore dello schermo (sopra la barra delle applicazioni): Zeph ci
    cammina dentro, sopra le tue finestre, come Desktop Goose. */
 'use strict';
-const { app, BrowserWindow, Tray, Menu, ipcMain, screen, nativeImage } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, screen, nativeImage, shell } = require('electron');
+const { spawn } = require('child_process');
 const path = require('path');
 
 // trasparenza su Linux
@@ -83,6 +84,8 @@ function buildTrayMenu() {
     { label: '👋 Saluta', click: () => sendCmd('saluta') },
     { label: '💃 Balla', click: () => sendCmd('balla') },
     { label: '🦘 Salta', click: () => sendCmd('salta') },
+    { label: '🤸 Salto mortale', click: () => sendCmd('flip') },
+    { label: '🌀 Piroetta', click: () => sendCmd('spin') },
     { label: '😂 Barzelletta', click: () => sendCmd('barzelletta') },
     { type: 'separator' },
     {
@@ -118,6 +121,28 @@ app.whenReady().then(() => {
     if (win) win.webContents.send('chat-message', String(text || ''));
   });
   ipcMain.on('zeph-quit', () => app.quit());
+
+  // azioni "assistente": solo URL sicuri e app in lista consentita
+  const APP_CMDS = {
+    win32: { calc: 'calc', notepad: 'notepad', paint: 'mspaint', explorer: 'explorer' },
+    darwin: { calc: 'Calculator', notepad: 'TextEdit', paint: 'Preview', explorer: 'Finder' },
+    linux: { calc: 'gnome-calculator', notepad: 'gedit', paint: 'gimp', explorer: 'nautilus' },
+  };
+  ipcMain.on('zeph-action', (e, a) => {
+    if (!a || typeof a !== 'object') return;
+    if (a.type === 'url' && typeof a.url === 'string' && /^(https?:|mailto:)/i.test(a.url)) {
+      shell.openExternal(a.url);
+    } else if (a.type === 'app' && typeof a.id === 'string') {
+      const table = APP_CMDS[process.platform] || APP_CMDS.linux;
+      const cmd = table[a.id];
+      if (!cmd) return;
+      try {
+        if (process.platform === 'win32') spawn('cmd', ['/c', 'start', '', cmd], { detached: true, stdio: 'ignore' });
+        else if (process.platform === 'darwin') spawn('open', ['-a', cmd], { detached: true, stdio: 'ignore' });
+        else spawn(cmd, [], { detached: true, stdio: 'ignore' });
+      } catch (err) { /* app non disponibile su questo sistema */ }
+    }
+  });
 });
 
 // niente finestra = app chiusa (anche su macOS: è un compagno, non un documento)

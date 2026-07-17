@@ -79,7 +79,8 @@
     ⌨️ WASD / frecce → guidalo tu<br>
     ✋ Trascina → ruota la visuale · rotella → zoom<br>
     💬 Scrivigli in basso: ti risponde a voce!<br>
-    🧑 Trascina qui un file .glb per usare il TUO avatar
+    🧑 Trascina qui un file .glb per usare il TUO avatar<br>
+    🚀 Prova: «apri youtube» · «cerca gattini» · «ricordami tra 5 minuti»
   </div>
 </div>
 
@@ -91,11 +92,12 @@
     <div class="chip" data-cmd="balla">💃 Balla</div>
     <div class="chip" data-cmd="salta">🦘 Salta</div>
     <div class="chip" data-cmd="barzelletta">😂 Barzelletta</div>
+    <div class="chip" data-cmd="salto mortale">🤸 Acrobazia</div>
     <div class="chip" id="wanderchip">🚶 Passeggia da solo</div>
     <div class="chip" id="avatarchip">🧑 Il tuo avatar</div>
   </div>
   <div id="inputrow">
-    <input id="msg" type="text" placeholder="Scrivi qualcosa… (es. «ciao», «come stai?», «balla!»)" autocomplete="off">
+    <input id="msg" type="text" placeholder="Scrivi qualcosa… (es. «apri youtube», «balla!», «ricordami tra 5 minuti»)" autocomplete="off">
     <button id="send">Invia</button>
   </div>
 </div>
@@ -411,6 +413,9 @@ const zeph = ZephCore.build(THREE);
 const anim = new ZephCore.Animator(zeph);
 scene.add(zeph.root);
 let avatarDriver = null;
+const sparkles = ZephCore.createSparkles(THREE, scene);
+let prevActionName = null;
+let nextStretchAt = 30;
 
 const actor = { obj: zeph.root }; // ciò che si muove nel mondo
 
@@ -459,15 +464,41 @@ function backToZeph() {
   anim.avatar = zeph;
   actor.obj = zeph.root;
   avatarChip.textContent = '🧑 Il tuo avatar';
+  clearAvatarBytes();
   speak('Rieccomi! Però il tuo avatar mi piaceva, eh!');
 }
 function loadAvatarFile(file) {
   if (!gltfLoader || !file) return;
-  const url = URL.createObjectURL(file);
-  gltfLoader.load(url,
-    g => { URL.revokeObjectURL(url); setAvatar(g.scene); },
-    undefined,
-    err => { console.error(err); URL.revokeObjectURL(url); speak('Uhm, non riesco a leggere questo file… è un .glb valido?'); });
+  file.arrayBuffer().then(ab => {
+    gltfLoader.parse(ab, '',
+      g => { setAvatar(g.scene); saveAvatarBytes(ab); },
+      err => { console.error(err); speak('Uhm, non riesco a leggere questo file… è un .glb valido?'); });
+  });
+}
+
+// l'avatar scelto viene ricordato per la prossima volta (IndexedDB)
+function idb(cb) {
+  try {
+    const rq = indexedDB.open('zeph-db', 1);
+    rq.onupgradeneeded = () => rq.result.createObjectStore('kv');
+    rq.onsuccess = () => cb(rq.result);
+  } catch (e) { /* niente memoria: pazienza */ }
+}
+function saveAvatarBytes(ab) {
+  idb(db => db.transaction('kv', 'readwrite').objectStore('kv').put(ab, 'avatar'));
+}
+function clearAvatarBytes() {
+  idb(db => db.transaction('kv', 'readwrite').objectStore('kv').delete('avatar'));
+}
+function loadSavedAvatar() {
+  if (!gltfLoader) return;
+  idb(db => {
+    const g = db.transaction('kv').objectStore('kv').get('avatar');
+    g.onsuccess = () => {
+      if (g.result) gltfLoader.parse(g.result, '', gl => setAvatar(gl.scene, { quiet: true }), () => {});
+      else if (location.protocol.indexOf('http') === 0) loadAvatarUrl('avatars/avatar.glb', true);
+    };
+  });
 }
 function loadAvatarUrl(url, quiet) {
   if (!gltfLoader) return;
@@ -491,8 +522,8 @@ window.addEventListener('drop', e => {
   const f = e.dataTransfer.files && e.dataTransfer.files[0];
   if (f && /\.(glb|gltf)$/i.test(f.name)) loadAvatarFile(f);
 });
-// se la pagina è servita via web (es. GitHub Pages), carica in automatico avatars/avatar.glb
-if (location.protocol.indexOf('http') === 0) loadAvatarUrl('avatars/avatar.glb', true);
+// riprende l'avatar salvato, oppure avatars/avatar.glb se la pagina è servita via web
+loadSavedAvatar();
 
 // ---------- Movimento ----------
 function updateMovement(dt) {
@@ -743,6 +774,20 @@ function botRespond(text) {
       camera.position.z + (d.z / len) * 1.8
     );
   }
+  if (out.app) {
+    out.say = 'Le app del computer le apro solo dalla versione desktop! Da qui però posso aprire i siti: prova «apri youtube».';
+  }
+  if (out.open) {
+    // sincrono: così il gesto dell'utente autorizza l'apertura (niente blocco popup)
+    window.open(out.open, '_blank');
+  }
+  if (out.remind) {
+    const r = out.remind;
+    setTimeout(() => {
+      anim.startAction('jump');
+      speak('Ehi! Promemoria: ' + r.text);
+    }, r.seconds * 1000);
+  }
   if (out.action) anim.startAction(out.action);
   speak(out.say);
 }
@@ -808,6 +853,27 @@ function tick() {
   updateCamera(dt);
   updateBubblePosition();
   updateStatus();
+
+  // scintille su balli, piroette e atterraggi
+  const act = anim.state.action;
+  if (act && (act.name === 'dance' || act.name === 'spin') && Math.random() < dt * 7) {
+    sparkles.burst(
+      state.pos.x + (Math.random() - 0.5) * 0.9,
+      state.pos.y + 0.9 + Math.random() * 0.7,
+      state.pos.z + (Math.random() - 0.5) * 0.9, 2);
+  }
+  const actName = act ? act.name : null;
+  if (!actName && (prevActionName === 'jump' || prevActionName === 'flip')) {
+    sparkles.burst(state.pos.x, state.pos.y + 0.15, state.pos.z, 12);
+  }
+  prevActionName = actName;
+  sparkles.update(dt, camera);
+
+  // ogni tanto, da fermo, si stiracchia
+  if (t > nextStretchAt) {
+    nextStretchAt = t + 26 + Math.random() * 22;
+    if (!act && !anim.state.talking && state.speed < 0.1) anim.startAction('stretch');
+  }
 
   for (const cl of clouds) {
     cl.position.x += dt * 0.4;

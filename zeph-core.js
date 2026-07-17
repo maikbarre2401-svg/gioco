@@ -143,7 +143,9 @@ function build(THREE) {
 }
 
 // ---------- Animatore procedurale ----------
-const ACTIONS = { wave: 2.2, dance: 6.0, jump: 0.95 };
+const ACTIONS = { wave: 2.2, dance: 6.0, jump: 0.95, flip: 1.15, spin: 1.5, stretch: 2.6 };
+
+function easeInOut(u) { return u * u * (3 - 2 * u); }
 
 function clamp01(v) { return Math.min(1, Math.max(0, v)); }
 function envelope(t, dur) {
@@ -296,6 +298,42 @@ Animator.prototype.update = function (t, dt) {
         P.shL.z += 0.25 * crouch + 1.15 * air; P.shR.z += -0.25 * crouch - 1.15 * air;
         P.mouth = Math.max(P.mouth, 0.5 * air);
         s.jumpAir = air; // per l'ombra finta dell'app desktop
+      } else if (a.name === 'flip') {
+        // salto mortale all'indietro
+        const jt = a.t / a.dur;
+        let crouch = 0, air = 0;
+        if (jt < 0.22) crouch = jt / 0.22;
+        else if (jt < 0.8) air = Math.sin(((jt - 0.22) / 0.58) * Math.PI);
+        else crouch = (1 - (jt - 0.8) / 0.2) * 0.6;
+        const spinP = jt < 0.22 ? 0 : jt > 0.8 ? 1 : (jt - 0.22) / 0.58;
+        P.rootY += -0.16 * crouch + 0.95 * air;
+        P.body.x += -Math.PI * 2 * easeInOut(spinP);
+        P.kneeL += 0.9 * crouch + 1.7 * air; P.kneeR += 0.9 * crouch + 1.7 * air;
+        P.legL.x += -0.4 * crouch - 1.5 * air; P.legR.x += -0.4 * crouch - 1.5 * air;
+        P.spine.x += 0.2 * crouch + 0.45 * air;
+        P.shL.x += 0.5 * crouch - 1.6 * air; P.shR.x += 0.5 * crouch - 1.6 * air;
+        P.mouth = Math.max(P.mouth, 0.6 * air);
+        s.jumpAir = air;
+      } else if (a.name === 'spin') {
+        // piroetta: due giri su se stesso a braccia aperte
+        const sp = a.t / a.dur;
+        const A = Math.sin(sp * Math.PI);
+        P.body.y += Math.PI * 4 * easeInOut(sp);
+        P.rootY += -0.06 * A;
+        P.kneeL += 0.3 * A; P.kneeR += 0.3 * A;
+        P.shL.z += 1.5 * A; P.shR.z += -1.5 * A;
+        P.elL.x += -0.2 * A; P.elR.x += -0.2 * A;
+        P.head.x += -0.08 * A;
+        P.mouth = Math.max(P.mouth, 0.3 * A);
+      } else if (a.name === 'stretch') {
+        // stiracchiata pigra con sbadiglio
+        P.shL.z += 2.5 * w; P.shR.z += -2.5 * w;
+        P.elL.x += -0.15 * w; P.elR.x += -0.15 * w;
+        P.spine.x += -0.14 * w;
+        P.spine.z += Math.sin(t * 1.4) * 0.07 * w;
+        P.head.x += -0.18 * w;
+        P.mouth = Math.max(P.mouth, 0.55 * w); // sbadiglio
+        P.brow += 0.006 * w;
       }
     }
   }
@@ -590,8 +628,103 @@ const DEFAULT_REPLIES = [
   'Bella questa! Raccontamene un’altra.',
 ];
 
+// --- intenti da assistente: aprire siti/app, messaggi, promemoria, ora ---
+const SITI = {
+  youtube: 'https://www.youtube.com', google: 'https://www.google.com',
+  gmail: 'https://mail.google.com', whatsapp: 'https://web.whatsapp.com',
+  maps: 'https://www.google.com/maps', mappe: 'https://www.google.com/maps',
+  wikipedia: 'https://it.wikipedia.org', facebook: 'https://www.facebook.com',
+  instagram: 'https://www.instagram.com', tiktok: 'https://www.tiktok.com',
+  netflix: 'https://www.netflix.com', spotify: 'https://open.spotify.com',
+  amazon: 'https://www.amazon.it', twitch: 'https://www.twitch.tv',
+  notizie: 'https://news.google.com/?hl=it', traduttore: 'https://translate.google.com',
+  meteo: 'https://www.google.com/search?q=meteo',
+};
+const APP_PC = [
+  { re: /calcolatric/, id: 'calc', nome: 'la calcolatrice' },
+  { re: /blocco note|notepad/, id: 'notepad', nome: 'il Blocco note' },
+  { re: /paint/, id: 'paint', nome: 'Paint' },
+  { re: /esplora|cartell|file manager|risorse/, id: 'explorer', nome: 'Esplora file' },
+];
+function searchUrl(q) { return 'https://www.google.com/search?q=' + encodeURIComponent(q); }
+
+function actionIntent(t) {
+  let m;
+
+  // ora e data
+  if (/che or[ae]|dimmi l'ora/.test(t)) {
+    const d = new Date();
+    return { say: 'Sono le ' + d.getHours() + ' e ' + (d.getMinutes() < 10 ? 'zero ' : '') + d.getMinutes() + '!' };
+  }
+  if (/che giorno è|data di oggi|quanti ne abbiamo/.test(t)) {
+    const d = new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    return { say: 'Oggi è ' + d + '!' };
+  }
+
+  // promemoria / timer
+  m = t.match(/(?:ricordami|avvisami|timer)\s*(?:tra|fra|di|da)?\s+(\d+)\s+(secondo|secondi|minuto|minuti|ora|ore)\s*(?:di\s+|che\s+|per\s+|del\s+|della\s+|dello\s+|dei\s+|delle\s+)?(.*)/);
+  if (m) {
+    const n = parseInt(m[1], 10);
+    const mult = m[2][0] === 's' ? 1 : m[2][0] === 'm' ? 60 : 3600;
+    const testo = (m[3] || '').trim();
+    return {
+      say: 'Ricevuto! Tra ' + m[1] + ' ' + m[2] + ' ti avviso io' + (testo ? ' per: ' + testo : '') + '. Vai tranquillo!',
+      remind: { seconds: n * mult, text: testo || 'Il tempo è scaduto!' },
+    };
+  }
+
+  // messaggio WhatsApp (Zeph lo PREPARA, l'utente preme invia)
+  m = t.match(/manda\s+(?:un\s+)?messaggio(?:\s+(?:su\s+)?whatsapp)?(?:\s+a\s+([+\d][\d .]{5,}))?\s*(?:che dice|dicendo|con scritto|:)?\s*(.*)/);
+  if (m) {
+    const num = (m[1] || '').replace(/\D/g, '');
+    const testo = (m[2] || '').trim();
+    if (!testo) return { say: 'Dimmi anche cosa scrivere! Per esempio: «manda messaggio ciao, arrivo tra poco».' };
+    return {
+      say: 'Ti preparo il messaggio su WhatsApp! Tu devi solo premere invia.',
+      open: 'https://wa.me/' + num + '?text=' + encodeURIComponent(testo),
+    };
+  }
+
+  // email
+  m = t.match(/scrivi\s+(?:una\s+|un'\s*)?(?:mail|email|e-mail)(?:\s+a\s+(\S+@\S+\.\S+))?\s*(?:che dice|dicendo|:)?\s*(.*)/);
+  if (m) {
+    const dest = m[1] || '';
+    const corpo = (m[2] || '').trim();
+    return {
+      say: 'Ti apro la mail già impostata! Controlla e premi invia.',
+      open: 'mailto:' + dest + (corpo ? '?body=' + encodeURIComponent(corpo) : ''),
+    };
+  }
+
+  // ricerca
+  m = t.match(/^(?:cerca(?:mi)?|googla|cerca su google)\s+(.+)/);
+  if (m) return { say: 'Cerco «' + m[1] + '» su Google!', open: searchUrl(m[1]) };
+
+  // apri sito / app
+  m = t.match(/^(?:apri(?:mi)?|avvia|lancia|vai su)\s+(.+)/);
+  if (m) {
+    let q = m[1].replace(/^(il|lo|la|le|i|gli|un|una|l')\s+/, '').trim();
+    for (const app of APP_PC) {
+      if (app.re.test(q)) return { say: 'Apro ' + app.nome + '!', app: app.id, action: 'jump' };
+    }
+    if (/^(browser|internet|chrome|edge|firefox)/.test(q)) {
+      return { say: 'Apro il browser!', open: 'https://www.google.com', action: 'jump' };
+    }
+    for (const nome in SITI) {
+      if (q.indexOf(nome) !== -1) return { say: 'Apro ' + nome + '!', open: SITI[nome], action: 'jump' };
+    }
+    if (/^[\w-]+(\.[\w-]+)+/.test(q)) return { say: 'Apro ' + q + '!', open: 'https://' + q, action: 'jump' };
+    return { say: 'Non conosco «' + q + '», te lo cerco su Google!', open: searchUrl(q) };
+  }
+
+  return null;
+}
+
 const RULES = [
   { re: /(barzellett|scherz|fammi ridere|divertent|joke)/, fn: () => ({ say: pick(BARZELLETTE) }) },
+  { re: /(salto mortale|capriola|acrobazia|flip|mortale)/, fn: () => ({ say: pick(['Guarda questa acrobaziaaa!', 'Rullo di tamburi… salto mortale!', 'Tieniti forte!']), action: 'flip' }) },
+  { re: /(piroetta|giravolta|trottola|gira su te)/, fn: () => ({ say: pick(['Piroettaaa!', 'Guarda che stile!']), action: 'spin' }) },
+  { re: /(stiracchiati|stretching|rilassati)/, fn: () => ({ say: 'Aaah… che bello stiracchiarsi!', action: 'stretch' }) },
   { re: /(balla|danza|ballare|dance)/, fn: () => ({ say: pick(['E vaiii! Guarda che mosse!', 'Musica, maestro! Si balla!', 'Questa è la mia specialità!']), action: 'dance' }) },
   { re: /(salta|salto|jump)/, fn: () => ({ say: pick(['Uuup! Hai visto che salto?', 'Guarda quanto vado in alto!']), action: 'jump' }) },
   { re: /(canta|canzone|canzoncina)/, fn: () => ({ say: 'Laaa la la làààà… Zeph è il mio nome, camminare è la mia passioneee!', action: 'dance' }) },
@@ -602,7 +735,7 @@ const RULES = [
   { re: /(come stai|come va|tutto bene)/, fn: () => ({ say: pick(['Benissimo! Le mie gambe 3D oggi sono al top! E tu?', 'Alla grande! Un po’ di poligoni scricchiolano ma va bene così.', 'Molto bene, grazie! E tu come stai?']) }) },
   { re: /(chi sei|come ti chiami|il tuo nome|cosa sei)/, fn: () => ({ say: 'Sono Zeph! Un personaggio 3D fatto di poligoni e simpatia. Vivo qui sul tuo schermo!', action: 'wave' }) },
   { re: /(quanti anni)/, fn: () => ({ say: 'Sono nato pochi secondi fa, quando mi hai acceso! Quindi… sono giovanissimo.' }) },
-  { re: /(cosa sai fare|aiuto|help|comandi|istruzioni)/, fn: () => ({ say: 'So camminare, ballare, saltare, salutare, seguire il mouse e raccontare barzellette! Prova a scrivermi «balla» o «seguimi»!' }) },
+  { re: /(cosa sai fare|aiuto|help|comandi|istruzioni)/, fn: () => ({ say: 'So ballare, saltare, fare il salto mortale e la piroetta! E poi apro siti e app («apri youtube»), cerco su Google, preparo messaggi WhatsApp e mail, e ti faccio da sveglia («ricordami tra 5 minuti»)!' }) },
   { re: /(grazie|gentile)/, fn: () => ({ say: pick(['Prego! È un piacere!', 'Figurati! Per te, sempre!']) }) },
   { re: /(ti voglio bene|ti amo|sei bello|sei forte|bravo)/, fn: () => ({ say: 'Ooh, grazie! Anche tu sei il mio umano preferito!', action: 'wave' }) },
   { re: /(buonanotte|vado a dormire|a domani)/, fn: () => ({ say: 'Buonanotte! Io resto di guardia allo schermo. A presto!', action: 'wave' }) },
@@ -612,12 +745,58 @@ const RULES = [
 function botReply(text) {
   const t = (text || '').toLowerCase().trim();
   if (!t) return null;
+  const intent = actionIntent(t);
+  if (intent) return intent;
   for (const r of RULES) { if (r.re.test(t)) return r.fn(); }
   return { say: pick(DEFAULT_REPLIES) };
 }
 
+// ---------- Scintille (particelle per salti e balli) ----------
+function createSparkles(THREE, scene) {
+  const colors = [0xffd23e, 0x5eead4, 0xff8ab5, 0x9dd0ff];
+  const pool = [];
+  for (let i = 0; i < 32; i++) {
+    const m = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.075, 0.075),
+      new THREE.MeshBasicMaterial({ color: colors[i % colors.length], transparent: true, side: THREE.DoubleSide, depthWrite: false })
+    );
+    m.visible = false;
+    m.userData = { life: 0, vel: new THREE.Vector3() };
+    scene.add(m);
+    pool.push(m);
+  }
+  return {
+    burst(x, y, z, n) {
+      let c = 0;
+      for (const m of pool) {
+        if (m.userData.life <= 0) {
+          m.position.set(x + (Math.random() - 0.5) * 0.3, y, z + (Math.random() - 0.5) * 0.3);
+          m.userData.vel.set((Math.random() - 0.5) * 2.6, 1.4 + Math.random() * 2.2, (Math.random() - 0.5) * 2.6);
+          m.userData.life = 1;
+          m.visible = true;
+          if (++c >= n) break;
+        }
+      }
+    },
+    update(dt, camera) {
+      for (const m of pool) {
+        const u = m.userData;
+        if (u.life <= 0) continue;
+        u.life -= dt * 1.15;
+        if (u.life <= 0) { m.visible = false; continue; }
+        m.position.addScaledVector(u.vel, dt);
+        u.vel.y -= 4.5 * dt;
+        const sc = Math.max(0.05, u.life);
+        m.scale.set(sc, sc, sc);
+        m.quaternion.copy(camera.quaternion);
+        m.material.opacity = u.life;
+      }
+    },
+  };
+}
+
 global.ZephCore = {
-  build, Animator, botReply, pick, createAvatarDriver,
+  build, Animator, botReply, pick, createAvatarDriver, createSparkles,
   FRASI_PASSEGGIO, FRASI_DESKTOP, BARZELLETTE,
   HIP_Y, HEIGHT: 1.75,
 };

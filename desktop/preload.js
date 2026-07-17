@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('zephBridge', {
   quit: () => ipcRenderer.send('zeph-quit'),
   // finestra della chat
   sendChat: text => ipcRenderer.send('chat-message', text),
+  // azioni assistente (validate nel processo principale)
+  doAction: a => ipcRenderer.send('zeph-action', a),
   // avatar personalizzato: cerca avatar.glb e ne restituisce i byte
   loadAvatar: () => {
     try {
