@@ -25,7 +25,13 @@ Scrivigli (in chat, browser o desktop):
 - **«scrivi una mail a nome@esempio.it dicendo ci vediamo domani»** — apre la mail già compilata
 - **«ricordami tra 5 minuti della pizza»** — al momento giusto salta, te lo dice a voce e (sul desktop) manda una notifica
 - **«che ore sono?»**, **«che giorno è?»**
-- **«salto mortale»** 🤸, **«piroetta»** 🌀 — le nuove acrobazie, con scintille all'atterraggio ✨
+- **«salto mortale»** 🤸, **«piroetta»** 🌀 — acrobazie con scintille all'atterraggio ✨
+- **«mi chiamo …»** — si ricorda il tuo nome e ti saluta per nome la volta dopo
+- **«corri»** / **«rallenta»** (o tieni premuto **Shift**) — corsa vera, con falcata da corsa
+- **«chiama il cane»** 🐶 — arriva **Rocky**: ti segue scodinzolando e abbaia (anche sul desktop!)
+- **«fai notte»** 🌙 / «tramonto» / «alba» / «fai giorno» — il sole si muove davvero: stelle, luna e lucciole di notte (solo browser)
+- **«fai piovere»** 🌧 / «fai nevicare» ❄ / «torna il sole» — meteo con gocce e fiocchi veri (solo browser)
+- **«foto»** 📸 — si mette in posa e ti scarica una foto ricordo del mondo (solo browser)
 
 ## 🖥️ Versione desktop — sullo schermo
 

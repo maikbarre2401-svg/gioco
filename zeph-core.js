@@ -209,24 +209,27 @@ Animator.prototype.update = function (t, dt) {
   P.head.x += s.lookPitch * lookW;
   s.pupilX = s.lookYaw * 0.012 * lookW;
 
-  // camminata
+  // camminata (e corsa: speedRatio > 1 allunga la falcata e piega i gomiti)
   if (walkW > 0.001) {
     const w = walkW, ph = s.phase;
+    const runW = clamp01((s.speedRatio || 0) - 1);
     const swing = Math.sin(ph);
-    P.legL.x += -swing * 0.5 * w;
-    P.legR.x += swing * 0.5 * w;
-    P.kneeL += Math.max(0, Math.cos(ph + 0.7)) * 0.8 * w;
-    P.kneeR += Math.max(0, -Math.cos(ph + 0.7)) * 0.8 * w;
+    const amp = 0.5 + 0.3 * runW;
+    P.legL.x += -swing * amp * w;
+    P.legR.x += swing * amp * w;
+    P.kneeL += Math.max(0, Math.cos(ph + 0.7)) * (0.8 + 0.55 * runW) * w;
+    P.kneeR += Math.max(0, -Math.cos(ph + 0.7)) * (0.8 + 0.55 * runW) * w;
     P.footL += (swing * 0.22 + 0.08) * w;
     P.footR += (-swing * 0.22 + 0.08) * w;
-    P.shL.x += swing * 0.34 * w;
-    P.shR.x += -swing * 0.34 * w;
-    P.elL.x += (-0.2 + Math.max(0, swing) * -0.25) * w;
-    P.elR.x += (-0.2 + Math.max(0, -swing) * -0.25) * w;
-    P.rootY += (Math.abs(Math.cos(ph)) * 0.035 - 0.018) * w;
-    P.spine.x += 0.08 * w;
-    P.body.y += swing * 0.07 * w;
+    P.shL.x += swing * (0.34 + 0.28 * runW) * w;
+    P.shR.x += -swing * (0.34 + 0.28 * runW) * w;
+    P.elL.x += (-0.2 + Math.max(0, swing) * -0.25 - 0.85 * runW) * w;
+    P.elR.x += (-0.2 + Math.max(0, -swing) * -0.25 - 0.85 * runW) * w;
+    P.rootY += (Math.abs(Math.cos(ph)) * (0.035 + 0.03 * runW) - 0.018) * w;
+    P.spine.x += (0.08 + 0.16 * runW) * w;
+    P.body.y += swing * 0.07 * (1 - runW * 0.5) * w;
     P.spine.y += -swing * 0.09 * w;
+    P.head.x += -0.08 * runW * w; // sguardo avanti anche piegato
   }
 
   // parlato: testa e gesti
@@ -593,6 +596,90 @@ function createAvatarDriver(THREE, avatarScene, opts) {
   return driver;
 }
 
+// ---------- Rocky, il cane compagno ----------
+function buildDog(THREE) {
+  function mat(c, r) { return new THREE.MeshStandardMaterial({ color: c, roughness: r || 0.9 }); }
+  const fur = mat(0xb9884f), dark = mat(0x6e4a28), cream = mat(0xe8d3ac),
+        black = mat(0x241d15, 0.5), red = mat(0xc0392b, 0.7);
+  function sph(r, m, sx, sy, sz) {
+    const s = new THREE.Mesh(new THREE.SphereGeometry(r, 14, 10), m);
+    s.scale.set(sx || 1, sy || 1, sz || 1); s.castShadow = true; return s;
+  }
+  const D = { root: new THREE.Group() };
+
+  D.body = new THREE.Group(); D.body.position.y = 0.26; D.root.add(D.body);
+  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.085, 0.2, 5, 12), fur);
+  torso.rotation.x = Math.PI / 2; torso.castShadow = true;
+  D.body.add(torso);
+  const belly = sph(0.075, cream, 1, 0.8, 1.3); belly.position.set(0, -0.03, 0.02); D.body.add(belly);
+
+  D.head = new THREE.Group(); D.head.position.set(0, 0.1, 0.19); D.body.add(D.head);
+  const skull = sph(0.07, fur); D.head.add(skull);
+  const snout = sph(0.035, cream, 0.85, 0.7, 1.25); snout.position.set(0, -0.015, 0.07); D.head.add(snout);
+  const nose = sph(0.015, black); nose.position.set(0, 0, 0.115); D.head.add(nose);
+  const eyeL = sph(0.012, black); eyeL.position.set(0.033, 0.025, 0.055);
+  const eyeR = eyeL.clone(); eyeR.position.x = -0.033;
+  D.head.add(eyeL, eyeR);
+  const earL = sph(0.03, dark, 0.55, 1, 0.35); earL.position.set(0.045, 0.065, -0.005); earL.rotation.z = 0.3;
+  const earR = earL.clone(); earR.position.x = -0.045; earR.rotation.z = -0.3;
+  D.head.add(earL, earR);
+  const collar = new THREE.Mesh(new THREE.TorusGeometry(0.052, 0.012, 6, 14), red);
+  collar.position.set(0, -0.055, -0.01); collar.rotation.x = Math.PI / 2 - 0.35;
+  D.head.add(collar);
+
+  D.tail = new THREE.Group(); D.tail.position.set(0, 0.07, -0.19); D.body.add(D.tail);
+  const tailM = new THREE.Mesh(new THREE.CapsuleGeometry(0.015, 0.1, 4, 8), fur);
+  tailM.position.set(0, 0.05, -0.03); tailM.rotation.x = 0.55; tailM.castShadow = true;
+  D.tail.add(tailM);
+
+  function leg(x, z) {
+    const g = new THREE.Group(); g.position.set(x, -0.02, z); D.body.add(g);
+    const l = new THREE.Mesh(new THREE.CapsuleGeometry(0.019, 0.15, 4, 8), fur);
+    l.position.y = -0.1; l.castShadow = true; g.add(l);
+    const paw = sph(0.023, cream, 1, 0.7, 1.2); paw.position.set(0, -0.2, 0.008); g.add(paw);
+    return g;
+  }
+  D.legFL = leg(0.055, 0.11); D.legFR = leg(-0.055, 0.11);
+  D.legBL = leg(0.055, -0.11); D.legBR = leg(-0.055, -0.11);
+
+  return D;
+}
+
+// st: { speedRatio, phase, excited }
+function updateDog(D, t, dt, st) {
+  const w = clamp01(st.speedRatio || 0), ph = st.phase || 0;
+  const sw = Math.sin(ph) * 0.65 * w;
+  D.legFL.rotation.x = sw; D.legBR.rotation.x = sw;
+  D.legFR.rotation.x = -sw; D.legBL.rotation.x = -sw;
+  D.body.position.y = 0.26 + Math.abs(Math.cos(ph)) * 0.028 * w;
+  D.body.rotation.x = Math.sin(ph) * 0.04 * w;
+  const exc = st.excited ? 1 : 0;
+  D.tail.rotation.y = Math.sin(t * (7 + exc * 7)) * (0.45 + 0.3 * exc);
+  D.head.rotation.x = -0.05 + Math.sin(t * 1.3) * 0.06 + 0.1 * w;
+  D.head.rotation.z = Math.sin(t * 2.7) * 0.1 * exc;
+  D.head.rotation.y = Math.sin(t * 0.7) * 0.15 * (1 - w);
+}
+
+// abbaio sintetizzato (nessun file audio)
+let barkCtx = null;
+function bark() {
+  try {
+    barkCtx = barkCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (barkCtx.state === 'suspended') barkCtx.resume();
+    const t0 = barkCtx.currentTime + 0.02;
+    for (let i = 0; i < 2; i++) {
+      const o = barkCtx.createOscillator(), g = barkCtx.createGain();
+      o.type = 'square';
+      o.frequency.setValueAtTime(620 - i * 70, t0 + i * 0.13);
+      o.frequency.exponentialRampToValueAtTime(300, t0 + i * 0.13 + 0.09);
+      g.gain.setValueAtTime(0.09, t0 + i * 0.13);
+      g.gain.exponentialRampToValueAtTime(0.001, t0 + i * 0.13 + 0.11);
+      o.connect(g); g.connect(barkCtx.destination);
+      o.start(t0 + i * 0.13); o.stop(t0 + i * 0.13 + 0.12);
+    }
+  } catch (e) { /* niente audio */ }
+}
+
 // ---------- Il "cervello": risposte in italiano ----------
 function pick(arr) { return arr[(Math.random() * arr.length) | 0]; }
 
@@ -650,6 +737,38 @@ function searchUrl(q) { return 'https://www.google.com/search?q=' + encodeURICom
 
 function actionIntent(t) {
   let m;
+
+  // nome dell'utente
+  m = t.match(/(?:mi chiamo|il mio nome è)\s+([a-zA-Zàèéìòù]+)/);
+  if (m) {
+    const nome = m[1].charAt(0).toUpperCase() + m[1].slice(1);
+    return { say: 'Piacere di conoscerti, ' + nome + '! Me lo ricorderò, promesso!', setName: nome, action: 'wave' };
+  }
+  if (/come mi chiamo|sai il mio nome|chi sono io/.test(t)) return { whoami: true };
+
+  // cielo e meteo
+  if (/fai (?:venire la |scendere la )?notte|voglio la notte|buio/.test(t)) return { sky: 'notte', say: pick(['Uuuh, guarda che cielo stellato!', 'Arriva la notte! Ci sono pure le lucciole!']) };
+  if (/tramonto/.test(t)) return { sky: 'tramonto', say: 'Che colori, il tramonto è il mio momento preferito!' };
+  if (/alba/.test(t)) return { sky: 'alba', say: 'Sta sorgendo il sole… che pace!' };
+  if (/fai giorno|torna il giorno|voglio il giorno/.test(t)) return { sky: 'giorno', say: 'Ed è subito giorno!' };
+  if (/fai piovere|pioggia/.test(t)) return { weather: 'rain', say: pick(['Arriva la pioggia! Speriamo di non arrugginire!', 'Piove! Senti che profumo di erba bagnata.']) };
+  if (/nevic|neve/.test(t)) return { weather: 'snow', say: 'Neveee! Guarda che fiocchi enormi!' };
+  if (/bel tempo|sereno|smetti di piovere|basta pioggia|basta neve|torna il sole/.test(t)) return { weather: 'clear', sky: 'giorno', say: 'Torna il sole! Molto meglio così.' };
+
+  // il cane Rocky
+  if (/(chiama|arriva|voglio|fai venire).*(cane|cucciolo|rocky)|^(cane|rocky)!?$/.test(t)) {
+    return { dog: 'on', say: pick(['Rocky! Vieni qui bello!', 'Rockyyyy! A me!']), action: 'wave' };
+  }
+  if (/(via|vattene|a cuccia|manda via|basta).*(cane|rocky)/.test(t)) {
+    return { dog: 'off', say: 'Rocky, a cuccia! Bravo, ci vediamo dopo!' };
+  }
+
+  // corsa
+  if (/(corri|di corsa|sprint)/.test(t)) return { run: true, say: pick(['Vaiiii che si corre!', 'Turbo attivato!']) };
+  if (/(rallenta|vai piano|cammina normale|passo normale)/.test(t)) return { run: false, say: 'Ok, si passeggia tranquilli.' };
+
+  // foto ricordo
+  if (/(foto|selfie|fotografia|scatta)/.test(t)) return { photo: true, say: 'Mettiti in posa… Cheeeese!' };
 
   // ora e data
   if (/che or[ae]|dimmi l'ora/.test(t)) {
@@ -735,7 +854,7 @@ const RULES = [
   { re: /(come stai|come va|tutto bene)/, fn: () => ({ say: pick(['Benissimo! Le mie gambe 3D oggi sono al top! E tu?', 'Alla grande! Un po’ di poligoni scricchiolano ma va bene così.', 'Molto bene, grazie! E tu come stai?']) }) },
   { re: /(chi sei|come ti chiami|il tuo nome|cosa sei)/, fn: () => ({ say: 'Sono Zeph! Un personaggio 3D fatto di poligoni e simpatia. Vivo qui sul tuo schermo!', action: 'wave' }) },
   { re: /(quanti anni)/, fn: () => ({ say: 'Sono nato pochi secondi fa, quando mi hai acceso! Quindi… sono giovanissimo.' }) },
-  { re: /(cosa sai fare|aiuto|help|comandi|istruzioni)/, fn: () => ({ say: 'So ballare, saltare, fare il salto mortale e la piroetta! E poi apro siti e app («apri youtube»), cerco su Google, preparo messaggi WhatsApp e mail, e ti faccio da sveglia («ricordami tra 5 minuti»)!' }) },
+  { re: /(cosa sai fare|aiuto|help|comandi|istruzioni)/, fn: () => ({ say: 'Ballo, salto, faccio acrobazie e corro («corri»)! Apro siti e app («apri youtube»), cerco su Google, preparo messaggi e mail, faccio da sveglia («ricordami tra 5 minuti»), comando il cielo («fai notte», «fai piovere»), chiamo il mio cane Rocky e scatto foto ricordo!' }) },
   { re: /(grazie|gentile)/, fn: () => ({ say: pick(['Prego! È un piacere!', 'Figurati! Per te, sempre!']) }) },
   { re: /(ti voglio bene|ti amo|sei bello|sei forte|bravo)/, fn: () => ({ say: 'Ooh, grazie! Anche tu sei il mio umano preferito!', action: 'wave' }) },
   { re: /(buonanotte|vado a dormire|a domani)/, fn: () => ({ say: 'Buonanotte! Io resto di guardia allo schermo. A presto!', action: 'wave' }) },
@@ -797,6 +916,7 @@ function createSparkles(THREE, scene) {
 
 global.ZephCore = {
   build, Animator, botReply, pick, createAvatarDriver, createSparkles,
+  buildDog, updateDog, bark,
   FRASI_PASSEGGIO, FRASI_DESKTOP, BARZELLETTE,
   HIP_Y, HEIGHT: 1.75,
 };

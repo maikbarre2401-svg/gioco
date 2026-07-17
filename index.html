@@ -85,7 +85,7 @@
     ✋ Trascina → ruota la visuale · rotella → zoom<br>
     💬 Scrivigli in basso (o premi 🎤 e parlagli): risponde a voce!<br>
     🧑 Trascina qui un file .glb per usare il TUO avatar<br>
-    🚀 Prova: «apri youtube» · «cerca gattini» · «ricordami tra 5 minuti»
+    🚀 Prova: «fai notte» · «fai piovere» · «corri» · «apri youtube» · «mi chiamo …»
   </div>
 </div>
 
@@ -98,6 +98,8 @@
     <div class="chip" data-cmd="salta">🦘 Salta</div>
     <div class="chip" data-cmd="barzelletta">😂 Barzelletta</div>
     <div class="chip" data-cmd="salto mortale">🤸 Acrobazia</div>
+    <div class="chip" id="dogchip">🐶 Rocky</div>
+    <div class="chip" data-cmd="foto">📸 Foto</div>
     <div class="chip" id="wanderchip">🚶 Passeggia da solo</div>
     <div class="chip" id="avatarchip">🧑 Il tuo avatar</div>
   </div>
@@ -192,6 +194,147 @@ const sky = new THREE.Mesh(
 );
 sky.renderOrder = -10;
 scene.add(sky);
+
+// ---------- Giorno/notte e meteo ----------
+const env = {
+  dayTarget: 0.25, dayCur: 0.25,   // 0 alba · 0.25 giorno · 0.47 tramonto · 0.72 notte
+  weather: 'clear', rainW: 0, snowW: 0, dayF: 1, duskF: 0,
+  celestial: new THREE.Vector3().copy(sunDir),
+};
+const SKY_PHASES = { alba: 0.02, giorno: 0.25, tramonto: 0.47, notte: 0.72 };
+function setSkyTarget(name) { if (SKY_PHASES[name] !== undefined) env.dayTarget = SKY_PHASES[name]; }
+function setWeather(w) { env.weather = w; }
+
+const stars = (function () {
+  const pos = [];
+  for (let i = 0; i < 380; i++) {
+    const az = Math.random() * Math.PI * 2, el = Math.asin(Math.random()) * 0.96;
+    pos.push(Math.cos(az) * Math.cos(el) * 165, Math.sin(el) * 165 + 2, Math.sin(az) * Math.cos(el) * 165);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  const p = new THREE.Points(g, new THREE.PointsMaterial({
+    color: 0xffffff, size: 1.5, sizeAttenuation: false,
+    transparent: true, opacity: 0, fog: false, depthWrite: false,
+  }));
+  scene.add(p);
+  return p;
+})();
+
+const moon = new THREE.Mesh(new THREE.SphereGeometry(5, 18, 14),
+  new THREE.MeshBasicMaterial({ color: 0xf2eedd, fog: false }));
+moon.visible = false;
+scene.add(moon);
+
+const fireflies = [];
+for (let i = 0; i < 22; i++) {
+  const f = new THREE.Mesh(new THREE.SphereGeometry(0.022, 6, 5),
+    new THREE.MeshBasicMaterial({ color: 0xd9ffa0, transparent: true, opacity: 0, fog: false }));
+  f.userData = { cx: (Math.random() - 0.5) * 36, cz: (Math.random() - 0.5) * 36, seed: Math.random() * 100 };
+  f.visible = false;
+  scene.add(f);
+  fireflies.push(f);
+}
+
+function makePrecip(count, color, size) {
+  const g = new THREE.BufferGeometry();
+  const pos = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++) {
+    pos[i * 3] = (Math.random() - 0.5) * 32;
+    pos[i * 3 + 1] = Math.random() * 14;
+    pos[i * 3 + 2] = (Math.random() - 0.5) * 32;
+  }
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const p = new THREE.Points(g, new THREE.PointsMaterial({
+    color, size, transparent: true, opacity: 0, depthWrite: false,
+  }));
+  p.visible = false;
+  scene.add(p);
+  return p;
+}
+const rain = makePrecip(900, 0x86a8cf, 0.11);
+const snow = makePrecip(420, 0xffffff, 0.1);
+function updatePrecip(p, w, fall, dt, t, sway) {
+  p.visible = w > 0.03;
+  if (!p.visible) return;
+  p.material.opacity = (sway ? 0.85 : 0.8) * w;
+  p.position.set(cam.focus.x, 0, cam.focus.z);
+  const arr = p.geometry.attributes.position;
+  for (let i = 0; i < arr.count; i++) {
+    let y = arr.getY(i) - fall * dt;
+    if (y < 0) y += 14;
+    arr.setY(i, y);
+    if (sway) arr.setX(i, arr.getX(i) + Math.sin(t * 1.3 + i) * dt * 0.35);
+  }
+  arr.needsUpdate = true;
+}
+
+const PAL = {
+  top:  { day: new THREE.Color(0x2e6cbe), dusk: new THREE.Color(0x3a3f78), night: new THREE.Color(0x070d22) },
+  hor:  { day: new THREE.Color(0xcfe6f5), dusk: new THREE.Color(0xff9d6b), night: new THREE.Color(0x16203c) },
+  fogc: { day: new THREE.Color(0xcfe6f5), dusk: new THREE.Color(0xd8926e), night: new THREE.Color(0x121a30) },
+  glow: { day: new THREE.Color(0xfff3d0), dusk: new THREE.Color(0xffb469), night: new THREE.Color(0xcfdcf5) },
+  sunc: { day: new THREE.Color(0xfff0d8), dusk: new THREE.Color(0xffab66), night: new THREE.Color(0xa9c4ec) },
+};
+const tmpC = new THREE.Color(), tmpC2 = new THREE.Color();
+function blendPal(tr) { return tmpC.copy(tr.night).lerp(tr.dusk, env.duskF).lerp(tr.day, env.dayF); }
+
+function applyEnvironment(t, dt) {
+  env.dayCur += (env.dayTarget - env.dayCur) * Math.min(1, dt * 0.5);
+  const a = env.dayCur * Math.PI * 2;
+  const e = Math.sin(a);
+  env.dayF = Math.min(1, Math.max(0, (e - 0.08) / 0.32));
+  env.duskF = Math.min(1, Math.max(0, 1 - Math.abs(e) / 0.3));
+  const nightF = Math.min(1, Math.max(0, (-e - 0.04) / 0.3));
+
+  env.rainW += ((env.weather === 'rain' ? 1 : 0) - env.rainW) * Math.min(1, dt * 0.8);
+  env.snowW += ((env.weather === 'snow' ? 1 : 0) - env.snowW) * Math.min(1, dt * 0.8);
+  const wet = Math.max(env.rainW, env.snowW);
+
+  // sole di giorno, luna di notte
+  if (e > -0.04) env.celestial.set(Math.cos(a), Math.max(0.05, e * 0.92), 0.3).normalize();
+  else env.celestial.set(-Math.cos(a), Math.abs(e) * 0.85 + 0.12, -0.3).normalize();
+
+  sun.color.copy(blendPal(PAL.sunc));
+  sun.intensity = (0.32 + env.dayF * 0.93 + env.duskF * 0.25) * (1 - 0.5 * wet);
+  hemi.intensity = (0.13 + env.dayF * 0.29 + env.duskF * 0.08) * (1 - 0.35 * wet);
+
+  const u = sky.material.uniforms;
+  u.topColor.value.copy(blendPal(PAL.top)).lerp(tmpC2.set(0x5c6673), wet * 0.55);
+  u.horizonColor.value.copy(blendPal(PAL.hor)).lerp(tmpC2.set(0x9aa3ad), wet * 0.55);
+  u.sunColor.value.copy(blendPal(PAL.glow)).multiplyScalar(1 - wet * 0.75);
+  u.sunDirection.value.copy(env.celestial);
+
+  scene.fog.color.copy(blendPal(PAL.fogc)).lerp(tmpC2.set(0x8f99a5), wet * 0.5);
+  scene.fog.near = 33 - wet * 12;
+  scene.fog.far = 135 - wet * 55 - nightF * 25;
+  renderer.setClearColor(scene.fog.color);
+
+  cloudMat.color.setRGB(1, 1, 1).lerp(tmpC2.set(0x707a88), wet * 0.8);
+
+  stars.material.opacity = nightF * (1 - wet * 0.85);
+  stars.visible = stars.material.opacity > 0.02;
+  stars.position.set(cam.focus.x, 0, cam.focus.z);
+  moon.visible = nightF > 0.05;
+  if (moon.visible) {
+    moon.position.set(cam.focus.x + env.celestial.x * 160, env.celestial.y * 160, cam.focus.z + env.celestial.z * 160);
+  }
+  for (const f of fireflies) {
+    const fu = f.userData;
+    const op = nightF * (0.45 + 0.55 * Math.sin(t * 2.6 + fu.seed));
+    f.visible = op > 0.04;
+    if (f.visible) {
+      f.material.opacity = op;
+      f.position.set(
+        fu.cx + Math.sin(t * 0.35 + fu.seed) * 2.4,
+        terrainH(f.position.x, f.position.z) + 0.5 + Math.sin(t * 0.9 + fu.seed * 2) * 0.35,
+        fu.cz + Math.cos(t * 0.28 + fu.seed) * 2.4);
+    }
+  }
+
+  updatePrecip(rain, env.rainW, 11, dt, t, false);
+  updatePrecip(snow, env.snowW, 1.5, dt, t, true);
+}
 
 // ---------- Terreno collinare ----------
 function terrainH(x, z) {
@@ -435,6 +578,8 @@ const state = {
   interacted: false, muted: false,
 };
 const WALK_SPEED = 2.0;
+const RUN_SPEED = 4.2;
+state.running = false;
 state.pos.y = terrainH(state.pos.x, state.pos.z);
 
 // ---------- Caricamento avatar GLB ----------
@@ -551,7 +696,8 @@ function updateMovement(dt) {
 
   const act = anim.state.action;
   const blocked = act && act.name !== 'wave';
-  const targetSpeed = (dir && !blocked) ? WALK_SPEED : 0;
+  const runOn = state.running || k.ShiftLeft || k.ShiftRight;
+  const targetSpeed = (dir && !blocked) ? (runOn ? RUN_SPEED : WALK_SPEED) : 0;
   state.speed += (targetSpeed - state.speed) * Math.min(1, dt * 6);
   if (state.speed < 0.01) state.speed = 0;
 
@@ -567,7 +713,8 @@ function updateMovement(dt) {
     state.pos.z += Math.cos(state.heading) * state.speed * dt;
     const rad = Math.hypot(state.pos.x, state.pos.z);
     if (rad > 55) { state.pos.x *= 55 / rad; state.pos.z *= 55 / rad; state.target = null; }
-    anim.state.phase += state.speed * dt * (Math.PI / 0.7);
+    const stride = 0.7 + 0.3 * Math.min(1, Math.max(0, state.speed / WALK_SPEED - 1));
+    anim.state.phase += state.speed * dt * (Math.PI / stride);
   }
   state.pos.y = terrainH(state.pos.x, state.pos.z);
   anim.state.speedRatio = state.speed / WALK_SPEED;
@@ -596,6 +743,51 @@ function updateWander(t) {
   }
 }
 
+// ---------- Rocky il cane ----------
+const dog = { on: false, built: null, pos: new THREE.Vector3(2, 0, 4), heading: 0, speed: 0, phase: 0, nextBarkAt: 15 };
+const dogChip = document.getElementById('dogchip');
+function syncDogChip() { dogChip.classList.toggle('on', dog.on); }
+function setDog(on) {
+  dog.on = on;
+  if (on && !dog.built) {
+    dog.built = ZephCore.buildDog(THREE);
+    scene.add(dog.built.root);
+    dog.pos.set(state.pos.x + 2, 0, state.pos.z + 2);
+  }
+  if (dog.built) dog.built.root.visible = on;
+  syncDogChip();
+}
+dogChip.addEventListener('click', () => {
+  state.interacted = true;
+  botRespond(dog.on ? 'via il cane' : 'chiama il cane');
+});
+function updateDogHost(t, dt) {
+  if (!dog.on || !dog.built) return;
+  const tx = state.pos.x - Math.sin(state.heading) * 1.1 + Math.cos(state.heading) * 0.7;
+  const tz = state.pos.z - Math.cos(state.heading) * 1.1 - Math.sin(state.heading) * 0.7;
+  const dx = tx - dog.pos.x, dz = tz - dog.pos.z;
+  const dist = Math.hypot(dx, dz);
+  const targetSpeed = dist > 3.5 ? 4.8 : dist > 0.35 ? Math.min(3.1, dist * 2.4) : 0;
+  dog.speed += (targetSpeed - dog.speed) * Math.min(1, dt * 5);
+  if (dog.speed > 0.02) {
+    dog.heading = lerpAngle(dog.heading, Math.atan2(dx, dz), Math.min(1, dt * 6));
+    dog.pos.x += Math.sin(dog.heading) * dog.speed * dt;
+    dog.pos.z += Math.cos(dog.heading) * dog.speed * dt;
+    dog.phase += dog.speed * dt * (Math.PI / 0.3);
+  }
+  dog.pos.y = terrainH(dog.pos.x, dog.pos.z);
+  dog.built.root.position.copy(dog.pos);
+  dog.built.root.rotation.y = dog.heading;
+  ZephCore.updateDog(dog.built, t, dt, {
+    speedRatio: dog.speed / 3.1, phase: dog.phase,
+    excited: anim.state.talking || !!anim.state.action,
+  });
+  if (t > dog.nextBarkAt) {
+    dog.nextBarkAt = t + 9 + Math.random() * 16;
+    if (state.interacted && !state.muted) ZephCore.bark();
+  }
+}
+
 // ---------- Camera ----------
 const cam = { yaw: 0, pitch: 0.38, dist: 4.8, focus: new THREE.Vector3(0, 1, 0) };
 function updateCamera(dt) {
@@ -612,7 +804,7 @@ function updateCamera(dt) {
   if (camera.position.y < gY) camera.position.y = gY;
   camera.lookAt(cam.focus);
 
-  sun.position.copy(state.pos).addScaledVector(sunDir, 38);
+  sun.position.copy(state.pos).addScaledVector(env.celestial, 38);
   sun.target.position.copy(state.pos);
   sky.position.set(cam.focus.x, 0, cam.focus.z);
 }
@@ -783,6 +975,17 @@ function botRespond(text) {
   if (out.app) {
     out.say = 'Le app del computer le apro solo dalla versione desktop! Da qui però posso aprire i siti: prova «apri youtube».';
   }
+  if (out.setName) localStorage.setItem('zephName', out.setName);
+  if (out.whoami) {
+    const n = localStorage.getItem('zephName');
+    out.say = n ? ('Ti chiami ' + n + '! Come potrei dimenticarlo?')
+      : 'Non me l\u2019hai ancora detto! Scrivimi \u00abmi chiamo\u2026\u00bb e me lo ricorder\u00f2.';
+  }
+  if (out.run !== undefined) state.running = out.run;
+  if (out.sky) setSkyTarget(out.sky);
+  if (out.weather) setWeather(out.weather);
+  if (out.dog) setDog(out.dog === 'on');
+  if (out.photo) takePhoto();
   if (out.open) {
     // sincrono: così il gesto dell'utente autorizza l'apertura (niente blocco popup)
     window.open(out.open, '_blank');
@@ -796,6 +999,18 @@ function botRespond(text) {
   }
   if (out.action) anim.startAction(out.action);
   speak(out.say);
+}
+
+// ---------- Foto ricordo ----------
+function takePhoto() {
+  anim.startAction('wave');
+  setTimeout(() => {
+    renderer.render(scene, camera);
+    const link = document.createElement('a');
+    link.href = renderer.domElement.toDataURL('image/png');
+    link.download = 'zeph-foto.png';
+    link.click();
+  }, 950);
 }
 
 // ---------- Interfaccia ----------
@@ -891,6 +1106,8 @@ function tick() {
   updateWander(t);
   anim.update(t, dt);
   updateCamera(dt);
+  applyEnvironment(t, dt);
+  updateDogHost(t, dt);
   updateBubblePosition();
   updateStatus();
 
@@ -939,8 +1156,11 @@ tick();
 // saluto iniziale (solo fumetto: la voce parte dopo la prima interazione)
 setTimeout(() => {
   anim.startAction('wave');
-  showBubble('Ciao! Sono Zeph 👋 Scrivimi qui sotto, oppure trascina qui il tuo avatar .glb!');
-  hideBubble(5600);
+  const nome = localStorage.getItem('zephName');
+  showBubble(nome
+    ? ('Bentornato, ' + nome + '! 👋 Che facciamo oggi? Prova «fai notte» o «chiama il cane»!')
+    : 'Ciao! Sono Zeph 👋 Scrivimi qui sotto, oppure trascina qui il tuo avatar .glb!');
+  hideBubble(6000);
 }, 700);
 
 // piccolo gancio per debug/test

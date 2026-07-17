@@ -16,7 +16,7 @@ if (!app.requestSingleInstanceLock()) app.quit();
 let win = null;
 let chatWin = null;
 let tray = null;
-const flags = { voice: true, wander: true, follow: false };
+const flags = { voice: true, wander: true, follow: false, dog: false };
 
 const STRIP_HEIGHT = 460;
 
@@ -91,6 +91,10 @@ function buildTrayMenu() {
     {
       label: '🚶 Passeggia da solo', type: 'checkbox', checked: flags.wander,
       click: item => { flags.wander = item.checked; sendCmd('wander:' + (item.checked ? 'on' : 'off')); },
+    },
+    {
+      label: '🐶 Rocky il cane', type: 'checkbox', checked: flags.dog,
+      click: item => { flags.dog = item.checked; sendCmd('dog:' + (item.checked ? 'on' : 'off')); },
     },
     {
       label: '🖱️ Segui il mouse', type: 'checkbox', checked: flags.follow,

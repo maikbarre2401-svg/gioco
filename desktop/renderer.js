@@ -93,6 +93,8 @@ const state = {
   mouseX: null,
 };
 const WALK_SPEED = 1.7;
+const RUN_SPEED = 3.4;
+state.running = false;
 
 function margin() { return 0.8; }
 function maxX() { return worldHalfWidth() - margin(); }
@@ -112,7 +114,7 @@ function updateMovement(dt) {
 
   const act = anim.state.action;
   const blocked = act && act.name !== 'wave';
-  const targetSpeed = (dir !== 0 && !blocked) ? WALK_SPEED : 0;
+  const targetSpeed = (dir !== 0 && !blocked) ? (state.running ? RUN_SPEED : WALK_SPEED) : 0;
   state.speed += (targetSpeed - state.speed) * Math.min(1, dt * 6);
   if (state.speed < 0.01) state.speed = 0;
 
@@ -125,7 +127,8 @@ function updateMovement(dt) {
   if (state.speed > 0.01 && dir !== 0) {
     state.x += dir * state.speed * dt;
     state.x = Math.max(-maxX(), Math.min(maxX(), state.x));
-    anim.state.phase += state.speed * dt * (Math.PI / 0.7);
+    const stride = 0.7 + 0.3 * Math.min(1, Math.max(0, state.speed / WALK_SPEED - 1));
+    anim.state.phase += state.speed * dt * (Math.PI / stride);
   }
   anim.state.speedRatio = state.speed / WALK_SPEED;
 
@@ -163,6 +166,46 @@ function updateChatter(t) {
     if (!anim.state.talking && !anim.state.action) {
       speak(ZephCore.pick(ZephCore.FRASI_DESKTOP));
     }
+  }
+}
+
+// ---------- Rocky il cane ----------
+const dog = { on: false, built: null, x: 2.5, heading: 0, speed: 0, phase: 0, nextBarkAt: 20, blob: null };
+function setDogStrip(on) {
+  dog.on = on;
+  if (on && !dog.built) {
+    dog.built = ZephCore.buildDog(THREE);
+    scene.add(dog.built.root);
+    dog.x = state.x + 1.5;
+    dog.blob = blob.clone();
+    dog.blob.scale.set(0.5, 0.5, 1);
+    scene.add(dog.blob);
+  }
+  if (dog.built) { dog.built.root.visible = on; dog.blob.visible = on; }
+}
+function updateDogStrip(t, dt) {
+  if (!dog.on || !dog.built) return;
+  const tx = state.x + (dog.x <= state.x ? -0.85 : 0.85);
+  const dx = tx - dog.x;
+  const dist = Math.abs(dx);
+  const targetSpeed = dist > 3 ? 4.4 : dist > 0.2 ? Math.min(2.9, dist * 2.6) : 0;
+  dog.speed += (targetSpeed - dog.speed) * Math.min(1, dt * 5);
+  if (dog.speed > 0.02) {
+    dog.x += Math.sign(dx) * dog.speed * dt;
+    dog.phase += dog.speed * dt * (Math.PI / 0.3);
+  }
+  const targetHeading = dog.speed > 0.15 ? Math.sign(dx) * Math.PI / 2 * 0.9 : 0;
+  dog.heading += (targetHeading - dog.heading) * Math.min(1, dt * 6);
+  dog.built.root.position.x = dog.x;
+  dog.built.root.rotation.y = dog.heading;
+  ZephCore.updateDog(dog.built, t, dt, {
+    speedRatio: dog.speed / 2.9, phase: dog.phase,
+    excited: anim.state.talking || !!anim.state.action,
+  });
+  dog.blob.position.x = dog.x;
+  if (t > dog.nextBarkAt) {
+    dog.nextBarkAt = t + 10 + Math.random() * 18;
+    if (!state.muted) ZephCore.bark();
   }
 }
 
@@ -258,6 +301,18 @@ function botRespond(text) {
     else window.open(out.open, '_blank');
   }
   if (out.app && bridge) bridge.doAction({ type: 'app', id: out.app });
+  if (out.setName) localStorage.setItem('zephName', out.setName);
+  if (out.whoami) {
+    const n = localStorage.getItem('zephName');
+    out.say = n ? ('Ti chiami ' + n + '! Come potrei dimenticarlo?')
+      : 'Non me l\u2019hai ancora detto! Scrivimi \u00abmi chiamo\u2026\u00bb e me lo ricorder\u00f2.';
+  }
+  if (out.run !== undefined) state.running = out.run;
+  if (out.dog) setDogStrip(out.dog === 'on');
+  if (out.sky || out.weather) {
+    out.say = 'Il cielo e il meteo li comando solo nel mio mondo nel browser! Qui sul desktop ci pensa Windows.';
+  }
+  if (out.photo) out.say = 'Le foto ricordo le scatto solo nel mio mondo nel browser!';
   if (out.remind) {
     const r = out.remind;
     setTimeout(() => {
@@ -278,6 +333,8 @@ if (bridge) {
     else if (cmd === 'flip') botRespond('salto mortale');
     else if (cmd === 'spin') botRespond('piroetta');
     else if (cmd === 'barzelletta') botRespond('barzelletta');
+    else if (cmd === 'dog:on') { setDogStrip(true); speak('Rocky! Vieni qui bello!'); }
+    else if (cmd === 'dog:off') { setDogStrip(false); speak('Rocky, a cuccia!'); }
     else if (cmd === 'wander:on') { state.wander = true; }
     else if (cmd === 'wander:off') { state.wander = false; state.targetX = null; }
     else if (cmd === 'follow:on') { state.follow = true; speak('Ti seguo! Muovi il mouse!'); }
@@ -404,6 +461,7 @@ function tick() {
   updateWander(t);
   updateChatter(t);
   anim.update(t, dt);
+  updateDogStrip(t, dt);
   updateBubblePosition();
 
   // scintille su balli, piroette e atterraggi
