@@ -42,6 +42,11 @@
   #send { border:none; background:#14b8a6; color:#04222c; font-weight:700; font-size:14px;
     border-radius:12px; padding:0 20px; cursor:pointer; transition:filter .15s; }
   #send:hover { filter:brightness(1.15); }
+  #mic { border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.08); color:#fff;
+    font-size:17px; border-radius:12px; padding:0 14px; cursor:pointer; transition:background .15s, transform .1s; }
+  #mic:hover { background:rgba(94,234,212,.25); }
+  #mic.listening { background:#e74c5e; border-color:#ff9aa8; animation:miclisten 1s ease-in-out infinite; }
+  @keyframes miclisten { 50% { transform:scale(1.12); box-shadow:0 0 16px rgba(231,76,94,.75); } }
 
   #bubble { position:fixed; z-index:9; max-width:260px; background:#fff; color:#1e293b;
     border-radius:14px; padding:10px 14px; font-size:14px; line-height:1.45;
@@ -78,7 +83,7 @@
     🖱️ Clic sul terreno → cammina lì<br>
     ⌨️ WASD / frecce → guidalo tu<br>
     ✋ Trascina → ruota la visuale · rotella → zoom<br>
-    💬 Scrivigli in basso: ti risponde a voce!<br>
+    💬 Scrivigli in basso (o premi 🎤 e parlagli): risponde a voce!<br>
     🧑 Trascina qui un file .glb per usare il TUO avatar<br>
     🚀 Prova: «apri youtube» · «cerca gattini» · «ricordami tra 5 minuti»
   </div>
@@ -98,6 +103,7 @@
   </div>
   <div id="inputrow">
     <input id="msg" type="text" placeholder="Scrivi qualcosa… (es. «apri youtube», «balla!», «ricordami tra 5 minuti»)" autocomplete="off">
+    <button id="mic" title="Parla con Zeph a voce">🎤</button>
     <button id="send">Invia</button>
   </div>
 </div>
@@ -800,6 +806,40 @@ const muteBtn = document.getElementById('mutebtn');
 
 document.getElementById('send').addEventListener('click', sendMsg);
 msgInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendMsg(); });
+
+// --- parlagli a voce: riconoscimento vocale (Chrome/Edge) ---
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const micBtn = document.getElementById('mic');
+let rec = null, listening = false;
+function stopListeningUI() { listening = false; micBtn.classList.remove('listening'); }
+micBtn.addEventListener('click', () => {
+  state.interacted = true;
+  if (listening) { try { rec.stop(); } catch (e) {} stopListeningUI(); return; }
+  if (!SR) { speak('Questo browser non mi fa sentire il microfono… prova con Chrome o Edge, oppure scrivimi!'); return; }
+  try {
+    rec = new SR();
+    rec.lang = 'it-IT';
+    rec.interimResults = false;
+    rec.maxAlternatives = 1;
+    let got = false;
+    rec.onresult = ev => {
+      got = true;
+      const heard = ev.results[0][0].transcript;
+      msgInput.value = heard;
+      setTimeout(sendMsg, 250);
+    };
+    rec.onerror = ev => {
+      stopListeningUI();
+      if (ev.error === 'not-allowed') speak('Mi serve il permesso del microfono per sentirti!');
+      else if (ev.error === 'network' || ev.error === 'service-not-allowed') speak('Il riconoscimento vocale non è disponibile qui… scrivimi pure!');
+      else if (!got) speak('Non ti ho sentito bene… riprova!');
+    };
+    rec.onend = stopListeningUI;
+    rec.start();
+    listening = true;
+    micBtn.classList.add('listening');
+  } catch (e) { stopListeningUI(); speak('Il microfono non funziona qui… scrivimi pure!'); }
+});
 function sendMsg() {
   state.interacted = true;
   const t = msgInput.value;

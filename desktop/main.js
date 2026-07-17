@@ -121,6 +121,13 @@ app.whenReady().then(() => {
     if (win) win.webContents.send('chat-message', String(text || ''));
   });
   ipcMain.on('zeph-quit', () => app.quit());
+  ipcMain.on('zeph-open-chat', () => createChatWindow());
+
+  // permessi: solo microfono e notifiche
+  const { session } = require('electron');
+  session.defaultSession.setPermissionRequestHandler((wc, permission, cb) => {
+    cb(permission === 'media' || permission === 'notifications');
+  });
 
   // azioni "assistente": solo URL sicuri e app in lista consentita
   const APP_CMDS = {

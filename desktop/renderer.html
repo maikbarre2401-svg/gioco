@@ -16,10 +16,25 @@
   #bubble::after { content:""; position:absolute; left:50%; bottom:-7px; margin-left:-7px;
     border-left:7px solid transparent; border-right:7px solid transparent;
     border-top:8px solid rgba(255,255,255,.97); }
+
+  #dock { position:fixed; right:18px; bottom:16px; z-index:20; display:flex; gap:10px; }
+  .dockbtn { width:48px; height:48px; border-radius:50%; font-size:21px;
+    background:rgba(13,22,38,.88); border:1.5px solid rgba(94,234,212,.55);
+    color:#fff; display:flex; align-items:center; justify-content:center;
+    cursor:pointer; user-select:none; box-shadow:0 4px 16px rgba(0,0,0,.35);
+    transition:transform .12s, background .15s; }
+  .dockbtn:hover { transform:scale(1.12); background:rgba(20,184,166,.85); }
+  .dockbtn:active { transform:scale(.95); }
+  #micbtn.listening { background:#e74c5e; border-color:#ff9aa8; animation:miclisten 1s ease-in-out infinite; }
+  @keyframes miclisten { 50% { transform:scale(1.15); box-shadow:0 0 22px rgba(231,76,94,.8); } }
 </style>
 </head>
 <body>
 <div id="bubble"></div>
+<div id="dock">
+  <div class="dockbtn" id="micbtn" title="Parla con Zeph a voce">🎤</div>
+  <div class="dockbtn" id="chatbtn" title="Apri la chat per scrivergli">💬</div>
+</div>
 <script src="../three.min.js"></script>
 <script src="../gltf-loader.js"></script>
 <script src="../zeph-core.js"></script>

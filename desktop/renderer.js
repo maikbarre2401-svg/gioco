@@ -291,16 +291,21 @@ if (bridge) {
 // ---------- Mouse: hit-test per il click-through ----------
 const raycaster = new THREE.Raycaster();
 let interactive = false;
+const dock = document.getElementById('dock');
 
 function cursorOverZeph(mx, my) {
   const v = new THREE.Vector2((mx / W()) * 2 - 1, -(my / H()) * 2 + 1);
   raycaster.setFromCamera(v, camera);
   return raycaster.intersectObject(actor.obj, true).length > 0;
 }
+function cursorOverDock(mx, my) {
+  const r = dock.getBoundingClientRect();
+  return mx >= r.left - 8 && mx <= r.right + 8 && my >= r.top - 8 && my <= r.bottom + 8;
+}
 
 window.addEventListener('mousemove', e => {
   state.mouseX = e.clientX;
-  const over = cursorOverZeph(e.clientX, e.clientY);
+  const over = cursorOverZeph(e.clientX, e.clientY) || cursorOverDock(e.clientX, e.clientY);
   if (over !== interactive) {
     interactive = over;
     document.body.style.cursor = over ? 'pointer' : 'default';
@@ -308,18 +313,72 @@ window.addEventListener('mousemove', e => {
   }
 });
 
+// ---------- Pulsanti sullo schermo: chat e microfono ----------
+document.getElementById('chatbtn').addEventListener('click', () => {
+  if (bridge && bridge.openChat) bridge.openChat();
+  else speak('La chat si apre solo nella versione desktop completa!');
+});
+
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const micBtn = document.getElementById('micbtn');
+let rec = null, listening = false;
+
+function stopListeningUI() {
+  listening = false;
+  micBtn.classList.remove('listening');
+}
+micBtn.addEventListener('click', () => {
+  if (listening) { try { rec.stop(); } catch (e) {} stopListeningUI(); return; }
+  if (!SR) { micNotAvailable(); return; }
+  try {
+    rec = new SR();
+    rec.lang = 'it-IT';
+    rec.interimResults = false;
+    rec.maxAlternatives = 1;
+    let got = false;
+    rec.onresult = ev => {
+      got = true;
+      const t = ev.results[0][0].transcript;
+      botRespond(t);
+    };
+    rec.onerror = ev => {
+      stopListeningUI();
+      if (ev.error === 'network' || ev.error === 'service-not-allowed' || ev.error === 'language-not-supported') micNotAvailable();
+      else if (ev.error === 'not-allowed') speak('Mi serve il permesso del microfono per sentirti!');
+      else if (!got) speak('Non ti ho sentito bene… riprova!');
+    };
+    rec.onend = stopListeningUI;
+    rec.start();
+    listening = true;
+    micBtn.classList.add('listening');
+  } catch (e) { stopListeningUI(); micNotAvailable(); }
+});
+function micNotAvailable() {
+  speak('Qui sul desktop non riesco ancora a sentirti dal microfono… ma scrivimi dalla chat qui accanto e ti rispondo a voce! Nella versione browser invece posso sentirti davvero.');
+  if (bridge && bridge.openChat) bridge.openChat();
+}
+
 const CLICK_REPLIES = [
   { say: 'Ehi! Mi hai cliccato!', action: 'wave' },
   { say: 'Serve qualcosa? Sono tutto orecchie!', action: null },
   { say: 'Guarda cosa so fare!', action: 'dance' },
   { say: 'Op!', action: 'jump' },
-  { say: 'Dimmi pure! Apri la chat dall’icona vicino all’orologio!', action: 'wave' },
+  { say: 'Dimmi pure! Premi il fumetto 💬 qui in basso a destra per scrivermi!', action: 'wave' },
 ];
 window.addEventListener('mousedown', e => {
+  if (e.button !== 0) return;
+  if (cursorOverDock(e.clientX, e.clientY)) return;
   if (!cursorOverZeph(e.clientX, e.clientY)) return;
   const r = ZephCore.pick(CLICK_REPLIES);
   if (r.action) anim.startAction(r.action);
   speak(r.say);
+});
+// clic destro su Zeph → apre la chat
+window.addEventListener('contextmenu', e => {
+  if (cursorOverZeph(e.clientX, e.clientY)) {
+    e.preventDefault();
+    if (bridge && bridge.openChat) bridge.openChat();
+  }
 });
 
 window.addEventListener('resize', () => {

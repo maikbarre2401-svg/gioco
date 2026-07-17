@@ -39,7 +39,9 @@ Zeph (o il tuo avatar) passeggia lungo il bordo inferiore dello schermo in una s
 
 Su macOS/Linux: `cd desktop && npm install && npm start`.
 
-**Comandi:** icona di Zeph vicino all'orologio → 💬 Parla con Zeph (chat, risponde a voce), Saluta, Balla, Salta, Barzelletta, 🚶 Passeggia da solo, 🖱️ Segui il mouse, 🔊 Voce, ❌ Chiudi.
+**Comandi:** in basso a destra dello schermo ci sono due pulsanti sempre visibili: **💬 apre la chat** (scrivigli e risponde a voce) e **🎤 il microfono**. Anche il clic destro su Zeph apre la chat. In più c'è l'icona di Zeph vicino all'orologio con il menu completo: Saluta, Balla, Salta, 🤸 Salto mortale, 🌀 Piroetta, Barzelletta, 🚶 Passeggia da solo, 🖱️ Segui il mouse, 🔊 Voce, ❌ Chiudi.
+
+**Parlargli a voce:** nella **versione browser** il microfono 🎤 funziona davvero (Chrome/Edge): premi, parla, e Zeph capisce ed esegue («apri youtube», «balla»…). Nell'app desktop Electron il riconoscimento vocale di sistema non è disponibile: il pulsante 🎤 te lo spiega e ti apre la chat scritta — Zeph ti risponde comunque sempre a voce.
 
 ## 🌐 Versione browser
 
