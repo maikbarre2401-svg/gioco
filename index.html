@@ -79,13 +79,14 @@
   <h1>ZEPH <span>· 3D</span></h1>
   <div class="sub">Il tuo compagno virtuale che parla e cammina</div>
   <div id="status"><div class="dot"></div><span id="statustext">Sto arrivando…</span></div>
+  <div id="starbadge" style="margin-top:6px;font-size:12px;color:#ffd23e;">⭐ 0/12 stelle</div>
   <div id="hints">
     🖱️ Clic sul terreno → cammina lì<br>
     ⌨️ WASD / frecce → guidalo tu<br>
     ✋ Trascina → ruota la visuale · rotella → zoom<br>
     💬 Scrivigli in basso (o premi 🎤 e parlagli): risponde a voce!<br>
     🧑 Trascina qui un file .glb per usare il TUO avatar<br>
-    🚀 Prova: «metti la musica» · «lancia la palla» · «indovinello» · «sasso carta forbice» · «cambia look» · «fai notte»
+    🚀 Prova: «vola» · «metti la musica» · «lancia la palla» · «indovinello» · «cambia look» · «fai notte» — e raccogli le ⭐!
   </div>
 </div>
 
@@ -532,6 +533,138 @@ for (let i = 0; i < 15; i++) {
   scene.add(cap);
 }
 
+// ---------- Villaggio ----------
+function addHouse(x, z, rotY, wallColor, roofColor) {
+  const y = terrainH(x, z);
+  const h = new THREE.Group();
+  const wall = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.9, 2.2),
+    new THREE.MeshStandardMaterial({ color: wallColor, roughness: 0.95 }));
+  wall.position.y = 0.95; wall.castShadow = true; wall.receiveShadow = true;
+  h.add(wall);
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(2.15, 1.15, 4),
+    new THREE.MeshStandardMaterial({ color: roofColor, roughness: 0.9, flatShading: true }));
+  roof.position.y = 2.45; roof.rotation.y = Math.PI / 4; roof.castShadow = true;
+  h.add(roof);
+  const door = new THREE.Mesh(new THREE.BoxGeometry(0.55, 1.1, 0.08),
+    new THREE.MeshStandardMaterial({ color: 0x5b4028, roughness: 0.9 }));
+  door.position.set(0.5, 0.55, 1.12);
+  h.add(door);
+  for (const wx of [-0.65, 0.65]) {
+    const win = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.06),
+      new THREE.MeshStandardMaterial({ color: 0xbfe0f0, roughness: 0.3, emissive: 0x223744 }));
+    win.position.set(wx, 1.15, 1.12);
+    h.add(win);
+  }
+  const chimney = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.8, 0.3),
+    new THREE.MeshStandardMaterial({ color: 0x8a7a6a, roughness: 1 }));
+  chimney.position.set(-0.7, 2.6, -0.4); chimney.castShadow = true;
+  h.add(chimney);
+  h.position.set(x, y, z);
+  h.rotation.y = rotY;
+  scene.add(h);
+}
+const VILLAGE = { x: 22, z: 15 };
+addHouse(VILLAGE.x, VILLAGE.z, -0.5, 0xe8dcc2, 0xa5553e);
+addHouse(VILLAGE.x + 5.5, VILLAGE.z + 3, -0.9, 0xd9c9a8, 0x7a4a3a);
+addHouse(VILLAGE.x - 3, VILLAGE.z + 6.5, 0.2, 0xe2d3be, 0x8f6a4a);
+
+// ---------- Nina, l'amica del villaggio ----------
+const nina = { rig: ZephCore.build(THREE), anim: null,
+  pos: new THREE.Vector3(VILLAGE.x + 2, 0, VILLAGE.z + 2),
+  heading: 0, speed: 0, target: null, nextMoveAt: 5, nextWaveAt: 0, met: false };
+nina.anim = new ZephCore.Animator(nina.rig);
+nina.rig.mats.jacket.color.set(0xc95d7a);
+nina.rig.mats.jacketDark.color.set(0x8f3d56);
+nina.rig.mats.jeans.color.set(0x4a4a58);
+nina.rig.mats.hair.color.set(0x6e4a1f);
+nina.rig.mats.shoe.color.set(0xf5e9e9);
+scene.add(nina.rig.root);
+function updateNina(t, dt) {
+  const distP = Math.hypot(state.pos.x - nina.pos.x, state.pos.z - nina.pos.z);
+  // se il giocatore è vicino: fermati, guardalo e saluta
+  if (distP < 3.2) {
+    nina.target = null;
+    const toPlayer = Math.atan2(state.pos.x - nina.pos.x, state.pos.z - nina.pos.z);
+    nina.heading = lerpAngle(nina.heading, toPlayer, Math.min(1, dt * 4));
+    if (t > nina.nextWaveAt) {
+      nina.nextWaveAt = t + 14 + Math.random() * 10;
+      nina.anim.startAction('wave');
+      if (!nina.met) {
+        nina.met = true;
+        if (!anim.state.talking) speak('Guarda, c’è la mia amica Nina! Salutala!');
+      }
+    }
+  } else if (!nina.target && t > nina.nextMoveAt) {
+    const a2 = Math.random() * Math.PI * 2, r2 = 2 + Math.random() * 7;
+    nina.target = new THREE.Vector3(VILLAGE.x + Math.sin(a2) * r2, 0, VILLAGE.z + Math.cos(a2) * r2);
+    nina.nextMoveAt = t + 6 + Math.random() * 8;
+  }
+  let dir = 0;
+  if (nina.target) {
+    const dx = nina.target.x - nina.pos.x, dz = nina.target.z - nina.pos.z;
+    if (Math.hypot(dx, dz) < 0.2) nina.target = null;
+    else { nina.heading = lerpAngle(nina.heading, Math.atan2(dx, dz), Math.min(1, dt * 5)); dir = 1; }
+  }
+  const ts2 = dir ? 1.1 : 0;
+  nina.speed += (ts2 - nina.speed) * Math.min(1, dt * 5);
+  if (nina.speed > 0.02) {
+    nina.pos.x += Math.sin(nina.heading) * nina.speed * dt;
+    nina.pos.z += Math.cos(nina.heading) * nina.speed * dt;
+    nina.anim.state.phase += nina.speed * dt * (Math.PI / 0.7);
+  }
+  nina.pos.y = terrainH(nina.pos.x, nina.pos.z);
+  nina.anim.state.speedRatio = nina.speed / 2.0;
+  nina.rig.root.position.copy(nina.pos);
+  nina.rig.root.rotation.y = nina.heading;
+  nina.anim.update(t + 37, dt); // offset per non respirare in sincrono con Zeph
+}
+
+// ---------- Stelle da raccogliere ----------
+const stars2 = [];
+const starMat = new THREE.MeshStandardMaterial({ color: 0xffd23e, emissive: 0x9a7400, roughness: 0.4 });
+let starsFound = 0;
+const starBadge = document.getElementById('starbadge');
+function spawnStars() {
+  starsFound = 0;
+  for (const st of stars2) scene.remove(st);
+  stars2.length = 0;
+  const srng = mulberry32((Math.random() * 1e9) | 0);
+  for (let i = 0; i < 12; i++) {
+    const a3 = srng() * Math.PI * 2, r3 = 4 + srng() * 38;
+    const st = new THREE.Mesh(new THREE.OctahedronGeometry(0.16, 0), starMat);
+    st.scale.y = 1.5;
+    st.position.set(Math.sin(a3) * r3, 0, Math.cos(a3) * r3);
+    st.position.y = terrainH(st.position.x, st.position.z) + 0.95;
+    st.userData.taken = false;
+    scene.add(st);
+    stars2.push(st);
+  }
+  starBadge.textContent = '⭐ 0/12 stelle';
+}
+spawnStars();
+function updateStars(t, dt) {
+  for (const st of stars2) {
+    if (st.userData.taken) continue;
+    st.rotation.y += dt * 2.2;
+    st.position.y += Math.sin(t * 2 + st.position.x) * dt * 0.12;
+    const d = Math.hypot(st.position.x - state.pos.x, st.position.z - state.pos.z);
+    const dy = Math.abs(st.position.y - (state.pos.y + 1));
+    if (d < 0.8 && dy < 1.6) {
+      st.userData.taken = true;
+      st.visible = false;
+      starsFound++;
+      starBadge.textContent = '⭐ ' + starsFound + '/12 stelle';
+      if (state.interacted && !state.muted) ZephCore.chime();
+      sparkles.burst(st.position.x, st.position.y, st.position.z, 8);
+      if (starsFound === 12) {
+        speak('WOW! Le hai raccolte tutte! Sei un campione! Tra un po’ ne nascondo altre…');
+        anim.startAction('dance');
+        setTimeout(spawnStars, 30000);
+      }
+    }
+  }
+}
+
 // ---------- Nuvole e farfalle ----------
 const clouds = [];
 const cloudMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 });
@@ -571,7 +704,7 @@ let avatarDriver = null;
 const sparkles = ZephCore.createSparkles(THREE, scene);
 let prevActionName = null;
 let nextStretchAt = 30;
-const botCtx = {}; // stato dei giochi (quiz, sasso carta forbice)
+const botCtx = { name: localStorage.getItem('zephName') || null }; // stato giochi + nome
 
 // luci da discoteca (si accendono con la musica)
 const disco1 = new THREE.PointLight(0xff4fd8, 0, 10);
@@ -675,7 +808,10 @@ const state = {
 };
 const WALK_SPEED = 2.0;
 const RUN_SPEED = 4.2;
+const FLY_SPEED = 5.5;
 state.running = false;
+state.flying = false;
+state.flyLerp = 0;
 state.pos.y = terrainH(state.pos.x, state.pos.z);
 
 // ---------- Caricamento avatar GLB ----------
@@ -793,7 +929,7 @@ function updateMovement(dt) {
   const act = anim.state.action;
   const blocked = act && act.name !== 'wave';
   const runOn = state.running || k.ShiftLeft || k.ShiftRight;
-  const targetSpeed = (dir && !blocked) ? (runOn ? RUN_SPEED : WALK_SPEED) : 0;
+  const targetSpeed = (dir && !blocked) ? (state.flying ? FLY_SPEED : runOn ? RUN_SPEED : WALK_SPEED) : 0;
   state.speed += (targetSpeed - state.speed) * Math.min(1, dt * 6);
   if (state.speed < 0.01) state.speed = 0;
 
@@ -812,8 +948,10 @@ function updateMovement(dt) {
     const stride = 0.7 + 0.3 * Math.min(1, Math.max(0, state.speed / WALK_SPEED - 1));
     anim.state.phase += state.speed * dt * (Math.PI / stride);
   }
-  state.pos.y = terrainH(state.pos.x, state.pos.z);
-  anim.state.speedRatio = state.speed / WALK_SPEED;
+  state.flyLerp += ((state.flying ? 1 : 0) - state.flyLerp) * Math.min(1, dt * 2);
+  state.pos.y = terrainH(state.pos.x, state.pos.z) + 2.3 * state.flyLerp;
+  anim.state.speedRatio = (state.speed / WALK_SPEED) * (1 - state.flyLerp);
+  anim.state.flying = state.flying;
 
   actor.obj.position.copy(state.pos);
   actor.obj.rotation.y = state.heading;
@@ -895,8 +1033,13 @@ function updateDogHost(t, dt) {
 }
 
 // ---------- Camera ----------
-const cam = { yaw: 0, pitch: 0.38, dist: 4.8, focus: new THREE.Vector3(0, 1, 0) };
+const cam = { yaw: 0, pitch: 0.38, dist: 4.8, focus: new THREE.Vector3(0, 1, 0), mode: 'normal' };
 function updateCamera(dt) {
+  if (cam.mode === 'cinema') {
+    cam.yaw += dt * 0.13;
+    cam.dist += (6.8 + Math.sin(clock.elapsedTime * 0.1) * 1.6 - cam.dist) * Math.min(1, dt);
+    cam.pitch += (0.3 - cam.pitch) * Math.min(1, dt);
+  }
   const targetFocus = new THREE.Vector3(state.pos.x, state.pos.y + 1.0, state.pos.z);
   cam.focus.lerp(targetFocus, Math.min(1, dt * 5));
   const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
@@ -930,6 +1073,7 @@ el.addEventListener('pointermove', e => {
   const dx = e.clientX - pt.x, dy = e.clientY - pt.y;
   if (Math.abs(e.clientX - pt.x) + Math.abs(e.clientY - pt.y) > 6) pt.dragged = true;
   if (pt.dragged) {
+    cam.mode = 'normal';
     cam.yaw -= dx * 0.0055;
     cam.pitch = Math.min(1.25, Math.max(0.06, cam.pitch + dy * 0.004));
     pt.x = e.clientX; pt.y = e.clientY;
@@ -1081,7 +1225,7 @@ function botRespond(text) {
   if (out.app) {
     out.say = 'Le app del computer le apro solo dalla versione desktop! Da qui però posso aprire i siti: prova «apri youtube».';
   }
-  if (out.setName) localStorage.setItem('zephName', out.setName);
+  if (out.setName) { localStorage.setItem('zephName', out.setName); botCtx.name = out.setName; }
   if (out.whoami) {
     const n = localStorage.getItem('zephName');
     out.say = n ? ('Ti chiami ' + n + '! Come potrei dimenticarlo?')
@@ -1100,6 +1244,10 @@ function botRespond(text) {
   }
   if (out.autoSky !== undefined) env.auto = out.autoSky;
   if (out.ball) throwBall();
+  if (out.fly !== undefined) state.flying = out.fly;
+  if (out.camMode) cam.mode = out.camMode;
+  if (out.stars) out.say = starsFound >= 12 ? 'Le hai già trovate tutte!'
+    : 'Ne hai raccolte ' + starsFound + ' su 12! Le vedi brillare in giro per il mondo: raggiungile!';
   if (out.open) {
     // sincrono: così il gesto dell'utente autorizza l'apertura (niente blocco popup)
     window.open(out.open, '_blank');
@@ -1263,6 +1411,13 @@ function tick() {
     if (!act && !anim.state.talking && state.speed < 0.1 && !musicOn) anim.startAction('stretch');
   }
 
+  updateNina(t, dt);
+  updateStars(t, dt);
+  // scia del jetpack
+  if (state.flyLerp > 0.3 && Math.random() < dt * 22) {
+    sparkles.burst(state.pos.x + (Math.random() - 0.5) * 0.25, state.pos.y + 0.25, state.pos.z + (Math.random() - 0.5) * 0.25, 1);
+  }
+
   // palla, luci disco e ballo continuo finché c'è musica
   updateBall(dt);
   if (musicOn) {
@@ -1301,9 +1456,11 @@ tick();
 setTimeout(() => {
   anim.startAction('wave');
   const nome = localStorage.getItem('zephName');
+  const h = new Date().getHours();
+  const salve = h < 12 ? 'Buongiorno' : h < 18 ? 'Ciao' : 'Buonasera';
   showBubble(nome
-    ? ('Bentornato, ' + nome + '! 👋 Che facciamo oggi? Prova «fai notte» o «chiama il cane»!')
-    : 'Ciao! Sono Zeph 👋 Scrivimi qui sotto, oppure trascina qui il tuo avatar .glb!');
+    ? (salve + ', ' + nome + '! 👋 Prova «vola», «lancia la palla» o vai a trovare Nina al villaggio!')
+    : salve + '! Sono Zeph 👋 Scrivimi qui sotto: prova «vola» o «metti la musica»!');
   hideBubble(6000);
 }, 700);
 

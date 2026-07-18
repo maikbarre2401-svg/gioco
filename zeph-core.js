@@ -175,6 +175,7 @@ function Animator(avatar) {
     blinkAt: 2.5, blinkT: -1,
     lookYaw: 0, lookPitch: 0, lookTYaw: 0, lookTPitch: 0, nextLookAt: 2,
     eyeScale: 1, pupilX: 0, lastRootY: 0,
+    flying: false, flyW: 0,
   };
 }
 
@@ -245,6 +246,21 @@ Animator.prototype.update = function (t, dt) {
     const lead = s.gestureLead > 0;
     armGesture(P.shR, P.elR, t, -1, gA * (lead ? 1 : 0.4));
     armGesture(P.shL, P.elL, t + 1.7, 1, gA * (lead ? 0.4 : 1));
+  }
+
+  // volo col jetpack: gambe raccolte, braccia aperte, leggero ondeggiare
+  s.flyW += ((s.flying ? 1 : 0) - s.flyW) * Math.min(1, dt * 3);
+  if (s.flyW > 0.001) {
+    const w = s.flyW;
+    P.spine.x += 0.22 * w;
+    P.legL.x += -0.3 * w; P.legR.x += -0.42 * w;
+    P.kneeL += 0.55 * w; P.kneeR += 0.72 * w;
+    P.footL += 0.3 * w; P.footR += 0.35 * w;
+    P.shL.z += 0.55 * w; P.shR.z += -0.55 * w;
+    P.shL.x += 0.25 * w; P.shR.x += 0.25 * w;
+    P.head.x += -0.08 * w;
+    P.rootY += (0.05 + Math.sin(t * 2.3) * 0.07) * w;
+    P.mouth = Math.max(P.mouth, 0.2 * w);
   }
 
   // bocca sincronizzata col parlato
@@ -660,6 +676,25 @@ function updateDog(D, t, dt, st) {
   D.head.rotation.y = Math.sin(t * 0.7) * 0.15 * (1 - w);
 }
 
+// campanellino per le stelle raccolte
+let barkCtx = null;
+function chime() {
+  try {
+    barkCtx = barkCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (barkCtx.state === 'suspended') barkCtx.resume();
+    const t0 = barkCtx.currentTime + 0.02;
+    [659, 880].forEach((f, i) => {
+      const o = barkCtx.createOscillator(), g = barkCtx.createGain();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(f, t0 + i * 0.09);
+      g.gain.setValueAtTime(0.14, t0 + i * 0.09);
+      g.gain.exponentialRampToValueAtTime(0.001, t0 + i * 0.09 + 0.25);
+      o.connect(g); g.connect(barkCtx.destination);
+      o.start(t0 + i * 0.09); o.stop(t0 + i * 0.09 + 0.27);
+    });
+  } catch (e) { /* niente audio */ }
+}
+
 // musica chiptune generata al volo (126 BPM, nessun file audio)
 const music = (function () {
   let ctx = null, timer = null, playing = false, step = 0, nextTime = 0;
@@ -707,7 +742,6 @@ const music = (function () {
 })();
 
 // abbaio sintetizzato (nessun file audio)
-let barkCtx = null;
 function bark() {
   try {
     barkCtx = barkCtx || new (window.AudioContext || window.webkitAudioContext)();
@@ -863,6 +897,21 @@ function actionIntent(t, ctx) {
     return { autoSky: true, say: 'Da adesso il tempo scorre da solo: guarda il sole muoversi!' };
   }
   if (/ferma il (ciclo|tempo)|tempo fermo/.test(t)) return { autoSky: false, say: 'Fermo il tempo!… Che potere!' };
+
+  // modalità volo
+  if (/\b(vola|decolla|jetpack|volare)\b/.test(t)) {
+    return { fly: true, say: pick(['Jetpack attivatooo! Si vola!', 'Pronti al decollo… tre, due, uno!']) };
+  }
+  if (/\b(atterra|scendi|torna a terra)\b/.test(t)) return { fly: false, say: 'Atterraggio morbido!' };
+
+  // modalità camera
+  if (/(camera|visuale|telecamera) (cinema|cinematografica)|cinematic/.test(t)) {
+    return { camMode: 'cinema', say: 'Azione! Camera cinematografica!' };
+  }
+  if (/(camera|visuale|telecamera) normale/.test(t)) return { camMode: 'normal', say: 'Camera normale!' };
+
+  // stelle raccolte
+  if (/quante stelle|le stelle/.test(t)) return { stars: true };
 
   // la palla per Rocky
   if (/(lancia|tira).*(palla|pallina)|riporto/.test(t)) {
@@ -1039,7 +1088,15 @@ function botReply(text, ctx) {
 
   const intent = actionIntent(t, ctx);
   if (intent) return intent;
-  for (const r of RULES) { if (r.re.test(t)) return r.fn(); }
+  for (const r of RULES) {
+    if (r.re.test(t)) {
+      const out = r.fn();
+      if (ctx.name && out.say && /^Ciao\b/.test(out.say)) {
+        out.say = out.say.replace(/^Ciao/, 'Ciao ' + ctx.name);
+      }
+      return out;
+    }
+  }
   return { say: pick(DEFAULT_REPLIES) };
 }
 
@@ -1089,7 +1146,7 @@ function createSparkles(THREE, scene) {
 
 global.ZephCore = {
   build, Animator, botReply, pick, createAvatarDriver, createSparkles,
-  buildDog, updateDog, bark, music,
+  buildDog, updateDog, bark, chime, music,
   FRASI_PASSEGGIO, FRASI_DESKTOP, BARZELLETTE,
   HIP_Y, HEIGHT: 1.75,
 };

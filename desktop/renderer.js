@@ -5,7 +5,8 @@
 'use strict';
 
 const bridge = window.zephBridge || null; // assente se aperto in un browser normale
-const botCtx = {}; // stato dei giochi (quiz, sasso carta forbice)
+const botCtx = {}; // stato giochi + nome (riempito dopo)
+try { botCtx.name = localStorage.getItem('zephName') || null; } catch (e) {}
 
 // ---------- Scena trasparente ----------
 const W = () => window.innerWidth, H = () => window.innerHeight;
@@ -133,6 +134,8 @@ const state = {
 const WALK_SPEED = 1.7;
 const RUN_SPEED = 3.4;
 state.running = false;
+state.flying = false;
+state.flyLerp = 0;
 // afferrato col mouse e lasciato cadere, come un'ochetta
 const grab = { pending: false, on: false, y: 0, vy: 0, falling: false, sx: 0, sy: 0, said: false };
 
@@ -162,8 +165,10 @@ function updateMovement(dt) {
     blob.material.opacity = sh2 * 0.9;
     return;
   }
-  actor.obj.position.y = 0;
+  state.flyLerp += ((state.flying ? 1 : 0) - state.flyLerp) * Math.min(1, dt * 2);
+  actor.obj.position.y = (1.15 + Math.sin(Date.now() * 0.0021) * 0.14) * state.flyLerp;
   actor.obj.rotation.z = 0;
+  anim.state.flying = state.flying;
 
   if (state.follow && state.mouseX !== null) {
     const wx = (state.mouseX / W() * 2 - 1) * worldHalfWidth();
@@ -195,13 +200,13 @@ function updateMovement(dt) {
     const stride = 0.7 + 0.3 * Math.min(1, Math.max(0, state.speed / WALK_SPEED - 1));
     anim.state.phase += state.speed * dt * (Math.PI / stride);
   }
-  anim.state.speedRatio = state.speed / WALK_SPEED;
+  anim.state.speedRatio = (state.speed / WALK_SPEED) * (1 - state.flyLerp);
 
   actor.obj.position.x = state.x;
   actor.obj.rotation.y = state.heading;
 
-  // ombra finta: segue Zeph e si restringe quando salta
-  const air = anim.state.jumpAir || 0;
+  // ombra finta: segue Zeph e si restringe quando salta o vola
+  const air = (anim.state.jumpAir || 0) + state.flyLerp * 0.9;
   blob.position.x = state.x;
   const sh = 1 / (1 + air * 1.6);
   blob.scale.set(sh, sh, 1);
@@ -380,7 +385,7 @@ function botRespond(text) {
   if (out.app && bridge) bridge.doAction({ type: 'app', id: out.app });
   if (out.volume && bridge) bridge.doAction({ type: 'volume', dir: out.volume });
   if (out.battery) { batteryReport(); return; }
-  if (out.setName) localStorage.setItem('zephName', out.setName);
+  if (out.setName) { localStorage.setItem('zephName', out.setName); botCtx.name = out.setName; }
   if (out.whoami) {
     const n = localStorage.getItem('zephName');
     out.say = n ? ('Ti chiami ' + n + '! Come potrei dimenticarlo?')
@@ -395,6 +400,9 @@ function botRespond(text) {
   if (out.ball) out.say = 'La palla la lancio solo nel prato del browser! Qui Rocky mi segue e basta.';
   if (out.music === 'on') startMusic();
   if (out.music === 'off') stopMusic();
+  if (out.fly !== undefined) state.flying = out.fly;
+  if (out.camMode) out.say = 'La camera si muove solo nel mio mondo nel browser!';
+  if (out.stars) out.say = 'Le stelle da raccogliere sono nel mio mondo nel browser! Qui mi accontento della taskbar.';
   if (out.outfit) {
     if (avatarDriver) out.say = 'Il look lo cambio solo quando sono Zeph, non con il tuo avatar!';
     else randomOutfit();
@@ -596,6 +604,11 @@ function tick() {
     if (!act && !anim.state.talking && state.speed < 0.1 && !state.follow && !musicOn) anim.startAction('stretch');
   }
 
+  // scia del jetpack
+  if (state.flyLerp > 0.3 && Math.random() < dt * 20) {
+    sparkles.burst(state.x + (Math.random() - 0.5) * 0.2, actor.obj.position.y + 0.2, 0, 1);
+  }
+
   // luci disco e ballo continuo finché c'è musica
   if (musicOn) {
     if (!anim.state.action && !anim.state.talking && state.speed < 0.1 && !grab.on && !grab.falling) anim.startAction('dance');
@@ -618,7 +631,11 @@ tryLoadAvatar();
 // saluto di benvenuto
 setTimeout(() => {
   anim.startAction('wave');
-  speak('Ciao! Sono Zeph, da adesso abito qui sul tuo schermo!');
+  const h = new Date().getHours();
+  const salve = h < 12 ? 'Buongiorno' : h < 18 ? 'Ciao' : 'Buonasera';
+  speak(botCtx.name
+    ? (salve + ', ' + botCtx.name + '! Eccomi di nuovo sul tuo schermo! Prova a dirmi «vola»!')
+    : salve + '! Sono Zeph, da adesso abito qui sul tuo schermo!');
 }, 1200);
 
 // gancio per test

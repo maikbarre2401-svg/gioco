@@ -44,6 +44,11 @@ Scrivigli (in chat, browser o desktop):
 - **«cambia look»** 👕 — vestiti e capelli nuovi (se lo ricorda per la prossima volta)
 - **«ciclo automatico»** ⏰ — il sole gira da solo: giorno, tramonto, notte e alba in loop (solo browser)
 - **Sul desktop: afferralo col mouse!** Trascinalo in aria («Ehiii! Mettimi giù!») e lascialo cadere 😄
+- **«vola»** 🚀 — jetpack con scia di particelle: si alza in volo e sfreccia (anche sul desktop!); «atterra» per scendere
+- **🏘 Il villaggio** — tre casette oltre la collina e **Nina**, l'amica di Zeph: avvicinati e ti saluta con la mano
+- **⭐ 12 stelle nascoste** nel mondo: raggiungile per raccoglierle (anche in volo!), con suono e contatore; raccolte tutte, festa e nuova caccia
+- **«camera cinema»** 🎥 — inquadratura cinematografica che orbita da sola; «camera normale» per tornare
+- Ti saluta con **«Buongiorno/Buonasera»** in base all'ora, e se sa il tuo nome lo usa
 
 ## 🖥️ Versione desktop — sullo schermo
 
