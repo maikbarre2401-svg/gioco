@@ -34,7 +34,7 @@ function build(THREE) {
     return m;
   }
 
-  const B = { root: new THREE.Group(), HIP_Y };
+  const B = { root: new THREE.Group(), HIP_Y, mats: M };
 
   B.body = new THREE.Group(); B.body.position.y = HIP_Y; B.root.add(B.body);
 
@@ -269,7 +269,7 @@ Animator.prototype.update = function (t, dt) {
         P.head.z += 0.11 * w;
         P.mouth = Math.max(P.mouth, 0.25 * w);
       } else if (a.name === 'dance') {
-        const b = t * 6.0;
+        const b = t * (s.danceFreq || 6.0);
         P.body.y += Math.sin(b) * 0.38 * w;
         P.rootY += (Math.abs(Math.sin(b)) * 0.06 - 0.045) * w;
         P.legL.x += -0.14 * w; P.legR.x += -0.14 * w;
@@ -660,6 +660,52 @@ function updateDog(D, t, dt, st) {
   D.head.rotation.y = Math.sin(t * 0.7) * 0.15 * (1 - w);
 }
 
+// musica chiptune generata al volo (126 BPM, nessun file audio)
+const music = (function () {
+  let ctx = null, timer = null, playing = false, step = 0, nextTime = 0;
+  const BPM = 126, STEP = 60 / BPM / 4;
+  const bassSeq = [110, 0, 110, 0, 131, 0, 98, 0, 110, 0, 110, 0, 165, 0, 147, 0];
+  const leadSeq = [440, 523, 659, 880, 659, 523, 440, 392, 440, 523, 659, 784, 659, 523, 494, 392];
+  function voice(type, f0, f1, t0, dur, vol) {
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(f0, t0);
+    if (f1) o.frequency.exponentialRampToValueAtTime(f1, t0 + dur);
+    g.gain.setValueAtTime(vol, t0);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+    o.connect(g); g.connect(ctx.destination);
+    o.start(t0); o.stop(t0 + dur + 0.02);
+  }
+  function schedule() {
+    if (!playing) return;
+    while (nextTime < ctx.currentTime + 0.12) {
+      const s16 = step % 16;
+      if (s16 % 4 === 0) voice('sine', 150, 45, nextTime, 0.13, 0.5);
+      if (s16 % 4 === 2) voice('square', 7000, 5000, nextTime, 0.03, 0.045);
+      const bnote = bassSeq[s16];
+      if (bnote) voice('square', bnote, 0, nextTime, 0.1, 0.1);
+      if (s16 % 2 === 0) {
+        const l = leadSeq[(step >> 1) % 16];
+        if (l) voice('triangle', l, 0, nextTime, 0.18, 0.055);
+      }
+      step++; nextTime += STEP;
+    }
+  }
+  return {
+    get playing() { return playing; },
+    start() {
+      if (playing) return;
+      try {
+        ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
+        if (ctx.state === 'suspended') ctx.resume();
+        playing = true; step = 0; nextTime = ctx.currentTime + 0.05;
+        timer = setInterval(schedule, 40);
+      } catch (e) { playing = false; }
+    },
+    stop() { playing = false; clearInterval(timer); },
+  };
+})();
+
 // abbaio sintetizzato (nessun file audio)
 let barkCtx = null;
 function bark() {
@@ -759,8 +805,69 @@ const IMPOSTAZIONI = [
 ];
 function searchUrl(q) { return 'https://www.google.com/search?q=' + encodeURIComponent(q); }
 
-function actionIntent(t) {
+const INDOVINELLI = [
+  { q: 'Ha i denti ma non morde mai. Che cos’è?', a: /pettine/, sol: 'il pettine' },
+  { q: 'Più è fresco e più è caldo. Che cos’è?', a: /pane|pagnotta/, sol: 'il pane' },
+  { q: 'Ha un letto ma non dorme mai, corre ma non cammina. Che cos’è?', a: /fiume/, sol: 'il fiume' },
+  { q: 'Cade sempre ma non si fa mai male. Che cos’è?', a: /pioggia|neve/, sol: 'la pioggia' },
+  { q: 'Ha la coda ma non è un animale, e vola senza ali. Che cos’è?', a: /aquilone/, sol: 'l’aquilone' },
+  { q: 'Ripete tutto quello che dici senza aver studiato le lingue. Che cos’è?', a: /\beco\b/, sol: 'l’eco' },
+];
+
+function actionIntent(t, ctx) {
   let m;
+
+  // giochi: sasso carta forbice
+  if (/sasso.*carta.*forbic|carta.*forbic|morra/.test(t)) {
+    ctx.pending = 'rps';
+    return { say: 'Ci sto! Uno, due, tre… scrivi sasso, carta o forbice!' };
+  }
+  // giochi: indovinelli
+  if (/indovinell|facciamo un quiz|\bquiz\b/.test(t)) {
+    const idx = (Math.random() * INDOVINELLI.length) | 0;
+    ctx.pending = 'quiz'; ctx.quizIdx = idx;
+    return { say: 'Indovinello! ' + INDOVINELLI[idx].q };
+  }
+  // calcoli a voce
+  m = t.match(/quanto fa (.+)/);
+  if (m) {
+    let expr = m[1].replace(/più/g, '+').replace(/meno/g, '-')
+      .replace(/\bper\b/g, '*').replace(/\bx\b/g, '*')
+      .replace(/diviso/g, '/').replace(/virgola/g, '.').replace(/,/g, '.')
+      .replace(/[^0-9+\-*/().\s]/g, '').trim();
+    if (expr && /\d/.test(expr)) {
+      try {
+        const val = Function('"use strict"; return (' + expr + ')')();
+        if (isFinite(val)) {
+          const out = Math.round(val * 10000) / 10000;
+          return { say: 'Fa ' + String(out).replace('.', ' virgola ') + '!', action: 'jump' };
+        }
+      } catch (e) { /* espressione non valida */ }
+    }
+    return { say: 'Uhm, questa non riesco a calcolarla… prova tipo «quanto fa 25 per 4»!' };
+  }
+
+  // musica
+  if (/(basta|ferma|stop|spegni).*musica/.test(t)) return { music: 'off', say: 'Musica spenta! Silenzio in sala.' };
+  if (/(metti|suona|accendi|fai partire).*(musica|canzone)|^musica!?$/.test(t)) {
+    return { music: 'on', say: 'DJ Zeph in consolle! Si ballaaa!', action: 'dance' };
+  }
+
+  // cambio look
+  if (/(cambia|nuovo|cambiati).*(look|vestiti|vestito|colori|stile)|vestiti nuovi/.test(t)) {
+    return { outfit: true, say: pick(['Guarda che stile nuovo!', 'Nuovo look, nuova vita!']), action: 'spin' };
+  }
+
+  // ciclo giorno/notte automatico
+  if (/ciclo (automatico|del tempo)|tempo automatico|giorno e notte automatic/.test(t)) {
+    return { autoSky: true, say: 'Da adesso il tempo scorre da solo: guarda il sole muoversi!' };
+  }
+  if (/ferma il (ciclo|tempo)|tempo fermo/.test(t)) return { autoSky: false, say: 'Fermo il tempo!… Che potere!' };
+
+  // la palla per Rocky
+  if (/(lancia|tira).*(palla|pallina)|riporto/.test(t)) {
+    return { ball: true, dog: 'on', say: pick(['Vai Rocky, prendilaaa!', 'Guarda che lancio!']) };
+  }
 
   // nome dell'utente
   m = t.match(/(?:mi chiamo|il mio nome è)\s+([a-zA-Zàèéìòù]+)/);
@@ -899,17 +1006,38 @@ const RULES = [
   { re: /(come stai|come va|tutto bene)/, fn: () => ({ say: pick(['Benissimo! Le mie gambe 3D oggi sono al top! E tu?', 'Alla grande! Un po’ di poligoni scricchiolano ma va bene così.', 'Molto bene, grazie! E tu come stai?']) }) },
   { re: /(chi sei|come ti chiami|il tuo nome|cosa sei)/, fn: () => ({ say: 'Sono Zeph! Un personaggio 3D fatto di poligoni e simpatia. Vivo qui sul tuo schermo!', action: 'wave' }) },
   { re: /(quanti anni)/, fn: () => ({ say: 'Sono nato pochi secondi fa, quando mi hai acceso! Quindi… sono giovanissimo.' }) },
-  { re: /(cosa sai fare|aiuto|help|comandi|istruzioni)/, fn: () => ({ say: 'Ballo, salto, faccio acrobazie e corro! Apro le VERE app del PC («apri whatsapp», «apri impostazioni wifi», «apri fotocamera»), alzo e abbasso il volume, ti dico la batteria, cerco su Google, preparo messaggi e mail, faccio da sveglia, comando il cielo e il meteo, chiamo Rocky e scatto foto!' }) },
+  { re: /(cosa sai fare|aiuto|help|comandi|istruzioni)/, fn: () => ({ say: 'Apro le vere app del PC, alzo il volume, ti dico la batteria, comando cielo e meteo, chiamo Rocky e gli lancio la palla («lancia la palla»), metto la musica e ballo a tempo («metti la musica»), gioco a sasso carta forbice, faccio indovinelli e calcoli («quanto fa 25 per 4»), cambio look («cambia look»)… e molto altro!' }) },
   { re: /(grazie|gentile)/, fn: () => ({ say: pick(['Prego! È un piacere!', 'Figurati! Per te, sempre!']) }) },
   { re: /(ti voglio bene|ti amo|sei bello|sei forte|bravo)/, fn: () => ({ say: 'Ooh, grazie! Anche tu sei il mio umano preferito!', action: 'wave' }) },
   { re: /(buonanotte|vado a dormire|a domani)/, fn: () => ({ say: 'Buonanotte! Io resto di guardia allo schermo. A presto!', action: 'wave' }) },
   { re: /(ciao|salve|ehi|hey|hola|buongiorno|buonasera)\b/, fn: () => ({ say: pick(['Ciao! Che bello vederti!', 'Ehilà! Come va?', 'Ciao ciao! Sono contento che tu sia qui!']), action: 'wave' }) },
 ];
 
-function botReply(text) {
+function botReply(text, ctx) {
+  ctx = ctx || {};
   const t = (text || '').toLowerCase().trim();
   if (!t) return null;
-  const intent = actionIntent(t);
+
+  // risposte attese dai giochi in corso
+  if (ctx.pending === 'rps') {
+    const mine = pick(['sasso', 'carta', 'forbice']);
+    const tua = /sasso/.test(t) ? 'sasso' : /carta/.test(t) ? 'carta' : /forbic/.test(t) ? 'forbice' : null;
+    if (!tua) { return { say: 'Devi scrivere sasso, carta o forbice! Riprova!' }; }
+    ctx.pending = null;
+    if (tua === mine) return { say: 'Io ho scelto ' + mine + '… pari! Rivincita?' };
+    const vinceZeph = (mine === 'sasso' && tua === 'forbice') || (mine === 'carta' && tua === 'sasso') || (mine === 'forbice' && tua === 'carta');
+    return vinceZeph
+      ? { say: 'Io ho scelto ' + mine + '… ho vinto iooo!', action: 'dance' }
+      : { say: 'Io ho scelto ' + mine + '… hai vinto tu! Complimenti!', action: 'jump' };
+  }
+  if (ctx.pending === 'quiz') {
+    const ind = INDOVINELLI[ctx.quizIdx || 0];
+    ctx.pending = null;
+    if (ind.a.test(t)) return { say: 'Bravissimo! Era proprio ' + ind.sol + '!', action: 'dance' };
+    return { say: 'Nooo, era ' + ind.sol + '! Vuoi riprovare? Scrivi «indovinello»!' };
+  }
+
+  const intent = actionIntent(t, ctx);
   if (intent) return intent;
   for (const r of RULES) { if (r.re.test(t)) return r.fn(); }
   return { say: pick(DEFAULT_REPLIES) };
@@ -961,7 +1089,7 @@ function createSparkles(THREE, scene) {
 
 global.ZephCore = {
   build, Animator, botReply, pick, createAvatarDriver, createSparkles,
-  buildDog, updateDog, bark,
+  buildDog, updateDog, bark, music,
   FRASI_PASSEGGIO, FRASI_DESKTOP, BARZELLETTE,
   HIP_Y, HEIGHT: 1.75,
 };

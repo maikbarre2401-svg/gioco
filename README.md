@@ -37,6 +37,13 @@ Scrivigli (in chat, browser o desktop):
 - **«fai notte»** 🌙 / «tramonto» / «alba» / «fai giorno» — il sole si muove davvero: stelle, luna e lucciole di notte (solo browser)
 - **«fai piovere»** 🌧 / «fai nevicare» ❄ / «torna il sole» — meteo con gocce e fiocchi veri (solo browser)
 - **«foto»** 📸 — si mette in posa e ti scarica una foto ricordo del mondo (solo browser)
+- **«metti la musica»** 🎵 — DJ Zeph: musica generata al volo, balla a tempo con luci da discoteca («basta musica» per spegnere)
+- **«lancia la palla»** ⚽ — Rocky corre a prenderla e te la riporta (solo browser)
+- **«sasso carta forbice»** ✂️ e **«indovinello»** 🧩 — gioca davvero con te, con vittorie ballate
+- **«quanto fa 125 per 8?»** 🧮 — calcoli a voce
+- **«cambia look»** 👕 — vestiti e capelli nuovi (se lo ricorda per la prossima volta)
+- **«ciclo automatico»** ⏰ — il sole gira da solo: giorno, tramonto, notte e alba in loop (solo browser)
+- **Sul desktop: afferralo col mouse!** Trascinalo in aria («Ehiii! Mettimi giù!») e lascialo cadere 😄
 
 ## 🖥️ Versione desktop — sullo schermo
 

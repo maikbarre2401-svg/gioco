@@ -5,6 +5,7 @@
 'use strict';
 
 const bridge = window.zephBridge || null; // assente se aperto in un browser normale
+const botCtx = {}; // stato dei giochi (quiz, sasso carta forbice)
 
 // ---------- Scena trasparente ----------
 const W = () => window.innerWidth, H = () => window.innerHeight;
@@ -35,6 +36,43 @@ scene.add(key);
 const rim = new THREE.DirectionalLight(0xbcd7ff, 0.5);
 rim.position.set(-4, 5, -6);
 scene.add(rim);
+// luci da discoteca (si accendono con la musica)
+const disco1 = new THREE.PointLight(0xff4fd8, 0, 8);
+const disco2 = new THREE.PointLight(0x4fd8ff, 0, 8);
+scene.add(disco1, disco2);
+let musicOn = false;
+function startMusic() { if (musicOn) return; musicOn = true; ZephCore.music.start(); anim.state.danceFreq = 6.6; }
+function stopMusic() { musicOn = false; ZephCore.music.stop(); anim.state.danceFreq = 6.0; }
+
+// guardaroba
+const OUTFITS = [
+  { jacket: 0x3c5a64, jeans: 0x46618c, shoe: 0xe9eaec, hair: 0x3a2d21 },
+  { jacket: 0x8a3d4e, jeans: 0x2e3a52, shoe: 0xf2f2f2, hair: 0x201a14 },
+  { jacket: 0xc7842e, jeans: 0x3f4f46, shoe: 0x2f3338, hair: 0x5a4632 },
+  { jacket: 0x4a7a4f, jeans: 0x54514e, shoe: 0xe8e4d8, hair: 0x77502e },
+  { jacket: 0x5a4f8a, jeans: 0x333a47, shoe: 0xd9d4e8, hair: 0x14100d },
+  { jacket: 0x2d6a8f, jeans: 0x6b4f3a, shoe: 0xf5efe0, hair: 0x8a7048 },
+];
+function applyOutfit(i) {
+  const o = OUTFITS[((i % OUTFITS.length) + OUTFITS.length) % OUTFITS.length];
+  zeph.mats.jacket.color.set(o.jacket);
+  zeph.mats.jacketDark.color.set(o.jacket).multiplyScalar(0.62);
+  zeph.mats.jeans.color.set(o.jeans);
+  zeph.mats.shoe.color.set(o.shoe);
+  zeph.mats.hair.color.set(o.hair);
+  try { localStorage.setItem('zephOutfit', String(i)); } catch (e) {}
+}
+function randomOutfit() {
+  let cur = 0;
+  try { cur = parseInt(localStorage.getItem('zephOutfit') || '0', 10) || 0; } catch (e) {}
+  let i = cur;
+  while (i === cur) i = (Math.random() * OUTFITS.length) | 0;
+  applyOutfit(i);
+}
+try {
+  const saved = parseInt(localStorage.getItem('zephOutfit') || '0', 10);
+  if (saved) applyOutfit(saved);
+} catch (e) {}
 
 // ---------- Zeph e ombra finta ----------
 const zeph = ZephCore.build(THREE);
@@ -95,11 +133,38 @@ const state = {
 const WALK_SPEED = 1.7;
 const RUN_SPEED = 3.4;
 state.running = false;
+// afferrato col mouse e lasciato cadere, come un'ochetta
+const grab = { pending: false, on: false, y: 0, vy: 0, falling: false, sx: 0, sy: 0, said: false };
 
 function margin() { return 0.8; }
 function maxX() { return worldHalfWidth() - margin(); }
 
 function updateMovement(dt) {
+  if (grab.on || grab.falling) {
+    if (grab.falling) {
+      grab.vy -= 22 * dt;
+      grab.y += grab.vy * dt;
+      if (grab.y <= 0) {
+        grab.y = 0; grab.falling = false;
+        sparkles.burst(state.x, 0.15, 0, 10);
+        if (Math.random() < 0.6) speak(ZephCore.pick(['Ahia! Però che volo!', 'Uff! Avvisami la prossima volta!', 'Wiii! Di nuovo!']));
+      }
+    }
+    state.speed = 0;
+    anim.state.speedRatio = 0;
+    actor.obj.position.x = state.x;
+    actor.obj.position.y = grab.y;
+    actor.obj.rotation.y = 0;
+    actor.obj.rotation.z = grab.on ? Math.sin(Date.now() * 0.004) * 0.14 : 0;
+    blob.position.x = state.x;
+    const sh2 = 1 / (1 + grab.y * 1.2);
+    blob.scale.set(sh2, sh2, 1);
+    blob.material.opacity = sh2 * 0.9;
+    return;
+  }
+  actor.obj.position.y = 0;
+  actor.obj.rotation.z = 0;
+
   if (state.follow && state.mouseX !== null) {
     const wx = (state.mouseX / W() * 2 - 1) * worldHalfWidth();
     state.targetX = Math.max(-maxX(), Math.min(maxX(), wx));
@@ -297,7 +362,7 @@ function batteryReport() {
 }
 
 function botRespond(text) {
-  const out = ZephCore.botReply(text);
+  const out = ZephCore.botReply(text, botCtx);
   if (!out) return;
   if (out.stop) { state.wander = false; state.follow = false; state.targetX = null; }
   if (out.wander) { state.wander = true; state.follow = false; }
@@ -323,10 +388,17 @@ function botRespond(text) {
   }
   if (out.run !== undefined) state.running = out.run;
   if (out.dog) setDogStrip(out.dog === 'on');
-  if (out.sky || out.weather) {
+  if (out.sky || out.weather || out.autoSky !== undefined) {
     out.say = 'Il cielo e il meteo li comando solo nel mio mondo nel browser! Qui sul desktop ci pensa Windows.';
   }
   if (out.photo) out.say = 'Le foto ricordo le scatto solo nel mio mondo nel browser!';
+  if (out.ball) out.say = 'La palla la lancio solo nel prato del browser! Qui Rocky mi segue e basta.';
+  if (out.music === 'on') startMusic();
+  if (out.music === 'off') stopMusic();
+  if (out.outfit) {
+    if (avatarDriver) out.say = 'Il look lo cambio solo quando sono Zeph, non con il tuo avatar!';
+    else randomOutfit();
+  }
   if (out.remind) {
     const r = out.remind;
     setTimeout(() => {
@@ -349,6 +421,8 @@ if (bridge) {
     else if (cmd === 'barzelletta') botRespond('barzelletta');
     else if (cmd === 'dog:on') { setDogStrip(true); speak('Rocky! Vieni qui bello!'); }
     else if (cmd === 'dog:off') { setDogStrip(false); speak('Rocky, a cuccia!'); }
+    else if (cmd === 'music:on') { startMusic(); speak('DJ Zeph in consolle! Si ballaaa!'); anim.startAction('dance'); }
+    else if (cmd === 'music:off') { stopMusic(); speak('Musica spenta!'); }
     else if (cmd === 'wander:on') { state.wander = true; }
     else if (cmd === 'wander:off') { state.wander = false; state.targetX = null; }
     else if (cmd === 'follow:on') { state.follow = true; speak('Ti seguo! Muovi il mouse!'); }
@@ -376,7 +450,20 @@ function cursorOverDock(mx, my) {
 
 window.addEventListener('mousemove', e => {
   state.mouseX = e.clientX;
-  const over = cursorOverZeph(e.clientX, e.clientY) || cursorOverDock(e.clientX, e.clientY);
+  // presa: se trascini dopo aver premuto su Zeph, lo sollevi
+  if (grab.pending && !grab.on && Math.abs(e.clientX - grab.sx) + Math.abs(e.clientY - grab.sy) > 12) {
+    grab.on = true; grab.falling = false;
+    state.targetX = null;
+    anim.state.action = null;
+    if (!grab.said) { grab.said = true; speak('Ehiii! Mettimi giù!'); }
+  }
+  if (grab.on) {
+    const wx = (e.clientX / W() * 2 - 1) * worldHalfWidth();
+    state.x = Math.max(-maxX(), Math.min(maxX(), wx));
+    grab.y = Math.max(0, (H() - e.clientY) / PX_PER_WORLD - 0.9);
+  }
+  const over = grab.on || grab.pending ||
+    cursorOverZeph(e.clientX, e.clientY) || cursorOverDock(e.clientX, e.clientY);
   if (over !== interactive) {
     interactive = over;
     document.body.style.cursor = over ? 'pointer' : 'default';
@@ -440,9 +527,22 @@ window.addEventListener('mousedown', e => {
   if (e.button !== 0) return;
   if (cursorOverDock(e.clientX, e.clientY)) return;
   if (!cursorOverZeph(e.clientX, e.clientY)) return;
-  const r = ZephCore.pick(CLICK_REPLIES);
-  if (r.action) anim.startAction(r.action);
-  speak(r.say);
+  grab.pending = true; grab.sx = e.clientX; grab.sy = e.clientY;
+});
+window.addEventListener('mouseup', e => {
+  if (e.button !== 0) return;
+  if (grab.on) {
+    // lasciato a mezz'aria: cade
+    grab.on = false; grab.pending = false;
+    grab.falling = true; grab.vy = 0; grab.said = false;
+    return;
+  }
+  if (grab.pending) {
+    grab.pending = false;
+    const r = ZephCore.pick(CLICK_REPLIES);
+    if (r.action) anim.startAction(r.action);
+    speak(r.say);
+  }
 });
 // clic destro su Zeph → apre la chat
 window.addEventListener('contextmenu', e => {
@@ -493,7 +593,19 @@ function tick() {
   // ogni tanto, da fermo, si stiracchia
   if (t > nextStretchAt) {
     nextStretchAt = t + 30 + Math.random() * 30;
-    if (!act && !anim.state.talking && state.speed < 0.1 && !state.follow) anim.startAction('stretch');
+    if (!act && !anim.state.talking && state.speed < 0.1 && !state.follow && !musicOn) anim.startAction('stretch');
+  }
+
+  // luci disco e ballo continuo finché c'è musica
+  if (musicOn) {
+    if (!anim.state.action && !anim.state.talking && state.speed < 0.1 && !grab.on && !grab.falling) anim.startAction('dance');
+    const beat = 1.1 + Math.sin(t * 13.2) * 0.55;
+    disco1.intensity = beat; disco2.intensity = 1.65 - beat * 0.5;
+    const da = t * 1.7;
+    disco1.position.set(state.x + Math.sin(da) * 1.8, 2.2, 2 + Math.cos(da) * 1.4);
+    disco2.position.set(state.x - Math.sin(da) * 1.8, 2.2, 2 - Math.cos(da) * 1.4);
+  } else {
+    disco1.intensity = 0; disco2.intensity = 0;
   }
 
   renderer.render(scene, camera);

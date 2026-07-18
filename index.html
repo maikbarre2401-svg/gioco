@@ -85,7 +85,7 @@
     ✋ Trascina → ruota la visuale · rotella → zoom<br>
     💬 Scrivigli in basso (o premi 🎤 e parlagli): risponde a voce!<br>
     🧑 Trascina qui un file .glb per usare il TUO avatar<br>
-    🚀 Prova: «fai notte» · «fai piovere» · «corri» · «apri youtube» · «mi chiamo …»
+    🚀 Prova: «metti la musica» · «lancia la palla» · «indovinello» · «sasso carta forbice» · «cambia look» · «fai notte»
   </div>
 </div>
 
@@ -100,6 +100,8 @@
     <div class="chip" data-cmd="salto mortale">🤸 Acrobazia</div>
     <div class="chip" id="dogchip">🐶 Rocky</div>
     <div class="chip" data-cmd="foto">📸 Foto</div>
+    <div class="chip" data-cmd="metti la musica">🎵 Musica</div>
+    <div class="chip" data-cmd="lancia la palla">⚽ Palla</div>
     <div class="chip" id="wanderchip">🚶 Passeggia da solo</div>
     <div class="chip" id="avatarchip">🧑 Il tuo avatar</div>
   </div>
@@ -280,6 +282,10 @@ const tmpC = new THREE.Color(), tmpC2 = new THREE.Color();
 function blendPal(tr) { return tmpC.copy(tr.night).lerp(tr.dusk, env.duskF).lerp(tr.day, env.dayF); }
 
 function applyEnvironment(t, dt) {
+  if (env.auto) {
+    env.dayCur = (env.dayCur + dt * 0.0045) % 1;
+    env.dayTarget = env.dayCur;
+  }
   env.dayCur += (env.dayTarget - env.dayCur) * Math.min(1, dt * 0.5);
   const a = env.dayCur * Math.PI * 2;
   const e = Math.sin(a);
@@ -565,6 +571,96 @@ let avatarDriver = null;
 const sparkles = ZephCore.createSparkles(THREE, scene);
 let prevActionName = null;
 let nextStretchAt = 30;
+const botCtx = {}; // stato dei giochi (quiz, sasso carta forbice)
+
+// luci da discoteca (si accendono con la musica)
+const disco1 = new THREE.PointLight(0xff4fd8, 0, 10);
+const disco2 = new THREE.PointLight(0x4fd8ff, 0, 10);
+scene.add(disco1, disco2);
+let musicOn = false;
+function startMusic() {
+  if (musicOn) return;
+  musicOn = true;
+  ZephCore.music.start();
+  anim.state.danceFreq = 6.6; // a tempo con i 126 BPM
+}
+function stopMusic() {
+  musicOn = false;
+  ZephCore.music.stop();
+  anim.state.danceFreq = 6.0;
+}
+
+// guardaroba di Zeph
+const OUTFITS = [
+  { jacket: 0x3c5a64, jeans: 0x46618c, shoe: 0xe9eaec, hair: 0x3a2d21 },
+  { jacket: 0x8a3d4e, jeans: 0x2e3a52, shoe: 0xf2f2f2, hair: 0x201a14 },
+  { jacket: 0xc7842e, jeans: 0x3f4f46, shoe: 0x2f3338, hair: 0x5a4632 },
+  { jacket: 0x4a7a4f, jeans: 0x54514e, shoe: 0xe8e4d8, hair: 0x77502e },
+  { jacket: 0x5a4f8a, jeans: 0x333a47, shoe: 0xd9d4e8, hair: 0x14100d },
+  { jacket: 0x2d6a8f, jeans: 0x6b4f3a, shoe: 0xf5efe0, hair: 0x8a7048 },
+];
+function applyOutfit(i) {
+  const o = OUTFITS[((i % OUTFITS.length) + OUTFITS.length) % OUTFITS.length];
+  zeph.mats.jacket.color.set(o.jacket);
+  zeph.mats.jacketDark.color.set(o.jacket).multiplyScalar(0.62);
+  zeph.mats.jeans.color.set(o.jeans);
+  zeph.mats.shoe.color.set(o.shoe);
+  zeph.mats.hair.color.set(o.hair);
+  localStorage.setItem('zephOutfit', String(o === OUTFITS[0] ? '' : i));
+}
+function randomOutfit() {
+  const cur = parseInt(localStorage.getItem('zephOutfit') || '0', 10) || 0;
+  let i = cur;
+  while (i === cur) i = (Math.random() * OUTFITS.length) | 0;
+  applyOutfit(i);
+}
+{
+  const saved = parseInt(localStorage.getItem('zephOutfit') || '0', 10);
+  if (saved) applyOutfit(saved);
+}
+
+// la palla di Rocky
+const ball = { mesh: null, mode: 'none', pos: new THREE.Vector3(), vel: new THREE.Vector3() };
+function throwBall() {
+  if (!ball.mesh) {
+    ball.mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(0.07, 12, 10),
+      new THREE.MeshStandardMaterial({ color: 0xe64545, roughness: 0.5 })
+    );
+    ball.mesh.castShadow = true;
+    scene.add(ball.mesh);
+  }
+  ball.mesh.visible = true;
+  ball.mode = 'flying';
+  const dirA = state.heading + (Math.random() - 0.5) * 0.7;
+  ball.pos.set(
+    state.pos.x + Math.sin(state.heading) * 0.4,
+    state.pos.y + 1.4,
+    state.pos.z + Math.cos(state.heading) * 0.4
+  );
+  ball.vel.set(Math.sin(dirA) * 7.5, 4.5, Math.cos(dirA) * 7.5);
+  anim.startAction('wave');
+}
+function updateBall(dt) {
+  if (ball.mode === 'none') return;
+  if (ball.mode === 'flying') {
+    ball.vel.y -= 9.8 * dt;
+    ball.pos.addScaledVector(ball.vel, dt);
+    const gY = terrainH(ball.pos.x, ball.pos.z) + 0.07;
+    if (ball.pos.y < gY) {
+      ball.pos.y = gY;
+      ball.vel.y *= -0.45; ball.vel.x *= 0.72; ball.vel.z *= 0.72;
+      if (ball.vel.length() < 1.2) ball.mode = 'landed';
+    }
+  } else if (ball.mode === 'carried') {
+    ball.pos.set(
+      dog.pos.x + Math.sin(dog.heading) * 0.3,
+      dog.pos.y + 0.42,
+      dog.pos.z + Math.cos(dog.heading) * 0.3
+    );
+  }
+  ball.mesh.position.copy(ball.pos);
+}
 
 const actor = { obj: zeph.root }; // ciò che si muove nel mondo
 
@@ -763,8 +859,10 @@ dogChip.addEventListener('click', () => {
 });
 function updateDogHost(t, dt) {
   if (!dog.on || !dog.built) return;
-  const tx = state.pos.x - Math.sin(state.heading) * 1.1 + Math.cos(state.heading) * 0.7;
-  const tz = state.pos.z - Math.cos(state.heading) * 1.1 - Math.sin(state.heading) * 0.7;
+  let tx = state.pos.x - Math.sin(state.heading) * 1.1 + Math.cos(state.heading) * 0.7;
+  let tz = state.pos.z - Math.cos(state.heading) * 1.1 - Math.sin(state.heading) * 0.7;
+  // riporto: corri verso la palla, poi riportala a Zeph
+  if (ball.mode === 'landed') { tx = ball.pos.x; tz = ball.pos.z; }
   const dx = tx - dog.pos.x, dz = tz - dog.pos.z;
   const dist = Math.hypot(dx, dz);
   const targetSpeed = dist > 3.5 ? 4.8 : dist > 0.35 ? Math.min(3.1, dist * 2.4) : 0;
@@ -782,6 +880,14 @@ function updateDogHost(t, dt) {
     speedRatio: dog.speed / 3.1, phase: dog.phase,
     excited: anim.state.talking || !!anim.state.action,
   });
+  if (ball.mode === 'landed' && Math.hypot(ball.pos.x - dog.pos.x, ball.pos.z - dog.pos.z) < 0.4) {
+    ball.mode = 'carried';
+    if (!state.muted) ZephCore.bark();
+  } else if (ball.mode === 'carried' && Math.hypot(state.pos.x - dog.pos.x, state.pos.z - dog.pos.z) < 1.3) {
+    ball.mode = 'none';
+    ball.mesh.visible = false;
+    speak('Bravo Rocky! Che riporto! Vuoi che la rilanci?');
+  }
   if (t > dog.nextBarkAt) {
     dog.nextBarkAt = t + 9 + Math.random() * 16;
     if (state.interacted && !state.muted) ZephCore.bark();
@@ -959,7 +1065,7 @@ function updateBubblePosition() {
 
 // ---------- Risposte ----------
 function botRespond(text) {
-  const out = ZephCore.botReply(text);
+  const out = ZephCore.botReply(text, botCtx);
   if (!out) return;
 
   if (out.stop) { state.wander = false; state.target = null; syncWanderChip(); }
@@ -986,6 +1092,14 @@ function botRespond(text) {
   if (out.weather) setWeather(out.weather);
   if (out.dog) setDog(out.dog === 'on');
   if (out.photo) takePhoto();
+  if (out.music === 'on') startMusic();
+  if (out.music === 'off') stopMusic();
+  if (out.outfit) {
+    if (avatarDriver) out.say = 'Il look lo cambio solo quando sono Zeph! Premi «Torna a Zeph» e riprova.';
+    else randomOutfit();
+  }
+  if (out.autoSky !== undefined) env.auto = out.autoSky;
+  if (out.ball) throwBall();
   if (out.open) {
     // sincrono: così il gesto dell'utente autorizza l'apertura (niente blocco popup)
     window.open(out.open, '_blank');
@@ -1146,7 +1260,20 @@ function tick() {
   // ogni tanto, da fermo, si stiracchia
   if (t > nextStretchAt) {
     nextStretchAt = t + 26 + Math.random() * 22;
-    if (!act && !anim.state.talking && state.speed < 0.1) anim.startAction('stretch');
+    if (!act && !anim.state.talking && state.speed < 0.1 && !musicOn) anim.startAction('stretch');
+  }
+
+  // palla, luci disco e ballo continuo finché c'è musica
+  updateBall(dt);
+  if (musicOn) {
+    if (!anim.state.action && !anim.state.talking && state.speed < 0.1) anim.startAction('dance');
+    const beat = 1.1 + Math.sin(t * 13.2) * 0.55;
+    disco1.intensity = beat; disco2.intensity = 1.65 - beat * 0.5;
+    const da = t * 1.7;
+    disco1.position.set(state.pos.x + Math.sin(da) * 2.4, state.pos.y + 2.3, state.pos.z + Math.cos(da) * 2.4);
+    disco2.position.set(state.pos.x - Math.sin(da) * 2.4, state.pos.y + 2.3, state.pos.z - Math.cos(da) * 2.4);
+  } else {
+    disco1.intensity = 0; disco2.intensity = 0;
   }
 
   for (const cl of clouds) {
