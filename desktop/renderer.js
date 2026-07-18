@@ -402,6 +402,21 @@ function botRespond(text) {
   if (out.music === 'off') stopMusic();
   if (out.fly !== undefined) state.flying = out.fly;
   if (out.camMode) out.say = 'La camera si muove solo nel mio mondo nel browser!';
+  if (out.quality) out.say = 'La grafica Ultra HD è nel mio mondo nel browser! Qui resto leggero apposta.';
+  if (out.setPref) {
+    try {
+      const prefs = JSON.parse(localStorage.getItem('zephPrefs') || '{}');
+      prefs[out.setPref.k] = out.setPref.v;
+      localStorage.setItem('zephPrefs', JSON.stringify(prefs));
+    } catch (e) {}
+  }
+  if (out.getPref) {
+    let prefs = {};
+    try { prefs = JSON.parse(localStorage.getItem('zephPrefs') || '{}'); } catch (e) {}
+    out.say = prefs[out.getPref]
+      ? 'Il tuo ' + out.getPref + ' preferito è ' + prefs[out.getPref] + '! Me lo ricordo eccome!'
+      : 'Non me l\u2019hai ancora detto! Scrivimi \u00abil mio ' + out.getPref + ' preferito è \u2026\u00bb';
+  }
   if (out.stars) out.say = 'Le stelle da raccogliere sono nel mio mondo nel browser! Qui mi accontento della taskbar.';
   if (out.outfit) {
     if (avatarDriver) out.say = 'Il look lo cambio solo quando sono Zeph, non con il tuo avatar!';

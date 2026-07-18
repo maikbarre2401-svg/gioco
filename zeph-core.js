@@ -786,6 +786,25 @@ const BARZELLETTE = [
   'Perché il libro di matematica è triste? Perché ha troppi problemi!',
   'Qual è il colmo per un elettricista? Non essere al corrente di niente!',
 ];
+const CURIOSITA = [
+  'Sapevi che il cuore di una balenottera azzurra è grande come un\u2019automobile?',
+  'I polpi hanno tre cuori e il sangue blu!',
+  'Un fulmine è cinque volte più caldo della superficie del Sole.',
+  'Le api riconoscono i volti delle persone.',
+  'Su Venere un giorno dura più di un anno!',
+  'Il miele non scade mai: ne hanno trovato di commestibile nelle tombe egizie.',
+  'Le giraffe dormono solo due ore al giorno.',
+  'Un cucchiaino di stella di neutroni peserebbe quanto una montagna.',
+  'I gatti fanno le fusa a una frequenza che aiuta a guarire le ossa.',
+  'Gli struzzi corrono più veloci dei cavalli.',
+  'Il tuo corpo produce 25 milioni di cellule nuove ogni secondo.',
+  'I pinguini si dichiarano amore regalandosi un sassolino.',
+  'La Torre Eiffel d\u2019estate è più alta di 15 centimetri: il ferro si dilata col caldo!',
+  'Le farfalle sentono i sapori… con le zampe.',
+  'In Italia ci sono più di 1500 tipi di pasta diversi.',
+  'Il Sole contiene il 99,8 per cento di tutta la massa del sistema solare.',
+];
+
 const DEFAULT_REPLIES = [
   'Interessante! Dimmi di più…',
   'Ah sì? Non ci avevo mai pensato!',
@@ -904,6 +923,14 @@ function actionIntent(t, ctx) {
   }
   if (/\b(atterra|scendi|torna a terra)\b/.test(t)) return { fly: false, say: 'Atterraggio morbido!' };
 
+  // qualità grafica
+  if (/ultra ?hd|grafica (alta|ultra|massima)/.test(t)) {
+    return { quality: 'ultra', say: 'Grafica ULTRA attivata! Guarda che luce, che bagliori!' };
+  }
+  if (/grafica (normale|bassa|leggera)/.test(t)) {
+    return { quality: 'normal', say: 'Grafica normale: leggera e velocissima!' };
+  }
+
   // modalità camera
   if (/(camera|visuale|telecamera) (cinema|cinematografica)|cinematic/.test(t)) {
     return { camMode: 'cinema', say: 'Azione! Camera cinematografica!' };
@@ -917,6 +944,15 @@ function actionIntent(t, ctx) {
   if (/(lancia|tira).*(palla|pallina)|riporto/.test(t)) {
     return { ball: true, dog: 'on', say: pick(['Vai Rocky, prendilaaa!', 'Guarda che lancio!']) };
   }
+
+  // gusti e preferenze
+  m = t.match(/il mio (colore|animale|cibo|numero|gioco|film|cartone|cantante|squadra) preferit[oa] è (?:il |la |lo |l')?(.+)/);
+  if (m) {
+    return { setPref: { k: m[1], v: m[2].trim() },
+      say: 'Segnato! Il tuo ' + m[1] + ' preferito è ' + m[2].trim() + '. Non me lo dimentico!' };
+  }
+  m = t.match(/qual è il mio (colore|animale|cibo|numero|gioco|film|cartone|cantante|squadra) preferit[oa]/);
+  if (m) return { getPref: m[1] };
 
   // nome dell'utente
   m = t.match(/(?:mi chiamo|il mio nome è)\s+([a-zA-Zàèéìòù]+)/);
@@ -1012,6 +1048,7 @@ function actionIntent(t, ctx) {
   m = t.match(/^(?:apri(?:mi)?|avvia|lancia|vai su)\s+(.+)/);
   if (m) {
     let q = m[1].replace(/^(il|lo|la|le|i|gli|un|una|l')\s+/, '').trim();
+    q = fixTypos(q) || q; // «watshap» → «whatsapp»
     // Impostazioni di Windows (vera app, anche per sezione)
     if (/impostazioni|settings/.test(q)) {
       for (const st of IMPOSTAZIONI) {
@@ -1042,6 +1079,17 @@ function actionIntent(t, ctx) {
 
 const RULES = [
   { re: /(barzellett|scherz|fammi ridere|divertent|joke)/, fn: () => ({ say: pick(BARZELLETTE) }) },
+  { re: /(curiosit|sapevi che|dimmi qualcosa|fatto interessante|insegnami)/, fn: () => ({ say: pick(CURIOSITA) }) },
+  { re: /(mi annoio|annoiato|che facciamo|non so che fare)/, fn: () => ({ say: pick([
+    'Noia bandita! Prova «metti la musica» e balliamo!',
+    'Ti lancio una sfida: «sasso carta forbice»!',
+    'Andiamo a trovare Nina al villaggio! Oppure dimmi «vola»!',
+    'Facciamo la caccia alle stelle? Ne mancano parecchie!',
+    'Chiedimi una curiosità, ne so a bizzeffe!']) }) },
+  { re: /(sei vivo|sei vero|sei un robot|esisti davvero)/, fn: () => ({ say: pick([
+    'Sono fatto di poligoni e fantasia… ma i sentimenti sembrano veri, no?',
+    'Diciamo che sono vivo quanto può esserlo un mucchietto di triangoli molto simpatici!']) }) },
+  { re: /(chi ti ha (creato|fatto|costruito)|come sei nato)/, fn: () => ({ say: 'Sono nato da codice, poligoni e un pizzico di magia, direttamente sul tuo computer!' }) },
   { re: /(salto mortale|capriola|acrobazia|flip|mortale)/, fn: () => ({ say: pick(['Guarda questa acrobaziaaa!', 'Rullo di tamburi… salto mortale!', 'Tieniti forte!']), action: 'flip' }) },
   { re: /(piroetta|giravolta|trottola|gira su te)/, fn: () => ({ say: pick(['Piroettaaa!', 'Guarda che stile!']), action: 'spin' }) },
   { re: /(stiracchiati|stretching|rilassati)/, fn: () => ({ say: 'Aaah… che bello stiracchiarsi!', action: 'stretch' }) },
@@ -1097,7 +1145,73 @@ function botReply(text, ctx) {
       return out;
     }
   }
-  return { say: pick(DEFAULT_REPLIES) };
+
+  // nessuna regola: prova a correggere i refusi («bala» → «balla»)
+  if (!ctx._retry) {
+    const fixed = fixTypos(t);
+    if (fixed && fixed !== t) {
+      ctx._retry = true;
+      const out = botReply(fixed, ctx) || {};
+      ctx._retry = false;
+      if (out.say) out.say = 'Ho capito «' + fixed + '»! ' + out.say;
+      return out;
+    }
+  }
+
+  // risposta generica, mai due volte la stessa di fila
+  let idx = (Math.random() * DEFAULT_REPLIES.length) | 0;
+  if (idx === ctx.lastDefault) idx = (idx + 1) % DEFAULT_REPLIES.length;
+  ctx.lastDefault = idx;
+  return { say: DEFAULT_REPLIES[idx] };
+}
+
+// ---------- Correzione dei refusi ----------
+const LEXICON = ['balla', 'salta', 'saluta', 'vola', 'atterra', 'corri', 'rallenta', 'musica',
+  'palla', 'indovinello', 'barzelletta', 'piroetta', 'foto', 'fotocamera', 'notte', 'giorno',
+  'tramonto', 'alba', 'piovere', 'nevicare', 'sereno', 'cane', 'rocky', 'whatsapp', 'youtube',
+  'google', 'gmail', 'telegram', 'spotify', 'netflix', 'instagram', 'tiktok', 'impostazioni',
+  'calcolatrice', 'volume', 'batteria', 'stelle', 'cinema', 'seguimi', 'fermati', 'ciao',
+  'curiosità', 'apri', 'cerca', 'ricordami', 'messaggio', 'sasso', 'carta', 'forbice', 'look'];
+
+function levenshtein(a, b) {
+  if (Math.abs(a.length - b.length) > 2) return 99;
+  const dp = [];
+  for (let i = 0; i <= a.length; i++) dp[i] = [i];
+  for (let j = 0; j <= b.length; j++) dp[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1, dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+  }
+  return dp[a.length][b.length];
+}
+
+// storpiature comuni che la distanza di battitura non aggancia
+const ALIASES = {
+  watshap: 'whatsapp', whatsap: 'whatsapp', watsapp: 'whatsapp', wazzap: 'whatsapp',
+  yutube: 'youtube', iutub: 'youtube', youtub: 'youtube', yutub: 'youtube',
+  gugol: 'google', instagram: 'instagram', istagram: 'instagram',
+  bater: 'batteria', bateria: 'batteria',
+};
+
+function fixTypos(t) {
+  const words = t.split(/\s+/);
+  let changed = false;
+  const out = words.map(w => {
+    if (w.length < 4) return w;
+    if (ALIASES[w]) { changed = true; return ALIASES[w]; }
+    let best = null, bestD = 99;
+    for (const cand of LEXICON) {
+      const d = levenshtein(w, cand);
+      if (d < bestD) { bestD = d; best = cand; }
+    }
+    const maxD = w.length > 6 ? 2 : 1;
+    if (best && bestD > 0 && bestD <= maxD) { changed = true; return best; }
+    return w;
+  });
+  return changed ? out.join(' ') : null;
 }
 
 // ---------- Scintille (particelle per salti e balli) ----------

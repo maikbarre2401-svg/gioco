@@ -125,6 +125,7 @@ if (typeof THREE === 'undefined') {
 }
 </script>
 <script src="./gltf-loader.js"></script>
+<script src="./postfx.js"></script>
 <script src="./zeph-core.js"></script>
 <script>
 /* ============================================================
@@ -150,6 +151,30 @@ container.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0xcfe6f5, 33, 135);
+
+// ---------- Qualità grafica (Ultra HD con bloom e luce ambientale) ----------
+let ultra = localStorage.getItem('zephUltra') !== 'off';
+let composer = null, bloomPass = null;
+function setupComposer() {
+  if (typeof THREE.EffectComposer !== 'function' || typeof THREE.UnrealBloomPass !== 'function') return;
+  composer = new THREE.EffectComposer(renderer);
+  composer.addPass(new THREE.RenderPass(scene, camera));
+  bloomPass = new THREE.UnrealBloomPass(
+    new THREE.Vector2(window.innerWidth, window.innerHeight), 0.22, 0.4, 0.95);
+  composer.addPass(bloomPass);
+  composer.setSize(window.innerWidth, window.innerHeight);
+}
+function applyQuality() {
+  renderer.setPixelRatio(ultra ? window.devicePixelRatio : Math.min(window.devicePixelRatio, 2));
+  const res = ultra ? 4096 : 2048;
+  if (sun.shadow.mapSize.x !== res) {
+    sun.shadow.mapSize.set(res, res);
+    if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
+  }
+  localStorage.setItem('zephUltra', ultra ? 'on' : 'off');
+}
+// se il PC arranca, Zeph abbassa la grafica da solo
+let fpsAccum = 0, fpsCount = 0, fpsCheckAt = 12;
 
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 300);
 
@@ -197,6 +222,22 @@ const sky = new THREE.Mesh(
 );
 sky.renderOrder = -10;
 scene.add(sky);
+
+// luce ambientale realistica catturata dal cielo (image-based lighting)
+const pmrem = new THREE.PMREMGenerator(renderer);
+let envRT = null, lastEnvPhase = -9, nextEnvCheckAt = 0;
+function updateEnvMap(t) {
+  if (t !== undefined && t < nextEnvCheckAt) return;
+  nextEnvCheckAt = (t || 0) + 2;
+  if (Math.abs(env.dayCur - lastEnvPhase) < 0.1 && envRT) return;
+  lastEnvPhase = env.dayCur;
+  const envScene = new THREE.Scene();
+  envScene.add(sky.clone());
+  const rt = pmrem.fromScene(envScene, 0.05);
+  if (envRT) envRT.dispose();
+  envRT = rt;
+  scene.environment = rt.texture;
+}
 
 // ---------- Giorno/notte e meteo ----------
 const env = {
@@ -831,6 +872,9 @@ function setAvatar(gltfScene, opts) {
   scene.add(driver.root);
   anim.avatar = driver;
   actor.obj = driver.root;
+  driver.root.traverse(o => {
+    if (o.material && o.material.isMeshStandardMaterial) o.material.envMapIntensity = 0.5;
+  });
   avatarChip.textContent = '↩︎ Torna a Zeph';
   if (!opts.quiet) {
     speak(driver.hasRig
@@ -1128,6 +1172,7 @@ window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  if (composer) composer.setSize(window.innerWidth, window.innerHeight);
 });
 
 // ---------- Voce e fumetto ----------
@@ -1246,6 +1291,21 @@ function botRespond(text) {
   if (out.ball) throwBall();
   if (out.fly !== undefined) state.flying = out.fly;
   if (out.camMode) cam.mode = out.camMode;
+  if (out.quality) {
+    ultra = out.quality === 'ultra';
+    applyQuality();
+  }
+  if (out.setPref) {
+    const prefs = JSON.parse(localStorage.getItem('zephPrefs') || '{}');
+    prefs[out.setPref.k] = out.setPref.v;
+    localStorage.setItem('zephPrefs', JSON.stringify(prefs));
+  }
+  if (out.getPref) {
+    const prefs = JSON.parse(localStorage.getItem('zephPrefs') || '{}');
+    out.say = prefs[out.getPref]
+      ? 'Il tuo ' + out.getPref + ' preferito è ' + prefs[out.getPref] + '! Me lo ricordo eccome!'
+      : 'Non me l’hai ancora detto! Scrivimi «il mio ' + out.getPref + ' preferito è …»';
+  }
   if (out.stars) out.say = starsFound >= 12 ? 'Le hai già trovate tutte!'
     : 'Ne hai raccolte ' + starsFound + ' su 12! Le vedi brillare in giro per il mondo: raggiungile!';
   if (out.open) {
@@ -1374,6 +1434,14 @@ function updateStatus() {
   if (s !== lastStatus) { lastStatus = s; statusText.textContent = s; }
 }
 
+// riflessi ambientali morbidi su tutto (a scena costruita)
+scene.traverse(o => {
+  if (o.material && o.material.isMeshStandardMaterial) o.material.envMapIntensity = 0.5;
+});
+setupComposer();
+applyQuality();
+updateEnvMap();
+
 // ---------- Loop principale ----------
 const clock = new THREE.Clock();
 function tick() {
@@ -1448,7 +1516,21 @@ function tick() {
     b.rotation.y = Math.atan2(Math.cos(tt) * u.rx, -Math.sin(tt * 0.8) * u.rz * 0.8);
   }
 
-  renderer.render(scene, camera);
+  updateEnvMap(t);
+  if (ultra && composer) composer.render();
+  else renderer.render(scene, camera);
+
+  // controllo FPS: in ultra, se va lento, passa da solo alla grafica normale
+  fpsAccum += dt; fpsCount++;
+  if (t > fpsCheckAt) {
+    const avg = fpsAccum / Math.max(1, fpsCount);
+    fpsAccum = 0; fpsCount = 0; fpsCheckAt = t + 8;
+    if (ultra && avg > 0.042) {
+      ultra = false;
+      applyQuality();
+      speak('Il tuo computer faticava un po’… sono passato alla grafica normale, così torno scattante!');
+    }
+  }
 }
 tick();
 
@@ -1465,7 +1547,7 @@ setTimeout(() => {
 }, 700);
 
 // piccolo gancio per debug/test
-window.zeph = { state, anim, startAction: n => anim.startAction(n), speak, botRespond, cam, loadAvatarUrl, backToZeph };
+window.zeph = { state, anim, startAction: n => anim.startAction(n), speak, botRespond, cam, loadAvatarUrl, backToZeph, env };
 })();
 </script>
 </body>

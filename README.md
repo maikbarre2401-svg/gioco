@@ -49,6 +49,10 @@ Scrivigli (in chat, browser o desktop):
 - **⭐ 12 stelle nascoste** nel mondo: raggiungile per raccoglierle (anche in volo!), con suono e contatore; raccolte tutte, festa e nuova caccia
 - **«camera cinema»** 🎥 — inquadratura cinematografica che orbita da sola; «camera normale» per tornare
 - Ti saluta con **«Buongiorno/Buonasera»** in base all'ora, e se sa il tuo nome lo usa
+- **🧠 Capisce anche i refusi**: «bala» → balla, «watshap» → WhatsApp, «yutube» → YouTube — corregge da solo e te lo dice
+- **«dimmi una curiosità»** — ne sa sedici, da imparare qualcosa ogni volta
+- **«il mio colore preferito è il blu»** — impara i tuoi gusti (colore, animale, cibo, numero…) e li ricorda: «qual è il mio colore preferito?»
+- **«ultra hd»** / «grafica normale» 🖥 — grafica ULTRA con bagliori luminosi (bloom), luce ambientale catturata dal cielo e ombre ad alta risoluzione; se il PC arranca, Zeph abbassa la grafica da solo e ti avvisa
 
 ## 🖥️ Versione desktop — sullo schermo
 
