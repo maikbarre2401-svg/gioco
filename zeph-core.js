@@ -695,6 +695,101 @@ function chime() {
   } catch (e) { /* niente audio */ }
 }
 
+// botto dei fuochi d'artificio
+function boom() {
+  try {
+    barkCtx = barkCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (barkCtx.state === 'suspended') barkCtx.resume();
+    const c = barkCtx, t0 = c.currentTime + 0.02;
+    const len = Math.floor(c.sampleRate * 0.45);
+    const buf = c.createBuffer(1, len, c.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.2);
+    const src = c.createBufferSource(); src.buffer = buf;
+    const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 700;
+    const g = c.createGain(); g.gain.setValueAtTime(0.3, t0);
+    src.connect(lp); lp.connect(g); g.connect(c.destination);
+    src.start(t0);
+    const o = c.createOscillator(), g2 = c.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(130, t0);
+    o.frequency.exponentialRampToValueAtTime(42, t0 + 0.4);
+    g2.gain.setValueAtTime(0.22, t0);
+    g2.gain.exponentialRampToValueAtTime(0.001, t0 + 0.42);
+    o.connect(g2); g2.connect(c.destination);
+    o.start(t0); o.stop(t0 + 0.44);
+  } catch (e) { /* niente audio */ }
+}
+
+// suoni d'ambiente: uccellini di giorno, grilli di notte, vento leggero
+const ambience = (function () {
+  let running = false, mode = null, timers = [], windSrc = null, windGain = null;
+  function ac() {
+    barkCtx = barkCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (barkCtx.state === 'suspended') barkCtx.resume();
+    return barkCtx;
+  }
+  function tone(f0, f1, dur, vol, t0, type) {
+    const c = ac();
+    const o = c.createOscillator(), g = c.createGain();
+    o.type = type || 'sine';
+    o.frequency.setValueAtTime(f0, t0);
+    if (f1) o.frequency.exponentialRampToValueAtTime(f1, t0 + dur);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(vol, t0 + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g); g.connect(c.destination);
+    o.start(t0); o.stop(t0 + dur + 0.03);
+  }
+  function birdLoop() {
+    if (!running || mode !== 'day') return;
+    try {
+      const c = ac(), t0 = c.currentTime + 0.05;
+      const f = 2100 + Math.random() * 1900;
+      const n = 2 + (Math.random() * 3 | 0);
+      for (let i = 0; i < n; i++) tone(f * (0.94 + Math.random() * 0.12), f * 1.3, 0.11, 0.028, t0 + i * 0.16);
+    } catch (e) {}
+    timers.push(setTimeout(birdLoop, 2500 + Math.random() * 6000));
+  }
+  function cricketLoop() {
+    if (!running || mode !== 'night') return;
+    try {
+      const c = ac(), t0 = c.currentTime + 0.05;
+      for (let i = 0; i < 3; i++) tone(4300, 0, 0.035, 0.016, t0 + i * 0.09, 'triangle');
+    } catch (e) {}
+    timers.push(setTimeout(cricketLoop, 900 + Math.random() * 900));
+  }
+  function startWind() {
+    try {
+      const c = ac();
+      const len = c.sampleRate * 2;
+      const buf = c.createBuffer(1, len, c.sampleRate);
+      const d = buf.getChannelData(0);
+      let v = 0;
+      for (let i = 0; i < len; i++) { v = v * 0.98 + (Math.random() * 2 - 1) * 0.02; d[i] = v * 3; }
+      windSrc = c.createBufferSource(); windSrc.buffer = buf; windSrc.loop = true;
+      const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 380;
+      windGain = c.createGain(); windGain.gain.value = 0.012;
+      windSrc.connect(lp); lp.connect(windGain); windGain.connect(c.destination);
+      windSrc.start();
+    } catch (e) { windSrc = null; }
+  }
+  return {
+    setMode(m) {
+      if (running && mode === m) return;
+      this.stop();
+      mode = m; running = true;
+      if (!windSrc) startWind();
+      if (m === 'day') birdLoop(); else cricketLoop();
+    },
+    stop() {
+      running = false;
+      timers.forEach(clearTimeout); timers = [];
+      if (windSrc) { try { windSrc.stop(); } catch (e) {} windSrc = null; windGain = null; }
+    },
+  };
+})();
+
 // musica chiptune generata al volo (126 BPM, nessun file audio)
 const music = (function () {
   let ctx = null, timer = null, playing = false, step = 0, nextTime = 0;
@@ -940,6 +1035,14 @@ function actionIntent(t, ctx) {
   // stelle raccolte
   if (/quante stelle|le stelle/.test(t)) return { stars: true };
 
+  // fuochi d'artificio
+  if (/fuochi d.artificio|\bfuochi\b|spettacolo pirotecnico/.test(t)) {
+    return { fireworks: true, say: pick(['Spettacolo pirotecnicooo!', 'Fuochi! Guarda in alto!']) };
+  }
+
+  // missioni
+  if (/missioni|obiettivi|\bsfide\b/.test(t)) return { missions: true };
+
   // la palla per Rocky
   if (/(lancia|tira).*(palla|pallina)|riporto/.test(t)) {
     return { ball: true, dog: 'on', say: pick(['Vai Rocky, prendilaaa!', 'Guarda che lancio!']) };
@@ -1079,7 +1182,7 @@ function actionIntent(t, ctx) {
 
 const RULES = [
   { re: /(barzellett|scherz|fammi ridere|divertent|joke)/, fn: () => ({ say: pick(BARZELLETTE) }) },
-  { re: /(curiosit|sapevi che|dimmi qualcosa|fatto interessante|insegnami)/, fn: () => ({ say: pick(CURIOSITA) }) },
+  { re: /(curiosit|sapevi che|dimmi qualcosa|fatto interessante|insegnami)/, fn: () => ({ say: pick(CURIOSITA), curio: true }) },
   { re: /(mi annoio|annoiato|che facciamo|non so che fare)/, fn: () => ({ say: pick([
     'Noia bandita! Prova «metti la musica» e balliamo!',
     'Ti lancio una sfida: «sasso carta forbice»!',
@@ -1121,11 +1224,11 @@ function botReply(text, ctx) {
     const tua = /sasso/.test(t) ? 'sasso' : /carta/.test(t) ? 'carta' : /forbic/.test(t) ? 'forbice' : null;
     if (!tua) { return { say: 'Devi scrivere sasso, carta o forbice! Riprova!' }; }
     ctx.pending = null;
-    if (tua === mine) return { say: 'Io ho scelto ' + mine + '… pari! Rivincita?' };
+    if (tua === mine) return { say: 'Io ho scelto ' + mine + '… pari! Rivincita?', rps: 'draw' };
     const vinceZeph = (mine === 'sasso' && tua === 'forbice') || (mine === 'carta' && tua === 'sasso') || (mine === 'forbice' && tua === 'carta');
     return vinceZeph
-      ? { say: 'Io ho scelto ' + mine + '… ho vinto iooo!', action: 'dance' }
-      : { say: 'Io ho scelto ' + mine + '… hai vinto tu! Complimenti!', action: 'jump' };
+      ? { say: 'Io ho scelto ' + mine + '… ho vinto iooo!', action: 'dance', rps: 'lose' }
+      : { say: 'Io ho scelto ' + mine + '… hai vinto tu! Complimenti!', action: 'jump', rps: 'win' };
   }
   if (ctx.pending === 'quiz') {
     const ind = INDOVINELLI[ctx.quizIdx || 0];
@@ -1215,10 +1318,11 @@ function fixTypos(t) {
 }
 
 // ---------- Scintille (particelle per salti e balli) ----------
-function createSparkles(THREE, scene) {
+function createSparkles(THREE, scene, count) {
+  count = count || 32;
   const colors = [0xffd23e, 0x5eead4, 0xff8ab5, 0x9dd0ff];
   const pool = [];
-  for (let i = 0; i < 32; i++) {
+  for (let i = 0; i < count; i++) {
     const m = new THREE.Mesh(
       new THREE.PlaneGeometry(0.075, 0.075),
       new THREE.MeshBasicMaterial({ color: colors[i % colors.length], transparent: true, side: THREE.DoubleSide, depthWrite: false })
@@ -1260,7 +1364,7 @@ function createSparkles(THREE, scene) {
 
 global.ZephCore = {
   build, Animator, botReply, pick, createAvatarDriver, createSparkles,
-  buildDog, updateDog, bark, chime, music,
+  buildDog, updateDog, bark, chime, boom, ambience, music,
   FRASI_PASSEGGIO, FRASI_DESKTOP, BARZELLETTE,
   HIP_Y, HEIGHT: 1.75,
 };

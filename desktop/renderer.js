@@ -403,6 +403,8 @@ function botRespond(text) {
   if (out.fly !== undefined) state.flying = out.fly;
   if (out.camMode) out.say = 'La camera si muove solo nel mio mondo nel browser!';
   if (out.quality) out.say = 'La grafica Ultra HD è nel mio mondo nel browser! Qui resto leggero apposta.';
+  if (out.fireworks) out.say = 'I fuochi d\u2019artificio li sparo nel mio mondo nel browser! Qui rischierei di bruciare la taskbar.';
+  if (out.missions) out.say = 'Le missioni sono nel mio mondo nel browser! Apri index.html e gioca con me!';
   if (out.setPref) {
     try {
       const prefs = JSON.parse(localStorage.getItem('zephPrefs') || '{}');

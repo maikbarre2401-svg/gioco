@@ -60,6 +60,12 @@
     user-select:none; transition:background .15s; }
   #mutebtn:hover { background:rgba(13,22,38,.95); }
 
+  #missions { position:fixed; right:14px; top:64px; z-index:11; width:250px; padding:12px 14px;
+    display:none; font-size:12.5px; line-height:1.9; }
+  #missions.show { display:block; }
+  #missions h3 { font-size:13px; color:#ffd23e; margin-bottom:4px; letter-spacing:1px; }
+  #missions .fatta { opacity:.55; text-decoration:line-through; }
+
   #droptip { position:fixed; inset:0; z-index:30; display:none; align-items:center;
     justify-content:center; background:rgba(13,22,38,.72); color:#fff; font-size:22px;
     border:3px dashed #5eead4; pointer-events:none; }
@@ -79,7 +85,7 @@
   <h1>ZEPH <span>· 3D</span></h1>
   <div class="sub">Il tuo compagno virtuale che parla e cammina</div>
   <div id="status"><div class="dot"></div><span id="statustext">Sto arrivando…</span></div>
-  <div id="starbadge" style="margin-top:6px;font-size:12px;color:#ffd23e;">⭐ 0/12 stelle</div>
+  <div id="starbadge" style="margin-top:6px;font-size:12px;color:#ffd23e;">⭐ 0/12 stelle · 🏆 0/10 missioni</div>
   <div id="hints">
     🖱️ Clic sul terreno → cammina lì<br>
     ⌨️ WASD / frecce → guidalo tu<br>
@@ -91,6 +97,7 @@
 </div>
 
 <div class="panel" id="mutebtn" title="Attiva/disattiva la voce">🔊</div>
+<div class="panel" id="missions"><h3>🏆 MISSIONI</h3><div id="missionlist"></div></div>
 
 <div class="panel" id="chatbar">
   <div id="chips">
@@ -102,6 +109,7 @@
     <div class="chip" id="dogchip">🐶 Rocky</div>
     <div class="chip" data-cmd="foto">📸 Foto</div>
     <div class="chip" data-cmd="metti la musica">🎵 Musica</div>
+    <div class="chip" id="missionchip">🏆 Missioni</div>
     <div class="chip" data-cmd="lancia la palla">⚽ Palla</div>
     <div class="chip" id="wanderchip">🚶 Passeggia da solo</div>
     <div class="chip" id="avatarchip">🧑 Il tuo avatar</div>
@@ -362,6 +370,8 @@ function applyEnvironment(t, dt) {
 
   stars.material.opacity = nightF * (1 - wet * 0.85);
   stars.visible = stars.material.opacity > 0.02;
+  if (nightF > 0.5 && state.interacted) completeMission('notte');
+  updateAmbience(nightF);
   stars.position.set(cam.focus.x, 0, cam.focus.z);
   moon.visible = nightF > 0.05;
   if (moon.visible) {
@@ -633,6 +643,7 @@ function updateNina(t, dt) {
       if (!nina.met) {
         nina.met = true;
         if (!anim.state.talking) speak('Guarda, c’è la mia amica Nina! Salutala!');
+        completeMission('nina');
       }
     }
   } else if (!nina.target && t > nina.nextMoveAt) {
@@ -680,7 +691,7 @@ function spawnStars() {
     scene.add(st);
     stars2.push(st);
   }
-  starBadge.textContent = '⭐ 0/12 stelle';
+  try { renderMissions(); } catch (e) { /* primo avvio: il pannello arriva dopo */ }
 }
 spawnStars();
 function updateStars(t, dt) {
@@ -694,16 +705,129 @@ function updateStars(t, dt) {
       st.userData.taken = true;
       st.visible = false;
       starsFound++;
-      starBadge.textContent = '⭐ ' + starsFound + '/12 stelle';
+      renderMissions();
+      if (starsFound >= 3) completeMission('stelle3');
       if (state.interacted && !state.muted) ZephCore.chime();
       sparkles.burst(st.position.x, st.position.y, st.position.z, 8);
       if (starsFound === 12) {
+        completeMission('stelle12');
         speak('WOW! Le hai raccolte tutte! Sei un campione! Tra un po’ ne nascondo altre…');
         anim.startAction('dance');
         setTimeout(spawnStars, 30000);
       }
     }
   }
+}
+
+// ---------- Missioni ----------
+const MISSIONS = [
+  { id: 'nina', txt: 'Vai a salutare Nina al villaggio' },
+  { id: 'stelle3', txt: 'Raccogli 3 stelle' },
+  { id: 'stelle12', txt: 'Raccogli tutte e 12 le stelle' },
+  { id: 'flip', txt: 'Fai un salto mortale' },
+  { id: 'vola', txt: 'Vola con il jetpack' },
+  { id: 'palla', txt: 'Gioca al riporto con Rocky' },
+  { id: 'balla', txt: 'Balla con la musica accesa' },
+  { id: 'notte', txt: 'Guarda le stelle di notte' },
+  { id: 'gioco', txt: 'Vinci a sasso carta forbice' },
+  { id: 'curioso', txt: 'Chiedi una curiosità' },
+];
+let missionsDone = {};
+try { missionsDone = JSON.parse(localStorage.getItem('zephMissions') || '{}'); } catch (e) {}
+const missionList = document.getElementById('missionlist');
+const missionPanel = document.getElementById('missions');
+function missionCount() { return MISSIONS.filter(mi => missionsDone[mi.id]).length; }
+function renderMissions() {
+  missionList.innerHTML = MISSIONS.map(mi =>
+    '<div class="' + (missionsDone[mi.id] ? 'fatta' : '') + '">' +
+    (missionsDone[mi.id] ? '✅ ' : '⬜ ') + mi.txt + '</div>').join('');
+  const sb = document.getElementById('starbadge');
+  sb.textContent = '⭐ ' + starsFound + '/12 stelle · 🏆 ' + missionCount() + '/10 missioni';
+}
+function completeMission(id) {
+  if (missionsDone[id]) return;
+  missionsDone[id] = true;
+  localStorage.setItem('zephMissions', JSON.stringify(missionsDone));
+  renderMissions();
+  const mi = MISSIONS.find(x => x.id === id);
+  if (state.interacted && !state.muted) ZephCore.chime();
+  launchRocket();
+  const n = missionCount();
+  if (n >= MISSIONS.length) {
+    setTimeout(() => {
+      speak('INCREDIBILE! Hai completato TUTTE le missioni! Sei una leggenda! Spettacolo pirotecnico in tuo onore!');
+      fireworksShow(9);
+      anim.startAction('dance');
+    }, 700);
+  } else if (mi) {
+    speak('Missione completata: ' + mi.txt.toLowerCase() + '! Siamo a ' + n + ' su 10!');
+  }
+}
+document.getElementById('missionchip').addEventListener('click', () => {
+  state.interacted = true;
+  missionPanel.classList.toggle('show');
+  renderMissions();
+});
+
+// ---------- Fuochi d'artificio ----------
+const fwSparks = ZephCore.createSparkles(THREE, scene, 150);
+const rockets = [];
+function launchRocket() {
+  const m = new THREE.Mesh(
+    new THREE.SphereGeometry(0.06, 8, 6),
+    new THREE.MeshBasicMaterial({ color: [0xffd23e, 0xff6b9a, 0x7ce0ff, 0xb0ff8a][(Math.random() * 4) | 0] })
+  );
+  const a2 = Math.random() * Math.PI * 2, r2 = 2 + Math.random() * 6;
+  m.position.set(state.pos.x + Math.sin(a2) * r2, state.pos.y + 0.2, state.pos.z + Math.cos(a2) * r2);
+  scene.add(m);
+  rockets.push({ mesh: m, vel: new THREE.Vector3((Math.random() - 0.5) * 0.8, 8.5 + Math.random() * 2.5, (Math.random() - 0.5) * 0.8) });
+}
+function fireworksShow(n) {
+  for (let i = 0; i < n; i++) setTimeout(launchRocket, i * 650 + Math.random() * 350);
+}
+function updateRockets(dt) {
+  for (let i = rockets.length - 1; i >= 0; i--) {
+    const r = rockets[i];
+    r.vel.y -= 3.2 * dt;
+    r.mesh.position.addScaledVector(r.vel, dt);
+    if (Math.random() < dt * 28) fwSparks.burst(r.mesh.position.x, r.mesh.position.y, r.mesh.position.z, 1);
+    if (r.vel.y < 1.2) {
+      fwSparks.burst(r.mesh.position.x, r.mesh.position.y, r.mesh.position.z, 30);
+      if (state.interacted && !state.muted) ZephCore.boom();
+      scene.remove(r.mesh);
+      rockets.splice(i, 1);
+    }
+  }
+}
+
+// ---------- Ambiente sonoro e mondo persistente ----------
+let ambManaged = true;
+function updateAmbience(nightF) {
+  if (!ambManaged || !state.interacted || state.muted) { ZephCore.ambience.stop(); return; }
+  ZephCore.ambience.setMode(nightF > 0.4 ? 'night' : 'day');
+}
+function saveWorld() {
+  try {
+    localStorage.setItem('zephWorld', JSON.stringify({
+      x: state.pos.x, z: state.pos.z,
+      day: env.dayTarget, weather: env.weather,
+      dog: dog.on, auto: env.auto || false,
+    }));
+  } catch (e) {}
+}
+setInterval(saveWorld, 5000);
+function restoreWorld() {
+  let w = null;
+  try { w = JSON.parse(localStorage.getItem('zephWorld') || 'null'); } catch (e) {}
+  if (!w) return;
+  if (typeof w.x === 'number' && typeof w.z === 'number' && Math.hypot(w.x, w.z) < 54) {
+    state.pos.x = w.x; state.pos.z = w.z;
+    state.pos.y = terrainH(w.x, w.z);
+  }
+  if (typeof w.day === 'number') { env.dayTarget = w.day; env.dayCur = w.day; }
+  if (w.weather) env.weather = w.weather;
+  if (w.auto) env.auto = true;
+  if (w.dog) setDog(true);
 }
 
 // ---------- Nuvole e farfalle ----------
@@ -1069,6 +1193,7 @@ function updateDogHost(t, dt) {
     ball.mode = 'none';
     ball.mesh.visible = false;
     speak('Bravo Rocky! Che riporto! Vuoi che la rilanci?');
+    completeMission('palla');
   }
   if (t > dog.nextBarkAt) {
     dog.nextBarkAt = t + 9 + Math.random() * 16;
@@ -1290,6 +1415,16 @@ function botRespond(text) {
   if (out.autoSky !== undefined) env.auto = out.autoSky;
   if (out.ball) throwBall();
   if (out.fly !== undefined) state.flying = out.fly;
+  if (out.fly) completeMission('vola');
+  if (out.action === 'flip') completeMission('flip');
+  if (out.rps === 'win') completeMission('gioco');
+  if (out.curio) completeMission('curioso');
+  if (out.fireworks) fireworksShow(6);
+  if (out.missions) {
+    missionPanel.classList.add('show');
+    renderMissions();
+    out.say = 'Hai completato ' + missionCount() + ' missioni su 10! Guarda il pannello qui a destra!';
+  }
   if (out.camMode) cam.mode = out.camMode;
   if (out.quality) {
     ultra = out.quality === 'ultra';
@@ -1418,7 +1553,11 @@ wanderChip.addEventListener('click', () => {
 muteBtn.addEventListener('click', () => {
   state.muted = !state.muted;
   muteBtn.textContent = state.muted ? '🔇' : '🔊';
-  if (state.muted && window.speechSynthesis) speechSynthesis.cancel();
+  if (state.muted) {
+    if (window.speechSynthesis) speechSynthesis.cancel();
+    ZephCore.ambience.stop();
+    stopMusic();
+  }
 });
 
 let lastStatus = '';
@@ -1440,6 +1579,8 @@ scene.traverse(o => {
 });
 setupComposer();
 applyQuality();
+restoreWorld();
+renderMissions();
 updateEnvMap();
 
 // ---------- Loop principale ----------
@@ -1488,8 +1629,9 @@ function tick() {
 
   // palla, luci disco e ballo continuo finché c'è musica
   updateBall(dt);
+  updateRockets(dt);
   if (musicOn) {
-    if (!anim.state.action && !anim.state.talking && state.speed < 0.1) anim.startAction('dance');
+    if (!anim.state.action && !anim.state.talking && state.speed < 0.1) { anim.startAction('dance'); completeMission('balla'); }
     const beat = 1.1 + Math.sin(t * 13.2) * 0.55;
     disco1.intensity = beat; disco2.intensity = 1.65 - beat * 0.5;
     const da = t * 1.7;

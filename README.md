@@ -53,6 +53,10 @@ Scrivigli (in chat, browser o desktop):
 - **«dimmi una curiosità»** — ne sa sedici, da imparare qualcosa ogni volta
 - **«il mio colore preferito è il blu»** — impara i tuoi gusti (colore, animale, cibo, numero…) e li ricorda: «qual è il mio colore preferito?»
 - **«ultra hd»** / «grafica normale» 🖥 — grafica ULTRA con bagliori luminosi (bloom), luce ambientale catturata dal cielo e ombre ad alta risoluzione; se il PC arranca, Zeph abbassa la grafica da solo e ti avvisa
+- **🏆 «missioni»** — 10 obiettivi da completare (saluta Nina, raccogli le stelle, vinci a sasso carta forbice, vola…): pannello con i progressi, premi pirotecnici e salvataggio automatico
+- **«fuochi d'artificio»** 🎆 — razzi veri con scia, esplosione di colori e BOTTO (meglio di notte!)
+- **🐦 Suoni d'ambiente** — uccellini di giorno, grilli di notte e vento leggero, tutti sintetizzati
+- **💾 Il mondo si ricorda di te** — riapri la pagina e ritrovi l'ora del giorno, il meteo, Rocky e la tua posizione
 
 ## 🖥️ Versione desktop — sullo schermo
 
