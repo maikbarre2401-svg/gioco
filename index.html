@@ -989,7 +989,14 @@ function botRespond(text) {
   if (out.open) {
     // sincrono: così il gesto dell'utente autorizza l'apertura (niente blocco popup)
     window.open(out.open, '_blank');
+  } else if (out.appUrl) {
+    // nessuna versione web: tenta il protocollo dell'app (il browser chiede conferma)
+    window.open(out.appUrl, '_self');
   }
+  if (out.volume) {
+    out.say = 'Il volume del PC lo controllo solo dalla versione desktop! Lì bastano le parole magiche «alza il volume».';
+  }
+  if (out.battery) { batteryReport(); return; }
   if (out.remind) {
     const r = out.remind;
     setTimeout(() => {
@@ -999,6 +1006,16 @@ function botRespond(text) {
   }
   if (out.action) anim.startAction(out.action);
   speak(out.say);
+}
+
+// ---------- Batteria ----------
+function batteryReport() {
+  if (!navigator.getBattery) { speak('Questo browser non mi fa vedere la batteria!'); return; }
+  navigator.getBattery().then(b => {
+    const perc = Math.round(b.level * 100);
+    speak('La batteria è al ' + perc + ' per cento' +
+      (b.charging ? ' e si sta caricando!' : perc < 20 ? '… mettila in carica!' : '!'));
+  }).catch(() => speak('Questo browser non mi fa vedere la batteria!'));
 }
 
 // ---------- Foto ricordo ----------

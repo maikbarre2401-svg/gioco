@@ -18,8 +18,13 @@ L'avatar eredita tutto: camminata, salti, balli, gesti mentre parla, e — se il
 
 Scrivigli (in chat, browser o desktop):
 
-- **«apri youtube»** / google, gmail, maps, wikipedia, netflix, spotify… — apre il sito (nel desktop, nel tuo browser predefinito)
-- **«apri calcolatrice»** / blocco note, paint, esplora file — apre l'app del PC (solo versione desktop)
+- **«apri whatsapp»** — sul desktop apre la **VERA app** di WhatsApp installata (idem Spotify, Telegram, Discord); nel browser la versione web
+- **«apri impostazioni»** — apre le vere Impostazioni di Windows; funziona anche per sezione: «apri impostazioni **wifi** / bluetooth / audio / schermo / batteria / aggiornamenti / privacy»
+- **«apri fotocamera»**, **«apri store»** — le app native di Windows
+- **«apri calcolatrice»** / blocco note, paint, esplora file, **terminale, gestione attività, pannello di controllo, strumento di cattura, Word, Excel, PowerPoint** — app del PC (versione desktop)
+- **«alza il volume»** / «abbassa il volume» / «muto» — controlla davvero il volume del PC (versione desktop)
+- **«quanta batteria ho?»** — ti dice a voce la percentuale e se è in carica
+- **«apri youtube»** / google, gmail, maps, wikipedia, netflix… — apre il sito
 - **«cerca ricette veloci»** — cerca su Google
 - **«manda messaggio arrivo tra 10 minuti»** — prepara il messaggio su WhatsApp: *tu premi invia* (Zeph non manda mai nulla da solo)
 - **«scrivi una mail a nome@esempio.it dicendo ci vediamo domani»** — apre la mail già compilata

@@ -133,16 +133,29 @@ app.whenReady().then(() => {
     cb(permission === 'media' || permission === 'notifications');
   });
 
-  // azioni "assistente": solo URL sicuri e app in lista consentita
+  // azioni "assistente": solo URL/protocolli sicuri e app in lista consentita
+  const URL_OK = /^(https?:|mailto:|whatsapp:|tg:|spotify:|discord:|steam:|ms-settings:|ms-windows-store:|microsoft\.windows\.camera:)/i;
   const APP_CMDS = {
-    win32: { calc: 'calc', notepad: 'notepad', paint: 'mspaint', explorer: 'explorer' },
-    darwin: { calc: 'Calculator', notepad: 'TextEdit', paint: 'Preview', explorer: 'Finder' },
-    linux: { calc: 'gnome-calculator', notepad: 'gedit', paint: 'gimp', explorer: 'nautilus' },
+    win32: {
+      calc: 'calc', notepad: 'notepad', paint: 'mspaint', explorer: 'explorer',
+      terminal: 'cmd', taskmgr: 'taskmgr', control: 'control', snip: 'snippingtool',
+      word: 'winword', excel: 'excel', powerpoint: 'powerpnt',
+    },
+    darwin: {
+      calc: 'Calculator', notepad: 'TextEdit', paint: 'Preview', explorer: 'Finder',
+      terminal: 'Terminal', taskmgr: 'Activity Monitor', control: 'System Settings',
+      snip: 'Screenshot', word: 'Microsoft Word', excel: 'Microsoft Excel', powerpoint: 'Microsoft PowerPoint',
+    },
+    linux: {
+      calc: 'gnome-calculator', notepad: 'gedit', paint: 'gimp', explorer: 'nautilus',
+      terminal: 'gnome-terminal', taskmgr: 'gnome-system-monitor', control: 'gnome-control-center',
+      snip: 'gnome-screenshot',
+    },
   };
   ipcMain.on('zeph-action', (e, a) => {
     if (!a || typeof a !== 'object') return;
-    if (a.type === 'url' && typeof a.url === 'string' && /^(https?:|mailto:)/i.test(a.url)) {
-      shell.openExternal(a.url);
+    if (a.type === 'url' && typeof a.url === 'string' && URL_OK.test(a.url)) {
+      shell.openExternal(a.url).catch(() => {});
     } else if (a.type === 'app' && typeof a.id === 'string') {
       const table = APP_CMDS[process.platform] || APP_CMDS.linux;
       const cmd = table[a.id];
@@ -152,6 +165,25 @@ app.whenReady().then(() => {
         else if (process.platform === 'darwin') spawn('open', ['-a', cmd], { detached: true, stdio: 'ignore' });
         else spawn(cmd, [], { detached: true, stdio: 'ignore' });
       } catch (err) { /* app non disponibile su questo sistema */ }
+    } else if (a.type === 'volume' && ['up', 'down', 'mute'].indexOf(a.dir) !== -1) {
+      // tasti multimediali di sistema: sicuro e reversibile
+      try {
+        if (process.platform === 'win32') {
+          const code = a.dir === 'up' ? 175 : a.dir === 'down' ? 174 : 173;
+          const times = a.dir === 'mute' ? 1 : 5;
+          spawn('powershell', ['-NoProfile', '-Command',
+            '$w=New-Object -ComObject WScript.Shell; 1..' + times + ' | ForEach-Object { $w.SendKeys([char]' + code + ') }'],
+            { detached: true, stdio: 'ignore' });
+        } else if (process.platform === 'darwin') {
+          const script = a.dir === 'mute' ? 'set volume with output muted'
+            : 'set volume output volume ((output volume of (get volume settings)) ' + (a.dir === 'up' ? '+ 10)' : '- 10)');
+          spawn('osascript', ['-e', script], { detached: true, stdio: 'ignore' });
+        } else {
+          const arg = a.dir === 'mute' ? ['set-sink-mute', '@DEFAULT_SINK@', 'toggle']
+            : ['set-sink-volume', '@DEFAULT_SINK@', a.dir === 'up' ? '+10%' : '-10%'];
+          spawn('pactl', arg, { detached: true, stdio: 'ignore' });
+        }
+      } catch (err) { /* niente controllo volume */ }
     }
   });
 });

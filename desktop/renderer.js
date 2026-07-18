@@ -287,6 +287,15 @@ function updateBubblePosition() {
 }
 
 // ---------- Comandi (tray e chat) ----------
+function batteryReport() {
+  if (!navigator.getBattery) { speak('Non riesco a leggere la batteria su questo PC!'); return; }
+  navigator.getBattery().then(b => {
+    const perc = Math.round(b.level * 100);
+    speak('La batteria è al ' + perc + ' per cento' +
+      (b.charging ? ' e si sta caricando!' : perc < 20 ? '… mettila in carica!' : '!'));
+  }).catch(() => speak('Non riesco a leggere la batteria su questo PC!'));
+}
+
 function botRespond(text) {
   const out = ZephCore.botReply(text);
   if (!out) return;
@@ -296,11 +305,16 @@ function botRespond(text) {
   if (out.come && state.mouseX !== null) {
     state.targetX = Math.max(-maxX(), Math.min(maxX(), (state.mouseX / W() * 2 - 1) * worldHalfWidth()));
   }
-  if (out.open) {
+  if (out.appUrl && bridge) {
+    // protocollo di sistema: apre la VERA app installata (WhatsApp, Impostazioni…)
+    bridge.doAction({ type: 'url', url: out.appUrl });
+  } else if (out.open) {
     if (bridge) bridge.doAction({ type: 'url', url: out.open });
     else window.open(out.open, '_blank');
   }
   if (out.app && bridge) bridge.doAction({ type: 'app', id: out.app });
+  if (out.volume && bridge) bridge.doAction({ type: 'volume', dir: out.volume });
+  if (out.battery) { batteryReport(); return; }
   if (out.setName) localStorage.setItem('zephName', out.setName);
   if (out.whoami) {
     const n = localStorage.getItem('zephName');

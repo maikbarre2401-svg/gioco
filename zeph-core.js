@@ -724,14 +724,38 @@ const SITI = {
   instagram: 'https://www.instagram.com', tiktok: 'https://www.tiktok.com',
   netflix: 'https://www.netflix.com', spotify: 'https://open.spotify.com',
   amazon: 'https://www.amazon.it', twitch: 'https://www.twitch.tv',
+  telegram: 'https://web.telegram.org', discord: 'https://discord.com/app',
   notizie: 'https://news.google.com/?hl=it', traduttore: 'https://translate.google.com',
   meteo: 'https://www.google.com/search?q=meteo',
+};
+// protocolli che aprono la VERA app installata sul PC (usati dalla versione desktop)
+const APP_PROTO = {
+  whatsapp: 'whatsapp://', spotify: 'spotify:', telegram: 'tg://',
+  discord: 'discord://-/', steam: 'steam://open/main',
 };
 const APP_PC = [
   { re: /calcolatric/, id: 'calc', nome: 'la calcolatrice' },
   { re: /blocco note|notepad/, id: 'notepad', nome: 'il Blocco note' },
   { re: /paint/, id: 'paint', nome: 'Paint' },
   { re: /esplora|cartell|file manager|risorse/, id: 'explorer', nome: 'Esplora file' },
+  { re: /terminale|prompt|cmd\b/, id: 'terminal', nome: 'il terminale' },
+  { re: /gestione attivit|task manager/, id: 'taskmgr', nome: 'Gestione attività' },
+  { re: /pannello di controllo/, id: 'control', nome: 'il Pannello di controllo' },
+  { re: /cattura|screenshot|ritaglio/, id: 'snip', nome: 'lo Strumento di cattura' },
+  { re: /\bword\b/, id: 'word', nome: 'Word' },
+  { re: /\bexcel\b/, id: 'excel', nome: 'Excel' },
+  { re: /powerpoint|power point/, id: 'powerpoint', nome: 'PowerPoint' },
+];
+// sezioni delle Impostazioni di Windows (protocollo ms-settings:)
+const IMPOSTAZIONI = [
+  { re: /wifi|wi-fi|rete|internet/, page: 'network-wifi', nome: 'del WiFi' },
+  { re: /bluetooth/, page: 'bluetooth', nome: 'del Bluetooth' },
+  { re: /audio|suon|volume/, page: 'sound', nome: 'dell’audio' },
+  { re: /schermo|display|monitor/, page: 'display', nome: 'dello schermo' },
+  { re: /batteria|risparmio/, page: 'batterysaver', nome: 'della batteria' },
+  { re: /aggiornament/, page: 'windowsupdate', nome: 'degli aggiornamenti' },
+  { re: /privacy/, page: 'privacy', nome: 'della privacy' },
+  { re: /account/, page: 'yourinfo', nome: 'dell’account' },
 ];
 function searchUrl(q) { return 'https://www.google.com/search?q=' + encodeURIComponent(q); }
 
@@ -767,8 +791,8 @@ function actionIntent(t) {
   if (/(corri|di corsa|sprint)/.test(t)) return { run: true, say: pick(['Vaiiii che si corre!', 'Turbo attivato!']) };
   if (/(rallenta|vai piano|cammina normale|passo normale)/.test(t)) return { run: false, say: 'Ok, si passeggia tranquilli.' };
 
-  // foto ricordo
-  if (/(foto|selfie|fotografia|scatta)/.test(t)) return { photo: true, say: 'Mettiti in posa… Cheeeese!' };
+  // foto ricordo («fotocamera» invece è l'app: gestita più sotto)
+  if (/\b(foto|selfie|fotografia|scatta)\b/.test(t)) return { photo: true, say: 'Mettiti in posa… Cheeeese!' };
 
   // ora e data
   if (/che or[ae]|dimmi l'ora/.test(t)) {
@@ -801,6 +825,7 @@ function actionIntent(t) {
     return {
       say: 'Ti preparo il messaggio su WhatsApp! Tu devi solo premere invia.',
       open: 'https://wa.me/' + num + '?text=' + encodeURIComponent(testo),
+      appUrl: 'whatsapp://send?text=' + encodeURIComponent(testo) + (num ? '&phone=' + num : ''),
     };
   }
 
@@ -819,10 +844,27 @@ function actionIntent(t) {
   m = t.match(/^(?:cerca(?:mi)?|googla|cerca su google)\s+(.+)/);
   if (m) return { say: 'Cerco «' + m[1] + '» su Google!', open: searchUrl(m[1]) };
 
+  // volume del PC
+  if (/(alza|aumenta|su) (il |col )?volume/.test(t)) return { volume: 'up', say: 'Alzo il volume del PC!' };
+  if (/(abbassa|riduci|giù) (il |col )?volume/.test(t)) return { volume: 'down', say: 'Abbasso il volume del PC!' };
+  if (/(metti|attiva) (il )?muto|silenzia il pc|togli l.audio/.test(t)) return { volume: 'mute', say: 'Shhh… muto!' };
+
+  // batteria
+  if (/batteria|quanta carica/.test(t)) return { battery: true };
+
   // apri sito / app
   m = t.match(/^(?:apri(?:mi)?|avvia|lancia|vai su)\s+(.+)/);
   if (m) {
     let q = m[1].replace(/^(il|lo|la|le|i|gli|un|una|l')\s+/, '').trim();
+    // Impostazioni di Windows (vera app, anche per sezione)
+    if (/impostazioni|settings/.test(q)) {
+      for (const st of IMPOSTAZIONI) {
+        if (st.re.test(q)) return { say: 'Apro le impostazioni ' + st.nome + '!', appUrl: 'ms-settings:' + st.page, action: 'jump' };
+      }
+      return { say: 'Apro le Impostazioni!', appUrl: 'ms-settings:', action: 'jump' };
+    }
+    if (/fotocamera|webcam/.test(q)) return { say: 'Apro la fotocamera!', appUrl: 'microsoft.windows.camera:', action: 'jump' };
+    if (/microsoft store|store/.test(q)) return { say: 'Apro il Microsoft Store!', appUrl: 'ms-windows-store:', action: 'jump' };
     for (const app of APP_PC) {
       if (app.re.test(q)) return { say: 'Apro ' + app.nome + '!', app: app.id, action: 'jump' };
     }
@@ -830,8 +872,11 @@ function actionIntent(t) {
       return { say: 'Apro il browser!', open: 'https://www.google.com', action: 'jump' };
     }
     for (const nome in SITI) {
-      if (q.indexOf(nome) !== -1) return { say: 'Apro ' + nome + '!', open: SITI[nome], action: 'jump' };
+      if (q.indexOf(nome) !== -1) {
+        return { say: 'Apro ' + nome + '!', open: SITI[nome], appUrl: APP_PROTO[nome], action: 'jump' };
+      }
     }
+    if (APP_PROTO[q]) return { say: 'Apro ' + q + '!', appUrl: APP_PROTO[q], action: 'jump' };
     if (/^[\w-]+(\.[\w-]+)+/.test(q)) return { say: 'Apro ' + q + '!', open: 'https://' + q, action: 'jump' };
     return { say: 'Non conosco «' + q + '», te lo cerco su Google!', open: searchUrl(q) };
   }
@@ -854,7 +899,7 @@ const RULES = [
   { re: /(come stai|come va|tutto bene)/, fn: () => ({ say: pick(['Benissimo! Le mie gambe 3D oggi sono al top! E tu?', 'Alla grande! Un po’ di poligoni scricchiolano ma va bene così.', 'Molto bene, grazie! E tu come stai?']) }) },
   { re: /(chi sei|come ti chiami|il tuo nome|cosa sei)/, fn: () => ({ say: 'Sono Zeph! Un personaggio 3D fatto di poligoni e simpatia. Vivo qui sul tuo schermo!', action: 'wave' }) },
   { re: /(quanti anni)/, fn: () => ({ say: 'Sono nato pochi secondi fa, quando mi hai acceso! Quindi… sono giovanissimo.' }) },
-  { re: /(cosa sai fare|aiuto|help|comandi|istruzioni)/, fn: () => ({ say: 'Ballo, salto, faccio acrobazie e corro («corri»)! Apro siti e app («apri youtube»), cerco su Google, preparo messaggi e mail, faccio da sveglia («ricordami tra 5 minuti»), comando il cielo («fai notte», «fai piovere»), chiamo il mio cane Rocky e scatto foto ricordo!' }) },
+  { re: /(cosa sai fare|aiuto|help|comandi|istruzioni)/, fn: () => ({ say: 'Ballo, salto, faccio acrobazie e corro! Apro le VERE app del PC («apri whatsapp», «apri impostazioni wifi», «apri fotocamera»), alzo e abbasso il volume, ti dico la batteria, cerco su Google, preparo messaggi e mail, faccio da sveglia, comando il cielo e il meteo, chiamo Rocky e scatto foto!' }) },
   { re: /(grazie|gentile)/, fn: () => ({ say: pick(['Prego! È un piacere!', 'Figurati! Per te, sempre!']) }) },
   { re: /(ti voglio bene|ti amo|sei bello|sei forte|bravo)/, fn: () => ({ say: 'Ooh, grazie! Anche tu sei il mio umano preferito!', action: 'wave' }) },
   { re: /(buonanotte|vado a dormire|a domani)/, fn: () => ({ say: 'Buonanotte! Io resto di guardia allo schermo. A presto!', action: 'wave' }) },
