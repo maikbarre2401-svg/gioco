@@ -17,6 +17,13 @@ Pagina profilo in stile hacker/cyberpunk con grafica 3D in tempo reale (Three.js
   `hack`, `matrix`, `theme rosso`, `trace`, `whoami`, `social`, `copy`, `sudo`.
   Funzionano TAB (completamento) e frecce ↑ ↓ (cronologia). Sul telefono ci sono
   i bottoni dei comandi.
+- **Coniglio bianco 3D**: con `matrix` ("Segui il coniglio bianco") o `coniglio` appare un
+  coniglietto 3D in stile cartoon che si materializza come in Matrix. Saltella per lo schermo,
+  salta sui pannelli, ti segue con lo sguardo e a volte scappa ("Prendimi se ci riesci!").
+  - **Trascinalo** col mouse o col dito: scalcia e si lamenta.
+  - **Lancialo**: vola, rimbalza sui bordi e atterra stordito.
+  - **Cliccalo** per le coccole (cuoricini), **doppio click** per gli occhiali da Neo 😎.
+  - `occhiali` mette/toglie gli occhiali, `coniglio via` lo rimanda nella tana.
 - **4 temi colore**: verde, ciano, rosso, viola (`theme <nome>`); il tema scelto viene ricordato.
 - Effetti sonori sintetizzati, cursore a mirino con scia binaria, glitch, testo che si decifra.
 - Funziona su telefono e computer; se manca un file o il WebGL, la pagina continua a funzionare.

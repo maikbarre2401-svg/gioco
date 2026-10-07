@@ -1237,6 +1237,15 @@ body {
     background: #fff;
     box-shadow: 0 0 8px #fff, 0 0 14px rgb(var(--a));
 }
+.rabbit-hover #cursor,
+.rabbit-drag #cursor {
+    --c: #ff8fc0;
+    width: 46px;
+    height: 46px;
+    margin: -23px 0 0 -23px;
+    rotate: 45deg;
+}
+.rabbit-drag #cursor { width: 28px; height: 28px; margin: -14px 0 0 -14px; }
 .has-cursor, .has-cursor * { cursor: none !important; }
 .has-cursor .term-input { cursor: text !important; }
 .has-cursor.pointer-seen #cursor, .has-cursor.pointer-seen #cursor-dot { opacity: 1; }
@@ -1267,6 +1276,81 @@ body {
     animation: ripple .7s ease-out forwards;
 }
 @keyframes ripple { to { transform: scale(8) rotate(45deg); opacity: 0; } }
+
+/* ================= Coniglio bianco 3D ================= */
+#rabbit {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 45;
+    display: none;
+    pointer-events: none;
+    will-change: transform;
+}
+#rabbit.on { display: block; }
+#rabbit-say {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 46;
+    padding: 7px 12px;
+    border-radius: 10px;
+    border: 1px solid rgb(var(--a));
+    background: rgba(0, 8, 4, .92);
+    box-shadow: 0 0 18px -4px rgb(var(--a));
+    color: #fff;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    font-weight: 600;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity .25s;
+}
+#rabbit-say.show { opacity: 1; }
+#rabbit-say::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    bottom: -6px;
+    width: 10px;
+    height: 10px;
+    margin-left: -5px;
+    background: rgba(0, 8, 4, .92);
+    border-right: 1px solid rgb(var(--a));
+    border-bottom: 1px solid rgb(var(--a));
+    transform: rotate(45deg);
+}
+.rabbit-beam {
+    position: fixed;
+    top: 0;
+    z-index: 44;
+    pointer-events: none;
+    background: linear-gradient(to bottom, transparent, rgb(var(--a) / .3) 55%, rgb(var(--a) / .85));
+    box-shadow: 0 0 50px rgb(var(--a) / .6);
+    transform-origin: center bottom;
+    animation: rabbit-beam 1.4s ease-out forwards;
+}
+@keyframes rabbit-beam {
+    0%   { opacity: 0; transform: scaleX(.05); }
+    18%  { opacity: 1; transform: scaleX(1); }
+    70%  { opacity: .8; transform: scaleX(.8); }
+    100% { opacity: 0; transform: scaleX(.1); }
+}
+.rabbit-fx {
+    position: fixed;
+    z-index: 46;
+    pointer-events: none;
+    font-family: var(--font-mono);
+    font-size: 14px;
+    font-weight: 800;
+    color: rgb(var(--a));
+    text-shadow: 0 0 8px rgb(var(--a));
+}
+.rabbit-fx.heart { color: #ff6fa8; font-size: 20px; text-shadow: 0 0 10px #ff6fa8; }
+.edge { position: absolute; top: 0; width: 1px; height: 1px; pointer-events: none; }
+.edge-l { left: 0; }
+.edge-r { right: 0; }
 
 #granted-overlay {
     position: fixed;
@@ -1401,6 +1485,7 @@ body {
 
                 <!-- Finestra profilo -->
                 <article class="win card" id="card" aria-label="Profilo">
+                    <i class="edge edge-l" aria-hidden="true"></i><i class="edge edge-r" aria-hidden="true"></i>
                     <div class="win-glow" aria-hidden="true"></div>
                     <div class="win-glass" aria-hidden="true"><div class="win-holo"></div><div class="win-glare"></div></div>
                     <div class="win-border" aria-hidden="true"></div>
@@ -1498,6 +1583,7 @@ body {
                 <!-- Colonna centrale: HUD attorno al globo 3D (solo schermi larghi) -->
                 <aside class="center-col" aria-hidden="true">
                     <div class="panel layer reveal" style="--z:20px; --d:1.3s">
+                        <i class="edge edge-l"></i><i class="edge edge-r"></i>
                         <div class="panel-title"><span>SYS://MONITOR</span><span class="live">● REC</span></div>
                         <div class="stat"><span>FPS</span><b id="s-fps">--</b></div>
                         <div class="stat"><span>RISOLUZIONE</span><b id="s-res">--</b></div>
@@ -1513,6 +1599,7 @@ body {
                         </div>
                     </div>
                     <div class="panel layer reveal" style="--z:20px; --d:1.5s">
+                        <i class="edge edge-l"></i><i class="edge edge-r"></i>
                         <div class="panel-title"><span>NET://TRACE</span><span class="live">LIVE</span></div>
                         <div class="net-body">
                             <div class="radar" id="radar"></div>
@@ -1523,6 +1610,7 @@ body {
 
                 <!-- Finestra terminale interattivo -->
                 <section class="win term" id="term" aria-label="Terminale interattivo">
+                    <i class="edge edge-l" aria-hidden="true"></i><i class="edge edge-r" aria-hidden="true"></i>
                     <div class="win-glow" aria-hidden="true"></div>
                     <div class="win-glass" aria-hidden="true"><div class="win-holo"></div><div class="win-glare"></div></div>
                     <div class="win-border" aria-hidden="true"></div>
@@ -1547,6 +1635,7 @@ body {
                         <button type="button" class="chip" data-cmd="social">social</button>
                         <button type="button" class="chip" data-cmd="hack">hack</button>
                         <button type="button" class="chip" data-cmd="matrix">matrix</button>
+                        <button type="button" class="chip" data-cmd="coniglio">coniglio</button>
                         <button type="button" class="chip" data-cmd="theme">theme</button>
                         <button type="button" class="chip" data-cmd="trace">trace</button>
                     </div>
@@ -1559,6 +1648,8 @@ body {
 
 <audio id="background-audio" src="audio.mp3" loop preload="auto"></audio>
 
+<canvas id="rabbit" aria-hidden="true"></canvas>
+<div id="rabbit-say" aria-hidden="true"></div>
 <div id="granted-overlay" class="glitch" data-text="ACCESS GRANTED" aria-hidden="true">ACCESS GRANTED</div>
 <div id="cursor" aria-hidden="true"></div>
 <div id="cursor-dot" aria-hidden="true"></div>
@@ -1578,6 +1669,7 @@ body {
     const pad = (n) => String(n).padStart(2, '0');
     const clockStr = (d = new Date()) => `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
     const hex = (n) => Array.from({ length: n }, () => '0123456789ABCDEF'[(Math.random() * 16) | 0]).join('');
+    const pick = (arr) => arr[(Math.random() * arr.length) | 0];
     const storage = {
         get(k) { try { return localStorage.getItem(k); } catch (err) { return null; } },
         set(k, v) { try { localStorage.setItem(k, v); } catch (err) { /* storage non disponibile */ } },
@@ -1622,6 +1714,7 @@ body {
     };
     const pointer = { x: innerWidth / 2, y: innerHeight / 2 };
     const startedAt = performance.now();
+    let rabbit = null;
 
     $('#year').textContent = new Date().getFullYear();
 
@@ -1718,6 +1811,15 @@ body {
             [523, 659, 784, 1046].forEach((f, i) => this.tone(f, 0.22, { type: 'triangle', vol: 0.06, delay: i * 0.08 }));
         },
         whoosh() { this.tone(90, 0.9, { type: 'sawtooth', vol: 0.05, slide: 8 }); },
+        hop() { this.tone(rand(330, 420), 0.07, { type: 'sine', vol: 0.018, slide: 1.6 }); },
+        squeak() {
+            this.tone(950, 0.09, { type: 'sine', vol: 0.045, slide: 1.5 });
+            this.tone(1250, 0.1, { type: 'sine', vol: 0.035, slide: 1.4, delay: 0.09 });
+        },
+        thud() { this.tone(150, 0.14, { type: 'sine', vol: 0.06, slide: 0.55 }); },
+        chirp() { [988, 1319, 1760].forEach((f, i) => this.tone(f, 0.08, { type: 'triangle', vol: 0.04, delay: i * 0.06 })); },
+        throwIt() { this.tone(600, 0.3, { type: 'sine', vol: 0.025, slide: 0.35 }); },
+        magic() { [392, 523, 659, 784, 1046, 1318].forEach((f, i) => this.tone(f, 0.18, { type: 'sine', vol: 0.04, delay: i * 0.07 })); },
     };
 
     function setPlaying(on) {
@@ -2546,6 +2648,7 @@ body {
         root.style.setProperty('--a', t.a.join(' '));
         root.style.setProperty('--b', t.b.join(' '));
         if (scene3d) scene3d.setTheme(t);
+        if (rabbit) rabbit.setTheme(t);
         vizGrad = null;
         themeLabel.textContent = name.toUpperCase();
         storage.set('maik-theme', name);
@@ -2681,6 +2784,9 @@ body {
         state.mouseY = (e.clientY / innerHeight) * 2 - 1;
         body.classList.add('pointer-seen');
         spawnTrail(e.clientX, e.clientY);
+        if (rabbit && rabbit.active && !rabbit.dragging) {
+            body.classList.toggle('rabbit-hover', rabbit.hit(e.clientX, e.clientY));
+        }
         if (state.entered) {
             for (const w of wins) {
                 const r = w.getBoundingClientRect();
@@ -2920,6 +3026,1009 @@ body {
         });
     });
 
+    /* ================= Coniglio bianco 3D ================= */
+    function createRabbit() {
+        const T = window.THREE;
+        const canvas = $('#rabbit');
+        const sayEl = $('#rabbit-say');
+        const noop = () => {};
+        const api = {
+            supported: !!T,
+            active: false,
+            dragging: false,
+            swallowClick: false,
+            hit: () => false,
+            spawn: () => false,
+            dismiss: noop,
+            cheer: noop,
+            toggleShades: () => false,
+            update: noop,
+            setTheme: noop,
+            resize: noop,
+            grabStart: noop,
+            grabMove: noop,
+            grabEnd: noop,
+        };
+        if (!T) return api;
+
+        const GRAVITY = 2600;
+        const CAM_DIST = Math.hypot(4.2, 0.35);
+        const GLYPHS = Array.from('01ｱｲｳｴｵｶｷｸ0123456789<>*+');
+        const GRAB_LINES = ['Ehi! Mettimi giù!', 'Aiutooo! 😱', 'Non sono un mouse!', 'Dove mi porti?!', 'Soffro di vertigini!'];
+        const PET_LINES = ['♥', 'Ancora! ♥', 'Che bello! ♥', 'Pat pat ♥', 'Sei gentile ♥'];
+        const CHATTER = ['Hai preso la pillola rossa? 💊', 'Bussa, bussa, Neo...', 'Che fame... 🥕', 'Seguimi! 🐇', 'Prova a prendermi!', 'Lanciami! 🚀'];
+
+        let renderer = null, built = false, scn = null, cam = null;
+        let S = 110, C = 264, unitPx = 100, feetFrac = 0.7;
+        const pos = { x: 0, y: 0 }, prev = { x: 0, y: 0 }, vel = { x: 0, y: 0 }, mv = { x: 0, y: 0 };
+        let mode = 'off', modeT = 0, idleFor = 0, dir = 1, platId = null, prevPlat = null;
+        let hop = null, target = 0, zoom = false, spinning = false, hardThrow = false, bounces = 0, firstWalk = false;
+        let expr = 'normal', exprT = 0, blinkT = 2, blinkP = 0, sniffT = 3, sniffP = 0, chatterT = 22, fleeCd = 0, near = false;
+        let sq = 0, sqV = 0, shadesOn = false, shadesY = 0, shadesV = 0, shadesHide = false;
+        let sayUntil = 0, sayW = 0, frame = 0, platCache = null, platFrame = -1, swTimer = 0;
+        const grab = { id: null, ox: 0, oy: 0, px: 0, py: 0, sx: 0, sy: 0, t0: 0, moved: 0, samples: [], said: false };
+        const P = { yaw: 0, lean: 0, roll: 0, sx: 1, sy: 1, armL: 0, armR: 0, armLz: 0, armRz: 0, foot: 0, footZ: 0, headX: 0, headY: 0, headZ: 0 };
+        const R = {};
+        const ghosts = [], ears = [], eyes = [], happyEyes = [], xEyes = [], arms = [], feet = [];
+        let solidPlane, ghostPlane, ghostMat, ringMesh, rimA, rimB, irisMat, glintMat, shadowMesh;
+        const platWins = $$('.win, .center-col .panel').map((el, i) => ({ id: 'p' + i, l: el.querySelector(':scope > .edge-l'), r: el.querySelector(':scope > .edge-r') }));
+
+        const lerpK = (k, dt) => 1 - Math.exp(-k * dt);
+        const easeInOut = (p) => (p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2);
+        const wrapAngle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+
+        function ensure() {
+            if (built) return !!renderer;
+            built = true;
+            try {
+                renderer = new T.WebGLRenderer({ canvas, alpha: true, antialias: true });
+            } catch (err) {
+                renderer = null;
+                return false;
+            }
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+            renderer.setClearColor(0x000000, 0);
+            renderer.localClippingEnabled = true;
+            renderer.outputEncoding = T.sRGBEncoding;
+            renderer.toneMapping = T.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.05;
+
+            scn = new T.Scene();
+            cam = new T.PerspectiveCamera(30, 1, 0.1, 50);
+            cam.position.set(0, 0.85, 4.2);
+            cam.lookAt(0, 0.5, 0);
+            cam.updateMatrixWorld();
+
+            scn.add(new T.HemisphereLight(0xffffff, 0x2a3a30, 0.75));
+            const key = new T.DirectionalLight(0xffffff, 1.0);
+            key.position.set(1.6, 2.6, 3);
+            scn.add(key);
+            const fill = new T.DirectionalLight(0xdfefff, 0.35);
+            fill.position.set(-2, 0.5, 2);
+            scn.add(fill);
+            rimA = new T.DirectionalLight(0x00ff66, 1.7);
+            rimA.position.set(-2.5, 1.6, -2.5);
+            scn.add(rimA);
+            rimB = new T.DirectionalLight(0x00d9ff, 1.1);
+            rimB.position.set(2.6, 1.2, -2);
+            scn.add(rimB);
+
+            solidPlane = new T.Plane(new T.Vector3(0, -1, 0), 100);
+            ghostPlane = new T.Plane(new T.Vector3(0, 1, 0), -100);
+            build();
+            api.setTheme(THEMES[state.theme]);
+            resize();
+            return true;
+        }
+
+        function build() {
+            const lin = (h) => new T.Color(h).convertSRGBToLinear();
+            const clip = [solidPlane];
+            const fur = new T.MeshPhysicalMaterial({ color: lin(0xffffff), roughness: 0.78, sheen: lin(0xd2ffe8), clippingPlanes: clip });
+            const cream = new T.MeshPhysicalMaterial({ color: lin(0xfff0e4), roughness: 0.8, sheen: lin(0xffffff), clippingPlanes: clip });
+            const pink = new T.MeshStandardMaterial({ color: lin(0xff9cc0), roughness: 0.5, clippingPlanes: clip });
+            const eyeMat = new T.MeshPhysicalMaterial({ color: lin(0x15121c), roughness: 0.25, clearcoat: 1, clearcoatRoughness: 0.05, clippingPlanes: clip });
+            const dark = new T.MeshBasicMaterial({ color: lin(0x3a2530), clippingPlanes: clip });
+            const white = new T.MeshBasicMaterial({ color: 0xffffff, clippingPlanes: clip });
+            irisMat = new T.MeshBasicMaterial({ color: 0x00ff66, transparent: true, opacity: 0.55, toneMapped: false, clippingPlanes: clip });
+            const blushMat = new T.MeshBasicMaterial({ color: lin(0xff7aa8), transparent: true, opacity: 0.5, depthWrite: false, clippingPlanes: clip });
+            const shadesMat = new T.MeshPhysicalMaterial({ color: lin(0x050505), roughness: 0.12, metalness: 0.4, clearcoat: 1, clippingPlanes: clip });
+            glintMat = new T.MeshBasicMaterial({ color: 0x00ff66, transparent: true, opacity: 0.85, toneMapped: false, clippingPlanes: clip });
+            const yellow = new T.MeshBasicMaterial({ color: lin(0xffe066) });
+            const whiskerMat = new T.LineBasicMaterial({ color: lin(0xcfd6d2), transparent: true, opacity: 0.8, clippingPlanes: clip });
+
+            const sph = new T.SphereGeometry(1, 32, 24);
+            const add = (parent, mat, s, p, geo) => {
+                const m = new T.Mesh(geo || sph, mat);
+                m.scale.set(s[0], s[1], s[2]);
+                m.position.set(p[0], p[1], p[2]);
+                parent.add(m);
+                return m;
+            };
+
+            R.spinner = new T.Group();
+            R.spinner.position.y = 0.5;
+            scn.add(R.spinner);
+            const model = new T.Group();
+            model.position.y = -0.5;
+            R.spinner.add(model);
+            R.yawG = new T.Group();
+            model.add(R.yawG);
+            const bp = (R.bodyPivot = new T.Group());
+            R.yawG.add(bp);
+
+            // Corpo, pancia, zampe
+            add(bp, fur, [0.25, 0.235, 0.26], [0, 0.25, -0.02]);
+            add(bp, cream, [0.155, 0.16, 0.1], [0, 0.22, 0.165]);
+            for (const sx of [-1, 1]) {
+                add(bp, fur, [0.12, 0.11, 0.15], [sx * 0.15, 0.13, -0.04]);
+                const foot = new T.Group();
+                foot.position.set(sx * 0.11, 0.04, 0.02);
+                bp.add(foot);
+                feet.push(foot);
+                add(foot, fur, [0.068, 0.045, 0.125], [0, 0, 0.06]);
+                add(foot, pink, [0.032, 0.012, 0.042], [0, -0.04, 0.05]);
+                for (const k of [-1, 0, 1]) add(foot, pink, [0.012, 0.008, 0.013], [k * 0.022, -0.038, 0.135]);
+                const arm = new T.Group();
+                arm.position.set(sx * 0.11, 0.31, 0.15);
+                bp.add(arm);
+                arms.push(arm);
+                add(arm, fur, [0.05, 0.075, 0.05], [0, -0.07, 0.035]);
+            }
+            R.tail = add(bp, fur, [0.095, 0.095, 0.095], [0, 0.17, -0.27]);
+
+            // Testa
+            const head = (R.head = new T.Group());
+            head.position.set(0, 0.44, 0.02);
+            bp.add(head);
+            add(head, fur, [0.27, 0.235, 0.245], [0, 0.15, 0.02]);
+            for (const sx of [-1, 1]) add(head, fur, [0.085, 0.07, 0.07], [sx * 0.055, 0.085, 0.2]);
+            R.nose = add(head, pink, [0.03, 0.021, 0.018], [0, 0.122, 0.27]);
+            const arc = new T.TorusGeometry(0.017, 0.0045, 6, 14, Math.PI);
+            for (const sx of [-1, 1]) {
+                const m = new T.Mesh(arc, dark);
+                m.position.set(sx * 0.017, 0.084, 0.266);
+                m.rotation.z = Math.PI;
+                head.add(m);
+            }
+
+            // Occhi: normali, felici (^ ^) e strizzati (> <)
+            const happyGeo = new T.TorusGeometry(0.036, 0.009, 6, 18, Math.PI);
+            const bar = new T.BoxGeometry(0.06, 0.013, 0.012);
+            for (const sx of [-1, 1]) {
+                const eye = new T.Group();
+                eye.position.set(sx * 0.105, 0.17, 0.236);
+                eye.rotation.y = sx * 0.36;
+                head.add(eye);
+                add(eye, eyeMat, [0.052, 0.066, 0.03], [0, 0, 0]);
+                add(eye, irisMat, [0.036, 0.03, 0.012], [0, -0.024, 0.022]);
+                add(eye, white, [0.018, 0.02, 0.01], [-0.017, 0.024, 0.026]);
+                add(eye, white, [0.009, 0.009, 0.008], [0.017, -0.016, 0.027]);
+                eyes.push(eye);
+
+                const h = new T.Mesh(happyGeo, dark);
+                h.position.set(sx * 0.105, 0.16, 0.25);
+                h.rotation.y = sx * 0.36;
+                h.visible = false;
+                head.add(h);
+                happyEyes.push(h);
+
+                const xg = new T.Group();
+                xg.position.set(sx * 0.105, 0.17, 0.25);
+                xg.rotation.y = sx * 0.36;
+                xg.visible = false;
+                head.add(xg);
+                const b1 = new T.Mesh(bar, dark);
+                b1.position.y = 0.016;
+                b1.rotation.z = sx * 0.5;
+                const b2 = new T.Mesh(bar, dark);
+                b2.position.y = -0.016;
+                b2.rotation.z = -sx * 0.5;
+                xg.add(b1, b2);
+                xEyes.push(xg);
+
+                const blush = new T.Mesh(new T.CircleGeometry(0.048, 24), blushMat);
+                blush.position.set(sx * 0.168, 0.088, 0.21);
+                blush.rotation.y = sx * 0.63;
+                blush.scale.y = 0.62;
+                head.add(blush);
+            }
+
+            const wpts = [];
+            for (const sx of [-1, 1]) {
+                for (const k of [-1, 0, 1]) wpts.push(sx * 0.1, 0.095 + k * 0.012, 0.25, sx * 0.29, 0.105 + k * 0.035, 0.2);
+            }
+            R.whiskers = new T.LineSegments(new T.BufferGeometry().setAttribute('position', new T.Float32BufferAttribute(wpts, 3)), whiskerMat);
+            head.add(R.whiskers);
+
+            // Orecchie in due pezzi (la punta sinistra è un po' piegata)
+            for (const sx of [-1, 1]) {
+                const base = new T.Group();
+                base.position.set(sx * 0.095, 0.32, -0.02);
+                head.add(base);
+                add(base, fur, [0.062, 0.135, 0.042], [0, 0.12, 0]);
+                add(base, pink, [0.036, 0.1, 0.014], [0, 0.125, 0.032]);
+                const tip = new T.Group();
+                tip.position.set(0, 0.235, 0);
+                base.add(tip);
+                add(tip, fur, [0.058, 0.125, 0.04], [0, 0.1, 0]);
+                add(tip, pink, [0.032, 0.088, 0.013], [0, 0.09, 0.03]);
+                ears.push({ base, tip, sx, ax: 0, vx: 0, az: -sx * 0.17, vz: 0, tax: 0, tvx: 0 });
+            }
+
+            // Occhiali da Neo
+            const sh = (R.shades = new T.Group());
+            sh.position.set(0, 0.178, 0.282);
+            sh.visible = false;
+            head.add(sh);
+            const cyl = new T.CylinderGeometry(1, 1, 1, 28);
+            for (const sx of [-1, 1]) {
+                const lg = new T.Group();
+                lg.position.set(sx * 0.1, 0, -0.012);
+                lg.rotation.y = sx * 0.3;
+                sh.add(lg);
+                const lens = new T.Mesh(cyl, shadesMat);
+                lens.rotation.x = Math.PI / 2;
+                lens.scale.set(0.088, 0.02, 0.064);
+                lg.add(lens);
+                const gl = new T.Mesh(new T.BoxGeometry(0.07, 0.008, 0.004), glintMat);
+                gl.position.set(-0.012, 0.03, 0.012);
+                gl.rotation.z = 0.35;
+                lg.add(gl);
+                const temple = new T.Mesh(new T.BoxGeometry(0.012, 0.014, 0.2), shadesMat);
+                temple.position.set(sx * 0.272, 0.01, -0.1);
+                sh.add(temple);
+            }
+            const bridge = new T.Mesh(new T.BoxGeometry(0.06, 0.014, 0.014), shadesMat);
+            bridge.position.set(0, 0.012, 0);
+            sh.add(bridge);
+
+            // Stelline per quando gira la testa
+            R.stars = new T.Group();
+            R.stars.position.set(0, 0.47, 0.02);
+            R.stars.visible = false;
+            head.add(R.stars);
+            const oct = new T.OctahedronGeometry(0.035);
+            for (let i = 0; i < 3; i++) {
+                const a = (i / 3) * Math.PI * 2;
+                const st = new T.Mesh(oct, yellow);
+                st.position.set(Math.cos(a) * 0.2, 0, Math.sin(a) * 0.2);
+                R.stars.add(st);
+            }
+
+            // Ombra morbida
+            const sc = document.createElement('canvas');
+            sc.width = sc.height = 64;
+            const g2 = sc.getContext('2d');
+            const grd = g2.createRadialGradient(32, 32, 0, 32, 32, 32);
+            grd.addColorStop(0, 'rgba(0,0,0,.9)');
+            grd.addColorStop(1, 'rgba(0,0,0,0)');
+            g2.fillStyle = grd;
+            g2.fillRect(0, 0, 64, 64);
+            shadowMesh = new T.Mesh(new T.PlaneGeometry(1, 1), new T.MeshBasicMaterial({
+                map: new T.CanvasTexture(sc), transparent: true, depthWrite: false, opacity: 0.4,
+            }));
+            shadowMesh.position.z = -0.05;
+            shadowMesh.renderOrder = -1;
+            scn.add(shadowMesh);
+
+            // Effetto materializzazione: anello + copia wireframe
+            ringMesh = new T.Mesh(
+                new T.TorusGeometry(0.42, 0.012, 8, 72),
+                new T.MeshBasicMaterial({ color: 0x00ff66, transparent: true, opacity: 0.9, depthWrite: false, toneMapped: false })
+            );
+            ringMesh.rotation.x = Math.PI / 2;
+            ringMesh.visible = false;
+            scn.add(ringMesh);
+            ghostMat = new T.MeshBasicMaterial({
+                color: 0x00ff66, wireframe: true, transparent: true, opacity: 0.8,
+                depthWrite: false, toneMapped: false, clippingPlanes: [ghostPlane],
+            });
+            const ghostSph = new T.SphereGeometry(1, 12, 9);
+            const meshes = [];
+            model.traverse((o) => { if (o.isMesh) meshes.push(o); });
+            for (const m of meshes) {
+                const g = new T.Mesh(m.geometry === sph ? ghostSph : m.geometry, ghostMat);
+                g.visible = false;
+                m.add(g);
+                ghosts.push(g);
+            }
+        }
+
+        function computeSize() {
+            S = clamp(Math.min(innerWidth * 0.24, innerHeight * 0.13), 78, 128);
+            C = Math.round(S * 1.2) * 2;
+        }
+
+        function resize() {
+            if (!renderer) return;
+            computeSize();
+            renderer.setSize(C, C);
+            unitPx = C / (2 * CAM_DIST * Math.tan(Math.PI / 12));
+            const v = new T.Vector3(0, 0, 0).project(cam);
+            feetFrac = (1 - v.y) / 2;
+            if (!api.active) return;
+            pos.x = clamp(pos.x, S * 0.4, innerWidth - S * 0.4);
+            if (platId === 'ground') pos.y = innerHeight - 8;
+        }
+
+        /* --- Piattaforme: il fondo dello schermo + il bordo alto delle finestre --- */
+        function platforms() {
+            if (platFrame === frame && platCache) return platCache;
+            platFrame = frame;
+            const W = innerWidth, H = innerHeight;
+            const list = [{ key: 'ground', x0: S * 0.4, x1: W - S * 0.4, yAt: () => H - 8 }];
+            if (W >= 1200 && state.entered) {
+                for (const w of platWins) {
+                    if (!w.l || !w.r) continue;
+                    const a = w.l.getBoundingClientRect();
+                    const b = w.r.getBoundingClientRect();
+                    const xL = a.left, yL = a.top, xR = b.left, yR = b.top;
+                    if (xR - xL < S * 1.6 || Math.min(yL, yR) < S * 1.2) continue;
+                    list.push({
+                        key: w.id,
+                        x0: xL + S * 0.35,
+                        x1: xR - S * 0.35,
+                        yAt: (x) => yL + (yR - yL) * ((x - xL) / (xR - xL)) - 1,
+                    });
+                }
+            }
+            platCache = list;
+            return list;
+        }
+        const getPlat = (id) => (id ? platforms().find((p) => p.key === id) || null : null);
+
+        /* --- Effetti DOM --- */
+        function fx(x, y, text, cls, dx, dy, dur) {
+            const s = document.createElement('span');
+            s.className = 'rabbit-fx' + (cls ? ' ' + cls : '');
+            s.textContent = text;
+            s.style.left = x + 'px';
+            s.style.top = y + 'px';
+            body.appendChild(s);
+            const anim = s.animate(
+                [
+                    { opacity: 1, transform: 'translate(-50%, -50%) scale(1)' },
+                    { opacity: 0, transform: `translate(-50%, -50%) translate(${dx}px, ${dy}px) scale(.6)` },
+                ],
+                { duration: dur, easing: 'ease-out' }
+            );
+            anim.onfinish = () => s.remove();
+        }
+        function trail(x, y, n = 2) {
+            const count = REDUCED ? Math.min(n, 1) : n;
+            for (let i = 0; i < count; i++) {
+                fx(x + rand(-S * 0.25, S * 0.25), y - 4, pick(GLYPHS), '', rand(-30, 30), rand(-70, -25), rand(600, 1000));
+            }
+        }
+        function hearts(x, y, n) {
+            for (let i = 0; i < n; i++) {
+                fx(x + rand(-S * 0.3, S * 0.3), y + rand(-10, 10), '♥', 'heart', rand(-25, 25), rand(-100, -55), rand(800, 1200));
+            }
+        }
+        function beam(x, y) {
+            if (REDUCED) return;
+            const b = document.createElement('div');
+            b.className = 'rabbit-beam';
+            b.style.left = (x - S * 0.45) + 'px';
+            b.style.width = (S * 0.9) + 'px';
+            b.style.height = y + 'px';
+            body.appendChild(b);
+            b.addEventListener('animationend', () => b.remove());
+        }
+        function say(text, dur = 2.4) {
+            sayEl.textContent = text;
+            sayEl.classList.add('show');
+            sayW = sayEl.offsetWidth;
+            sayUntil = performance.now() + dur * 1000;
+        }
+
+        function setClip(h, ghostOpacity) {
+            solidPlane.constant = h;
+            ghostPlane.constant = -h;
+            ghostMat.opacity = ghostOpacity;
+            const fx3 = ghostOpacity > 0.01;
+            for (const g of ghosts) g.visible = fx3;
+            ringMesh.visible = fx3 && h > -0.08 && h < 1.3;
+            ringMesh.position.y = h;
+        }
+
+        /* --- Comportamento --- */
+        function setMode(m) { mode = m; modeT = 0; }
+        function squash(a) { sq = a; sqV = 0; }
+        function toIdle(t0) {
+            setMode('idle');
+            idleFor = t0 != null ? t0 : rand(1.2, 3.5);
+        }
+        function startFall(vx, vy) {
+            platId = null;
+            hop = null;
+            vel.x = vx;
+            vel.y = vy;
+            setMode('air');
+        }
+        function startWalk(x) {
+            target = x;
+            setMode('hop');
+            nextHop();
+        }
+        function nextHop() {
+            const rem = target - pos.x;
+            if (Math.abs(rem) < 3) {
+                hop = null;
+                zoom = false;
+                toIdle();
+                return;
+            }
+            dir = rem > 0 ? 1 : -1;
+            const dist = Math.min(Math.abs(rem), S * (zoom ? 0.9 : 0.55));
+            hop = { x0: pos.x, x1: pos.x + dir * dist, p: 0, dur: zoom ? 0.23 : 0.34, h: S * (zoom ? 0.32 : 0.22) };
+            sfx.hop();
+        }
+        function leapTo(pl) {
+            const tx = clamp(pos.x + (Math.random() - 0.5) * 420, pl.x0 + 10, pl.x1 - 10);
+            const ty = pl.yAt(tx);
+            const dy = ty - pos.y;
+            const tt = clamp(0.55 + Math.max(0, -dy) / 1100, 0.5, 1.1);
+            dir = tx >= pos.x ? 1 : -1;
+            startFall((tx - pos.x) / tt, (dy - 0.5 * GRAVITY * tt * tt) / tt);
+            sfx.hop();
+        }
+        function decide() {
+            const pl = getPlat(platId);
+            if (!pl) return startFall(0, 0);
+            zoom = false;
+            if (firstWalk) {
+                firstWalk = false;
+                return startWalk(pos.x < innerWidth / 2 ? pl.x1 - S * 0.2 : pl.x0 + S * 0.2);
+            }
+            const others = platforms().filter((p) => p.key !== platId);
+            const r = Math.random();
+            if (r < 0.4) return startWalk(rand(pl.x0, pl.x1));
+            if (r < 0.52) return startWalk(clamp(pointer.x, pl.x0, pl.x1));
+            if (r < 0.65) return setMode('groom');
+            if (r < 0.83 && others.length) return leapTo(pick(others));
+            if (r < 0.9 && platId !== 'ground') return startWalk(dir > 0 ? pl.x1 + S : pl.x0 - S);
+            sniffP = 0.8;
+            idleFor = rand(1, 2.5);
+        }
+        function stickToPlatform() {
+            const pl = getPlat(platId);
+            if (!pl || pos.x < pl.x0 - S * 0.3 || pos.x > pl.x1 + S * 0.3) {
+                startFall(0, 0);
+                return false;
+            }
+            pos.y = pl.yAt(pos.x);
+            return true;
+        }
+        function checkFlee() {
+            if (!FINE_POINTER || api.dragging) return;
+            const d = Math.hypot(pointer.x - pos.x, pointer.y - (pos.y - S * 0.5));
+            const isNear = d < S * 1.1;
+            if (isNear && !near && fleeCd <= 0 && Math.random() < 0.4) {
+                const pl = getPlat(platId);
+                if (pl) {
+                    zoom = true;
+                    fleeCd = 8;
+                    say(pick(['Prendimi se ci riesci!', 'Non mi prendi! 😜', 'Troppo lento, Neo!']));
+                    startWalk(pointer.x < pos.x ? pl.x1 : pl.x0);
+                }
+            }
+            near = isNear;
+        }
+
+        function updateHop(dt) {
+            if (!hop) return toIdle();
+            hop.p += dt / hop.dur;
+            const p = Math.min(hop.p, 1);
+            pos.x = hop.x0 + (hop.x1 - hop.x0) * p;
+            const pl = getPlat(platId);
+            if (!pl || pos.x < pl.x0 - S * 0.3 || pos.x > pl.x1 + S * 0.3) return startFall(dir * 260, -420);
+            pos.y = pl.yAt(pos.x) - Math.sin(Math.PI * p) * hop.h;
+            if (hop.p >= 1) {
+                squash(0.35);
+                trail(pos.x, pos.y, 1);
+                checkFlee();
+                if (mode === 'hop') nextHop();
+            }
+        }
+
+        function land(pl, ly) {
+            const impact = vel.y;
+            pos.y = ly;
+            if (impact > 950 && bounces < 1) {
+                bounces++;
+                vel.y = -impact * 0.3;
+                vel.x *= 0.6;
+                squash(0.9);
+                sfx.thud();
+                trail(pos.x, ly, 5);
+                return;
+            }
+            platId = pl.key;
+            vel.x = 0;
+            vel.y = 0;
+            bounces = 0;
+            if (spinning) {
+                spinning = false;
+                P.roll = wrapAngle(P.roll);
+            }
+            squash(clamp(impact / 1100, 0.35, 1));
+            trail(pos.x, ly, impact > 500 ? 7 : 3);
+            sfx.thud();
+            if (hardThrow || impact > 1700) {
+                hardThrow = false;
+                setMode('dizzy');
+                say(pick(['@_@', 'Gira tutto...', 'Ahia! 😵']));
+            } else {
+                toIdle(rand(0.5, 1.4));
+            }
+        }
+
+        function updateAir(dt) {
+            vel.y += GRAVITY * dt;
+            const py = pos.y;
+            pos.x += vel.x * dt;
+            pos.y += vel.y * dt;
+            const minX = S * 0.35, maxX = innerWidth - S * 0.35;
+            if (pos.x < minX) { pos.x = minX; vel.x = Math.abs(vel.x) * 0.5; squash(0.3); sfx.thud(); }
+            else if (pos.x > maxX) { pos.x = maxX; vel.x = -Math.abs(vel.x) * 0.5; squash(0.3); sfx.thud(); }
+            if (pos.y < S * 1.2 && vel.y < 0) { pos.y = S * 1.2; vel.y = Math.abs(vel.y) * 0.3; }
+            if (vel.y <= 0) return;
+            for (const pl of platforms()) {
+                if (pos.x < pl.x0 - S * 0.25 || pos.x > pl.x1 + S * 0.25) continue;
+                const ly = pl.yAt(pos.x);
+                if (py <= ly + 2 && pos.y >= ly) return land(pl, ly);
+            }
+            if (pos.y > innerHeight - 8) land(platforms()[0], innerHeight - 8);
+        }
+
+        function updateGrab(dt) {
+            const tx = clamp(grab.px + grab.ox, S * 0.35, innerWidth - S * 0.35);
+            const ty = clamp(grab.py + grab.oy, S * 1.15, innerHeight - 4);
+            pos.x += (tx - pos.x) * lerpK(28, dt);
+            pos.y += (ty - pos.y) * lerpK(28, dt);
+            if (!grab.said && performance.now() - grab.t0 > 450) {
+                grab.said = true;
+                say(pick(GRAB_LINES));
+            }
+        }
+
+        function pet() {
+            platId = prevPlat;
+            const pl = getPlat(platId);
+            if (!pl) return startFall(0, 0);
+            pos.y = pl.yAt(pos.x);
+            setMode('happy');
+            expr = 'happy';
+            exprT = 1.3;
+            sfx.chirp();
+            hearts(pos.x, pos.y - S * 0.9, 5);
+            say(pick(PET_LINES), 1.6);
+        }
+
+        /* --- Posa e animazione --- */
+        function animate(dt, t) {
+            const tg = {
+                yaw: dir * 0.3, lean: 0, roll: 0, sx: 1, sy: 1 + Math.sin(t * 2.6) * 0.015,
+                armL: 0, armR: 0, armLz: 0, armRz: 0, foot: 0, footZ: 0, headX: 0, headY: 0, headZ: 0,
+            };
+            const lookY = clamp((pointer.x - pos.x) / 320, -0.8, 0.8);
+            const lookX = clamp((pointer.y - (pos.y - S * 0.7)) / 520, -0.35, 0.4);
+            let face = 'normal';
+            switch (mode) {
+                case 'hop': {
+                    const p = hop ? Math.min(hop.p, 1) : 0;
+                    const c = Math.cos(p * Math.PI * 2), s1 = Math.sin(p * Math.PI);
+                    tg.yaw = dir * 1.0;
+                    tg.sy = 1 - 0.12 * c;
+                    tg.sx = 1 + 0.06 * c;
+                    tg.lean = 0.2 * Math.sin(p * Math.PI * 2);
+                    tg.foot = 0.85 * s1;
+                    tg.footZ = -0.05 * s1;
+                    tg.armL = tg.armR = -0.7 * s1;
+                    tg.headY = clamp(lookY - tg.yaw, -0.5, 0.5) * 0.4;
+                    tg.headX = -0.08;
+                    break;
+                }
+                case 'air': {
+                    tg.yaw = dir * 0.7;
+                    const up = clamp(-mv.y / 1400, -1, 1);
+                    tg.sy = 1 + Math.abs(up) * 0.1;
+                    tg.sx = 1 - Math.abs(up) * 0.05;
+                    tg.armL = -2.0 + Math.sin(t * 17) * 0.4;
+                    tg.armR = -2.0 + Math.sin(t * 17 + 2) * 0.4;
+                    tg.foot = 0.7 + Math.sin(t * 15) * 0.2;
+                    tg.roll = clamp(-mv.x / 3500, -0.4, 0.4);
+                    if (spinning || hardThrow) face = 'x';
+                    break;
+                }
+                case 'grab': {
+                    tg.yaw = 0;
+                    tg.sy = 1.07;
+                    tg.sx = 0.97;
+                    tg.armL = -2.3 + Math.sin(t * 16) * 0.45;
+                    tg.armR = -2.3 + Math.sin(t * 16 + Math.PI) * 0.45;
+                    tg.armLz = 0.25;
+                    tg.armRz = -0.25;
+                    tg.foot = 1.15 + Math.sin(t * 13) * 0.25;
+                    tg.roll = clamp(-mv.x / 1800, -0.7, 0.7);
+                    tg.headX = 0.12;
+                    tg.headZ = Math.sin(t * 5) * 0.12;
+                    face = 'x';
+                    break;
+                }
+                case 'groom': {
+                    tg.yaw = dir * 0.15;
+                    tg.armL = -2.1 + Math.sin(t * 13) * 0.3;
+                    tg.armR = -2.1 + Math.sin(t * 13 + Math.PI) * 0.3;
+                    tg.armLz = 0.45;
+                    tg.armRz = -0.45;
+                    tg.headX = 0.22;
+                    tg.headZ = Math.sin(t * 6.5) * 0.14;
+                    face = 'happy';
+                    break;
+                }
+                case 'dizzy': {
+                    tg.headZ = Math.sin(t * 9) * 0.28;
+                    tg.headY = Math.sin(t * 4.5) * 0.35;
+                    tg.roll = Math.sin(t * 9) * 0.07;
+                    face = 'x';
+                    break;
+                }
+                case 'happy': {
+                    const p = Math.min(modeT / 0.55, 1);
+                    tg.yaw = 0;
+                    tg.armL = tg.armR = -2.4;
+                    tg.armLz = -0.3;
+                    tg.armRz = 0.3;
+                    tg.sy = 1 + Math.sin(p * Math.PI) * 0.1;
+                    tg.foot = 0.6 * Math.sin(p * Math.PI);
+                    face = 'happy';
+                    break;
+                }
+                default:
+                    tg.headY = lookY - tg.yaw * 0.6;
+                    tg.headX = lookX - (sniffP > 0 ? 0.08 : 0);
+            }
+            const k = lerpK(mode === 'grab' || mode === 'air' ? 14 : 9, dt);
+            for (const key in tg) {
+                if (key === 'roll' && spinning) continue;
+                P[key] += (tg[key] - P[key]) * k;
+            }
+            if (spinning) P.roll += dt * 12 * (vel.x >= 0 ? -1 : 1);
+
+            sqV += (-sq * 320 - sqV * 15) * dt;
+            sq += sqV * dt;
+
+            R.spinner.rotation.z = P.roll;
+            R.yawG.rotation.y = P.yaw;
+            R.bodyPivot.rotation.x = P.lean;
+            const sqx = 1 + sq * 0.16, sqy = 1 - sq * 0.28;
+            R.bodyPivot.scale.set(P.sx * sqx, P.sy * sqy, P.sx * sqx);
+            arms[0].rotation.set(P.armL, 0, P.armLz);
+            arms[1].rotation.set(P.armR, 0, P.armRz);
+            feet[0].rotation.x = P.foot;
+            feet[1].rotation.x = P.foot * 0.9;
+            feet[0].position.z = 0.02 + P.footZ;
+            feet[1].position.z = 0.02 + P.footZ;
+            R.head.rotation.set(P.headX, P.headY, P.headZ);
+
+            // Espressione
+            if (exprT > 0) {
+                exprT -= dt;
+                if (face === 'normal') face = expr;
+            }
+            blinkT -= dt;
+            if (blinkT < 0) { blinkP = 0.13; blinkT = rand(2, 5.5); }
+            if (blinkP > 0) blinkP -= dt;
+            const eyeY = blinkP > 0 ? 0.12 : 1;
+            for (const e of eyes) { e.visible = face === 'normal'; e.scale.y = eyeY; }
+            for (const m of happyEyes) m.visible = face === 'happy';
+            for (const m of xEyes) m.visible = face === 'x';
+
+            if (mode === 'idle') {
+                sniffT -= dt;
+                if (sniffT < 0) { sniffP = 0.7; sniffT = rand(3, 7); }
+                if (Math.random() < dt * 0.25) pick(ears).vz += rand(-7, 7);
+            }
+            if (sniffP > 0) sniffP -= dt;
+            const sniff = sniffP > 0 ? Math.abs(Math.sin(t * 30)) : 0;
+            R.nose.scale.y = 0.021 * (1 + sniff * 0.35);
+            R.whiskers.rotation.x = sniff * 0.06;
+
+            // Orecchie molleggiate
+            for (const e of ears) {
+                let tx = clamp(mv.y * 0.0006, -1.0, 0.6);
+                let tz = -e.sx * 0.17 + clamp(-mv.x * 0.0003, -0.5, 0.5) * Math.cos(P.yaw);
+                if (mode === 'grab' || mode === 'air') {
+                    tx += Math.sin(t * 12 + e.sx * 1.7) * 0.3;
+                    tz += Math.sin(t * 10 + e.sx) * 0.25;
+                }
+                if (mode === 'dizzy') tz += Math.sin(t * 9 + e.sx) * 0.3;
+                if (face === 'happy') tz -= e.sx * 0.1;
+                e.vx += ((tx - e.ax) * 170 - e.vx * 11) * dt;
+                e.ax += e.vx * dt;
+                e.vz += ((tz - e.az) * 170 - e.vz * 11) * dt;
+                e.az += e.vz * dt;
+                e.base.rotation.set(e.ax, 0, e.az);
+                const tipT = (e.sx < 0 ? 0.6 : 0.1) - e.vx * 0.03;
+                e.tvx += ((tipT - e.tax) * 140 - e.tvx * 9) * dt;
+                e.tax += e.tvx * dt;
+                e.tip.rotation.x = e.tax;
+            }
+
+            R.tail.position.x = face === 'happy' ? Math.sin(t * 22) * 0.02 : 0;
+            R.stars.visible = mode === 'dizzy';
+            if (R.stars.visible) R.stars.rotation.y = t * 5;
+
+            if (R.shades.visible) {
+                shadesV += ((shadesHide ? 0.7 : 0) - shadesY) * 260 * dt - shadesV * 12 * dt;
+                shadesY += shadesV * dt;
+                R.shades.position.y = 0.178 + shadesY;
+                if (shadesHide && shadesY > 0.55) R.shades.visible = false;
+            }
+
+            // Ombra sul pavimento sotto il coniglio
+            const pl = getPlat(platId);
+            const groundPx = (pl ? pl.yAt(pos.x) : innerHeight - 8) - pos.y;
+            const hu = Math.max(0, groundPx) / unitPx;
+            shadowMesh.visible = mode !== 'grab' && hu < 0.7;
+            shadowMesh.position.y = -hu;
+            shadowMesh.material.opacity = 0.42 * clamp(1 - hu / 0.7, 0, 1);
+            shadowMesh.scale.set(0.75 * (1 - Math.min(hu, 0.5) * 0.4), 0.13, 1);
+        }
+
+        function place() {
+            canvas.style.transform = `translate3d(${(pos.x - C / 2).toFixed(1)}px, ${(pos.y - feetFrac * C).toFixed(1)}px, 0)`;
+            if (sayUntil) {
+                if (performance.now() > sayUntil) {
+                    sayEl.classList.remove('show');
+                    sayUntil = 0;
+                }
+                const bx = clamp(pos.x, sayW / 2 + 8, innerWidth - sayW / 2 - 8);
+                const by = Math.max(pos.y - S * 1.22, 44);
+                sayEl.style.transform = `translate3d(${bx.toFixed(1)}px, ${by.toFixed(1)}px, 0) translate(-50%, -100%)`;
+            }
+        }
+
+        function deactivate() {
+            api.active = false;
+            api.dragging = false;
+            mode = 'off';
+            canvas.classList.remove('on');
+            sayEl.classList.remove('show');
+            sayUntil = 0;
+            body.classList.remove('rabbit-hover', 'rabbit-drag');
+        }
+
+        function update(dt, t) {
+            if (!api.active) return;
+            frame++;
+            modeT += dt;
+            if (fleeCd > 0) fleeCd -= dt;
+            prev.x = pos.x;
+            prev.y = pos.y;
+            switch (mode) {
+                case 'appear': {
+                    stickToPlatform();
+                    const p = Math.min(modeT / 1.3, 1);
+                    setClip(-0.1 + 1.45 * easeInOut(p), p < 0.75 ? 0.85 : 0.85 * (1 - (p - 0.75) / 0.25));
+                    if (p >= 1) {
+                        setClip(100, 0);
+                        toIdle(1.3);
+                        firstWalk = true;
+                        say('Seguimi... 🐇', 2.6);
+                        sfx.chirp();
+                    }
+                    break;
+                }
+                case 'vanish': {
+                    const p = Math.min(modeT / 1.0, 1);
+                    setClip(1.35 - 1.45 * easeInOut(p), p < 0.6 ? 0.85 : 0.85 * (1 - (p - 0.6) / 0.4));
+                    if (p >= 1) { deactivate(); return; }
+                    break;
+                }
+                case 'idle':
+                    if (!stickToPlatform()) break;
+                    chatterT -= dt;
+                    if (chatterT < 0) { chatterT = rand(20, 38); say(pick(CHATTER)); }
+                    checkFlee();
+                    if (mode === 'idle' && modeT > 0.2) idleFor -= dt;
+                    if (mode === 'idle' && idleFor <= 0) decide();
+                    break;
+                case 'hop': updateHop(dt); break;
+                case 'air': updateAir(dt); break;
+                case 'grab': updateGrab(dt); break;
+                case 'groom':
+                case 'dizzy':
+                    if (stickToPlatform() && modeT > 2.2) toIdle();
+                    break;
+                case 'happy': {
+                    const p = Math.min(modeT / 0.55, 1);
+                    const pl = getPlat(platId);
+                    if (!pl) { startFall(0, 0); break; }
+                    pos.y = pl.yAt(pos.x) - Math.sin(Math.PI * p) * S * 0.4;
+                    if (p >= 1) { squash(0.5); toIdle(); }
+                    break;
+                }
+                default:
+                    break;
+            }
+            const inv = 1 / Math.max(dt, 1e-3);
+            mv.x += ((pos.x - prev.x) * inv - mv.x) * lerpK(12, dt);
+            mv.y += ((pos.y - prev.y) * inv - mv.y) * lerpK(12, dt);
+            animate(dt, t);
+            place();
+            renderer.render(scn, cam);
+        }
+
+        /* --- API pubblica --- */
+        api.update = update;
+        api.resize = resize;
+        api.setTheme = (th) => {
+            if (!renderer) return;
+            const a = new T.Color(th.a[0] / 255, th.a[1] / 255, th.a[2] / 255).convertSRGBToLinear();
+            const b = new T.Color(th.b[0] / 255, th.b[1] / 255, th.b[2] / 255).convertSRGBToLinear();
+            rimA.color.copy(a);
+            rimB.color.copy(b);
+            ghostMat.color.copy(a);
+            ringMesh.material.color.copy(a);
+            irisMat.color.copy(a);
+            glintMat.color.copy(a);
+        };
+        api.hit = (x, y) => api.active && mode !== 'appear' && mode !== 'vanish'
+            && Math.abs(x - pos.x) < S * 0.42 && y > pos.y - S * 1.15 && y < pos.y + S * 0.08;
+
+        api.spawn = () => {
+            if (!ensure()) {
+                api.supported = false;
+                return false;
+            }
+            if (api.active) return true;
+            resize();
+            api.active = true;
+            canvas.classList.add('on');
+            frame++;
+            const ground = platforms()[0];
+            pos.x = clamp(innerWidth * rand(0.35, 0.65), ground.x0, ground.x1);
+            pos.y = ground.yAt(pos.x);
+            platId = 'ground';
+            dir = Math.random() < 0.5 ? -1 : 1;
+            vel.x = vel.y = mv.x = mv.y = 0;
+            sq = sqV = 0;
+            spinning = hardThrow = false;
+            P.roll = 0;
+            setClip(-0.1, 0.85);
+            setMode('appear');
+            beam(pos.x, pos.y);
+            sfx.magic();
+            return true;
+        };
+        api.dismiss = () => {
+            if (!api.active || mode === 'vanish') return;
+            if (api.dragging) {
+                api.dragging = false;
+                body.classList.remove('rabbit-drag');
+            }
+            say('Ciao Neo! 🐇', 1.4);
+            beam(pos.x, pos.y);
+            setClip(1.35, 0.85);
+            setMode('vanish');
+        };
+        api.cheer = () => {
+            if (!api.active || !platId || mode === 'appear' || mode === 'vanish') return;
+            setMode('happy');
+            expr = 'happy';
+            exprT = 1.2;
+            hearts(pos.x, pos.y - S * 0.9, 3);
+            sfx.chirp();
+            say('Sono qui! 👋', 1.6);
+        };
+        api.toggleShades = () => {
+            if (!api.active) return false;
+            shadesOn = !shadesOn;
+            if (shadesOn) {
+                R.shades.visible = true;
+                shadesHide = false;
+                shadesY = 0.55;
+                shadesV = 0;
+                say(pick(['Deal with it. 😎', 'Ora sono Neo. 😎', 'Io conosco il kung fu. 😎']));
+            } else {
+                shadesHide = true;
+                shadesV = 3;
+                say('Occhiali via!', 1.4);
+            }
+            sfx.chirp();
+            return shadesOn;
+        };
+
+        api.grabStart = (e) => {
+            if (!api.active || mode === 'appear' || mode === 'vanish') return;
+            api.dragging = true;
+            const now = performance.now();
+            Object.assign(grab, {
+                id: e.pointerId, ox: pos.x - e.clientX, oy: pos.y - e.clientY, px: e.clientX, py: e.clientY,
+                sx: e.clientX, sy: e.clientY, t0: now, moved: 0, said: false,
+            });
+            grab.samples = [{ x: e.clientX, y: e.clientY, t: now }];
+            prevPlat = platId;
+            platId = null;
+            hop = null;
+            spinning = hardThrow = false;
+            bounces = 0;
+            setMode('grab');
+            sfx.squeak();
+            body.classList.add('rabbit-drag');
+            api.swallowClick = true;
+            clearTimeout(swTimer);
+        };
+        api.grabMove = (e) => {
+            if (!api.dragging || e.pointerId !== grab.id) return;
+            grab.px = e.clientX;
+            grab.py = e.clientY;
+            const now = performance.now();
+            grab.samples.push({ x: e.clientX, y: e.clientY, t: now });
+            while (grab.samples.length > 2 && now - grab.samples[0].t > 110) grab.samples.shift();
+            grab.moved = Math.max(grab.moved, Math.hypot(e.clientX - grab.sx, e.clientY - grab.sy));
+            if (!grab.said && grab.moved > 14) {
+                grab.said = true;
+                say(pick(GRAB_LINES));
+            }
+        };
+        api.grabEnd = (e) => {
+            if (!api.dragging || (e && e.pointerId !== grab.id)) return;
+            api.dragging = false;
+            body.classList.remove('rabbit-drag');
+            clearTimeout(swTimer);
+            swTimer = setTimeout(() => { api.swallowClick = false; }, 350);
+            const now = performance.now();
+            if (grab.moved < 8 && now - grab.t0 < 320) return pet();
+            const s = grab.samples, a = s[0], b = s[s.length - 1];
+            const dts = Math.max((b.t - a.t) / 1000, 0.016);
+            let vx = (b.x - a.x) / dts, vy = (b.y - a.y) / dts;
+            if (now - b.t > 120) vx = vy = 0;
+            const sp = Math.hypot(vx, vy);
+            if (sp > 2800) { vx *= 2800 / sp; vy *= 2800 / sp; }
+            if (Math.abs(vx) > 30) dir = vx > 0 ? 1 : -1;
+            spinning = hardThrow = sp > 1500;
+            if (sp > 900) {
+                say(pick(['Wheee!', 'Yuuuhuu!', 'Volooo! 🚀']), 1.6);
+                sfx.throwIt();
+            }
+            startFall(vx, vy);
+        };
+
+        return api;
+    }
+    rabbit = createRabbit();
+
+    addEventListener('pointerdown', (e) => {
+        if (!rabbit.active || e.button > 0 || !rabbit.hit(e.clientX, e.clientY)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        rabbit.grabStart(e);
+    }, true);
+    addEventListener('pointermove', (e) => rabbit.grabMove(e), { passive: true });
+    addEventListener('pointerup', (e) => rabbit.grabEnd(e), true);
+    addEventListener('pointercancel', (e) => rabbit.grabEnd(e), true);
+    addEventListener('blur', () => rabbit.grabEnd(null));
+    addEventListener('click', (e) => {
+        if (!rabbit.swallowClick) return;
+        rabbit.swallowClick = false;
+        e.preventDefault();
+        e.stopPropagation();
+    }, true);
+    addEventListener('dblclick', (e) => {
+        if (!rabbit.hit(e.clientX, e.clientY)) return;
+        e.preventDefault();
+        rabbit.toggleShades();
+    }, true);
+    addEventListener('touchstart', (e) => {
+        const t = e.touches[0];
+        if (t && e.touches.length === 1 && rabbit.hit(t.clientX, t.clientY)) e.preventDefault();
+    }, { capture: true, passive: false });
+
     /* ================= Terminale interattivo ================= */
     const termOut = $('#term-out');
     const termInput = $('#term-input');
@@ -3131,6 +4240,36 @@ body {
                 await typeLine('Matrix ti ha preso...', 'hi', 45);
                 await sleep(300);
                 await typeLine('Segui il coniglio bianco. 🐇', 'hi', 45);
+                if (rabbit.supported && !rabbit.active && rabbit.spawn()) {
+                    print('Il coniglio bianco è arrivato: prendilo col mouse! 🐇', 'dim');
+                }
+            },
+        },
+        coniglio: {
+            d: 'chiama il coniglio bianco 3D',
+            run(args) {
+                const sub = (args[0] || '').toLowerCase();
+                if (sub === 'via' || sub === 'off') {
+                    if (!rabbit.active) return print('Il coniglio non c\'è. Scrivi "coniglio" per chiamarlo.', 'dim');
+                    rabbit.dismiss();
+                    return print('Il coniglio torna nella tana. 🐇', 'dim');
+                }
+                if (!rabbit.supported) return print('Il coniglio 3D ha bisogno di WebGL: il tuo browser non lo supporta.', 'err');
+                if (rabbit.active) {
+                    rabbit.cheer();
+                    return print('Il coniglio è già qui! Prendilo col mouse. 🐇');
+                }
+                if (!rabbit.spawn()) return print('Il coniglio 3D ha bisogno di WebGL: il tuo browser non lo supporta.', 'err');
+                print('Segui il coniglio bianco... 🐇', 'hi');
+                print('Trascinalo e lancialo col mouse, cliccalo per le coccole.', 'dim');
+                print('Doppio click = occhiali da Neo · "coniglio via" per salutarlo.', 'dim');
+            },
+        },
+        occhiali: {
+            d: 'occhiali da Neo per il coniglio',
+            run() {
+                if (!rabbit.active) return print('Prima chiama il coniglio: scrivi "coniglio".', 'dim');
+                print(rabbit.toggleShades() ? 'Occhiali da Neo: ON 😎' : 'Occhiali da Neo: OFF');
             },
         },
         hack: {
@@ -3237,6 +4376,8 @@ body {
         tema: 'theme', musica: 'play', music: 'play', stop: 'pause', pausa: 'pause',
         ig: 'instagram', tt: 'tiktok', dc: 'discord', whois: 'whoami', chi: 'whoami', dir: 'ls',
         logout: 'exit', quit: 'exit', su: 'sudo',
+        rabbit: 'coniglio', bunny: 'coniglio', coniglietto: 'coniglio',
+        shades: 'occhiali', glasses: 'occhiali',
     };
 
     async function runCommand(raw) {
@@ -3454,6 +4595,7 @@ body {
     /* ================= Loop principale ================= */
     addEventListener('resize', () => {
         scene3d.resize();
+        rabbit.resize();
         sizeCanvases();
     });
     sizeCanvases();
@@ -3473,6 +4615,7 @@ body {
             drawOsc(t);
         }
         scene3d.update(dt, t);
+        rabbit.update(dt, t);
 
         fpsFrames++;
         fpsTime += rawDt;
