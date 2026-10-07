@@ -1,0 +1,7 @@
+# file locali di ORION (contengono anche il token Mapbox)
+orion_settings.json
+orion_cache.db
+orion_faces/
+dossier_*.txt
+dossier_*.json
+__pycache__/

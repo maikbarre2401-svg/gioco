@@ -5,20 +5,26 @@ ORION // SPY OSINT CINEMA PRO  —  by MAIKGOST
 Simulatore d'intelligence dall'estetica cinematografica (gioco / demo UI).
 
 ⚠️  SIMULAZIONE / GIOCO
-    Questo programma NON esegue nessuna ricerca reale, non contatta internet
-    e non raccoglie dati su nessuna persona. TUTTI i dati (nomi, foto, email,
-    profili, ecc.) sono generati in modo casuale e deterministico dal testo
-    digitato, a puro scopo di intrattenimento. I ritratti sono silhouette
-    astratte generate dal codice: NON sono persone reali.
+    Questo programma NON esegue nessuna ricerca reale e non raccoglie dati su
+    nessuna persona. TUTTI i dati (nomi, foto, email, profili, ecc.) sono
+    generati in modo casuale e deterministico dal testo digitato, a puro scopo
+    di intrattenimento. I ritratti sono silhouette astratte generate dal codice
+    oppure volti generati da IA (thispersondoesnotexist): NON persone reali.
+
+    Uniche connessioni di rete (entrambe disattivabili):
+      • download dei volti IA (opzione "Foto realistiche");
+      • mappa 3D Mapbox, aperta nel browser solo su richiesta.
 
 Creato da MAIKGOST.
 Requisiti: Python 3.8+, tkinter (di serie), Pillow (`pip install Pillow`).
 """
 
 import hashlib
+import html
 import json
 import math
 import os
+import queue
 import random
 import sqlite3
 import tempfile
@@ -29,6 +35,7 @@ import urllib.request
 import webbrowser
 from datetime import datetime, timedelta
 from io import BytesIO
+from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 try:
@@ -67,8 +74,16 @@ MONO = "Consolas"
 UI = "Segoe UI"
 MATRIX_CHARS = "アカサタナハマヤラабвг0123456789ABCDEF$#@%&<>/*ΞΨΛØ§"
 
+# --- file dell'app: sempre accanto allo script (non nella cartella corrente) ---
+try:
+    APP_DIR = os.path.dirname(os.path.abspath(__file__))
+except NameError:                       # es. eseguito da un REPL / freezer
+    APP_DIR = os.getcwd()
+SETTINGS_FILE = os.path.join(APP_DIR, "orion_settings.json")
+CACHE_DB = os.path.join(APP_DIR, "orion_cache.db")
+DOSSIER_SCHEMA = 2      # incrementare quando cambia la struttura del dossier
+
 # --- impostazioni (persistite in orion_settings.json) ---
-SETTINGS_FILE = "orion_settings.json"
 DEFAULT_SETTINGS = {
     "skip_intro": False, "intro_speed": "media", "slideshow_sec": 4.0,
     "bg_anim": True, "redacted": True, "sound": True, "accent": THEME["accent"],
@@ -78,8 +93,39 @@ INTRO_SCALE = {"corta": 0.6, "media": 1.0, "lunga": 1.55}
 ACCENTS = [("Ciano", "#00e5ff"), ("Verde", "#39ff14"),
            ("Magenta", "#ff2bd6"), ("Ambra", "#ffb020")]
 
+
+def _is_hex_color(v):
+    return (isinstance(v, str) and len(v) == 7 and v[0] == "#"
+            and all(c in "0123456789abcdefABCDEF" for c in v[1:]))
+
+
+def sanitize_settings(raw):
+    """Unisce `raw` ai default scartando chiavi sconosciute e valori del tipo
+    sbagliato (un JSON modificato a mano non deve far crashare l'app)."""
+    s = dict(DEFAULT_SETTINGS)
+    if not isinstance(raw, dict):
+        return s
+    for k, default in DEFAULT_SETTINGS.items():
+        v = raw.get(k)
+        if v is None:
+            continue
+        if isinstance(default, bool):
+            if isinstance(v, bool):
+                s[k] = v
+        elif isinstance(default, float):
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                s[k] = float(v)
+        elif isinstance(v, str):
+            s[k] = v
+    s["slideshow_sec"] = max(1.5, min(8.0, s["slideshow_sec"]))
+    if s["intro_speed"] not in INTRO_SCALE:
+        s["intro_speed"] = DEFAULT_SETTINGS["intro_speed"]
+    if not _is_hex_color(s["accent"]):
+        s["accent"] = DEFAULT_SETTINGS["accent"]
+    return s
+
 # Volti realistici: generati da IA (thispersondoesnotexist) → NON persone reali.
-FACES_DIR = "orion_faces"
+FACES_DIR = os.path.join(APP_DIR, "orion_faces")
 FACE_URL = "https://thispersondoesnotexist.com/"
 
 
@@ -509,13 +555,20 @@ map.on("style.load",()=>{
 
 def build_mapbox_html(data, token):
     """Costruisce la pagina Mapbox GL JS (globo 3D + terreno + marker identità)."""
-    markers = [{"name": it["name"], "lat": it["geo"][0], "lon": it["geo"][1],
-                "threat": it["threat"], "role": it["role"]} for it in data["identities"]]
+    # nome e ruolo finiscono in setHTML() → vanno escapati; il JSON finisce
+    # dentro <script> → niente '<', '>' o '&' letterali.
+    markers = [{"name": html.escape(it["name"]), "lat": it["geo"][0], "lon": it["geo"][1],
+                "threat": it["threat"], "role": html.escape(it["role"])}
+               for it in data["identities"]]
+    markers_js = (json.dumps(markers).replace("<", "\\u003c")
+                  .replace(">", "\\u003e").replace("&", "\\u0026"))
     return (MAPBOX_HTML
-            .replace("__TOKEN__", token)
-            .replace("__MARKERS__", json.dumps(markers))
-            .replace("__TARGET__", str(data["target"]).replace("<", "").replace(">", ""))
+            .replace("__TOKEN__", json.dumps(token)[1:-1])
+            .replace("__MARKERS__", markers_js)
+            .replace("__TARGET__", html.escape(str(data["target"])))
             .replace("__CREATOR__", CREATOR))
+
+
 ROLES = ["Consulente", "Sviluppatore", "Analista", "Imprenditore", "Fotografo",
          "Ricercatore", "Broker", "Giornalista", "Ingegnere", "DJ", "Trader"]
 PLATFORMS = [("Instagram", "◎"), ("Facebook", "f"), ("X", "✕"), ("LinkedIn", "in"),
@@ -530,12 +583,17 @@ EVENTS = ["Account creato", "Cambio città", "Nuovo dispositivo", "Login sospett
 
 
 def _slug(name):
-    return "".join(name.lower().split()) or "unknown"
+    """Versione 'sicura' del nome: usata per handle, email e nomi di file
+    (niente spazi, slash, due punti, ecc.)."""
+    return "".join(c for c in name.lower() if c.isalnum() or c in "._-") or "unknown"
 
 
-def build_dossier(target):
+def build_dossier(target, variant=0):
+    """Dossier deterministico: stesso target (+ stessa variante) → stessi dati.
+    `variant` > 0 produce una versione alternativa (bottone RIGENERA)."""
     target = (target or "Sconosciuto").strip()
-    seed = int(hashlib.md5(target.lower().encode()).hexdigest(), 16)
+    key = target.lower() if not variant else f"{target.lower()}#{variant}"
+    seed = int(hashlib.md5(key.encode()).hexdigest(), 16)
     rng = random.Random(seed)
 
     n_id = rng.randint(2, 4)
@@ -616,7 +674,7 @@ def build_dossier(target):
 
     # timeline eventi
     timeline = []
-    base = datetime.now()
+    base = datetime.now()                      # non deterministico: date relative a oggi
     for _ in range(rng.randint(6, 9)):
         base = base - timedelta(days=rng.randint(20, 200))
         timeline.append({"date": base.strftime("%Y-%m-%d"), "event": rng.choice(EVENTS),
@@ -625,7 +683,8 @@ def build_dossier(target):
     risk = min(99, int(footprint["exposure"] * 0.6 + (100 - footprint["privacy"]) * 0.4))
     case_id = f"ORION-{rng.randint(1000,9999)}-{rng.choice('ABCDEFXZ')}{rng.randint(10,99)}"
     return {
-        "simulation": True, "creator": CREATOR, "target": target,
+        "simulation": True, "schema": DOSSIER_SCHEMA, "variant": variant,
+        "creator": CREATOR, "target": target,
         "case_id": case_id, "classification": rng.choice(["CONFIDENTIAL", "SECRET", "TOP SECRET"]),
         "generated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "summary": {"threat": identities[0]["threat"], "confidence": identities[0]["confidence"],
@@ -1090,28 +1149,23 @@ class NetworkGraph:
     def _layout(self, data):
         nodes = [{"dist": 0, "ang": 0, "r": 16, "col": THEME["white"],
                   "label": data["target"], "kind": "target"}]
+        edges = []
         ids = data["identities"]
         for k, it in enumerate(ids):
             a = 2 * math.pi * k / max(1, len(ids))
+            id_idx = len(nodes)
             nodes.append({"dist": 150, "ang": a, "r": 11,
-                          "col": THEME["accent"] if k == 0 else THEME["accent2"],
+                          "col": self.accent if k == 0 else THEME["accent2"],
                           "label": it["name"], "kind": "id"})
+            edges.append((0, id_idx))
             ent = ([("@" + s["platform"][:6], THEME["magenta"]) for s in data["socials"][:2]] +
                    [(e["type"], THEME["amber"]) for e in data["emails"][:1]] +
                    [(it["location"].split(",")[0], THEME["green"])])
             for j, (lab, col) in enumerate(ent):
                 off = (j - (len(ent) - 1) / 2) * 0.34
+                edges.append((id_idx, len(nodes)))       # entità → sua identità
                 nodes.append({"dist": 250, "ang": a + off, "r": 6, "col": col,
-                              "label": lab, "kind": "ent", "parent": len(nodes) - 1 - j})
-        edges = []
-        idx_map = [i for i, n in enumerate(nodes) if n["kind"] == "id"]
-        for i in idx_map:
-            edges.append((0, i))
-        for i, n in enumerate(nodes):
-            if n["kind"] == "ent":
-                # collega all'identità più vicina in angolo
-                best = min(idx_map, key=lambda m: abs(nodes[m]["ang"] - n["ang"]))
-                edges.append((best, i))
+                              "label": lab, "kind": "ent"})
         return nodes, edges
 
     def _pos(self, node, cx, cy, phase):
@@ -1122,6 +1176,9 @@ class NetworkGraph:
         if not self.running or not self.c.winfo_exists():
             return
         try:
+            if not self.c.winfo_ismapped():         # scheda nascosta: non disegno
+                self.after_id = self.c.after(250, self._tick)
+                return
             w, h = self.c.winfo_width(), self.c.winfo_height()
             if w <= 1:
                 w, h = 800, 600
@@ -1169,13 +1226,12 @@ class NetworkGraph:
 
 class GeoMap:
     """Mappa tattica con ping geolocalizzati (coordinate reali proiettate)."""
-    def __init__(self, canvas, data, accent=None, on_open3d=None):
+    def __init__(self, canvas, data, accent=None):
         self.c = canvas
         self.accent = accent or THEME["accent"]
         self.frame = 0
         self.running = True
         self.after_id = None
-        self.on_open3d = on_open3d
         self.points = [(it["geo"][0], it["geo"][1], it["name"], it["threat"])
                        for it in data["identities"]]
         self._tick()
@@ -1203,15 +1259,19 @@ class GeoMap:
         if not self.running or not self.c.winfo_exists():
             return
         try:
+            if not self.c.winfo_ismapped():         # scheda nascosta: non disegno
+                self.after_id = self.c.after(250, self._tick)
+                return
             w, h = self.c.winfo_width(), self.c.winfo_height()
             if w <= 1:
                 w, h = 800, 560
             self.c.delete("all")
             self.c.create_rectangle(0, 0, w, h, fill=THEME["bg2"], outline="")
+            grid_col = lerp_color(THEME["bg2"], THEME["line"], 0.5)
             for gx in range(0, w, 46):
-                self.c.create_line(gx, 0, gx, h, fill=lerp_color(THEME["bg2"], THEME["line"], 0.5))
+                self.c.create_line(gx, 0, gx, h, fill=grid_col)
             for gy in range(0, h, 46):
-                self.c.create_line(0, gy, w, gy, fill=lerp_color(THEME["bg2"], THEME["line"], 0.5))
+                self.c.create_line(0, gy, w, gy, fill=grid_col)
             pts = self._project(w, h)
             for i in range(len(pts) - 1):
                 x1, y1 = pts[i][0], pts[i][1]
@@ -1279,21 +1339,26 @@ class SpyOSINTApp:
         self.results = None
         self.current_target = ""
         self.search_active = False
-        self.force_fresh = False
-        self._img_refs = []
+        self._search_id = 0                 # invalida i risultati di ricerche vecchie
+        self._ui_queue = queue.Queue()      # worker → thread Tk (Tk non è thread-safe)
+        self._db_lock = threading.Lock()
         self._face_cache = {}
         self._title_phase = 0.0
+        self._settings_win = None
         self.net_anim = None
         self.geo_anim = None
 
         self.settings = self._load_settings()
-        THEME["accent"] = self.settings.get("accent", THEME["accent"])
+        THEME["accent"] = self.settings["accent"]
 
         self._setup_db()
         self._style()
         self._build_ui()
         self._animate_title()
         self._clock()
+        self._poll_queue()
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.root.bind("<Escape>", lambda e: self.stop_search())
 
         if self.settings.get("splash", True):
             self.beep()
@@ -1325,20 +1390,18 @@ class SpyOSINTApp:
 
     # ---- impostazioni ---------------------------------------------------
     def _load_settings(self):
-        s = dict(DEFAULT_SETTINGS)
         try:
             with open(SETTINGS_FILE, encoding="utf-8") as f:
-                s.update(json.load(f))
-        except Exception:
-            pass
-        return s
+                return sanitize_settings(json.load(f))
+        except (OSError, ValueError):
+            return sanitize_settings({})
 
     def _save_settings(self):
         try:
             with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
                 json.dump(self.settings, f, indent=2)
-        except Exception:
-            pass
+        except OSError as e:
+            messagebox.showerror("Impostazioni", f"Impossibile salvare:\n{e}")
 
     def beep(self):
         if self.settings.get("sound"):
@@ -1357,31 +1420,71 @@ class SpyOSINTApp:
 
     def _setup_db(self):
         try:
-            self.conn = sqlite3.connect("orion_cache.db", check_same_thread=False)
+            self.conn = sqlite3.connect(CACHE_DB, check_same_thread=False)
             self.conn.execute("CREATE TABLE IF NOT EXISTS cache(target TEXT PRIMARY KEY, "
                               "data TEXT, ts DATETIME DEFAULT CURRENT_TIMESTAMP)")
             self.conn.commit()
-        except Exception:
+        except sqlite3.Error:
             self.conn = None
 
+    # la connessione è condivisa tra thread Tk e worker → serializzo gli accessi
     def _cache_put(self, t, d):
-        if self.conn:
-            try:
+        if not self.conn:
+            return
+        try:
+            with self._db_lock:
                 self.conn.execute("INSERT OR REPLACE INTO cache(target,data) VALUES(?,?)",
                                   (t.lower(), json.dumps(d)))
                 self.conn.commit()
-            except Exception:
-                pass
+        except (sqlite3.Error, TypeError, ValueError):
+            pass
 
     def _cache_get(self, t):
-        if self.conn:
-            try:
+        """Dossier in cache, oppure None se assente o di uno schema vecchio."""
+        if not self.conn:
+            return None
+        try:
+            with self._db_lock:
                 r = self.conn.execute("SELECT data FROM cache WHERE target=?",
                                       (t.lower(),)).fetchone()
-                return json.loads(r[0]) if r else None
-            except Exception:
-                return None
-        return None
+            d = json.loads(r[0]) if r else None
+        except (sqlite3.Error, ValueError):
+            return None
+        return d if isinstance(d, dict) and d.get("schema") == DOSSIER_SCHEMA else None
+
+    def _on_close(self):
+        self.search_active = False
+        for anim in (self.net_anim, self.geo_anim):
+            if anim:
+                anim.stop()
+        if self.conn:
+            try:
+                with self._db_lock:
+                    self.conn.close()
+            except sqlite3.Error:
+                pass
+            self.conn = None
+        self.root.destroy()
+
+    # ---- comunicazione worker → UI ------------------------------------
+    def _post(self, fn, *args):
+        """Chiamabile da qualsiasi thread: esegue fn(*args) nel thread Tk."""
+        self._ui_queue.put((fn, args))
+
+    def _poll_queue(self):
+        try:
+            while True:
+                fn, args = self._ui_queue.get_nowait()
+                try:
+                    fn(*args)
+                except tk.TclError:
+                    pass
+        except queue.Empty:
+            pass
+        try:
+            self.root.after(40, self._poll_queue)
+        except tk.TclError:
+            pass                                # finestra chiusa
 
     def _style(self):
         st = ttk.Style()
@@ -1653,8 +1756,7 @@ class SpyOSINTApp:
         self.start_search()
 
     def deep_scan(self):
-        self.surveillance_level = 3
-        self.start_search()
+        self.start_search(fresh=True)
 
     def random_target(self):
         name = f"{random.choice(FIRST)} {random.choice(LAST)}"
@@ -1664,10 +1766,10 @@ class SpyOSINTApp:
         if not self.current_target:
             messagebox.showinfo("Rigenera", "Prima esegui una scansione.")
             return
-        self.force_fresh = True
         self.input.delete(0, tk.END)
         self.input.insert(0, self.current_target)
-        self.start_search()
+        # variante casuale → dossier diverso per lo stesso nome (non salvato in cache)
+        self.start_search(fresh=True, variant=random.randint(1, 999_999))
 
     def copy_summary(self):
         if not self.results:
@@ -1686,7 +1788,13 @@ class SpyOSINTApp:
             return
         slug = _slug(self.results["target"])
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        base = os.path.join(os.getcwd(), f"dossier_{slug}_{stamp}")
+        path = filedialog.asksaveasfilename(
+            parent=self.root, title="Esporta dossier (SIMULAZIONE)",
+            initialfile=f"dossier_{slug}_{stamp}.txt", defaultextension=".txt",
+            filetypes=[("Testo + JSON", "*.txt")])
+        if not path:
+            return
+        base = os.path.splitext(path)[0]
         try:
             with open(base + ".txt", "w", encoding="utf-8") as f:
                 f.write(self._report_text(self.results))
@@ -1696,7 +1804,7 @@ class SpyOSINTApp:
                                 f"Dossier salvato (SIMULAZIONE):\n\n{base}.txt\n{base}.json\n\n"
                                 f"created by {CREATOR}")
             self._status("DOSSIER ESPORTATO", THEME["green"])
-        except Exception as e:
+        except OSError as e:
             messagebox.showerror("Esporta", str(e))
 
     def _report_text(self, d):
@@ -1717,11 +1825,17 @@ class SpyOSINTApp:
         return "\n".join(L)
 
     def stop_search(self):
+        if not self.search_active:
+            return
         self.search_active = False
+        self._search_id += 1                    # il worker in corso verrà ignorato
         self.launch_btn.config(state="normal")
+        self._progress(0, "interrotto")
         self._status("SCANSIONE INTERROTTA", THEME["amber"])
 
-    def start_search(self):
+    def start_search(self, fresh=False, variant=0):
+        if self.search_active:                  # Invio / ⌕ / rapidi durante una scansione
+            return
         target = self.input.get().strip()
         if not target:
             messagebox.showwarning("Bersaglio richiesto", "Inserisci un nome bersaglio.")
@@ -1730,47 +1844,60 @@ class SpyOSINTApp:
             messagebox.showerror("Pillow mancante", "Installa Pillow:\n\npip install Pillow")
             return
         self.search_active = True
-        self.current_target = target
+        self._search_id += 1
         self.launch_btn.config(state="disabled")
         self._status(f"SCANSIONE OSINT ATTIVA: {target}", THEME["accent"])
-        if not hasattr(self, "surveillance_level"):
-            self.surveillance_level = 1
-        threading.Thread(target=self._run, args=(target,), daemon=True).start()
+        threading.Thread(target=self._run, args=(self._search_id, target, fresh, variant),
+                         daemon=True).start()
 
-    def _run(self, target):
+    def _alive(self, sid):
+        return self.search_active and sid == self._search_id
+
+    def _run(self, sid, target, fresh, variant):
+        """Thread di lavoro: NON tocca Tk direttamente, passa da self._post()."""
         steps = [(8, "Inizializzo i nodi..."), (22, "Accesso alle banche dati..."),
                  (38, "Deploy crawler deep web..."), (54, "Scansione social..."),
                  (68, "Mappatura footprint..."), (80, "Raccolta asset visivi..."),
                  (90, "Valutazione minaccia..."), (100, "Dossier pronto.")]
         for v, m in steps:
-            if not self.search_active:
-                self.root.after(0, lambda: self.launch_btn.config(state="normal"))
+            if not self._alive(sid):
                 return
-            self.root.after(0, self._progress, v, m)
+            self._post(self._progress, v, m)
             time.sleep(0.09)
-        data = None
-        if not self.force_fresh and getattr(self, "surveillance_level", 1) < 3:
-            data = self._cache_get(target)
+        data = None if (fresh or variant) else self._cache_get(target)
         if not data:
-            data = build_dossier(target)
-            self._cache_put(target, data)
-        self._ensure_faces(data, target)     # volti IA (se attivo/online), con fallback
+            data = build_dossier(target, variant)
+        # volti IA (se attivi/online), con fallback; le varianti non vanno in cache
+        self._ensure_faces(data, target, sid, cache=not variant)
+        if self._alive(sid):
+            self._post(self._on_search_done, sid, data)
+
+    def _on_search_done(self, sid, data):
+        if sid != self._search_id:              # nel frattempo STOP o nuova ricerca
+            return
         self.results = data
-        self.force_fresh = False
-        self.surveillance_level = 1
-        self.root.after(0, self._render, data)
+        self.current_target = data["target"]
+        try:
+            self._render(data)
+        finally:
+            self.launch_btn.config(state="normal")
+            self.search_active = False
 
     # ---- volti realistici (IA, NON reali) ------------------------------
-    def _ensure_faces(self, data, target):
+    def _ensure_faces(self, data, target, sid, cache=True):
         for it in data["identities"]:
             it.setdefault("face_path", "")
         if not self.settings.get("real_faces", True):
             for it in data["identities"]:
                 it["face_path"] = ""
+            if cache:
+                self._cache_put(target, data)
             return
         try:
             os.makedirs(FACES_DIR, exist_ok=True)
-        except Exception:
+        except OSError:
+            if cache:
+                self._cache_put(target, data)
             return
         online = True
         n = len(data["identities"])
@@ -1779,9 +1906,9 @@ class SpyOSINTApp:
             if cur and os.path.exists(cur):
                 continue
             it["face_path"] = ""
-            if not online:
+            if not online or not self._alive(sid):
                 continue
-            self.root.after(0, self._progress, 96, f"Recupero volti IA… ({idx+1}/{n})")
+            self._post(self._progress, 96, f"Recupero volti IA… ({idx+1}/{n})")
             cp = os.path.join(FACES_DIR,
                               hashlib.md5(f"{target}|{idx}".encode()).hexdigest() + ".jpg")
             p = fetch_ai_face(cp)
@@ -1789,13 +1916,14 @@ class SpyOSINTApp:
                 it["face_path"] = p
             else:
                 online = False       # probabilmente offline: smetto di riprovare
-        self._cache_put(target, data)
+        if cache:
+            self._cache_put(target, data)
 
-    def _face_for(self, photo):
+    def _face_for(self, photo, data):
         """PIL del volto IA per la foto (in base all'identità), o None."""
-        if not self.settings.get("real_faces", True) or not self.results:
+        if not self.settings.get("real_faces", True) or not data:
             return None
-        ids = self.results.get("identities", [])
+        ids = data.get("identities", [])
         ix = photo.get("identity", 0)
         path = ids[ix].get("face_path", "") if ix < len(ids) else ""
         if not path or not os.path.exists(path):
@@ -1847,9 +1975,6 @@ class SpyOSINTApp:
                          f"{len(data['identities'])} identità · by {CREATOR}", THEME["green"])
         except Exception as e:
             messagebox.showerror("Errore", str(e))
-        finally:
-            self.launch_btn.config(state="normal")
-            self.search_active = False
 
     def _render_overview(self, data):
         s = data["summary"]; fp = data["footprint"]; idt = data["identities"]
@@ -1997,32 +2122,46 @@ class SpyOSINTApp:
         except Exception:
             self._maximize(win)
         self.beep()
+        data = self.results          # fisso i dati: una nuova scansione non li cambia qui
         canvas = tk.Canvas(win, bg=THEME["bg"], highlightthickness=0)
         canvas.pack(fill="both", expand=True)
-        if self.settings.get("skip_intro"):
-            self._gallery(win, canvas)
-            win.bind("<Escape>", lambda e: win.destroy())
-            win.focus_set()
-            return
-        scale = INTRO_SCALE.get(self.settings.get("intro_speed", "media"), 1.0)
-        intro = CinematicIntro(canvas, self.results["target"],
-                               on_done=lambda: self._gallery(win, canvas),
-                               accent=THEME["accent"], scale=scale)
-        win.bind("<Escape>", lambda e: (intro.stop(), win.destroy()))
-        win.bind("<space>", lambda e: (intro.stop(), self._gallery(win, canvas)))
-        win.bind("<Return>", lambda e: (intro.stop(), self._gallery(win, canvas)))
         win.focus_set()
+        if self.settings.get("skip_intro"):
+            self._gallery(win, canvas, data)
+            return
+        state = {"intro": None, "shown": False}
 
-    def _gallery(self, win, canvas):
+        def show(_=None):
+            if state["shown"]:          # Spazio/Invio + fine intro → una sola galleria
+                return
+            state["shown"] = True
+            if state["intro"]:
+                state["intro"].stop()
+            self._gallery(win, canvas, data)
+
+        def close(_=None):
+            if state["intro"]:
+                state["intro"].stop()
+            win.destroy()
+
+        win.bind("<Escape>", close)
+        win.bind("<space>", show)
+        win.bind("<Return>", show)
+        scale = INTRO_SCALE.get(self.settings["intro_speed"], 1.0)
+        state["intro"] = CinematicIntro(canvas, data["target"], on_done=show,
+                                        accent=THEME["accent"], scale=scale)
+
+    def _gallery(self, win, canvas, data):
         if not win.winfo_exists():
             return
+        win.unbind("<space>")
+        win.unbind("<Return>")
         try:
             win.attributes("-fullscreen", False)
-        except Exception:
+        except tk.TclError:
             pass
         canvas.destroy()
         self._maximize(win)
-        data = self.results
         head = tk.Frame(win, bg=THEME["bg"])
         head.pack(fill="x", padx=24, pady=(16, 6))
         tk.Label(head, text=f"💀  DOSSIER VISIVO — {data['target']}", font=(MONO, 22, "bold"),
@@ -2050,10 +2189,11 @@ class SpyOSINTApp:
         for it in data["identities"]:
             tab = tk.Frame(nb, bg=THEME["bg"])
             nb.add(tab, text=f"👤 {it['name']}")
-            self._grid(tab, [p for p in data["photos"] if p["identity"] == it["index"]], 3, it)
+            self._grid(tab, data, [p for p in data["photos"] if p["identity"] == it["index"]],
+                       3, it)
         tab_all = tk.Frame(nb, bg=THEME["bg"])
         nb.add(tab_all, text=f"💀 TUTTI ({len(data['photos'])})")
-        self._grid(tab_all, data["photos"], 5, None)
+        self._grid(tab_all, data, data["photos"], 5, None)
 
     def _scrollable(self, parent):
         cont = tk.Frame(parent, bg=THEME["bg"])
@@ -2067,11 +2207,31 @@ class SpyOSINTApp:
         canvas.configure(yscrollcommand=sb.set)
         canvas.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
-        canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(
-            int(-e.delta / 120) if e.delta else 0, "units"))
+        # rotella: un solo handler sulla finestra (non bind_all, che restava attivo
+        # anche dopo la chiusura della galleria e scorreva sempre l'ultima griglia)
+        canvas.orion_scroll = True
+        top = parent.winfo_toplevel()
+        if not getattr(top, "orion_wheel", False):
+            top.orion_wheel = True
+            for ev in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+                top.bind(ev, self._on_wheel, add="+")
         return inner
 
-    def _grid(self, parent, photos, cols, header):
+    @staticmethod
+    def _on_wheel(e):
+        """Scorre la griglia sotto il puntatore (Windows/macOS/Linux)."""
+        try:
+            w = e.widget.winfo_containing(e.x_root, e.y_root)
+        except (tk.TclError, AttributeError):
+            return
+        while w is not None and not getattr(w, "orion_scroll", False):
+            w = w.master
+        if w is None:
+            return
+        up = e.num == 4 or getattr(e, "delta", 0) > 0
+        w.yview_scroll(-1 if up else 1, "units")
+
+    def _grid(self, parent, data, photos, cols, header):
         inner = self._scrollable(parent)
         if header:
             it = header
@@ -2088,19 +2248,20 @@ class SpyOSINTApp:
                      bg=THEME["bg"], fg=THEME["dim"]).pack(pady=40)
             return
         for i, photo in enumerate(photos):
-            self._card(grid, photo).grid(row=i // cols, column=i % cols, padx=10, pady=10, sticky="n")
+            self._card(grid, data, photo).grid(row=i // cols, column=i % cols, padx=10,
+                                               pady=10, sticky="n")
 
-    def _card(self, parent, photo):
-        seed = f"{self.results['target']}|{photo['id']}"
+    def _card(self, parent, data, photo):
+        seed = f"{data['target']}|{photo['id']}"
         img = generate_portrait(seed, (240, 290), THEME["accent"], photo["identity_name"],
                                 f"{photo['tag']} · {photo['location']}", photo["matched"],
                                 self.settings.get("redacted", True),
-                                base_image=self._face_for(photo))
+                                base_image=self._face_for(photo, data))
         tkimg = ImageTk.PhotoImage(img)
-        self._img_refs.append(tkimg)
         card = tk.Frame(parent, bg=THEME["card"], highlightbackground=THEME["line"],
                         highlightthickness=1, cursor="hand2")
         lbl = tk.Label(card, image=tkimg, bg=THEME["card"], bd=0)
+        lbl.image = tkimg       # riferimento legato al widget: liberato con la finestra
         lbl.pack(padx=8, pady=(8, 4))
         meta = tk.Frame(card, bg=THEME["card"])
         meta.pack(fill="x", padx=8, pady=(0, 8))
@@ -2128,10 +2289,10 @@ class SpyOSINTApp:
         for w in (card, lbl, meta):
             w.bind("<Enter>", enter)
             w.bind("<Leave>", leave)
-            w.bind("<Button-1>", lambda e, p=photo: self._detail(p))
+            w.bind("<Button-1>", lambda e, p=photo: self._detail(data, p))
         return card
 
-    def _detail(self, photo):
+    def _detail(self, data, photo):
         win = tk.Toplevel(self.root)
         win.title(f"💀 {photo['identity_name']} — {photo['tag']} · by {CREATOR}")
         win.configure(bg=THEME["bg"])
@@ -2139,15 +2300,15 @@ class SpyOSINTApp:
         win.bind("<Escape>", lambda e: win.destroy())
         body = tk.Frame(win, bg=THEME["bg"])
         body.pack(fill="both", expand=True, padx=20, pady=20)
-        seed = f"{self.results['target']}|{photo['id']}"
+        seed = f"{data['target']}|{photo['id']}"
         big = generate_portrait(seed, (400, 480), THEME["accent"], photo["identity_name"],
                                 f"{photo['tag']} · {photo['location']}", photo["matched"],
                                 self.settings.get("redacted", True),
-                                base_image=self._face_for(photo))
+                                base_image=self._face_for(photo, data))
         tkbig = ImageTk.PhotoImage(big)
-        self._img_refs.append(tkbig)
         cv = tk.Canvas(body, width=400, height=480, bg=THEME["black"], highlightthickness=1,
                        highlightbackground=THEME["line"])
+        cv.image = tkbig
         cv.pack(side="left")
         cv.create_image(0, 0, image=tkbig, anchor="nw")
         FaceScan(cv, 400, 480, THEME["accent"], photo["matched"])
@@ -2209,19 +2370,24 @@ class SpyOSINTApp:
                                 f"orion_map_{_slug(self.results['target'])}.html")
             with open(path, "w", encoding="utf-8") as f:
                 f.write(html)
-            webbrowser.open("file://" + path)
+            webbrowser.open(Path(path).as_uri())
             self.beep()
             self._status("MAPPA 3D MAPBOX APERTA NEL BROWSER", THEME["green"])
-        except Exception as e:
+        except OSError as e:
             messagebox.showerror("Mapbox 3D", str(e))
 
     # ---- IMPOSTAZIONI ---------------------------------------------------
     def open_settings(self):
-        win = tk.Toplevel(self.root)
+        if self._settings_win is not None and self._settings_win.winfo_exists():
+            self._settings_win.lift()           # già aperta: niente doppioni
+            self._settings_win.focus_force()
+            return
+        win = self._settings_win = tk.Toplevel(self.root)
         win.title(f"⚙ Impostazioni — {CREATOR}")
         win.configure(bg=THEME["panel"])
         win.geometry("520x820")
         win.transient(self.root)
+        win.bind("<Escape>", lambda e: win.destroy())
         s = self.settings
 
         v_skip = tk.BooleanVar(value=s["skip_intro"])
@@ -2310,12 +2476,12 @@ class SpyOSINTApp:
                  font=(UI, 8), bg=THEME["panel"], fg=THEME["dim"]).pack(anchor="w", padx=24)
 
         def save():
-            self.settings.update({
+            self.settings = sanitize_settings({**self.settings, **{
                 "skip_intro": v_skip.get(), "intro_speed": v_speed.get(),
                 "slideshow_sec": round(v_sec.get(), 1), "bg_anim": v_bg.get(),
                 "redacted": v_red.get(), "sound": v_snd.get(), "accent": v_acc.get(),
                 "splash": v_splash.get(), "mapbox_token": v_token.get().strip(),
-                "splash_video": v_video.get().strip(), "real_faces": v_faces.get()})
+                "splash_video": v_video.get().strip(), "real_faces": v_faces.get()}})
             THEME["accent"] = self.settings["accent"]
             self._save_settings()
             self._status("IMPOSTAZIONI SALVATE", THEME["green"])
@@ -2339,8 +2505,13 @@ class FaceScan:
         self._tick()
 
     def _tick(self):
-        if not self.c.winfo_exists():
-            return
+        try:
+            self._draw()
+            self.c.after(40, self._tick)
+        except tk.TclError:                     # finestra di dettaglio chiusa
+            pass
+
+    def _draw(self):
         self.frame += 1
         self.c.delete("scan")
         acc = self.accent
@@ -2376,7 +2547,6 @@ class FaceScan:
                                text=txt, tags="scan")
             self.c.create_text(self.w // 2, self.h - 8, fill=THEME["dim"], font=(MONO, 8),
                                text=f"by {CREATOR}", tags="scan")
-        self.c.after(40, self._tick)
 
 
 class Slideshow:
@@ -2505,8 +2675,14 @@ class Slideshow:
         self._go(self.i - 1)
 
     def _go(self, idx):
-        if not self.win.winfo_exists():
+        if not self.win.winfo_exists() or self.cur_img is None:
             return
+        if self.fade_id:                        # tasti rapidi: annullo la dissolvenza in corso
+            try:
+                self.win.after_cancel(self.fade_id)
+            except tk.TclError:
+                pass
+            self.fade_id = None
         idx %= len(self.photos)
         nxt = self._portrait(idx)
         prev = self.cur_img
@@ -2531,6 +2707,8 @@ class Slideshow:
 
     def toggle(self):
         self.paused = not self.paused
+        if self.cur_img is None:                # finestra non ancora pronta
+            return
         self._blit(self.cur_img)
         self._schedule()
 
