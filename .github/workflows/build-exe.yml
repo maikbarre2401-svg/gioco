@@ -1,0 +1,45 @@
+name: Crea RickAndMorty.exe (Windows)
+
+on:
+  push:
+    paths:
+      - "rick_and_morty.py"
+      - "tools/**"
+      - ".github/workflows/build-exe.yml"
+  workflow_dispatch:
+
+jobs:
+  windows-exe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installa dipendenze
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pygame pyinstaller pillow
+
+      - name: Prova veloce del gioco (senza finestra)
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: |
+          python -c "import rick_and_morty as g; game = g.Game(); [game.step(1/60) for _ in range(60)]; print('ok')"
+
+      - name: Crea icona
+        run: python tools/make_icon.py
+
+      - name: Crea l'eseguibile
+        run: |
+          python -m PyInstaller --noconfirm --onefile --windowed --name RickAndMorty --icon icon.ico rick_and_morty.py
+
+      - name: Carica RickAndMorty.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: RickAndMorty-Windows
+          path: dist/RickAndMorty.exe
+          if-no-files-found: error
