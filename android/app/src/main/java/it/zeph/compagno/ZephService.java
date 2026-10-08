@@ -23,7 +23,6 @@ import android.graphics.Rect;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.Icon;
 import android.hardware.display.DisplayManager;
-import android.net.Uri;
 import android.os.BatteryManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -60,14 +59,7 @@ import android.widget.TextView;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.io.ByteArrayInputStream;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.util.HashMap;
 import java.util.Locale;
-import java.util.Map;
 
 /**
  * Zeph sul telefono: un servizio in primo piano (con la notifica fissa) che
@@ -86,6 +78,7 @@ public class ZephService extends Service {
     static final String ACTION_AVATAR = "it.zeph.compagno.AVATAR";
     static final String ACTION_READ = "it.zeph.compagno.READ";
     static final String ACTION_REPLY = "it.zeph.compagno.REPLY";
+    static final String ACTION_PREFS = "it.zeph.compagno.PREFS";
     static final String KEY_REPLY = "zeph_reply";
     static final String EXTRA_TEXT = "text";
     static final String EXTRA_CMD = "cmd";
@@ -93,7 +86,6 @@ public class ZephService extends Service {
     private static final String CH_MAIN = "zeph_main";
     private static final String CH_REMIND = "zeph_promemoria";
     private static final int NOTIF_ID = 7;
-    private static final String HOST = "zeph.local";
 
     static volatile boolean running = false;
 
@@ -227,7 +219,14 @@ public class ZephService extends Service {
             if (hidden) setHidden(false);
             js("zephRead(" + JSONObject.quote(intent.getStringExtra(EXTRA_TEXT)) + ")");
         } else if (ACTION_AVATAR.equals(action)) {
+            js("zephPrefsChanged()");
             js("zephReloadAvatar()");
+            refreshNotification();
+            updateTile();
+        } else if (ACTION_PREFS.equals(action)) {
+            js("zephPrefsChanged()");
+            refreshNotification();
+            updateTile();
         } else if (ACTION_RELOAD.equals(action)) {
             destroyOverlay();
             createOverlay();
@@ -293,14 +292,15 @@ public class ZephService extends Service {
         int replyFlags = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_MUTABLE : 0);
         PendingIntent replyPi = PendingIntent.getService(this, 2,
             new Intent(this, ZephService.class).setAction(ACTION_REPLY), replyFlags);
-        RemoteInput input = new RemoteInput.Builder(KEY_REPLY).setLabel("Scrivi a Zeph…").build();
+        String name = Prefs.petName(this);
+        RemoteInput input = new RemoteInput.Builder(KEY_REPLY).setLabel("Scrivi a " + name + "…").build();
         Notification.Action reply = new Notification.Action.Builder(icon, "💬 Scrivi", replyPi)
             .addRemoteInput(input)
             .setAllowGeneratedReplies(false)
             .build();
         return new Notification.Builder(this, CH_MAIN)
             .setSmallIcon(R.drawable.ic_stat_zeph)
-            .setContentTitle(hidden ? "Zeph è nascosto" : "Zeph è sul tuo schermo")
+            .setContentTitle(hidden ? name + " è nascosto" : name + " è sul tuo schermo")
             .setContentText(hidden ? "Premi «Mostra» per farlo tornare"
                 : "Scrivigli da qui · toccalo per farlo reagire · tienilo premuto per la chat")
             .setOngoing(true)
@@ -326,7 +326,7 @@ public class ZephService extends Service {
     private void reminder(String text) {
         Notification n = new Notification.Builder(this, CH_REMIND)
             .setSmallIcon(R.drawable.ic_stat_zeph)
-            .setContentTitle("Zeph ⏰")
+            .setContentTitle(Prefs.petName(this) + " ⏰")
             .setContentText(text)
             .setAutoCancel(true)
             .build();
@@ -440,7 +440,7 @@ public class ZephService extends Service {
         blp.gravity = Gravity.TOP | Gravity.START;
         bubbleAdded = false;
 
-        web.loadUrl("https://" + HOST + "/overlay.html");
+        web.loadUrl("https://" + LocalWeb.HOST + "/overlay.html");
     }
 
     private void destroyOverlay() {
@@ -599,39 +599,11 @@ public class ZephService extends Service {
 
     // ---------------------------------------------------------------- file locali
 
-    /**
-     * Serve la pagina, le librerie e l'avatar come se fossero un sito
-     * (https://zeph.local/...), così niente esce dal telefono.
-     */
+    /** Pagine e file locali (vedi LocalWeb); se Android chiude la pagina, Zeph ricompare. */
     private class LocalAssets extends WebViewClient {
         @Override
         public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest req) {
-            Uri u = req.getUrl();
-            String h = u.getHost();
-            if (h != null && (h.equals("api.open-meteo.com") || h.equals("geocoding-api.open-meteo.com"))) {
-                return null; // il meteo vero: lasciato passare
-            }
-            if (!HOST.equals(h)) return notFound(); // nessun'altra rete esterna
-            String path = u.getPath();
-            if (path == null || path.equals("/")) path = "/overlay.html";
-            path = path.substring(1);
-            if (path.contains("..")) return notFound();
-            try {
-                InputStream in;
-                if (path.equals("avatar.glb")) {
-                    File f = new File(getFilesDir(), "avatar.glb");
-                    if (f.exists()) in = new FileInputStream(f);
-                    else if (Prefs.useBundledAvatar(ZephService.this)) in = getAssets().open("avatar.glb");
-                    else return notFound();
-                } else {
-                    in = getAssets().open(path);
-                }
-                WebResourceResponse r = new WebResourceResponse(mime(path), "utf-8", in);
-                r.setResponseHeaders(headers());
-                return r;
-            } catch (IOException e) {
-                return notFound();
-            }
+            return LocalWeb.intercept(ZephService.this, req);
         }
 
         @Override
@@ -646,26 +618,6 @@ public class ZephService extends Service {
                 if (running) createOverlay();
             });
             return true;
-        }
-
-        private Map<String, String> headers() {
-            Map<String, String> h = new HashMap<>();
-            h.put("Access-Control-Allow-Origin", "*");
-            h.put("Cache-Control", "no-cache");
-            return h;
-        }
-
-        private WebResourceResponse notFound() {
-            return new WebResourceResponse("text/plain", "utf-8", 404, "Not Found", headers(),
-                new ByteArrayInputStream(new byte[0]));
-        }
-
-        private String mime(String p) {
-            if (p.endsWith(".html")) return "text/html";
-            if (p.endsWith(".js")) return "application/javascript";
-            if (p.endsWith(".glb")) return "model/gltf-binary";
-            if (p.endsWith(".png")) return "image/png";
-            return "application/octet-stream";
         }
     }
 
@@ -718,5 +670,29 @@ public class ZephService extends Service {
         @JavascriptInterface public void remind(String text) { main.post(() -> reminder(text)); }
 
         @JavascriptInterface public void openChat() { main.post(() -> ZephService.this.openChat(false)); }
+
+        /** Apre la pagina «avatar dalla foto». */
+        @JavascriptInterface public void openPhoto() {
+            main.post(() -> {
+                try {
+                    startActivity(new Intent(ZephService.this, PhotoActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                } catch (Exception e) { Log.w(TAG, "foto", e); }
+            });
+        }
+
+        /** Il nome del compagno (lo puoi cambiare dalla chat o dall'app). */
+        @JavascriptInterface public String petName() { return Prefs.petName(ZephService.this); }
+
+        @JavascriptInterface public void setPetName(String n) {
+            Prefs.setPetName(ZephService.this, n);
+            main.post(() -> { refreshNotification(); updateTile(); });
+        }
+
+        /** La tua chiave per il cervello AI: sta nelle impostazioni dell'app, non nella pagina. */
+        @JavascriptInterface public String aiKey() { return Prefs.aiKey(ZephService.this); }
+
+        @JavascriptInterface public void setAiKey(String k) {
+            Prefs.setAiKey(ZephService.this, k != null && (k.isEmpty() || k.startsWith("sk-ant-")) ? k : "");
+        }
     }
 }

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- la chiave del cervello AI non finisce nei backup né nel passaggio a un nuovo telefono (Android 12+) -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="zeph_secret.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="zeph_secret.xml" />
+    </device-transfer>
+</data-extraction-rules>

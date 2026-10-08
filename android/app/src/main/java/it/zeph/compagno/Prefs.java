@@ -34,4 +34,26 @@ final class Prefs {
     /** Ultima posizione orizzontale (px), per ripartire da dove l'avevi lasciato. */
     static int lastX(Context c) { return p(c).getInt("lastX", -1); }
     static void setLastX(Context c, int v) { p(c).edit().putInt("lastX", v).apply(); }
+
+    /** Il nome che hai dato al tuo compagno (di base «Zeph»). */
+    static String petName(Context c) { return p(c).getString("petName", "Zeph"); }
+    static void setPetName(Context c, String v) {
+        String n = v == null ? "" : v.replaceAll("[^\\p{L}' -]", "").trim();
+        if (n.length() > 16) n = n.substring(0, 16).trim();
+        p(c).edit().putString("petName", n.isEmpty() ? "Zeph" : n).apply();
+    }
+
+    /**
+     * La TUA chiave per il cervello AI (Claude). Resta solo su questo telefono:
+     * sta in un file a parte escluso dai backup (res/xml/backup_rules.xml).
+     */
+    private static SharedPreferences secret(Context c) {
+        return c.getSharedPreferences("zeph_secret", Context.MODE_PRIVATE);
+    }
+    static String aiKey(Context c) { return secret(c).getString("aiKey", ""); }
+    static void setAiKey(Context c, String v) { secret(c).edit().putString("aiKey", v == null ? "" : v.trim()).apply(); }
+
+    /** Usa il look fatto con la foto (al posto del file .glb). */
+    static boolean photoLook(Context c) { return p(c).getBoolean("photoLook", false); }
+    static void setPhotoLook(Context c, boolean v) { p(c).edit().putBoolean("photoLook", v).apply(); }
 }

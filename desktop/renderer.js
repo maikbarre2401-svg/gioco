@@ -270,7 +270,8 @@ function updateChatter(t) {
   if (t > state.nextChatterAt) {
     state.nextChatterAt = t + 35 + Math.random() * 50;
     if (!anim.state.talking && !anim.state.action) {
-      speak(ZephCore.pick(ZephCore.FRASI_DESKTOP));
+      const c = Math.random() < 0.5 ? ZephCore.memory.chatter(botCtx) : null;
+      speak(c ? c.say : ZephCore.pick(ZephCore.FRASI_DESKTOP));
     }
   }
 }
@@ -477,6 +478,17 @@ function botRespond(text) {
       speak('Ehi! Promemoria: ' + r.text);
       try { new Notification('Zeph ⏰', { body: r.text }); } catch (e) { /* niente notifiche */ }
     }, r.seconds * 1000);
+  }
+  if (out.photoAvatar) out.say = 'L’avatar dalla foto si crea nel browser (premi «📸 Avatar dalla foto») o nell’app sul telefono!';
+  // chiacchiere: con il cervello AI (la tua chiave) risponde Claude
+  if (out.aiQuery && ZephCore.ai.enabled()) {
+    showBubble('💭 …');
+    ZephCore.ai.ask(out.aiQuery, botCtx, out.say).then(r => {
+      const act = r.action || out.action;
+      if (act) anim.startAction(act);
+      speak(r.say);
+    });
+    return;
   }
   if (out.action) anim.startAction(out.action);
   speak(out.say);
@@ -729,12 +741,15 @@ tryLoadAvatar();
 
 // saluto di benvenuto
 setTimeout(() => {
+  // si ricorda di te: compleanno, giorni senza vedersi, com'è andata quella cosa…
+  const g = ZephCore.memory.greeting(botCtx);
+  if (g) { anim.startAction(g.action || 'wave'); speak(g.say); return; }
   anim.startAction('wave');
   const h = new Date().getHours();
   const salve = h < 12 ? 'Buongiorno' : h < 18 ? 'Ciao' : 'Buonasera';
   speak(botCtx.name
     ? (salve + ', ' + botCtx.name + '! Eccomi di nuovo sul tuo schermo! Prova a dirmi «vola»!')
-    : salve + '! Sono Zeph, da adesso abito qui sul tuo schermo!');
+    : salve + '! Sono ' + ZephCore.memory.petName() + ', da adesso abito qui sul tuo schermo! Raccontami un po’ di te.');
 }, 1200);
 
 // gancio per test

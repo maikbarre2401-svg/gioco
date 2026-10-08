@@ -113,6 +113,7 @@
     <div class="chip" data-cmd="lancia la palla">⚽ Palla</div>
     <div class="chip" id="wanderchip">🚶 Passeggia da solo</div>
     <div class="chip" id="avatarchip">🧑 Il tuo avatar</div>
+    <div class="chip" id="photochip">📸 Avatar dalla foto</div>
   </div>
   <div id="inputrow">
     <input id="msg" type="text" placeholder="Scrivi qualcosa… (es. «apri youtube», «balla!», «ricordami tra 5 minuti»)" autocomplete="off">
@@ -134,6 +135,7 @@ if (typeof THREE === 'undefined') {
 </script>
 <script src="./gltf-loader.js"></script>
 <script src="./postfx.js"></script>
+<script src="./anthropic-sdk.js"></script>
 <script src="./zeph-core.js"></script>
 <script>
 /* ============================================================
@@ -865,6 +867,8 @@ for (let i = 0; i < 7; i++) {
 const zeph = ZephCore.build(THREE);
 const anim = new ZephCore.Animator(zeph);
 scene.add(zeph.root);
+// il look fatto con la foto (foto.html): colori veri e la tua faccia
+try { ZephCore.applyLook(THREE, zeph, JSON.parse(localStorage.getItem('zephLook') || 'null')); } catch (e) { /* nessun look */ }
 let avatarDriver = null;
 const sparkles = ZephCore.createSparkles(THREE, scene);
 let prevActionName = null;
@@ -1068,6 +1072,8 @@ function loadFallbackAvatar() {
 }
 function loadSavedAvatar() {
   if (!gltfLoader) return;
+  // hai appena creato il look con la foto: resta Zeph con la tua faccia
+  if (localStorage.getItem('zephPreferZeph') && localStorage.getItem('zephLook')) return;
   let opened = false;
   idb(db => {
     opened = true;
@@ -1088,6 +1094,7 @@ function loadAvatarUrl(url, quiet) {
     undefined,
     err => { if (!quiet) { console.error(err); speak('Non riesco a caricare quell’avatar…'); } });
 }
+document.getElementById('photochip').addEventListener('click', () => { location.href = 'foto.html'; });
 avatarChip.addEventListener('click', () => {
   state.interacted = true;
   if (avatarDriver) backToZeph();
@@ -1170,7 +1177,9 @@ function updateWander(t) {
     state.target = new THREE.Vector3(Math.sin(a) * r, 0, Math.cos(a) * r);
     state.nextWanderAt = t + 4 + Math.random() * 6;
     if (state.interacted && Math.random() < 0.35) {
-      speak(ZephCore.pick(ZephCore.FRASI_PASSEGGIO));
+      // una domanda per conoscerti, un ricordo, o due chiacchiere
+      const c = Math.random() < 0.5 ? ZephCore.memory.chatter(botCtx) : null;
+      speak(c ? c.say : ZephCore.pick(ZephCore.FRASI_PASSEGGIO));
     }
   }
 }
@@ -1529,6 +1538,18 @@ function botRespond(text) {
       speak('Ehi! Promemoria: ' + r.text);
     }, r.seconds * 1000);
   }
+  if (out.party) sparkles.burst(state.pos.x, 1.6, state.pos.z, 30);
+  if (out.photoAvatar) setTimeout(() => { location.href = 'foto.html'; }, 2500);
+  // chiacchiere: con il cervello AI (la tua chiave) risponde Claude
+  if (out.aiQuery && ZephCore.ai.enabled()) {
+    showBubble('💭 …');
+    ZephCore.ai.ask(out.aiQuery, botCtx, out.say).then(r => {
+      const act = r.action || out.action;
+      if (act) anim.startAction(act);
+      speak(r.say);
+    });
+    return;
+  }
   if (out.action) anim.startAction(out.action);
   speak(out.say);
 }
@@ -1749,14 +1770,17 @@ tick();
 
 // saluto iniziale (solo fumetto: la voce parte dopo la prima interazione)
 setTimeout(() => {
-  anim.startAction('wave');
+  // si ricorda di te: compleanno, giorni senza vedersi, com'è andata quella cosa…
+  const g = ZephCore.memory.greeting(botCtx);
+  anim.startAction(g ? g.action || 'wave' : 'wave');
+  if (g && g.party) sparkles.burst(state.pos.x, 1.6, state.pos.z, 30);
   const nome = localStorage.getItem('zephName');
   const h = new Date().getHours();
   const salve = h < 12 ? 'Buongiorno' : h < 18 ? 'Ciao' : 'Buonasera';
-  showBubble(nome
+  showBubble(g ? g.say : nome
     ? (salve + ', ' + nome + '! 👋 Prova «vola», «lancia la palla» o vai a trovare Nina al villaggio!')
-    : salve + '! Sono Zeph 👋 Scrivimi qui sotto: prova «vola» o «metti la musica»!');
-  hideBubble(6000);
+    : salve + '! Sono ' + ZephCore.memory.petName() + ' 👋 Scrivimi qui sotto: raccontami di te, oppure prova «vola» o «metti la musica»!');
+  hideBubble(g ? 9000 : 6000);
 }, 700);
 
 // piccolo gancio per debug/test

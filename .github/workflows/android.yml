@@ -9,6 +9,9 @@ on:
       - 'zeph-core.js'
       - 'three.min.js'
       - 'gltf-loader.js'
+      - 'anthropic-sdk.js'
+      - 'foto.html'
+      - 'foto.js'
       - '.github/workflows/android.yml'
   workflow_dispatch:
 

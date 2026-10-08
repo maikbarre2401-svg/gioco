@@ -17,7 +17,9 @@ import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
+import android.text.InputType;
 import android.widget.CheckBox;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
@@ -37,7 +39,8 @@ public class MainActivity extends Activity {
     private static final int TEAL = 0xFF14B8A6;
 
     private TextView status;
-    private Button overlayBtn, notifBtn, startBtn, batteryBtn;
+    private Button overlayBtn, notifBtn, startBtn, batteryBtn, chatBtn;
+    private EditText nameEdit, keyEdit;
 
     private int dp(float v) {
         return Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, getResources().getDisplayMetrics()));
@@ -81,7 +84,7 @@ public class MainActivity extends Activity {
         batteryBtn.setOnClickListener(v -> askBattery());
         box.addView(batteryBtn, gap(full()));
 
-        section(box, "2 · Zeph");
+        section(box, "2 · Il tuo compagno");
         startBtn = button("", TEAL);
         startBtn.setOnClickListener(v -> {
             if (ZephService.running) {
@@ -95,12 +98,19 @@ public class MainActivity extends Activity {
             startBtn.postDelayed(this::refresh, 400);
         });
         box.addView(startBtn, full());
-        Button chat = button("🎤 Parla con Zeph", 0xFF334155);
-        chat.setOnClickListener(v -> startActivity(new Intent(this, ChatActivity.class).putExtra(ChatActivity.EXTRA_MIC, true)));
-        box.addView(chat, gap(full()));
+        chatBtn = button("🎤 Parla con Zeph", 0xFF334155);
+        chatBtn.setOnClickListener(v -> startActivity(new Intent(this, ChatActivity.class).putExtra(ChatActivity.EXTRA_MIC, true)));
+        box.addView(chatBtn, gap(full()));
 
         section(box, "3 · Il tuo avatar");
-        box.addView(text("Scegli il file .glb del tuo avatar (Avaturn, Ready Player Me…): Zeph lo farà camminare, parlare e ballare.", 13, 0x99FFFFFF));
+        box.addView(text("Fatti un selfie: il tuo compagno prende i tuoi colori e la tua faccia (la foto resta sul telefono).", 13, 0x99FFFFFF));
+        Button photo = button("📸 Crea l'avatar con una foto", TEAL);
+        photo.setOnClickListener(v -> startActivity(new Intent(this, PhotoActivity.class)));
+        box.addView(photo, gap(full()));
+        box.addView(gapped(text("Per un avatar 3D realistico: sul sito Avaturn fai un selfie, scarica il file .glb e sceglilo qui sotto. Il tuo compagno diventa quell'avatar e lo fa camminare, parlare e ballare.", 13, 0x99FFFFFF)));
+        Button avaturn = button("✨ Avatar 3D realistico (sito Avaturn)", 0xFF334155);
+        avaturn.setOnClickListener(v -> openWeb("https://avaturn.me"));
+        box.addView(avaturn, gap(full()));
         Button pick = button("🧑 Scegli il mio avatar (.glb)", 0xFF334155);
         pick.setOnClickListener(v -> {
             Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*");
@@ -110,13 +120,84 @@ public class MainActivity extends Activity {
         Button reset = button("↩ Torna a Zeph", 0xFF334155);
         reset.setOnClickListener(v -> {
             new File(getFilesDir(), "avatar.glb").delete();
+            new File(getFilesDir(), "look.json").delete();
             Prefs.setUseBundledAvatar(this, false);
+            Prefs.setPhotoLook(this, false);
             tellService(ZephService.ACTION_AVATAR);
             Toast.makeText(this, "Ecco di nuovo Zeph!", Toast.LENGTH_SHORT).show();
         });
         box.addView(reset, gap(full()));
 
-        section(box, "4 · Opzioni");
+        section(box, "4 · Il tuo amico");
+        box.addView(text("Come si chiama? (puoi anche dirglielo in chat: «ti chiamerò Leo»)", 13, 0x99FFFFFF));
+        nameEdit = new EditText(this);
+        nameEdit.setSingleLine(true);
+        nameEdit.setText(Prefs.petName(this));
+        nameEdit.setTextColor(Color.WHITE);
+        nameEdit.setHintTextColor(0x66FFFFFF);
+        nameEdit.setHint("Zeph");
+        box.addView(nameEdit, full());
+        Button saveName = button("💾 Salva il nome", 0xFF334155);
+        saveName.setOnClickListener(v -> {
+            Prefs.setPetName(this, nameEdit.getText().toString());
+            nameEdit.setText(Prefs.petName(this));
+            tellService(ZephService.ACTION_PREFS);
+            Toast.makeText(this, "Da adesso si chiama " + Prefs.petName(this) + "!", Toast.LENGTH_SHORT).show();
+            refresh();
+        });
+        box.addView(saveName, gap(full()));
+        box.addView(gapped(text(
+            "Si ricorda di te: il tuo nome, cosa ti piace, le persone di cui parli, com'è andata la giornata, cosa hai in programma. " +
+            "Ogni tanto ti fa domande per conoscerti meglio. Chiedigli «cosa sai di me?» oppure «cosa ti ho detto ieri?». " +
+            "Per fargli dimenticare tutto scrivigli «dimentica tutto».", 13, 0x99FFFFFF)));
+
+        section(box, "🧠 Cervello AI (facoltativo)");
+        box.addView(text(
+            "Di base usa un cervello offline, gratis. Se vuoi che chiacchieri davvero come un amico, metti qui la TUA chiave di Claude " +
+            "(si crea su console.anthropic.com; costa circa uno o due centesimi di dollaro a messaggio e li paghi tu). " +
+            "La chiave resta su questo telefono e i comandi (torcia, sveglie, app…) continuano a funzionare senza AI.", 13, 0x99FFFFFF));
+        keyEdit = new EditText(this);
+        keyEdit.setSingleLine(true);
+        keyEdit.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        keyEdit.setTextColor(Color.WHITE);
+        keyEdit.setHintTextColor(0x66FFFFFF);
+        keyEdit.setHint(Prefs.aiKey(this).isEmpty() ? "sk-ant-…" : "Chiave salvata ✓ (scrivine un'altra per cambiarla)");
+        box.addView(keyEdit, gap(full()));
+        LinearLayout keyRow = new LinearLayout(this);
+        keyRow.setOrientation(LinearLayout.HORIZONTAL);
+        Button saveKey = button("💾 Salva chiave", 0xFF334155);
+        saveKey.setOnClickListener(v -> {
+            String k = keyEdit.getText().toString().trim();
+            if (!k.startsWith("sk-ant-") || k.length() < 30) {
+                Toast.makeText(this, "Questa non sembra una chiave di Claude (inizia con sk-ant-)", Toast.LENGTH_LONG).show();
+                return;
+            }
+            Prefs.setAiKey(this, k);
+            keyEdit.setText("");
+            keyEdit.setHint("Chiave salvata ✓ (scrivine un'altra per cambiarla)");
+            tellService(ZephService.ACTION_PREFS);
+            Toast.makeText(this, "Cervello AI acceso!", Toast.LENGTH_SHORT).show();
+            refresh();
+        });
+        Button delKey = button("🗑 Togli", 0xFF334155);
+        delKey.setOnClickListener(v -> {
+            Prefs.setAiKey(this, "");
+            keyEdit.setHint("sk-ant-…");
+            tellService(ZephService.ACTION_PREFS);
+            Toast.makeText(this, "Chiave tolta: torna il cervello offline", Toast.LENGTH_SHORT).show();
+            refresh();
+        });
+        LinearLayout.LayoutParams kp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        keyRow.addView(saveKey, kp);
+        LinearLayout.LayoutParams kp2 = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 0.6f);
+        kp2.leftMargin = dp(8);
+        keyRow.addView(delKey, kp2);
+        box.addView(keyRow, gap(full()));
+        Button console = button("🔑 Crea una chiave (console.anthropic.com)", 0xFF334155);
+        console.setOnClickListener(v -> openWeb("https://console.anthropic.com/settings/keys"));
+        box.addView(console, gap(full()));
+
+        section(box, "5 · Opzioni");
         box.addView(text("Grandezza", 13, 0x99FFFFFF));
         RadioGroup size = new RadioGroup(this);
         size.setOrientation(RadioGroup.HORIZONTAL);
@@ -155,8 +236,10 @@ public class MainActivity extends Activity {
             "• Nelle Impostazioni rapide (tendina dall'alto) aggiungi il pulsante «Zeph» per accenderlo al volo\n" +
             "• Da qualsiasi app: Condividi → «Leggi con Zeph» e te lo legge ad alta voce\n" +
             "• Di notte, se lo lasci tranquillo, si addormenta. Toccalo per svegliarlo\n" +
+            "• Raccontagli la tua giornata: se lo ricorda e il giorno dopo ti chiede com'è andata\n" +
             "• Chiudi l'app quando vuoi: Zeph resta sullo schermo\n\n" +
-            "Prova a dirgli: «che tempo fa a Roma», «accendi la torcia», «svegliami alle 7 e mezza», " +
+            "Prova a dirgli: «oggi sono andato al mare», «domani ho un esame», «mi piace la pizza», «cosa sai di me?», " +
+            "«se ti dico buongiorno rispondi ciao campione», «ti chiamerò Leo», «che tempo fa a Roma», «accendi la torcia», «svegliami alle 7 e mezza», " +
             "«timer di 10 minuti», «prossima canzone», «chiama 333 1234567», «apri whatsapp», " +
             "«apri impostazioni wifi», «alza il volume», «quanta batteria ho?», «10 km in miglia», " +
             "«tira un dado», «quanti giorni mancano a Natale», «balla», «barzelletta».",
@@ -180,10 +263,14 @@ public class MainActivity extends Activity {
         mark(notifBtn, notif, "✅ Notifiche permesse", "Permetti le notifiche (per i comandi)");
         mark(batteryBtn, battery, "✅ Il risparmio batteria non lo chiude", "Non farlo mai chiudere dal risparmio batteria");
         boolean on = ZephService.running;
-        startBtn.setText(on ? "⏹ Togli Zeph dallo schermo" : "▶ Metti Zeph sullo schermo");
-        String av = new File(getFilesDir(), "avatar.glb").exists() ? "il tuo avatar" : "Zeph";
-        status.setText(on ? "🟢 Zeph è sul tuo schermo (" + av + "). Puoi chiudere l'app: resta lì."
-            : overlay ? "⚪ Zeph è spento. Premi «Metti Zeph sullo schermo»."
+        String name = Prefs.petName(this);
+        startBtn.setText(on ? "⏹ Togli " + name + " dallo schermo" : "▶ Metti " + name + " sullo schermo");
+        chatBtn.setText("🎤 Parla con " + name);
+        String av = Prefs.photoLook(this) && new File(getFilesDir(), "look.json").exists() ? "con il look della tua foto"
+            : new File(getFilesDir(), "avatar.glb").exists() ? "con il tuo avatar" : "come Zeph";
+        String brain = Prefs.aiKey(this).isEmpty() ? "cervello offline" : "cervello AI acceso";
+        status.setText(on ? "🟢 " + name + " è sul tuo schermo (" + av + ", " + brain + "). Puoi chiudere l'app: resta lì."
+            : overlay ? "⚪ " + name + " è spento. Premi «Metti " + name + " sullo schermo»."
             : "⚠️ Serve il permesso di apparire sopra le altre app (punto 1).");
     }
 
@@ -202,6 +289,19 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void openWeb(String url) {
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+        } catch (Exception e) {
+            Toast.makeText(this, "Non trovo un browser", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private TextView gapped(TextView t) {
+        t.setPadding(0, dp(12), 0, 0);
+        return t;
+    }
+
     private void tellService(String action) {
         if (ZephService.running) startService(new Intent(this, ZephService.class).setAction(action));
     }
@@ -216,6 +316,7 @@ public class MainActivity extends Activity {
             runOnUiThread(() -> {
                 if (ok) {
                     Prefs.setUseBundledAvatar(this, true);
+                    Prefs.setPhotoLook(this, false);
                     tellService(ZephService.ACTION_AVATAR);
                     Toast.makeText(this, "Avatar caricato! Guarda lo schermo", Toast.LENGTH_LONG).show();
                 } else {

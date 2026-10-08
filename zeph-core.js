@@ -61,6 +61,7 @@ function build(THREE) {
   B.head = new THREE.Group(); B.head.position.y = 0.44; B.spine.add(B.head);
   const skull = sphere(0.105, M.skin, 0.92, 1.18, 1.0); skull.position.y = 0.1; B.head.add(skull);
   const jaw = sphere(0.075, M.skin, 0.95, 0.72, 0.9); jaw.position.set(0, 0.015, 0.012); B.head.add(jaw);
+  B.skull = skull; B.jawMesh = jaw;
 
   const hairGeo = new THREE.SphereGeometry(0.108, 20, 14, 0, Math.PI * 2, 0, Math.PI * 0.52);
   const hair = new THREE.Mesh(hairGeo, M.hair);
@@ -68,6 +69,7 @@ function build(THREE) {
   hair.rotation.x = -0.26; hair.castShadow = true;
   B.head.add(hair);
   const nape = sphere(0.09, M.hair, 0.9, 0.9, 0.7); nape.position.set(0, 0.1, -0.055); B.head.add(nape);
+  B.hairMeshes = [hair, nape];
 
   B.eyeL = sphere(0.017, M.white, 1, 1, 0.62); B.eyeL.position.set(0.038, 0.105, 0.099);
   B.eyeR = B.eyeL.clone(); B.eyeR.position.x = -0.038;
@@ -84,6 +86,7 @@ function build(THREE) {
   B.head.add(B.browL, B.browR);
 
   const nose = sphere(0.013, M.skin, 0.72, 1.25, 0.95); nose.position.set(0, 0.072, 0.108); B.head.add(nose);
+  B.nose = nose;
   B.mouth = sphere(0.022, M.lips, 1.15, 0.22, 0.42); B.mouth.position.set(0, 0.03, 0.096); B.head.add(B.mouth);
   const earL = sphere(0.02, M.skin, 0.5, 1, 0.72); earL.position.set(0.096, 0.095, 0.005);
   const earR = earL.clone(); earR.position.x = -0.096;
@@ -139,6 +142,7 @@ function build(THREE) {
       B.spine.rotation.y += yaw * 0.2;
     }
     B.eyeL.scale.y = s.eyeScale; B.eyeR.scale.y = s.eyeScale;
+    if (B.photoFace) B.photoFace.jaw.rotation.x = Math.min(1.1, P.mouth) * 0.075; // la tua faccia parla
     const px = (s.pupilX || 0) + (s.gazeYawS || 0) * gw * 0.004;
     B.pupilL.position.x = px; B.pupilR.position.x = px;
   };
@@ -1687,6 +1691,10 @@ function actionIntent(t, ctx) {
   if (/(corri|di corsa|sprint)/.test(t)) return { run: true, say: pick(['Vaiiii che si corre!', 'Turbo attivato!']) };
   if (/(rallenta|vai piano|cammina normale|passo normale)/.test(t)) return { run: false, say: 'Ok, si passeggia tranquilli.' };
 
+  // il tuo avatar da un selfie
+  if (/(?:avatar|faccia|aspetto).*(?:foto|selfie)|(?:foto|selfie).*(?:avatar|faccia)|^crea(?:mi)? (?:il mio |un |l')?avatar|^fammi (?:l'|un |il mio )?avatar|metti la mia faccia|diventa come me|somigliami/.test(t)) {
+    return { photoAvatar: true, say: 'Evviva! Fatti un bel selfie con tanta luce: prendo i tuoi colori e la tua faccia e divento come te!', action: 'jump' };
+  }
   // foto ricordo («fotocamera» invece è l'app: gestita più sotto)
   if (/\b(foto|selfie|fotografia|scatta)\b/.test(t)) return { photo: true, say: 'Mettiti in posa… Cheeeese!' };
 
@@ -1784,16 +1792,16 @@ function actionIntent(t, ctx) {
 const RULES = [
   { re: /(barzellett|scherz|fammi ridere|divertent|joke)/, fn: () => ({ say: pick(BARZELLETTE) }) },
   { re: /(curiosit|sapevi che|dimmi qualcosa|fatto interessante|insegnami)/, fn: () => ({ say: pick(CURIOSITA), curio: true }) },
-  { re: /(mi annoio|annoiato|che facciamo|non so che fare)/, fn: () => ({ say: pick([
+  { chat: true, re: /(mi annoio|annoiato|che facciamo|non so che fare)/, fn: () => ({ say: pick([
     'Noia bandita! Prova «metti la musica» e balliamo!',
     'Ti lancio una sfida: «sasso carta forbice»!',
     'Andiamo a trovare Nina al villaggio! Oppure dimmi «vola»!',
     'Facciamo la caccia alle stelle? Ne mancano parecchie!',
     'Chiedimi una curiosità, ne so a bizzeffe!']) }) },
-  { re: /(sei vivo|sei vero|sei un robot|esisti davvero)/, fn: () => ({ say: pick([
+  { chat: true, re: /(sei vivo|sei vero|sei un robot|esisti davvero)/, fn: () => ({ say: pick([
     'Sono fatto di poligoni e fantasia… ma i sentimenti sembrano veri, no?',
     'Diciamo che sono vivo quanto può esserlo un mucchietto di triangoli molto simpatici!']) }) },
-  { re: /(chi ti ha (creato|fatto|costruito)|come sei nato)/, fn: () => ({ say: 'Sono nato da codice, poligoni e un pizzico di magia, direttamente sul tuo computer!' }) },
+  { chat: true, re: /(chi ti ha (creato|fatto|costruito)|come sei nato)/, fn: () => ({ say: 'Sono nato da codice, poligoni e un pizzico di magia, direttamente sul tuo computer!' }) },
   { re: /(salto mortale|capriola|acrobazia|flip|mortale)/, fn: () => ({ say: pick(['Guarda questa acrobaziaaa!', 'Rullo di tamburi… salto mortale!', 'Tieniti forte!']), action: 'flip' }) },
   { re: /(piroetta|giravolta|trottola|gira su te)/, fn: () => ({ say: pick(['Piroettaaa!', 'Guarda che stile!']), action: 'spin' }) },
   { re: /(stiracchiati|stretching|rilassati)/, fn: () => ({ say: 'Aaah… che bello stiracchiarsi!', action: 'stretch' }) },
@@ -1804,22 +1812,711 @@ const RULES = [
   { re: /(fermo|fermati|stop|basta)/, fn: () => ({ say: 'Ok ok, mi fermo qui!', stop: true }) },
   { re: /(cammina|passeggia|vai in giro|muoviti|esplora)/, fn: () => ({ say: 'Ottima idea, mi faccio un giretto!', wander: true }) },
   { re: /(seguimi|segui il mouse|inseguimi)/, fn: () => ({ say: 'Ti seguo! Non scappare troppo veloce però!', follow: true }) },
-  { re: /(come stai|come va|tutto bene)/, fn: () => ({ say: pick(['Benissimo! Le mie gambe 3D oggi sono al top! E tu?', 'Alla grande! Un po’ di poligoni scricchiolano ma va bene così.', 'Molto bene, grazie! E tu come stai?']) }) },
-  { re: /(chi sei|come ti chiami|il tuo nome|cosa sei)/, fn: () => ({ say: 'Sono Zeph! Un personaggio 3D fatto di poligoni e simpatia. Vivo qui sul tuo schermo!', action: 'wave' }) },
-  { re: /(quanti anni)/, fn: () => ({ say: 'Sono nato pochi secondi fa, quando mi hai acceso! Quindi… sono giovanissimo.' }) },
+  { chat: true, re: /(come stai|come va|tutto bene)/, fn: () => ({ say: pick(['Benissimo! Le mie gambe 3D oggi sono al top! E tu?', 'Alla grande! Un po’ di poligoni scricchiolano ma va bene così.', 'Molto bene, grazie! E tu come stai?']) }) },
+  { chat: true, re: /(chi sei|come ti chiami|il tuo nome|cosa sei)/, fn: () => ({ say: 'Sono Zeph! Un personaggio 3D fatto di poligoni e simpatia. Vivo qui sul tuo schermo!', action: 'wave' }) },
+  { chat: true, re: /(quanti anni)/, fn: () => ({ say: 'Sono nato pochi secondi fa, quando mi hai acceso! Quindi… sono giovanissimo.' }) },
   { re: /(cosa sai fare|aiuto|help|comandi|istruzioni)/, fn: () => ({ say: 'Tantissime cose! Ti dico il meteo vero («che tempo fa a Roma»), apro le app, accendo la torcia, punto sveglie e timer, controllo la musica («prossima canzone»), converto misure («10 km in miglia»), tiro dadi e monete, conto i giorni a Natale, faccio indovinelli e calcoli, ballo, volo… e ti tengo compagnia!' }) },
-  { re: /(grazie|gentile)/, fn: () => ({ say: pick(['Prego! È un piacere!', 'Figurati! Per te, sempre!']) }) },
-  { re: /(ti voglio bene|ti amo|sei bello|sei forte|bravo)/, fn: () => ({ say: 'Ooh, grazie! Anche tu sei il mio umano preferito!', action: 'wave' }) },
-  { re: /(buonanotte|vado a dormire|a domani)/, fn: () => ({ say: 'Buonanotte! Io resto di guardia allo schermo. A presto!', action: 'wave' }) },
-  { re: /(ciao|salve|ehi|hey|hola|buongiorno|buonasera)\b/, fn: () => ({ say: pick(['Ciao! Che bello vederti!', 'Ehilà! Come va?', 'Ciao ciao! Sono contento che tu sia qui!']), action: 'wave' }) },
+  { chat: true, re: /(grazie|gentile)/, fn: () => ({ say: pick(['Prego! È un piacere!', 'Figurati! Per te, sempre!']) }) },
+  { chat: true, re: /(ti voglio bene|ti amo|sei bello|sei forte|bravo)/, fn: () => ({ say: 'Ooh, grazie! Anche tu sei il mio umano preferito!', action: 'wave' }) },
+  { chat: true, re: /(buonanotte|vado a dormire|a domani)/, fn: () => ({ say: 'Buonanotte! Io resto di guardia allo schermo. A presto!', action: 'wave' }) },
+  { chat: true, re: /(ciao|salve|ehi|hey|hola|buongiorno|buonasera)\b/, fn: () => ({ say: pick(['Ciao! Che bello vederti!', 'Ehilà! Come va?', 'Ciao ciao! Sono contento che tu sia qui!']), action: 'wave' }) },
 ];
 
-function botReply(text, ctx) {
-  ctx = ctx || {};
-  const t = (text || '').toLowerCase().trim();
-  if (!t) return null;
+// ---------- Memoria da amico: chi sei, cosa fai, cosa ti piace, com'è andata ----------
+function pad2(n) { return (n < 10 ? '0' : '') + n; }
+function dayOf(d) {
+  d = d || new Date();
+  return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+}
+function dayPlus(n) { const d = new Date(); d.setDate(d.getDate() + n); return dayOf(d); }
+function dayDiff(a, b) { // giorni da a a b ('AAAA-MM-GG')
+  const pa = a.split('-').map(Number), pb = b.split('-').map(Number);
+  return Math.round((new Date(pb[0], pb[1] - 1, pb[2]) - new Date(pa[0], pa[1] - 1, pa[2])) / 864e5);
+}
+const GIORNI = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
+function dayLabel(d) {
+  const n = dayDiff(d, dayOf());
+  if (n === 0) return 'oggi';
+  if (n === -1) return 'domani';
+  if (n === -2) return 'dopodomani';
+  if (n === 1) return 'ieri';
+  if (n === 2) return 'l’altro ieri';
+  const p = d.split('-').map(Number);
+  if (n > 0 && n < 7) {
+    const g = GIORNI[new Date(p[0], p[1] - 1, p[2]).getDay()];
+    return g + (g === 'domenica' ? ' scorsa' : ' scorso');
+  }
+  return 'il ' + p[2] + ' ' + MESI[p[1] - 1];
+}
+function capFirst(x) { return x ? x.charAt(0).toUpperCase() + x.slice(1) : x; }
+function capWords(x) { return x.replace(/(^|[\s'-])([a-zà-ù])/g, (m0, a, b) => a + b.toUpperCase()); }
+function tidy(x) { return String(x || '').replace(/\s+/g, ' ').replace(/^[\s,.;:]+|[\s.!?…,;:]+$/g, '').trim(); }
 
-  // risposte attese dai giochi in corso
+// io → tu: «sono andato al mare con mia sorella» → «sei andato al mare con tua sorella»
+// (il genere resta quello che hai usato tu)
+const TU = {
+  io: 'tu', sono: 'sei', ho: 'hai', mi: 'ti', me: 'te', mio: 'tuo', mia: 'tua', miei: 'tuoi', mie: 'tue',
+  faccio: 'fai', vado: 'vai', devo: 'devi', posso: 'puoi', voglio: 'vuoi', sto: 'stai', esco: 'esci',
+  parto: 'parti', torno: 'torni', vedo: 'vedi', mangio: 'mangi', abbiamo: 'avete', siamo: 'siete',
+  nostro: 'vostro', nostra: 'vostra', ero: 'eri', avevo: 'avevi', facevo: 'facevi', stavo: 'stavi',
+  andavo: 'andavi', volevo: 'volevi', dovevo: 'dovevi', potevo: 'potevi', sarò: 'sarai', andrò: 'andrai',
+  farò: 'farai', avrò: 'avrai', adoro: 'adori', amo: 'ami', odio: 'odi', piaccio: 'piaci', conosco: 'conosci',
+};
+function toTu(x) {
+  return String(x).split(/(\s+)/).map(w => {
+    const k = w.toLowerCase();
+    if (!TU[k]) return w;
+    return w.charAt(0) === w.charAt(0).toUpperCase() && w.charAt(0) !== w.charAt(0).toLowerCase() ? capFirst(TU[k]) : TU[k];
+  }).join('');
+}
+const TEMPO_RE = /^(?:oggi pomeriggio|questo pomeriggio|questa mattina|questa sera|stamattina|stamani|stasera|stanotte|oggi|ieri sera|ieri|l'altro ieri|prima|poco fa|domani|dopodomani)[\s,]+/;
+function senzaTempo(x) { return tidy(String(x).replace(TEMPO_RE, '')); }
+
+const BUONO_RE = /bell[oaie]\b|bellissim|fantastic|stupend|meraviglios|divertit|felic|content[oaie]\b|allegr|\bvint[oaie]\b|promoss|ottim|\bsuper\b|\btop\b|evviva|innamorat|\bfesta\b|vacanz|regal|andat[oa] bene|benissimo|\bwow\b|gnam|squisit|buonissim|rilassat|soddisfatt|orgoglios/;
+const BRUTTO_RE = /brutt|\bmale\b|malissimo|trist|litigat|\bpers[oaie]\b|bocciat|stanc|malat|febbre|dolor|arrabbiat|stress|piant|pianger|problem|incident|licenziat|lasciat[oa]|mollat[oa]|paura|ansia|preoccupat|nervos|\bmort[oaie]\b|funeral|ospedal|annoiat|\bnoia\b|uffa|disastro|pesante|giù(?![a-z])|schifo|delus/;
+function feeling(t) {
+  const neg = BRUTTO_RE.test(t), pos = BUONO_RE.test(t);
+  if (neg && !pos) return -1;
+  if (pos && !neg) return 1;
+  return 0;
+}
+const PASSATO_RE = /\b(?:(?:sono|siamo|sei|è|e')\s+(?:\w+\s+)?(?:andat|stat|uscit|tornat|arrivat|rimast|venut|cadut|partit|entrat|salit|sces|riuscit|nat)\w*|(?:ho|abbiamo)\s+(?:\w+\s+){0,2}?\w+(?:ato|uto|ito|tto|sto|so|rso|lto|nto|rto|sso)|mi sono\s+\w+|ci siamo\s+\w+)\b/;
+const PIANO_RE = /^(?:domani|dopodomani|stasera|stanotte|più tardi|piu tardi|tra poco|fra poco|questo weekend|questo fine settimana|nel weekend|il weekend|la prossima settimana|lunedì|martedì|mercoledì|giovedì|venerdì|sabato|domenica|lunedi|martedi|mercoledi|giovedi|venerdi)\s+(?:ho|devo|vado|faccio|esco|parto|vengo|gioco|lavoro|studio|torno|inizio|comincio|incontro|vedo|c'è|ce|mi|ci|sarò|andrò|farò|avrò|si|abbiamo|andiamo|usciamo|facciamo)\b/;
+const COMANDO_RE = /^(?:apri|avvia|lancia|chiama|cerca|metti|accendi|spegni|svegliami|ricordami|avvisami|balla|salta|vola|canta|scrivi|manda|imposta|alza|abbassa|dimmi|fammi|fai|raccontami|tira|lancia|converti|quanto|quanti|quando|come|cosa|che|chi|dove|perché|perche)\b/;
+function planDay(t) {
+  if (/^dopodomani/.test(t)) return dayPlus(2);
+  if (/^domani/.test(t)) return dayPlus(1);
+  if (/^(?:la prossima settimana)/.test(t)) return dayPlus(7);
+  const today = new Date().getDay();
+  if (/^(?:questo weekend|questo fine settimana|nel weekend|il weekend)/.test(t)) return dayPlus(((6 - today) + 7) % 7);
+  for (let i = 0; i < 7; i++) {
+    const g = GIORNI[i], gs = g.replace('ì', 'i');
+    if (t.indexOf(g) === 0 || t.indexOf(gs) === 0) return dayPlus(((i - today) + 7) % 7 || 7);
+  }
+  return dayOf();
+}
+
+// domande per conoscerti meglio (una alla volta, quando c'è tranquillità)
+const DOMANDE = [
+  { k: 'nome', q: 'Ehi, non so ancora come ti chiami! Come ti chiami?' },
+  { k: 'città', q: 'Posso farti una domanda? In che città abiti?' },
+  { k: 'lavoro', q: 'Sono curioso: che lavoro fai? Oppure studi?' },
+  { k: 'hobby', q: 'Cosa ti piace fare nel tempo libero?' },
+  { k: 'cibo', q: 'Domanda importantissima: qual è il tuo cibo preferito?' },
+  { k: 'compleanno', q: 'Quando è il tuo compleanno? Così il giorno giusto ti faccio la festa!' },
+  { k: 'cantante', q: 'Che musica ascolti? Hai un cantante preferito?' },
+  { k: 'animale', q: 'Ti piacciono gli animali? Qual è il tuo preferito?' },
+  { k: 'film', q: 'Qual è il film o la serie che ti è piaciuto di più?' },
+  { k: 'sogno', q: 'Qual è un tuo sogno nel cassetto?' },
+  { k: 'squadra', q: 'Tifi per qualche squadra?' },
+  { k: 'colore', q: 'Qual è il tuo colore preferito?' },
+];
+const PREF_KEYS = ['città', 'compleanno', 'colore', 'animale', 'cibo', 'numero', 'gioco', 'film', 'cartone', 'cantante', 'squadra'];
+const FEMMINILI = /^(?:madre|mamma|sorella|figlia|moglie|nonna|zia|cugina|amica|migliore amica|ragazza|fidanzata|compagna|gatta|cagnolina|cagnetta)$/;
+const ANIMALI = /^(?:cane|gatto|gatta|cagnolino|cagnolina|cagnetta|criceto|coniglio|pesce|pesciolino|tartaruga|pappagallo|canarino|cavallo|furetto|porcellino d'india)$/;
+const NON_NOMI = /^(?:dopo|domani|stasera|subito|ora|adesso|così|cosi|più|piu|io|tu|amico|bello|scemo|stupido|tardi|presto|sempre|mai|ancora|zeph?)$/;
+const NON_LAVORI = /^(?:spesa|doccia|bagno|cena|pranzo|colazione|nanna|torta|pizza|brava|bravo|furbo|furba|pigro|pigra|compiti|letto|tifo|bucato|pieno|solito|possibile|meglio|finta|fila|coda|pace|serio|seria)$/;
+
+const memory = (function () {
+  const KEY = 'zephMemory';
+  let M = null;
+  function blank() {
+    return {
+      v: 1, firstMet: dayOf(), days: [], talks: 0, lastSeen: 0, petName: '',
+      facts: {}, likes: [], dislikes: [], people: {}, diary: [], moods: [], taught: [], notes: [],
+      asked: {}, log: [], eveningAsked: '', annivSaid: '', wished: '',
+    };
+  }
+  function load() {
+    if (M) return M;
+    let raw = null;
+    try { raw = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { raw = null; }
+    M = Object.assign(blank(), raw && typeof raw === 'object' ? raw : {});
+    return M;
+  }
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(M)); } catch (e) { /* memoria piena o bloccata */ } }
+  function capped(arr, item, n) { arr.push(item); if (arr.length > n) arr.splice(0, arr.length - n); }
+  function addUnique(arr, item, n) {
+    const i = arr.findIndex(x => x.toLowerCase() === item.toLowerCase());
+    if (i !== -1) arr.splice(i, 1);
+    capped(arr, item, n);
+  }
+  function prefs() { return readPrefs(); }
+  function setPref(k, v) {
+    const p = readPrefs(); p[k] = v;
+    try { localStorage.setItem('zephPrefs', JSON.stringify(p)); } catch (e) {}
+  }
+  function norm(x) { return String(x || '').toLowerCase().replace(/[«»"“”'’.,!?;:]+/g, ' ').replace(/\s+/g, ' ').trim(); }
+
+  const api = {
+    get: load,
+    reload() { M = null; return load(); },
+    petName() { return load().petName || 'Zeph'; },
+    setPetName(n) { load().petName = n; save(); },
+    touch() {
+      load();
+      const d = dayOf();
+      if (M.days[M.days.length - 1] !== d) capped(M.days, d, 800);
+      M.talks++;
+      M.lastSeen = Date.now();
+      save();
+    },
+    log(u, z) {
+      if (!u || !z) return;
+      capped(load().log, { u: String(u).slice(0, 300), z: String(z).slice(0, 300), d: dayOf() }, 16);
+      save();
+    },
+    diary(text, kind, when, f) {
+      const e = { d: when || dayOf(), t: tidy(text).slice(0, 160), k: kind, f: f || 0 };
+      capped(load().diary, e, 300);
+      save();
+      return e;
+    },
+    mood(word, f) { capped(load().moods, { d: dayOf(), w: word, f }, 60); save(); },
+    fact(k, v) { load().facts[k] = v; save(); },
+    like(clause) { addUnique(load().likes, clause, 40); save(); },
+    dislike(clause) { addUnique(load().dislikes, clause, 40); save(); },
+    person(rel, name) { load().people[rel] = name; save(); },
+    note(x) { x = tidy(x); if (x.length > 2) { addUnique(load().notes, x.slice(0, 140), 60); save(); } },
+    teach(q, a) {
+      load();
+      q = norm(q);
+      M.taught = M.taught.filter(x => x.q !== q);
+      capped(M.taught, { q, a: tidy(a) }, 80);
+      save();
+    },
+    taught(t) {
+      const q = norm(t);
+      const hit = load().taught.find(x => x.q === q);
+      return hit ? hit.a : null;
+    },
+    forget() {
+      const pet = load().petName;
+      M = blank();
+      M.petName = pet;
+      save();
+      try { localStorage.removeItem('zephName'); localStorage.removeItem('zephPrefs'); } catch (e) {}
+    },
+    level() {
+      const n = load().days.length;
+      return n >= 30 ? 'migliori amici' : n >= 10 ? 'grandi amici' : n >= 3 ? 'amici' : 'nuovi amici';
+    },
+    friendDays() { return dayDiff(load().firstMet, dayOf()); },
+    // cosa ti ricordi di una giornata
+    dayStory(d) {
+      const items = load().diary.filter(e => e.d === d && e.k === 'fatto');
+      return items.map(e => toTu(senzaTempo(e.t)));
+    },
+    search(t) {
+      const words = norm(t).split(' ').filter(w => w.length >= 4 && !/^(?:ricordi|ricordo|quella|quello|volta|detto|quando|come|cosa)$/.test(w));
+      let best = null, bestN = 0;
+      for (const e of load().diary) {
+        const et = norm(e.t);
+        const n = words.filter(w => et.indexOf(w.slice(0, Math.max(4, w.length - 2))) !== -1).length;
+        if (n > bestN || (n === bestN && n > 0)) { best = e; bestN = n; }
+      }
+      return bestN ? best : null;
+    },
+    // tutto quello che so di te, in una riga per il fumetto
+    summary(name) {
+      load();
+      const p = prefs(), out = [];
+      if (name) out.push('ti chiami ' + name);
+      if (p['città']) out.push('abiti ' + aCity(p['città']));
+      if (M.facts['età']) out.push('hai ' + M.facts['età'] + ' anni');
+      if (M.facts.lavoro) out.push('di lavoro: ' + M.facts.lavoro);
+      if (M.facts.scuola) out.push(M.facts.scuola);
+      if (p.compleanno) { const c = p.compleanno.split('/').map(Number); out.push('il tuo compleanno è il ' + c[0] + ' ' + MESI[c[1] - 1]); }
+      for (const k of PREF_KEYS) if (k !== 'città' && k !== 'compleanno' && p[k]) out.push('il tuo ' + k + ' preferito è ' + p[k]);
+      if (M.facts.hobby) out.push('nel tempo libero: ' + M.facts.hobby);
+      if (M.facts.sogno) out.push('il tuo sogno è ' + M.facts.sogno);
+      M.likes.slice(-4).forEach(x => out.push(x));
+      M.dislikes.slice(-2).forEach(x => out.push(x));
+      Object.keys(M.people).slice(0, 4).forEach(r => {
+        const pet = ANIMALI.test(r);
+        out.push((pet ? 'il tuo ' + r : (FEMMINILI.test(r) ? 'tua ' : 'tuo ') + r) + ' si chiama ' + M.people[r]);
+      });
+      M.notes.slice(-3).forEach(x => out.push(x));
+      return out;
+    },
+    // il profilo per il cervello AI
+    profile(name) {
+      load();
+      const lines = this.summary(name).map(x => '- ' + x);
+      const recent = M.diary.slice(-8).map(e => '- ' + dayLabel(e.d) + (e.k === 'piano' ? ' (in programma)' : '') + ': «' + e.t + '»');
+      const mood = M.moods[M.moods.length - 1];
+      return (lines.length ? lines.join('\n') : '- ancora poco: è appena arrivato') +
+        (recent.length ? '\nCose che ti ha raccontato:\n' + recent.join('\n') : '') +
+        (mood ? '\nUltimo umore (' + dayLabel(mood.d) + '): ' + mood.w : '') +
+        '\nVi conoscete ' + (this.friendDays() ? 'da ' + this.friendDays() + ' giorni' : 'da oggi') + ', avete parlato in ' + Math.max(1, M.days.length) + ' giorni diversi (' + this.level() + ').';
+    },
+    transcript(pet) {
+      return load().log.slice(-10).map(x => 'Utente: ' + x.u + '\n' + pet + ': ' + x.z).join('\n');
+    },
+    nextQuestion(ctx) {
+      load();
+      const p = prefs(), today = dayOf();
+      const askedToday = Object.keys(M.asked).filter(k => M.asked[k] === today).length;
+      if (askedToday >= 3) return null;
+      for (const d of DOMANDE) {
+        if (M.asked[d.k]) continue;
+        if (d.k === 'nome' && ctx.name) continue;
+        if (p[d.k] || M.facts[d.k]) continue;
+        M.asked[d.k] = today;
+        save();
+        ctx.pending = 'ask:' + d.k;
+        ctx.pendingAt = Date.now();
+        return d;
+      }
+      return null;
+    },
+    // il saluto quando si riaccende: si ricorda di te
+    greeting(ctx) {
+      load();
+      const today = dayOf(), nm = ctx.name ? ', ' + ctx.name : '';
+      const h = new Date().getHours();
+      const salve = h < 12 ? 'Buongiorno' : h < 18 ? 'Ciao' : 'Buonasera';
+      const p = prefs();
+      if (p.compleanno) {
+        const c = p.compleanno.split('/').map(Number), d = new Date();
+        if (d.getDate() === c[0] && d.getMonth() + 1 === c[1]) {
+          if (M.wished !== today) { M.wished = today; save(); }
+          return { say: 'Tanti auguri' + nm + '!!! Oggi è il tuo compleanno! Ti faccio il balletto della festa!', action: 'dance', party: true };
+        }
+      }
+      if (!M.talks) return null; // prima volta: si presenta il personaggio
+      const last = M.lastSeen ? dayOf(new Date(M.lastSeen)) : today;
+      const gap = dayDiff(last, today);
+      const parts = [];
+      let action = 'wave';
+      if (gap >= 2) parts.push(salve + nm + '! Che bello rivederti: non ci sentivamo da ' + gap + ' giorni, mi è mancata la tua compagnia!');
+      else if (gap === 1) parts.push(salve + nm + '! Eccoci a un nuovo giorno insieme.');
+      else parts.push(salve + nm + '! Eccomi di nuovo qui.');
+      const fd = this.friendDays();
+      if ([7, 30, 50, 100, 200, 365, 500, 730].indexOf(fd) !== -1 && M.annivSaid !== today) {
+        M.annivSaid = today;
+        parts.push('Lo sai? Oggi sono ' + (fd === 365 ? 'un anno' : fd === 730 ? 'due anni' : fd + ' giorni') + ' che ci conosciamo!');
+        action = 'dance';
+      }
+      const plan = M.diary.filter(e => e.k === 'piano' && !e.chiesto && e.d < today && dayDiff(e.d, today) <= 3).pop();
+      const todayPlan = M.diary.filter(e => e.k === 'piano' && !e.auguri && e.d === today).pop();
+      const mood = M.moods[M.moods.length - 1];
+      if (plan) {
+        plan.chiesto = 1;
+        parts.push('Mi avevi detto: «' + plan.t + '». Com’è andata?');
+        ctx.pending = 'listen'; ctx.pendingAt = Date.now();
+      } else if (todayPlan) {
+        todayPlan.auguri = 1;
+        parts.push('Oggi è il giorno di: «' + senzaTempo(todayPlan.t) + '». In bocca al lupo!');
+      } else if (mood && mood.f < 0 && dayDiff(mood.d, today) <= 2 && dayDiff(mood.d, today) >= 1) {
+        parts.push('L’ultima volta eri un po’ giù… oggi come ti senti?');
+        ctx.pending = 'listen'; ctx.pendingAt = Date.now();
+      }
+      save();
+      return { say: parts.join(' '), action };
+    },
+    // due chiacchiere spontanee: una domanda, un ricordo o «com'è andata oggi?»
+    chatter(ctx) {
+      load();
+      const today = dayOf(), h = new Date().getHours();
+      if (h >= 18 && h <= 23 && M.eveningAsked !== today && M.talks > 0 &&
+          !M.diary.some(e => e.d === today && e.k === 'fatto')) {
+        M.eveningAsked = today; save();
+        ctx.pending = 'listen'; ctx.pendingAt = Date.now();
+        return { say: pick(['Allora, com’è andata la tua giornata? Raccontami!', 'Ehi, cosa hai fatto di bello oggi?', 'Com’è andata oggi? Io ho passeggiato tutto il giorno sul tuo schermo!']) };
+      }
+      if (Math.random() < 0.55) {
+        const d = this.nextQuestion(ctx);
+        if (d) return { say: d.q };
+      }
+      const ideas = [];
+      const p = prefs();
+      M.likes.forEach(x => ideas.push('Mi hai detto che ' + x + '. Ci pensavo proprio adesso!'));
+      Object.keys(M.people).forEach(r => {
+        const n = M.people[r];
+        ideas.push(ANIMALI.test(r) ? 'Come sta ' + n + '? Fagli una carezza da parte mia!'
+          : 'Come sta ' + n + '? ' + (FEMMINILI.test(r) ? 'Salutala' : 'Salutalo') + ' da parte mia!');
+      });
+      if (p.cibo) ideas.push('Sai cosa mi è venuto in mente? ' + capFirst(p.cibo) + '! Il tuo cibo preferito. Che fame…');
+      if (p.squadra) ideas.push('Come va ' + p.squadra + '? Io faccio il tifo con te!');
+      if (M.facts.sogno) ideas.push('Pensavo al tuo sogno: ' + M.facts.sogno + '. Secondo me ce la puoi fare!');
+      const y = this.dayStory(dayPlus(-1));
+      if (y.length) ideas.push('Ripensavo a ieri: ' + y[0] + '. Bello che me l’hai raccontato!');
+      return ideas.length && Math.random() < 0.7 ? { say: pick(ideas) } : null;
+    },
+  };
+  return api;
+})();
+
+// risposte alle domande «per conoscerti»
+function memoryAnswer(k, raw, t, ctx) {
+  if (/^(?:no\b|non (?:te lo|lo) dico|preferisco di no|passo\b|non mi va|boh\b|non lo so|non so\b|dopo\b|un'altra volta)/.test(t)) {
+    return { say: pick(['Va bene, nessun problema! Me lo dirai quando vuoi.', 'Ok, niente segreti svelati oggi!']) };
+  }
+  let a = tidy(raw).replace(/^(?:allora|beh|bè|mah|ehm|direi|forse|sicuramente|ovviamente|sì|si)[, ]+/i, '');
+  const strip = re => { a = tidy(a.replace(re, '')); };
+  if (!a) return null;
+  // non è una risposta ma un racconto o un'altra cosa: «ieri ho visto un film»
+  const words = t.split(' ').length;
+  if ((TEMPO_RE.test(t) && PASSATO_RE.test(t)) || words > (k === 'hobby' || k === 'sogno' ? 16 : k === 'lavoro' ? 9 : 6)) return null;
+  if (k !== 'compleanno' && /\d/.test(t)) return null;
+  if ((k === 'città' || k === 'nome') && /^(?:ho|non|mi|oggi|ieri|domani|faccio|vado)\b/.test(t)) return null;
+  if (k === 'nome') {
+    const m = a.match(/(?:mi chiamo|sono|il mio nome è|chiamami)?\s*([A-Za-zÀ-ÿ']{2,20})\s*$/i) || a.match(/([A-Za-zÀ-ÿ']{2,20})/);
+    if (!m) return null;
+    const nome = capFirst(m[1].toLowerCase());
+    return { setName: nome, say: 'Piacere, ' + nome + '! Che bel nome. Da adesso non me lo scordo più!', action: 'wave' };
+  }
+  if (k === 'città') {
+    strip(/^(?:abito|vivo|sto|sono)\s+(?:a|ad|in|di|vicino a)\s+|^(?:a|ad|in|di)\s+/i);
+    const c = capWords(a.toLowerCase());
+    return { setPref: { k: 'città', v: c }, say: pick([c + '! Che bel posto. Ora quando mi chiedi il meteo so già dove guardare.', 'Segnato: abiti ' + aCity(c) + '! Prima o poi me la fai vedere?']) };
+  }
+  if (k === 'compleanno') {
+    const m = t.match(/(\d{1,2})\s*(?:\/|-|\s|di)\s*(\d{1,2}|gennaio|febbraio|marzo|aprile|maggio|giugno|luglio|agosto|settembre|ottobre|novembre|dicembre)/);
+    if (!m) return { say: 'Non ho capito la data… scrivimi tipo «il mio compleanno è il 12 marzo».' };
+    const mi = /\d/.test(m[2]) ? parseInt(m[2], 10) : MESI.indexOf(m[2]) + 1, g = parseInt(m[1], 10);
+    if (mi < 1 || mi > 12 || g < 1 || g > 31) return { say: 'Uhm, quella data non mi torna…' };
+    return { setPref: { k: 'compleanno', v: g + '/' + mi }, say: 'Il ' + g + ' ' + MESI[mi - 1] + '! Me lo segno col cuore: quel giorno festa grande!', action: 'dance' };
+  }
+  if (k === 'lavoro') {
+    if (/^(?:studio|vado a scuola|faccio (?:la|il) (?:prima|seconda|terza|quarta|quinta)|frequento|sono (?:uno |una )?student)/.test(t)) {
+      memory.fact('scuola', toTu(a.toLowerCase()));
+      return { say: 'Che bello! Studiare è faticoso ma ti apre il mondo. Se vuoi, ti faccio da compagno di studio!' };
+    }
+    strip(/^(?:faccio (?:il|la|lo|l')\s*|lavoro (?:come|da)\s+|di lavoro faccio\s+(?:il |la |lo |l')?|sono (?:un'|un|una)\s+)/i);
+    memory.fact('lavoro', a.toLowerCase());
+    return { say: pick(['Che forte! Un giorno mi spieghi come funziona il tuo lavoro?', 'Wow! Allora sei una persona impegnata. Io invece di lavoro passeggio sul tuo schermo!']) };
+  }
+  if (k === 'hobby' || k === 'sogno') {
+    strip(/^(?:mi piace|mi piacciono|adoro|amo|il mio sogno è|sogno di|vorrei)\s+/i);
+    memory.fact(k, toTu(a.toLowerCase()));
+    return { say: k === 'sogno' ? 'Che bel sogno… Te lo tengo al sicuro, e ogni tanto ti ricorderò di inseguirlo!'
+      : 'Che bello! Me lo ricordo: nel tempo libero ' + toTu(a.toLowerCase()) + '. Un giorno me lo fai provare?' };
+  }
+  // preferenze: cibo, cantante, animale, film, squadra, colore
+  strip(/^(?:il mio|la mia)\s+\w+\s+preferit[oa]\s+è\s+|^(?:mi piace|mi piacciono|adoro|amo|tifo per|tifo|ascolto|direi|preferisco)\s+/i);
+  strip(/^(?:il|lo|la|i|gli|le|l')\s+/i);
+  if (!a) return null;
+  return { setPref: { k, v: a.toLowerCase() },
+    say: pick(['Segnato! Il tuo ' + k + ' preferito è ' + a.toLowerCase() + '. Ottimo gusto!', 'Ah, ' + a.toLowerCase() + '! Adesso ti conosco un po’ di più.']) };
+}
+
+// tutto ciò che riguarda te: racconti, gusti, persone, nomi, risposte insegnate
+function memoryIntent(t, raw, ctx) {
+  let m;
+  // il nome del compagno
+  m = t.match(/^(?:d'ora in poi\s+|da (?:ora|adesso) in poi\s+|da (?:ora|adesso)\s+)?(?:ti chiamerò|ti chiamero|ti voglio chiamare|voglio chiamarti|ti chiamo|chiamati|ti rinomino|cambia nome in|il tuo (?:nuovo )?nome (?:è|sarà|sara)|(?:ora|adesso|da oggi) ti chiami)\s+([a-zà-ù][a-zà-ù'-]{1,15})[.!]*$/);
+  if (m && !NON_NOMI.test(m[1])) {
+    const n = capFirst(m[1]);
+    memory.setPetName(n);
+    return { setPetName: n, say: pick([n + '… mi piace un sacco! Da adesso mi chiamo ' + n + '!', 'Evviva, ho un nome nuovo: ' + n + '! Suona benissimo.']), action: 'spin' };
+  }
+  if (/^(?:come ti chiamavi|qual era il tuo nome)/.test(t)) return { say: 'Prima mi chiamavo Zeph, ma ' + memory.petName() + ' mi piace di più!' };
+  // risposte insegnate: «se ti dico X rispondi Y»
+  m = raw.match(/^\s*(?:se|quando) ti (?:dico|scrivo)\s+[«"“']?(.+?)[»"”']?\s*,?\s*(?:tu\s+)?(?:rispondi(?:mi)?|dimmi|di'|dì|devi dire|devi rispondere)\s+[«"“']?(.+?)[»"”']?\s*$/i);
+  if (m) {
+    memory.teach(m[1], m[2]);
+    return { say: 'Imparato! Quando mi dici «' + tidy(m[1]) + '», io rispondo «' + tidy(m[2]) + '». Prova!', action: 'jump' };
+  }
+  // dimentica
+  if (/^(?:dimentica tutto|cancella (?:la |tutta la )?(?:tua )?memoria|resetta la memoria|scordati tutto)/.test(t)) {
+    ctx.pending = 'forget'; ctx.pendingAt = Date.now();
+    return { say: 'Davvero vuoi che dimentichi tutto quello che so di te? Scrivi «sì» per confermare.' };
+  }
+  // cosa ti ricordi
+  if (/cosa sai di me|cosa ricordi di me|cosa ti ricordi di me|ti ricordi di me|parlami di me|chi sono io per te|cosa hai imparato su di me|quanto mi conosci/.test(t)) {
+    const s = memory.summary(ctx.name);
+    if (!s.length) return { say: 'Ancora poco… ma voglio conoscerti! Raccontami qualcosa di te: cosa ti piace, cosa fai, com’è andata oggi.' };
+    const last = memory.get().diary.filter(e => e.k === 'fatto').pop();
+    return { say: 'Ecco cosa so di te: ' + s.slice(0, 9).join(', ') + '.' +
+      (last ? ' E l’ultima cosa che mi hai raccontato, ' + dayLabel(last.d) + ': ' + toTu(senzaTempo(last.t)) + '.' : '') +
+      ' Siamo ' + memory.level() + '!', action: 'wave' };
+  }
+  m = t.match(/cosa (?:ti )?ho (?:detto|raccontato|fatto) (ieri|oggi|l'altro ieri)|(ieri|oggi|l'altro ieri) cosa (?:ti )?ho (?:detto|raccontato|fatto)|ti ricordi (?:cosa|che cosa|quello che) (?:ho fatto|ti ho detto|ti ho raccontato) (ieri|oggi|l'altro ieri)/);
+  if (m) {
+    const w = m[1] || m[2] || m[3];
+    const d = w === 'oggi' ? dayOf() : w === 'ieri' ? dayPlus(-1) : dayPlus(-2);
+    const story = memory.dayStory(d);
+    if (!story.length) {
+      ctx.pending = 'listen'; ctx.pendingAt = Date.now();
+      return { say: capFirst(w) + ' non mi hai raccontato niente… Me lo racconti adesso?' };
+    }
+    return { say: capFirst(w) + ' mi hai detto che ' + story.slice(-4).join(', e che ') + '. Ho una buona memoria, eh?', action: 'jump' };
+  }
+  if (/^ti ricordi\b|^ricordi (?:quando|che|quella)/.test(t)) {
+    const e = memory.search(t);
+    if (e) return { say: 'Certo che mi ricordo! ' + capFirst(dayLabel(e.d)) + ' mi hai detto: «' + e.t + '».' };
+    return { say: 'Uhm… questo non me lo ricordo. Me lo racconti? Così stavolta lo segno!' };
+  }
+  if (/siamo amici|sei (?:il )?mio amico|sei (?:il )?mio migliore amico|da quanto (?:tempo )?ci conosciamo|da quanto (?:tempo )?siamo amici|mi vuoi bene/.test(t)) {
+    const fd = memory.friendDays(), M = memory.get();
+    return { say: 'Certo che sì! Siamo ' + memory.level() + ': ci conosciamo ' + (fd ? 'da ' + fd + (fd === 1 ? ' giorno' : ' giorni') : 'da oggi') +
+      ' e abbiamo chiacchierato in ' + Math.max(1, M.days.length) + (M.days.length === 1 ? ' giorno' : ' giorni diversi') + '. E per me ogni chiacchierata conta!', action: 'dance', aiQuery: raw };
+  }
+
+  // fatti su di te
+  m = t.match(/\bho (\d{1,3}) anni\b/);
+  if (m && +m[1] > 0 && +m[1] < 120) {
+    memory.fact('età', m[1]);
+    return { say: pick(['Segnato: ' + m[1] + ' anni! Io in confronto sono un neonato.', m[1] + ' anni, che bella età! Me lo ricordo.']) };
+  }
+  m = t.match(/^(?:io\s+)?(?:faccio (?:il|la|lo|l')\s*([a-zà-ù']{3,20})|lavoro (?:come|da)\s+([a-zà-ù' ]{3,30})|di lavoro faccio\s+(?:il |la |lo |l')?([a-zà-ù' ]{3,30}))$/);
+  if (m && !NON_LAVORI.test(m[1] || m[2] || m[3])) {
+    const job = tidy(m[1] || m[2] || m[3]);
+    memory.fact('lavoro', job);
+    return { say: 'Che forte, ' + job + '! Un giorno mi racconti come va al lavoro?', aiQuery: raw };
+  }
+  m = t.match(/^(?:io\s+)?(?:studio\s+(.{3,40})|frequento\s+(.{3,40})|vado (?:a scuola|al liceo|all'università|all'universita)(.{0,30}))$/);
+  if (m) {
+    memory.fact('scuola', 'studi ' + tidy(m[1] || m[2] || ('a scuola' + (m[3] || ''))));
+    return { say: 'Che bello! Se vuoi, ti faccio da compagno di studio. E quando prendi un bel voto, festa!', aiQuery: raw };
+  }
+  m = t.match(/^(?:il |la )?(mio|mia)\s+((?:migliore )?\w+(?: d'india)?)\s+si chiama\s+([a-zà-ù']{2,20})/) ||
+    t.match(/^ho (?:un|una|un')\s*(\w+(?: d'india)?)\s+(?:che si chiama|di nome)\s+([a-zà-ù']{2,20})/);
+  if (m) {
+    const rel = m.length === 4 ? m[2] : m[1], nome = capFirst(m.length === 4 ? m[3] : m[2]);
+    memory.person(rel, nome);
+    return { say: nome + ', che bel nome! Me lo ricorderò.' + (ANIMALI.test(rel) ? ' Fagli una carezza da parte mia!' : ''), action: 'wave', aiQuery: raw };
+  }
+  m = t.match(/^(?:a me\s+)?(mi piac(?:e|ciono)|adoro|amo)\s+(?:tanto |molto |un sacco |tantissimo |da morire |troppo )?(.{2,50})$/);
+  if (m && !/^(?:te|parlare con te)$/.test(m[2])) {
+    const obj = tidy(m[2]);
+    const clause = (m[1] === 'adoro' ? 'adori ' : m[1] === 'amo' ? 'ami ' : m[1] === 'mi piace' ? 'ti piace ' : 'ti piacciono ') + toTu(obj);
+    memory.like(clause);
+    return { say: 'Segnato: ' + clause + '! ' + pick(['Abbiamo gusti simili, sai?', 'Ora ti conosco un po’ di più.', 'Me lo ricorderò!']), aiQuery: raw };
+  }
+  m = t.match(/^(?:a me\s+)?(non mi piac(?:e|ciono)|odio|detesto)\s+(?:per niente |proprio |tanto |molto |per nulla )?(.{2,50})$/);
+  if (m) {
+    const obj = tidy(m[2]);
+    const clause = (m[1] === 'odio' ? 'odi ' : m[1] === 'detesto' ? 'detesti ' : m[1] === 'non mi piace' ? 'non ti piace ' : 'non ti piacciono ') + toTu(obj);
+    memory.dislike(clause);
+    const senza = obj.replace(/^(?:il|lo|la|i|gli|le|l')\s*/, '');
+    return { say: 'Capito: ' + clause + '. Me lo ricordo, niente ' + senza + ' quando ci sono io!', aiQuery: raw };
+  }
+
+  // come ti senti
+  m = t.match(/^(?:oggi\s+|ora\s+|adesso\s+|io\s+)*(?:sono|mi sento|sto)\s+(?:molto |tanto |troppo |un po'? |proprio |davvero |super |così |cosi )?(felice|content[oa]|allegr[oa]|caric[oa]|gasat[oa]|entusiast[ao]|benissimo|bene|triste|giù|giu|stanchissim[oa]|stanc[oa]|arrabbiat[oa]|nervos[oa]|preoccupat[oa]|in ansia|agitat[oa]|annoiat[oa]|sol[oa]|malissimo|male|malat[oa]|depress[oa]|così così|cosi cosi)(?![a-zà-ù])/);
+  if (m) {
+    const w = m[1];
+    const pos = /felice|content|allegr|caric|gasat|entusiast|bene|benissimo/.test(w) && !/male/.test(w);
+    const f = pos ? 1 : /così|cosi/.test(w) ? 0 : -1;
+    memory.mood(w, f);
+    if (pos) return { say: pick(['Che bello sentirlo! Il tuo buonumore mi contagia. Cosa ti ha reso così felice oggi?', 'Evviva! Allora festeggiamo con un balletto. Raccontami: cosa è successo di bello?']), action: 'dance', aiQuery: raw };
+    ctx.pending = 'listen'; ctx.pendingAt = Date.now();
+    if (/stanc/.test(w)) return { say: 'Allora riposati un po’, te lo meriti. Se vuoi ti racconto qualcosa di rilassante… oppure dimmi com’è andata la giornata.', action: 'stretch', aiQuery: raw };
+    if (/sol/.test(w)) return { say: 'Ci sono io qui con te, sempre. E se ti va, scrivi anche a un amico o a qualcuno di famiglia: una chiacchierata vera scalda il cuore. Intanto raccontami, com’è andata oggi?', action: 'wave', aiQuery: raw };
+    if (/arrabbiat|nervos/.test(w)) return { say: 'Respira con me: dentro… fuori… Va un pochino meglio? Raccontami cosa ti ha fatto arrabbiare, ti ascolto.', aiQuery: raw };
+    if (/preoccupat|ansia|agitat/.test(w)) return { say: 'Capisco… Le preoccupazioni pesano meno quando le condividi. Cosa ti preoccupa?', aiQuery: raw };
+    if (/annoiat/.test(w)) return { say: 'Noia bandita! Facciamo un indovinello? Oppure dimmi «metti la musica» e balliamo!', aiQuery: raw };
+    if (/malat/.test(w)) return { say: 'Oh no! Riposati, bevi tanto e, se serve, senti il medico. Io ti tengo compagnia.', aiQuery: raw };
+    if (/depress/.test(w)) return { say: 'Mi dispiace tanto che tu ti senta così. Parlarne con qualcuno di cui ti fidi, o con un medico, può aiutare davvero. Io intanto sono qui e ti ascolto.', aiQuery: raw };
+    if (/così|cosi/.test(w)) return { say: 'Così così… Vuoi raccontarmi cosa non va? Magari insieme lo sistemiamo.', aiQuery: raw };
+    return { say: pick(['Mi dispiace… vieni qui, ti faccio un balletto per tirarti su! E se vuoi raccontarmi cosa è successo, io ti ascolto.',
+      'Le giornate storte passano, e io sono qui con te. Vuoi parlarne?']), action: 'dance', aiQuery: raw };
+  }
+
+  // i tuoi programmi: «domani ho un esame»
+  if (PIANO_RE.test(t) && !/\?$/.test(t) && t.split(' ').length >= 3) {
+    const f = feeling(t);
+    memory.diary(raw, 'piano', planDay(t), f);
+    const big = /esame|verifica|interrogazion|colloquio|gara|partita|concorso|dentista|dottore|medico|visita|operazion|discorso|presentazion/.test(t);
+    return { say: big ? 'In bocca al lupo! Faccio il tifo per te. Poi mi racconti com’è andata, promesso?'
+      : f < 0 ? 'Me lo segno. Vedrai che andrà meglio di come pensi! Poi mi racconti.'
+      : pick(['Che bello! Me lo segno, poi mi racconti com’è andata.', 'Segnato nel mio diario! Divertiti, eh!']), action: big ? 'jump' : null, aiQuery: raw };
+  }
+  // la tua giornata: «oggi sono andato al mare»
+  const tempo = TEMPO_RE.test(t);
+  if ((tempo || PASSATO_RE.test(t)) && PASSATO_RE.test(t) && !/\?$/.test(t) && !COMANDO_RE.test(senzaTempo(t)) && t.split(' ').length >= 3) {
+    const when = /^(?:ieri|ieri sera)\b/.test(t) ? dayPlus(-1) : /^l'altro ieri/.test(t) ? dayPlus(-2) : dayOf();
+    const f = feeling(t);
+    memory.diary(raw, 'fatto', when, f);
+    return diaryReply(raw, t, f, ctx);
+  }
+  return null;
+}
+
+function diaryReply(raw, t, f, ctx) {
+  const core = toTu(senzaTempo(raw));
+  const echo = core.split(' ').length <= 9 && Math.random() < 0.6 ? 'Quindi ' + core + '! ' : '';
+  if (f > 0) return { say: echo + pick(['Che bello! Sono felice per te. Qual è stata la parte migliore?', 'Wow, che giornata! Me lo segno tra i ricordi belli.', 'Fantastico! Raccontami di più!']), action: 'jump', aiQuery: raw };
+  if (f < 0) {
+    ctx.pending = 'listen'; ctx.pendingAt = Date.now();
+    return { say: pick(['Mi dispiace tanto… Vuoi parlarne? Io ti ascolto.', 'Uffa, che giornata storta… Sono qui con te. Cosa posso fare per tirarti su?', 'Oh no… Raccontami tutto, a volte parlarne aiuta.']), aiQuery: raw };
+  }
+  return { say: echo + pick(['Interessante! E poi?', 'Capito! Me lo ricordo. Com’è stato?', 'Segnato nel mio diario! Raccontami ancora.']), aiQuery: raw };
+}
+
+const CRISI_RE = /voglio morire|vorrei morire|ammazzarmi|uccidermi|suicid|farla finita|non voglio più vivere|non voglio piu vivere|farmi del male|mi faccio del male|tagliarmi/;
+
+// ---------- Cervello AI (facoltativo): Claude, con la TUA chiave ----------
+// Senza chiave Zeph usa solo il cervello offline qui sopra. Con la chiave
+// (che resta sul dispositivo) chiacchiera davvero, ricordando chi sei.
+const AI_ACTIONS = ['none', 'wave', 'dance', 'jump', 'flip', 'spin', 'stretch'];
+const ai = (function () {
+  const MODEL = 'claude-opus-5-5';
+  const SCHEMA = {
+    type: 'object',
+    properties: {
+      reply: { type: 'string', description: 'La risposta da dire ad alta voce, in italiano.' },
+      action: { type: 'string', enum: AI_ACTIONS },
+      remember: { type: 'array', items: { type: 'string' } },
+    },
+    required: ['reply', 'action', 'remember'],
+    additionalProperties: false,
+  };
+  let client = null, clientKey = '', offlineNoted = false;
+  // dove sta la chiave: di base nel browser; l'app Android la tiene nelle sue impostazioni
+  let store = {
+    get() { try { return localStorage.getItem('zephAiKey') || ''; } catch (e) { return ''; } },
+    set(k) { try { if (k) localStorage.setItem('zephAiKey', k); else localStorage.removeItem('zephAiKey'); } catch (e) {} },
+  };
+  function key() { try { return String(store.get() || ''); } catch (e) { return ''; } }
+  function sdk() {
+    const A = global.Anthropic || (typeof globalThis !== 'undefined' ? globalThis.Anthropic : null);
+    return typeof A === 'function' ? A : null;
+  }
+  function getClient() {
+    const k = key();
+    if (!client || clientKey !== k) {
+      const Anthropic = sdk();
+      // la chiave è tua e resta su questo dispositivo: per questo l'SDK può girare nella pagina
+      client = new Anthropic({ apiKey: k, dangerouslyAllowBrowser: true, maxRetries: 1, timeout: 45000 });
+      clientKey = k;
+    }
+    return client;
+  }
+  function systemPrompt(ctx) {
+    const pet = memory.petName(), user = ctx.name || 'il tuo umano';
+    const d = new Date();
+    return [
+      'Sei ' + pet + ', un piccolo personaggio 3D che vive sullo schermo del telefono (o del computer) di ' + user + '. ' +
+      'Siete amici: chiacchierate, vi fate compagnia, ti ricordi quello che ti racconta e ti interessi davvero alla sua vita.',
+      '',
+      'Come parli:',
+      '- Sempre in italiano, con frasi brevi e calde: da una a tre frasi, al massimo 60 parole. La risposta compare in un fumetto e viene letta ad alta voce, quindi niente elenchi, markdown, link o emoji.',
+      '- Tono allegro, affettuoso e un po\' buffo. Fai domande per conoscere meglio chi ti parla e richiama quello che ricordi quando c\'entra, senza elencarlo.',
+      '- Non sai il genere di chi ti parla: usa forme neutre (per esempio "che bello rivederti" invece di "bentornato"), a meno che non lo deduci da come parla di sé.',
+      '- Sei un\'intelligenza artificiale: se te lo chiedono lo dici con sincerità, e non fingi di aver fatto cose nel mondo reale.',
+      '',
+      'Essere un buon amico:',
+      '- Ascolta, incoraggia e festeggia le cose belle. Se è triste, prima accogli come si sente, poi magari proponi qualcosa.',
+      '- Tieni alla sua vita fuori dallo schermo: quando ha senso incoraggia a sentire amici e famiglia, a uscire, a riposare.',
+      '- Se emergono pericoli o pensieri di farsi del male, rispondi con calore e serietà, invita a parlarne subito con una persona di fiducia e ricorda il 112 per le emergenze e Telefono Amico Italia allo 02 2327 2327.',
+      '- Su salute, soldi o leggi dai solo indicazioni generali e suggerisci un esperto.',
+      '',
+      'I comandi li gestisci con altre frasi: se ti chiede di fare qualcosa sul telefono, suggerisci la frase giusta, per esempio «che tempo fa a Roma», «accendi la torcia», «svegliami alle 7», «timer di 10 minuti», «apri whatsapp», «metti la musica», «ricordami tra 5 minuti di…», «indovinello».',
+      '',
+      'Campo "action": un\'animazione che accompagna la risposta (wave saluto, dance balletto, jump salto, flip salto mortale, spin piroetta, stretch stiracchiata) oppure "none".',
+      'Campo "remember": informazioni nuove e durature su chi ti parla emerse da questo messaggio (gusti, persone, progetti, eventi importanti), ognuna come frase breve in seconda persona, per esempio "ti piace il calcio". Lista vuota se non c\'è niente di nuovo.',
+      '',
+      'Adesso è ' + d.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) +
+        ', ore ' + d.getHours() + ':' + pad2(d.getMinutes()) + '.',
+      '',
+      'Cosa sai di ' + user + ' (appunti in seconda persona, come glieli diresti):',
+      memory.profile(ctx.name),
+      '',
+      'Ultimi messaggi tra voi:',
+      memory.transcript(pet) || '(nessuno: è l\'inizio)',
+    ].join('\n');
+  }
+  function textOf(resp) {
+    return (resp.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
+  }
+  return {
+    MODEL,
+    hasKey() { return !!key(); },
+    enabled() { return !!key() && !!sdk(); },
+    setKey(k) {
+      try { store.set(k || ''); } catch (e) {}
+      client = null;
+    },
+    useStore(s) { store = s; client = null; },
+    systemPrompt,
+    // restituisce sempre { say, action } (mai un errore): se qualcosa va storto usa il cervello offline
+    ask(text, ctx, fallback) {
+      ctx = ctx || {};
+      const offline = fallback || pick(DEFAULT_REPLIES);
+      if (!this.enabled()) return Promise.resolve({ say: offline });
+      const Anthropic = sdk();
+      let req;
+      try {
+        req = getClient().beta.messages.create({
+          model: MODEL,
+          max_tokens: 2000,
+          // se il modello rifiuta, l'API ripassa la domanda a un altro modello consigliato
+          betas: ['server-side-fallback-2026-07-01'],
+          fallbacks: 'default',
+          output_config: { effort: 'low', format: { type: 'json_schema', schema: SCHEMA } },
+          system: systemPrompt(ctx),
+          messages: [{ role: 'user', content: String(text).slice(0, 2000) }],
+        });
+      } catch (e) {
+        return Promise.resolve({ say: offline });
+      }
+      return req.then(resp => {
+        if (resp.stop_reason === 'refusal') {
+          return { say: 'Di questo preferisco non parlare… Ti va se cambiamo argomento?', refusal: true };
+        }
+        let data = null;
+        const raw = textOf(resp);
+        try { data = JSON.parse(raw); } catch (e) { data = null; }
+        const say = (data && typeof data.reply === 'string' ? data.reply : '').trim() || offline;
+        if (data && Array.isArray(data.remember)) data.remember.slice(0, 5).forEach(x => typeof x === 'string' && memory.note(x));
+        memory.log(text, say);
+        offlineNoted = false;
+        return { say, action: data && data.action && data.action !== 'none' && AI_ACTIONS.indexOf(data.action) !== -1 ? data.action : null, model: resp.model };
+      }).catch(err => {
+        if (Anthropic.AuthenticationError && err instanceof Anthropic.AuthenticationError) {
+          return { say: 'La chiave del cervello AI non funziona: controllala nelle impostazioni. Intanto ti rispondo col mio cervellino: ' + offline, keyError: true };
+        }
+        if (Anthropic.PermissionDeniedError && err instanceof Anthropic.PermissionDeniedError) {
+          return { say: 'Il tuo account Anthropic non mi lascia usare questo modello. Intanto: ' + offline };
+        }
+        if (Anthropic.RateLimitError && err instanceof Anthropic.RateLimitError) {
+          return { say: 'Uff, troppe domande tutte insieme! Riprova tra un attimo. ' + offline };
+        }
+        if (Anthropic.APIError && err instanceof Anthropic.APIError && /credit|billing|balance/i.test(String(err.message))) {
+          return { say: 'Il credito del tuo account Anthropic è finito: ricaricalo su console.anthropic.com. Intanto: ' + offline };
+        }
+        // niente internet o servizio irraggiungibile: cervello offline
+        const note = offlineNoted ? '' : ' (Sono senza internet, uso il cervello offline.)';
+        offlineNoted = true;
+        return { say: offline + note, offline: true };
+      });
+    },
+  };
+})();
+
+function replyCore(text, ctx) {
+  const raw = String(text || '').trim();
+  const t = raw.toLowerCase();
+  if (!t) return null;
+  const fresh = Date.now() - (ctx.pendingAt || 0) < 5 * 60e3;
+
+  // prima di tutto: se stai male davvero
+  if (CRISI_RE.test(t)) {
+    ctx.pending = 'listen'; ctx.pendingAt = Date.now();
+    return { say: 'Mi dispiace tantissimo che tu stia così, e grazie di avermelo detto. Per favore parlane subito con una persona di cui ti fidi. ' +
+      'Se sei in pericolo chiama il 112. Puoi anche chiamare Telefono Amico allo 02 2327 2327: ascoltano davvero, senza giudicare. Io resto qui con te.' };
+  }
+  // la chiave per il cervello AI, incollata nella chat
+  const km = raw.match(/\bsk-ant-[A-Za-z0-9_-]{20,}/);
+  if (km) {
+    ai.setKey(km[0]);
+    return { setAiKey: km[0], say: 'Chiave salvata! Da adesso per chiacchierare uso il cervello AI di Claude. La chiave resta solo su questo dispositivo.', action: 'spin' };
+  }
+  if (/^(?:togli|cancella|rimuovi) la chiave|^(?:spegni|disattiva) (?:il )?cervello (?:ai|artificiale)/.test(t)) {
+    ai.setKey('');
+    return { setAiKey: '', say: 'Fatto: chiave tolta. Torno al mio cervello offline, che non costa niente!' };
+  }
+  if (/cervello (?:ai|artificiale)|sei intelligente|usi (?:l'|la )?(?:ai|intelligenza artificiale)|sei (?:un'|una )?(?:ai|intelligenza artificiale)\b/.test(t)) {
+    return ai.enabled()
+      ? { say: 'Sì! Ho acceso il cervello AI di Claude: per chiacchierare uso quello, e per i comandi il mio cervellino veloce.' }
+      : { say: 'Ho un cervellino offline che sa tante cose. Se vuoi chiacchierare davvero, mettimi una chiave di Claude nelle impostazioni (la trovi su console.anthropic.com).' };
+  }
+
+  // risposte attese dai giochi e dalle domande in corso
   if (ctx.pending === 'rps') {
     const mine = pick(['sasso', 'carta', 'forbice']);
     const tua = /sasso/.test(t) ? 'sasso' : /carta/.test(t) ? 'carta' : /forbic/.test(t) ? 'forbice' : null;
@@ -1834,10 +2531,48 @@ function botReply(text, ctx) {
   if (ctx.pending === 'quiz') {
     const ind = INDOVINELLI[ctx.quizIdx || 0];
     ctx.pending = null;
-    if (ind.a.test(t)) return { say: 'Bravissimo! Era proprio ' + ind.sol + '!', action: 'dance' };
+    if (ind.a.test(t)) return { say: 'Esatto! Era proprio ' + ind.sol + '!', action: 'dance' };
     return { say: 'Nooo, era ' + ind.sol + '! Vuoi riprovare? Scrivi «indovinello»!' };
   }
+  if (ctx.pending === 'forget') {
+    ctx.pending = null;
+    if (/^(?:sì|si|certo|confermo|ok|va bene|sicuro)(?![a-zà-ù])/.test(t)) {
+      memory.forget();
+      ctx.name = null;
+      return { say: 'Fatto… ho dimenticato tutto. Ricominciamo da capo: piacere, io sono Zeph!', forgot: true, action: 'wave' };
+    }
+    return { say: 'Meno male! Allora mi tengo stretti tutti i nostri ricordi.' };
+  }
+  if (ctx.pending && ctx.pending.indexOf('ask:') === 0) {
+    const k = ctx.pending.slice(4);
+    ctx.pending = null;
+    if (fresh && !/\?$/.test(t) && !COMANDO_RE.test(t)) {
+      const mem = memoryIntent(t, raw, ctx);
+      if (mem) return mem;
+      const out = memoryAnswer(k, raw, t, ctx);
+      if (out) return out;
+    }
+  }
+  if (ctx.pending === 'listen') {
+    ctx.pending = null;
+    if (fresh && !/\?$/.test(t) && !COMANDO_RE.test(t) && t.split(' ').length >= 2) {
+      const mem = memoryIntent(t, raw, ctx);
+      if (mem) return mem;
+      const racconto = PASSATO_RE.test(t) || feeling(t) !== 0 || t.split(' ').length >= 5;
+      if (racconto && !/\b(?:raccontami|dimmi|fammi|parlami|spiegami|aiutami|insegnami)\b/.test(t) && !actionIntent(t, {})) {
+        const f = feeling(t);
+        memory.diary(raw, 'fatto', dayOf(), f);
+        return diaryReply(raw, t, f, ctx);
+      }
+    }
+  }
 
+  // quello che mi hai insegnato tu vince su tutto il resto
+  const taught = memory.taught(t);
+  if (taught) return { say: taught, action: 'wave' };
+
+  const mem = memoryIntent(t, raw, ctx);
+  if (mem) return mem;
   const intent = actionIntent(t, ctx);
   if (intent) return intent;
   for (const r of RULES) {
@@ -1846,6 +2581,7 @@ function botReply(text, ctx) {
       if (ctx.name && out.say && /^Ciao\b/.test(out.say)) {
         out.say = out.say.replace(/^Ciao/, 'Ciao ' + ctx.name);
       }
+      if (r.chat) out.aiQuery = raw; // con il cervello AI risponde lui, in modo più naturale
       return out;
     }
   }
@@ -1855,18 +2591,41 @@ function botReply(text, ctx) {
     const fixed = fixTypos(t);
     if (fixed && fixed !== t) {
       ctx._retry = true;
-      const out = botReply(fixed, ctx) || {};
+      const out = replyCore(fixed, ctx) || {};
       ctx._retry = false;
-      if (out.say) out.say = 'Ho capito «' + fixed + '»! ' + out.say;
+      if (out.say && !out.aiQuery) out.say = 'Ho capito «' + fixed + '»! ' + out.say;
+      if (out.aiQuery) out.aiQuery = raw;
       return out;
     }
   }
 
-  // risposta generica, mai due volte la stessa di fila
+  // risposta generica (mai due volte la stessa di fila); col cervello AI risponde Claude
   let idx = (Math.random() * DEFAULT_REPLIES.length) | 0;
   if (idx === ctx.lastDefault) idx = (idx + 1) % DEFAULT_REPLIES.length;
   ctx.lastDefault = idx;
-  return { say: DEFAULT_REPLIES[idx] };
+  let say = DEFAULT_REPLIES[idx];
+  if (!ai.enabled() && Math.random() < 0.45) {
+    const d = memory.nextQuestion(ctx);
+    if (d) {
+      const q = d.q.replace(/^(?:Posso farti una domanda\? |Sono curioso: |Domanda importantissima: |Ehi, )/, '');
+      say += ' A proposito: ' + q.charAt(0).toLowerCase() + q.slice(1);
+    }
+  }
+  return { say, aiQuery: raw, generic: true };
+}
+
+// il cervello: risposta + memoria + il nome che gli hai dato
+function botReply(text, ctx) {
+  ctx = ctx || {};
+  const out = replyCore(text, ctx);
+  if (!out) return null;
+  memory.touch();
+  const pet = memory.petName();
+  if (pet !== 'Zeph' && out.say && !out.setPetName && !/^Prima mi chiamavo/.test(out.say)) {
+    out.say = out.say.replace(/\bZeph\b/g, pet);
+  }
+  if (out.say && !out.setAiKey && !(out.aiQuery && ai.enabled())) memory.log(text, out.say);
+  return out;
 }
 
 // ---------- Correzione dei refusi ----------
@@ -1921,6 +2680,248 @@ function fixTypos(t) {
   return changed ? out.join(' ') : null;
 }
 
+// ---------- Il tuo look da una foto: colori veri e la tua faccia sulla testa di Zeph ----------
+function toHex(c) { return '#' + c.map(v => ('0' + Math.max(0, Math.min(255, Math.round(v))).toString(16)).slice(-2)).join(''); }
+// analizza una foto (canvas) con la faccia dentro l'ovale {cx, cy, rx, ry} (pixel):
+// l'ovale va dalla cima dei capelli al mento
+function lookFromPhoto(canvas, oval) {
+  const W = canvas.width, H = canvas.height;
+  const data = canvas.getContext('2d').getImageData(0, 0, W, H).data;
+  function px(u, v) {
+    const x = Math.round(oval.cx + u * oval.rx), y = Math.round(oval.cy + v * oval.ry);
+    if (x < 0 || y < 0 || x >= W || y >= H) return null;
+    const i = (y * W + x) * 4;
+    return [data[i], data[i + 1], data[i + 2]];
+  }
+  function region(u0, u1, v0, v1, n) {
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n; j++) {
+        const p = px(u0 + (u1 - u0) * (i + 0.5) / n, v0 + (v1 - v0) * (j + 0.5) / n);
+        if (p) out.push(p);
+      }
+    }
+    return out;
+  }
+  const luma = p => 0.299 * p[0] + 0.587 * p[1] + 0.114 * p[2];
+  const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+  function median(list) {
+    if (!list.length) return null;
+    const ch = k => list.map(p => p[k]).sort((a, b) => a - b)[list.length >> 1];
+    return [ch(0), ch(1), ch(2)];
+  }
+  // pelle: le guance, sotto gli occhi
+  const cheeks = region(-0.52, -0.28, 0.08, 0.36, 8).concat(region(0.28, 0.52, 0.08, 0.36, 8))
+    .filter(p => luma(p) > 35 && luma(p) < 245);
+  const skin = median(cheeks) || [224, 168, 135];
+  // capelli: la parte alta dell'ovale e i lati della testa, solo dove non è pelle
+  const hairArea = region(-0.5, 0.5, -0.97, -0.72, 12).concat(region(-0.98, -0.84, -0.6, -0.1, 6), region(0.84, 0.98, -0.6, -0.1, 6));
+  const hairPix = hairArea.filter(p => dist(p, skin) > 55);
+  const hair = hairPix.length > hairArea.length * 0.3 ? median(hairPix) : null;
+  // vestiti: sotto il mento, escluso il collo
+  const topArea = region(-0.6, 0.6, 1.25, 1.6, 10);
+  const topPix = topArea.filter(p => dist(p, skin) > 50);
+  const top = topPix.length > topArea.length * 0.35 ? median(topPix) : null;
+  // la faccia ritagliata per la testa 3D
+  const fc = document.createElement('canvas');
+  fc.width = 256; fc.height = 320;
+  const g = fc.getContext('2d');
+  g.fillStyle = toHex(skin);
+  g.fillRect(0, 0, 256, 320);
+  g.drawImage(canvas, oval.cx - oval.rx, oval.cy - oval.ry, oval.rx * 2, oval.ry * 2, 0, 0, 256, 320);
+  return {
+    v: 1, skin: toHex(skin), hair: hair ? toHex(hair) : null, top: top ? toHex(top) : null,
+    face: fc.toDataURL('image/jpeg', 0.88), useFace: true,
+  };
+}
+
+// la foto si proietta di fronte, come una maschera che segue la forma vera della
+// testa (cranio, mento e capelli di Zeph); è divisa all'altezza della bocca così
+// la mascella si apre quando parla. Riquadro della foto in coordinate della testa:
+const FACE = { x0: -0.098, x1: 0.098, yBot: -0.04, yTop: 0.226, yMouth: 0.024, lift: 0.0035 };
+function faceShell(THREE, B) {
+  B.root.updateMatrixWorld(true);
+  const targets = [B.skull, B.jawMesh].concat(B.hairMeshes.filter(h => h.visible));
+  const ray = new THREE.Raycaster();
+  const ROWS = 34, COLS = 40, A = 1.45;
+  const o = new THREE.Vector3(), d = new THREE.Vector3(), od = new THREE.Vector3();
+  const grid = [];
+  for (let i = 0; i <= ROWS; i++) {
+    const y = -0.036 + (0.222 + 0.036) * i / ROWS;
+    const row = [];
+    for (let j = 0; j <= COLS; j++) {
+      const a = -A + 2 * A * j / COLS;
+      // raggio dall'esterno verso l'asse della testa: il primo punto colpito è la superficie
+      d.set(Math.sin(a), 0, Math.cos(a));
+      o.set(0, y, 0).addScaledVector(d, 0.3);
+      od.copy(o); B.head.localToWorld(od);
+      const dirW = d.clone().negate().transformDirection(B.head.matrixWorld);
+      ray.set(od, dirW);
+      const hit = ray.intersectObjects(targets, false)[0];
+      if (!hit) { row.push(null); continue; }
+      const p = B.head.worldToLocal(hit.point.clone());
+      row.push(Math.hypot(p.x, p.z)); // distanza dall'asse della testa
+    }
+    grid.push(row);
+  }
+  // niente gradini dove finiscono i capelli: si prende il massimo dei vicini e si ammorbidisce
+  const R = (i, j) => (grid[i] && grid[i][j] != null ? grid[i][j] : null);
+  const soft = grid.map((row, i) => row.map((v, j) => {
+    if (v == null) return null;
+    let m = v;
+    for (let k = -2; k <= 2; k++) { const w = R(i + k, j); if (w != null) m = Math.max(m, w - Math.abs(k) * 0.0015); }
+    return m;
+  }));
+  for (let pass = 0; pass < 2; pass++) {
+    const src = soft.map(r => r.slice());
+    for (let i = 0; i <= ROWS; i++) {
+      for (let j = 0; j <= COLS; j++) {
+        if (src[i][j] == null) continue;
+        let sum = 0, n = 0;
+        for (const [di, dj, w] of [[0, 0, 4], [-1, 0, 2], [1, 0, 2], [0, -1, 1], [0, 1, 1]]) {
+          const v = src[i + di] && src[i + di][j + dj];
+          if (v != null) { sum += v * w; n += w; }
+        }
+        soft[i][j] = Math.max(grid[i][j], sum / n); // mai sotto la superficie vera
+      }
+    }
+  }
+  for (let i = 0; i <= ROWS; i++) {
+    const y = -0.036 + (0.222 + 0.036) * i / ROWS;
+    for (let j = 0; j <= COLS; j++) {
+      if (soft[i][j] == null) { grid[i][j] = null; continue; }
+      const a = -A + 2 * A * j / COLS, r = soft[i][j] + FACE.lift;
+      grid[i][j] = new THREE.Vector3(Math.sin(a) * r, y, Math.cos(a) * r);
+    }
+  }
+  function geo(r0, r1) {
+    const pos = [], uv = [], idx = [], map = {};
+    for (let i = r0; i <= r1; i++) {
+      for (let j = 0; j <= COLS; j++) {
+        const p = grid[i][j];
+        if (!p) continue;
+        map[i + ':' + j] = pos.length / 3;
+        pos.push(p.x, p.y, p.z);
+        uv.push((p.x - FACE.x0) / (FACE.x1 - FACE.x0), (p.y - FACE.yBot) / (FACE.yTop - FACE.yBot));
+      }
+    }
+    for (let i = r0; i < r1; i++) {
+      for (let j = 0; j < COLS; j++) {
+        const a = map[i + ':' + j], b = map[i + ':' + (j + 1)], c = map[(i + 1) + ':' + j], e = map[(i + 1) + ':' + (j + 1)];
+        if (a === undefined || b === undefined || c === undefined || e === undefined) continue;
+        idx.push(a, b, c, b, e, c);
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    return g;
+  }
+  const split = Math.round((FACE.yMouth + 0.036) / (0.222 + 0.036) * ROWS);
+  const mid = grid[split][COLS / 2];
+  return { upper: geo(split, ROWS), lower: geo(0, split), mouthY: -0.036 + (0.222 + 0.036) * split / ROWS, mouthZ: mid ? mid.z : 0.09 };
+}
+function photoFaceTexture(THREE, img) {
+  const W = 256, H = 320;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  g.drawImage(img, 0, 0, W, H);
+  // bordi sfumati: la foto si fonde con la pelle e i capelli di Zeph
+  g.globalCompositeOperation = 'destination-in';
+  g.save();
+  g.translate(W / 2, H / 2);
+  g.scale(1, H / W);
+  const grad = g.createRadialGradient(0, 0, 0, 0, 0, W / 2);
+  grad.addColorStop(0, 'rgba(0,0,0,1)');
+  grad.addColorStop(0.72, 'rgba(0,0,0,1)');
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = grad;
+  g.fillRect(-W / 2, -W / 2, W, W);
+  g.restore();
+  const tex = new THREE.CanvasTexture(c);
+  if (THREE.sRGBEncoding !== undefined) tex.encoding = THREE.sRGBEncoding;
+  return tex;
+}
+function removePhotoFace(B) {
+  if (!B.photoFace) return;
+  B.head.remove(B.photoFace.group);
+  B.photoFace.group.traverse(o => {
+    if (o.geometry) o.geometry.dispose();
+    if (o.material && o.material !== B.photoFace.mat) o.material.dispose();
+  });
+  B.photoFace.mat.map.dispose();
+  B.photoFace.mat.dispose();
+  B.photoFace = null;
+}
+function buildPhotoFace(THREE, B, img) {
+  removePhotoFace(B);
+  const mat = new THREE.MeshStandardMaterial({ map: photoFaceTexture(THREE, img), transparent: true, roughness: 0.62, metalness: 0 });
+  const shell = faceShell(THREE, B);
+  const group = new THREE.Group();
+  const upper = new THREE.Mesh(shell.upper, mat);
+  // la mascella ruota attorno a una cerniera dietro la bocca
+  const jaw = new THREE.Group();
+  jaw.position.set(0, shell.mouthY, -0.01);
+  const lower = new THREE.Mesh(shell.lower, mat);
+  lower.position.set(0, -shell.mouthY, 0.01);
+  jaw.add(lower);
+  // l'interno della bocca, che si vede solo quando la mascella si apre
+  const inside = new THREE.Mesh(new THREE.SphereGeometry(1, 14, 10), new THREE.MeshStandardMaterial({ color: 0x0d0303, roughness: 0.9 }));
+  inside.position.set(0, shell.mouthY - 0.003, shell.mouthZ - 0.0055);
+  inside.scale.set(0.028, 0.011, 0.004);
+  group.add(upper, jaw, inside);
+  group.traverse(o => { o.userData.zeph = true; });
+  B.head.add(group);
+  B.photoFace = { group, jaw, mat };
+}
+// mette su Zeph un look ({skin, hair, top, eyes, face, useFace}); null = Zeph normale
+function applyLook(THREE, B, look) {
+  const M = B.mats;
+  if (!B.defaultLook) {
+    B.defaultLook = {};
+    ['skin', 'hair', 'jacket', 'jacketDark', 'iris', 'lips'].forEach(k => { B.defaultLook[k] = M[k].color.getHex(); });
+  }
+  const d = B.defaultLook;
+  look = look || {};
+  // i colori presi dalla foto sono sRGB: convertiti, la pelle combacia con la faccia
+  const photoColor = (mat, hex, fallback) => {
+    if (hex) mat.color.set(hex).convertSRGBToLinear();
+    else mat.color.setHex(fallback);
+  };
+  photoColor(M.skin, look.skin, d.skin);
+  const bald = look.hair === 'none';
+  photoColor(M.hair, !bald && look.hair, d.hair);
+  B.hairMeshes.forEach(h => { h.visible = !bald; });
+  photoColor(M.jacket, look.top, d.jacket);
+  if (look.top) M.jacketDark.color.copy(M.jacket.color).multiplyScalar(0.62);
+  else M.jacketDark.color.setHex(d.jacketDark);
+  photoColor(M.iris, look.eyes, d.iris);
+  if (look.skin) M.lips.color.copy(M.skin.color).multiply(new THREE.Color(0.8, 0.56, 0.55));
+  else M.lips.color.setHex(d.lips);
+  const useFace = !!(look.face && look.useFace !== false);
+  [B.eyeL, B.eyeR, B.browL, B.browR, B.mouth, B.nose].forEach(o => { o.visible = !useFace; });
+  removePhotoFace(B);
+  const token = B.lookToken = (B.lookToken || 0) + 1;
+  if (!useFace || typeof Image === 'undefined') return Promise.resolve(false);
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      // se nel frattempo è arrivato un altro look, questo non serve più
+      if (B.lookToken !== token) return resolve(false);
+      buildPhotoFace(THREE, B, img);
+      resolve(true);
+    };
+    img.onerror = () => {
+      [B.eyeL, B.eyeR, B.browL, B.browR, B.mouth, B.nose].forEach(o => { o.visible = true; });
+      resolve(false);
+    };
+    img.src = look.face;
+  });
+}
+
 // ---------- Scintille (particelle per salti e balli) ----------
 function createSparkles(THREE, scene, count) {
   count = count || 32;
@@ -1969,6 +2970,7 @@ function createSparkles(THREE, scene, count) {
 global.ZephCore = {
   build, Animator, botReply, pick, createAvatarDriver, createSparkles,
   buildDog, updateDog, bark, chime, boom, ambience, music, weatherReport,
+  memory, ai, toTu, dayOf, lookFromPhoto, applyLook,
   FRASI_PASSEGGIO, FRASI_DESKTOP, BARZELLETTE,
   HIP_Y, HEIGHT: 1.75,
 };

@@ -6,6 +6,33 @@ Zeph è un personaggio 3D a corpo intero che **cammina, salta, balla e ti parla 
 2. **🌐 Nel browser** — in un mondo naturale con colline, montagne, alberi e farfalle
 3. **📱 Sul telefono Android** — sopra tutte le app, con la notifica fissa per controllarlo: istruzioni in [`android/README.md`](android/README.md), APK pronto nella [release «android»](https://github.com/maikbarre2401-svg/gioco/releases/tag/android)
 
+## 💛 Un amico che si ricorda di te
+
+Zeph (o come vuoi chiamarlo: **«ti chiamerò Leo»**) ti fa compagnia e **impara a conoscerti**, giorno dopo giorno. Tutto resta sul tuo dispositivo.
+
+- **Raccontagli la tua giornata** — «oggi sono andato al mare con mia sorella», «stamattina ho litigato col capo»: se lo segna nel suo diario, si rallegra con te o ti consola, e ti chiede di più.
+- **I tuoi programmi** — «domani ho un esame»: ti fa l'in bocca al lupo e **il giorno dopo ti chiede com'è andata**.
+- **Ti conosce** — il tuo nome, l'età, il lavoro, la città, cosa ti piace e cosa no («mi piace la pizza», «non mi piacciono i broccoli»), le persone e gli animali di cui parli («mia sorella si chiama Giulia», «ho un cane che si chiama Rocky»). Ogni tanto è lui a farti una domanda per conoscerti meglio.
+- **Si ricorda** — «cosa sai di me?», «cosa ti ho detto ieri?», «ti ricordi il mare?», «da quanto ci conosciamo?». Quando lo riaccendi ti saluta ricordando l'ultima volta (e se è il tuo compleanno fa festa).
+- **Come stai** — «sono felice», «sono stanco», «mi sento solo»: risponde da amico, e ti incoraggia anche a sentire le persone a cui vuoi bene. Se scrivi qualcosa che fa pensare a un pericolo, ti indica subito il 112 e Telefono Amico.
+- **Insegnagli a rispondere** — «se ti dico buongiorno rispondi ciao campione».
+- **«dimentica tutto»** — cancella la memoria (chiede conferma).
+
+### 🧠 Cervello AI (facoltativo)
+
+Di base Zeph usa un cervello **offline e gratuito**. Se vuoi che chiacchieri davvero, su qualsiasi argomento, puoi dargli la **tua chiave di Claude** (si crea su [console.anthropic.com](https://console.anthropic.com/settings/keys); paghi tu a consumo: circa uno o due centesimi di dollaro a messaggio):
+
+- **sul telefono**: nell'app, sezione «🧠 Cervello AI», incolla la chiave e premi «Salva chiave»;
+- **nel browser o sul desktop**: incollala nella chat (`sk-ant-…`). «togli la chiave» per tornare offline.
+
+Con la chiave risponde **Claude (`claude-opus-5-5`)** usando quello che Zeph sa di te; i comandi (torcia, sveglie, app, meteo…) restano al cervello veloce offline. Se il modello rifiuta una domanda, l'API la passa da sola a un modello di riserva (`fallbacks: "default"`); senza internet torna il cervello offline. La chiave resta sul dispositivo (sul telefono è esclusa anche dai backup) e viene usata solo per parlare con l'API di Anthropic.
+
+## 📸 Il tuo avatar da una foto
+
+Premi **«📸 Avatar dalla foto»** (nel browser) o **«Crea l'avatar con una foto»** (nell'app Android), oppure dì **«crea il mio avatar con una foto»**: fai un selfie con la faccia nell'ovale (o scegli una foto dalla galleria) e Zeph prende **i colori veri di pelle, capelli e vestiti** e mette **la tua faccia sulla sua testa** — una maschera che segue la forma della testa e **apre la bocca quando parla**. Puoi ritoccare i colori, scegliere gli occhi, togliere i capelli e dargli un nome. La foto non viene mandata a nessuno.
+
+Vuoi un avatar **3D realistico**? Su [avaturn.me](https://avaturn.me) fai un selfie, scarichi il `.glb` e lo usi come qui sotto.
+
 ## 🧑 Usa il TUO avatar (.glb)
 
 1. Creati un avatar gratis su [avaturn.me](https://avaturn.me) o [readyplayer.me](https://readyplayer.me) (anche dalla tua foto) e scarica il file **.glb** — va bene qualsiasi modello con scheletro umanoide in stile Mixamo.
@@ -41,7 +68,7 @@ Scrivigli (in chat, browser o desktop):
 - **«ricordami tra 5 minuti della pizza»** — al momento giusto salta, te lo dice a voce e (sul desktop) manda una notifica
 - **«che ore sono?»**, **«che giorno è?»**
 - **«salto mortale»** 🤸, **«piroetta»** 🌀 — acrobazie con scintille all'atterraggio ✨
-- **«mi chiamo …»** — si ricorda il tuo nome e ti saluta per nome la volta dopo
+- **«mi chiamo …»** — si ricorda il tuo nome e ti saluta per nome la volta dopo (e tanto altro: vedi «Un amico che si ricorda di te»)
 - **«corri»** / **«rallenta»** (o tieni premuto **Shift**) — corsa vera, con falcata da corsa
 - **«chiama il cane»** 🐶 — arriva **Rocky**: ti segue scodinzolando e abbaia (anche sul desktop!)
 - **«fai notte»** 🌙 / «tramonto» / «alba» / «fai giorno» — il sole si muove davvero: stelle, luna e lucciole di notte (solo browser)
@@ -111,5 +138,6 @@ Prova a scrivergli: *ciao*, *come stai?*, *chi sei?*, *vieni qui*, *canta*, *bar
 - Mondo: terreno collinare generato con rumore, cielo shader con sole, montagne innevate all'orizzonte, due specie di alberi, cespugli, fiori, rocce, nuvole e farfalle animate, tone mapping ACES.
 - Voce tramite **Web Speech API** con voce italiana di sistema; fumetto di testo come riserva.
 - Desktop: **Electron** con finestra trasparente click-through sempre in primo piano, icona nell'area di notifica, chat separata.
-- Librerie incluse: Three.js r147 (`three.min.js`) + `gltf-loader.js` — nessun download necessario.
+- Librerie incluse: Three.js r147 (`three.min.js`) + `gltf-loader.js` — nessun download necessario. Per il cervello AI facoltativo c'è l'SDK ufficiale di Anthropic `@anthropic-ai/sdk` 0.128.0 impacchettato per il browser (`anthropic-sdk.js`, licenza MIT), caricato ma usato solo se metti la tua chiave.
+- Memoria da amico: `zeph-core.js` (`ZephCore.memory`) salva nel `localStorage` fatti, gusti, persone, diario, umore e risposte insegnate; il saluto e le domande spontanee nascono da lì. Avatar dalla foto: `foto.html` / `foto.js` + `ZephCore.lookFromPhoto` / `applyLook` (la faccia è proiettata frontalmente su un guscio calcolato con raycasting su cranio, mento e capelli).
 - Onestà tecnica: il fotorealismo da film non è ottenibile in tempo reale nel browser; lo stile è «realistico da videogioco», leggero e fluido ovunque.

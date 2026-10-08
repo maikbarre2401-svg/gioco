@@ -27,6 +27,15 @@ Zeph — o **il tuo avatar** — vive sullo schermo del telefono, sopra tutte le
 - **Reagisce al telefono**: quando colleghi il caricatore, quando la batteria è scarica, quando metti le cuffie.
 - **Di notte si addormenta** (seduto, con lo «Zzz…») se lo lasci tranquillo; toccalo per svegliarlo.
   Toccalo tre volte di fila: soffre il solletico!
+- **📸 Avatar dalla foto**: nell'app «Crea l'avatar con una foto» (o di' «crea il mio avatar con una foto»):
+  selfie con la fotocamera frontale, colori veri e la tua faccia sulla sua testa, che parla con te.
+  Per un avatar 3D realistico c'è il pulsante per il sito Avaturn: poi scegli il `.glb` che scarichi.
+- **Dagli un nome**: «ti chiamerò Leo» oppure dall'app; anche la notifica e il riquadro usano il nuovo nome.
+- **Un amico che si ricorda di te**: raccontagli la giornata, i programmi («domani ho un esame»), cosa ti
+  piace, le persone a cui vuoi bene. Il giorno dopo ti chiede com'è andata; «cosa sai di me?»,
+  «cosa ti ho detto ieri?». Tutto resta sul telefono; «dimentica tutto» per cancellare.
+- **🧠 Cervello AI facoltativo**: nell'app incolla la tua chiave di Claude (console.anthropic.com, a
+  consumo e a tuo carico: circa uno o due centesimi di dollaro a messaggio) e chiacchiera davvero di tutto. Senza chiave usa il cervello offline gratuito.
 
 ## Il modo più facile: scarica l'APK già pronto
 
@@ -70,5 +79,10 @@ l'«avvio automatico»: attivala per Zeph se vuoi che si riaccenda da solo dopo 
   (niente esce dal telefono). Voce: `TextToSpeech` di Android; fumetto: finestra nativa sopra la testa.
 - Le azioni sul telefono sono in una lista chiusa (`PhoneActions.java`): solo app, impostazioni e
   siti noti, niente comandi arbitrari.
+- Rete: la WebView può raggiungere solo Open-Meteo (meteo) e, se hai messo la chiave, `api.anthropic.com`
+  (`LocalWeb.java`). La chiave sta in `SharedPreferences` a parte, esclusa da backup e trasferimenti
+  (`res/xml/backup_rules.xml`, `data_extraction_rules.xml`), e non viene mai scritta nella pagina.
+- Avatar dalla foto: `PhotoActivity` apre `foto.html`; la fotocamera viene concessa solo a quella pagina
+  e solo per il video. Il look (colori + faccia ritagliata in JPEG) è salvato in `files/look.json`.
 - APK di debug firmato con una chiave di debug: se passi da un APK creato su GitHub a uno creato sul
   tuo PC (o viceversa), disinstalla prima quello vecchio.

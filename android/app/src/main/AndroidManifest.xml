@@ -14,6 +14,10 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- sveglie e timer veri nell'app Orologio -->
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
+    <!-- il selfie per l'avatar dalla foto (la foto resta sul telefono) -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.front" android:required="false" />
 
     <!-- app che Zeph sa aprire (da Android 11 vanno dichiarate) -->
     <queries>
@@ -60,6 +64,8 @@
 
     <application
         android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
         android:hardwareAccelerated="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
@@ -85,6 +91,13 @@
             android:taskAffinity="it.zeph.compagno.chat"
             android:theme="@android:style/Theme.Material.Dialog.NoActionBar"
             android:windowSoftInputMode="stateVisible|adjustResize" />
+
+        <activity
+            android:name=".PhotoActivity"
+            android:exported="false"
+            android:label="Avatar dalla foto"
+            android:screenOrientation="portrait"
+            android:theme="@android:style/Theme.Material.NoActionBar" />
 
         <service
             android:name=".ZephService"

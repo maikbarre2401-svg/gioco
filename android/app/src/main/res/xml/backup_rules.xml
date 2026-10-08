@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- la chiave del cervello AI non finisce nei backup (Android 11 e precedenti) -->
+<full-backup-content>
+    <exclude domain="sharedpref" path="zeph_secret.xml" />
+</full-backup-content>

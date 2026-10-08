@@ -27,7 +27,8 @@ android {
     }
 }
 
-// Copia nell'app: la pagina dell'overlay (android/web), il motore 3D e,
+// Copia nell'app: la pagina dell'overlay (android/web), il motore 3D, la pagina
+// dell'avatar dalla foto, l'SDK di Claude (usato solo con la tua chiave) e,
 // se passato con -PzephAvatar=percorso/avatar.glb, il tuo avatar.
 def zephWebOut = layout.buildDirectory.dir('zephWeb').get().asFile
 def repoRoot = rootProject.file('..')
@@ -35,6 +36,9 @@ tasks.register('zephWebAssets', Sync) {
     from(new File(repoRoot, 'three.min.js'))
     from(new File(repoRoot, 'gltf-loader.js'))
     from(new File(repoRoot, 'zeph-core.js'))
+    from(new File(repoRoot, 'anthropic-sdk.js'))
+    from(new File(repoRoot, 'foto.html'))
+    from(new File(repoRoot, 'foto.js'))
     from(rootProject.file('web'))
     def av = project.findProperty('zephAvatar')
     if (av) {

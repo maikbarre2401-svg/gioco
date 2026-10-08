@@ -11,6 +11,17 @@ const DEFAULT_HOST = { screenW: 1080, screenH: 2340, density: 3, winW: 540, winH
 let host = DEFAULT_HOST;
 try { if (A) host = JSON.parse(A.info()); } catch (e) { host = DEFAULT_HOST; }
 
+// il nome e la chiave del cervello AI stanno nelle impostazioni dell'app
+// (le cambi da lì o dalla chat): la chiave non viene mai salvata nella pagina
+if (A && A.aiKey) ZephCore.ai.useStore({ get: () => A.aiKey(), set: k => A.setAiKey(k) });
+function syncPrefs() {
+  try {
+    const n = A && A.petName ? A.petName() : null;
+    if (n && n !== ZephCore.memory.petName()) ZephCore.memory.setPetName(n);
+  } catch (e) { /* app vecchia senza questi metodi */ }
+}
+syncPrefs();
+
 // ---------- Scena ----------
 const VIS_H = 2.25;                 // metri visibili in altezza nella finestra
 const pxPerM = () => host.winH / VIS_H; // pixel dello schermo per metro
@@ -88,13 +99,20 @@ function backToZeph() {
   anim.avatar = zeph;
   actor.obj = zeph.root;
 }
-// l'app serve il tuo avatar a questo indirizzo (404 se non c'è: resta Zeph)
+// il look fatto con la foto (colori + la tua faccia), se c'è
+function loadLook() {
+  fetch('look.json?v=' + Date.now())
+    .then(r => (r.ok ? r.json() : null))
+    .catch(() => null)
+    .then(look => ZephCore.applyLook(THREE, zeph, look));
+}
+// l'app serve il tuo avatar a questo indirizzo (404 se non c'è: resta Zeph, col tuo look)
 function loadAvatar() {
-  if (typeof THREE.GLTFLoader !== 'function') return;
+  if (typeof THREE.GLTFLoader !== 'function') { loadLook(); return; }
   new THREE.GLTFLoader().load('avatar.glb?v=' + Date.now(),
     g => setAvatarScene(g.scene, g.animations),
     undefined,
-    () => backToZeph());
+    () => { backToZeph(); loadLook(); });
 }
 
 // ---------- Stato ----------
@@ -195,7 +213,10 @@ function updateChatter(t) {
   if (anim.state.sleeping) return;
   if (t > state.nextChatterAt) {
     state.nextChatterAt = t + 60 + Math.random() * 90;
-    if (!anim.state.talking && !anim.state.action && !state.grabbed) speak(ZephCore.pick(FRASI_TELEFONO));
+    if (anim.state.talking || anim.state.action || state.grabbed) return;
+    // una domanda per conoscerti, un ricordo, o due chiacchiere
+    const c = Math.random() < 0.6 ? ZephCore.memory.chatter(botCtx) : null;
+    speak(c ? c.say : ZephCore.pick(FRASI_TELEFONO));
   }
 }
 
@@ -290,9 +311,15 @@ function batteryReport() {
       (b.charging ? ' e si sta caricando!' : b.level < 20 ? '… mettila in carica!' : '!');
   } catch (e) { return 'Non riesco a leggere la batteria del telefono!'; }
 }
+function thinking() {
+  showBubble('💭 …');
+  anim.state.gestureLead = 1;
+}
 function botRespond(text) {
   const out = ZephCore.botReply(text, botCtx);
   if (!out) return;
+  if (out.setPetName && A && A.setPetName) A.setPetName(out.setPetName);
+  if (out.party) sparkles.burst(0, 1.2, 0, 24);
   if (out.stop) { state.wander = false; state.targetX = null; }
   if (out.wander) state.wander = true;
   if (out.follow) out.say = 'Sul telefono non c’è il mouse da seguire… ma posso passeggiare! Dimmi «cammina».';
@@ -369,6 +396,7 @@ function botRespond(text) {
   if (out.music === 'on') startMusic();
   if (out.music === 'off') stopMusic();
   if (out.dog) out.say = 'Rocky è rimasto a casa nel computer! Qui sul telefono c’è spazio solo per me.';
+  if (out.photoAvatar && !(A && A.openPhoto && (A.openPhoto(), true))) out.say = 'Apri l’app e premi «Crea l’avatar con una foto»!';
   if (out.sky || out.weather || out.autoSky !== undefined || out.photo || out.stars ||
       out.missions || out.fireworks || out.camMode || out.quality || out.ball) {
     out.say = 'Questa la so fare nel mio mondo sul computer! Qui sul telefono cammino, ballo e ti apro le app.';
@@ -376,6 +404,16 @@ function botRespond(text) {
   if (out.outfit) {
     out.say = avatarDriver ? 'Il look lo cambio solo quando sono Zeph, non con il tuo avatar!' : out.say;
     if (!avatarDriver) randomOutfit();
+  }
+  // chiacchiere: con il cervello AI risponde Claude (il cervello offline resta di riserva)
+  if (out.aiQuery && ZephCore.ai.enabled()) {
+    thinking();
+    ZephCore.ai.ask(out.aiQuery, botCtx, out.say).then(r => {
+      const act = r.action || out.action;
+      if (act) anim.startAction(act);
+      speak(r.say);
+    });
+    return;
   }
   if (out.action) anim.startAction(out.action);
   if (out.say) speak(out.say);
@@ -478,6 +516,7 @@ window.zephScreen = function (json) {
   onResize();
 };
 window.zephReloadAvatar = loadAvatar;
+window.zephPrefsChanged = syncPrefs;
 
 // ---------- Loop (30 fotogrammi al secondo: risparmia batteria) ----------
 function onResize() {
@@ -528,13 +567,22 @@ loadAvatar();
 touched();
 tick();
 setTimeout(() => {
+  // si ricorda di te: compleanno, giorni senza vedersi, com'è andata quella cosa…
+  const g = ZephCore.memory.greeting(botCtx);
+  if (g) {
+    anim.startAction(g.action || 'wave');
+    if (g.party) sparkles.burst(0, 1.2, 0, 30);
+    speak(g.say);
+    return;
+  }
   anim.startAction('wave');
   const h = new Date().getHours();
   const salve = h < 12 ? 'Buongiorno' : h < 18 ? 'Ciao' : 'Buonasera';
+  const pet = ZephCore.memory.petName();
   speak(botCtx.name ? salve + ', ' + botCtx.name + '! Eccomi sul tuo telefono!'
-    : salve + '! Sono Zeph: da adesso abito sul tuo telefono!');
+    : salve + '! Sono ' + pet + ': da adesso abito sul tuo telefono! Raccontami un po’ di te.');
 }, 1200);
 
 // gancio per i test
-window.zephPhone = { state, anim, botRespond, wake, get host() { return host; } };
+window.zephPhone = { state, anim, botRespond, wake, zeph, get host() { return host; } };
 })();

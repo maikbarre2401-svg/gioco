@@ -46,7 +46,7 @@ public class ZephTileService extends TileService {
         Tile t = getQsTile();
         if (t == null) return;
         t.setIcon(Icon.createWithResource(this, R.drawable.ic_stat_zeph));
-        t.setLabel("Zeph");
+        t.setLabel(Prefs.petName(this));
         if (Build.VERSION.SDK_INT >= 29) t.setSubtitle(on ? "Sullo schermo" : "Spento");
         t.setState(on ? Tile.STATE_ACTIVE : Tile.STATE_INACTIVE);
         t.updateTile();

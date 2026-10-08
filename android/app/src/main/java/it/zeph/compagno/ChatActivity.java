@@ -38,13 +38,13 @@ public class ChatActivity extends Activity {
         box.setBackgroundColor(0xFF101827);
 
         TextView title = new TextView(this);
-        title.setText("Parla con Zeph");
+        title.setText("Parla con " + Prefs.petName(this));
         title.setTextColor(0xFF5EEAD4);
         title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
         box.addView(title);
 
         TextView hint = new TextView(this);
-        hint.setText("Prova: «apri whatsapp», «balla», «che ore sono?», «ricordami tra 5 minuti della pizza»");
+        hint.setText("Raccontami la tua giornata, oppure prova: «apri whatsapp», «balla», «cosa sai di me?», «ricordami tra 5 minuti della pizza»");
         hint.setTextColor(0x99FFFFFF);
         hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         hint.setPadding(0, dp(4), 0, dp(10));

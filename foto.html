@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Avatar dalla foto</title>
+<style>
+  :root { --bg:#0f1726; --card:#1e293b; --line:rgba(255,255,255,.14); --text:#eaf2ff; --dim:rgba(234,242,255,.68);
+    --teal:#14b8a6; --mint:#5eead4; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { background:var(--bg); color:var(--text); font-family:system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  body { padding:18px 16px 32px; max-width:480px; margin:0 auto; }
+  h1 { font-size:21px; color:var(--mint); letter-spacing:.5px; }
+  h2 { font-size:15px; color:var(--mint); margin:22px 0 8px; }
+  p { font-size:14px; line-height:1.5; color:var(--dim); margin-top:6px; }
+  .small { font-size:12.5px; }
+  #cam { position:relative; width:100%; aspect-ratio:3/4; margin-top:14px; border-radius:18px; overflow:hidden;
+    background:#000; touch-action:none; }
+  #video, #still { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+  #video { transform:scaleX(-1); }
+  #still { display:none; }
+  #guide { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+  #count { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    font-size:96px; font-weight:800; color:#fff; text-shadow:0 4px 24px rgba(0,0,0,.6); pointer-events:none; }
+  #flash { position:absolute; inset:0; background:#fff; opacity:0; pointer-events:none; transition:opacity .35s; }
+  .row { display:flex; gap:10px; margin-top:12px; flex-wrap:wrap; }
+  button, .btn { flex:1; min-width:140px; border:1px solid var(--line); background:var(--card); color:var(--text);
+    border-radius:14px; padding:13px 14px; font-size:15px; cursor:pointer; text-align:center; font-family:inherit; }
+  button.main { background:var(--teal); border-color:var(--teal); color:#04222c; font-weight:700; }
+  button:disabled { opacity:.5; }
+  #zoomrow { display:none; align-items:center; gap:10px; margin-top:10px; font-size:13px; color:var(--dim); }
+  #zoomrow input { flex:1; accent-color:var(--teal); }
+  #err { color:#fca5a5; }
+  #preview { width:100%; height:min(52vh, 440px); margin-top:14px; border-radius:18px; overflow:hidden;
+    background:radial-gradient(circle at 50% 35%, #2c3e5a, #111a2b 75%); position:relative; }
+  #preview canvas { display:block; }
+  #viewbtn { position:absolute; right:10px; top:10px; flex:none; min-width:0; padding:7px 11px; font-size:13px;
+    background:rgba(15,23,38,.7); }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px; }
+  .field { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:10px 12px;
+    display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:14px; }
+  .field input[type=color] { width:44px; height:30px; border:none; background:none; padding:0; cursor:pointer; }
+  .chips { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+  .chip { width:34px; height:34px; border-radius:50%; border:2px solid transparent; cursor:pointer; }
+  .chip.on { border-color:var(--mint); box-shadow:0 0 0 2px var(--bg) inset; }
+  label.check { display:flex; gap:10px; align-items:center; margin-top:14px; font-size:14.5px; }
+  label.check input { width:20px; height:20px; accent-color:var(--teal); }
+  #pet { width:100%; margin-top:8px; border:1px solid var(--line); background:var(--card); color:var(--text);
+    border-radius:14px; padding:12px 14px; font-size:16px; outline:none; font-family:inherit; }
+  #pet:focus { border-color:var(--mint); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:14px; margin-top:22px; }
+  .card h2 { margin-top:0; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<h1>📸 Il tuo avatar dalla foto</h1>
+
+<section id="step1">
+  <p>Metti la faccia dentro l’ovale: i capelli in alto, il mento in basso. Viene meglio con tanta luce davanti (per esempio verso una finestra).</p>
+  <div id="cam">
+    <video id="video" playsinline muted autoplay></video>
+    <canvas id="still"></canvas>
+    <svg id="guide" viewBox="0 0 300 400" preserveAspectRatio="none" aria-hidden="true">
+      <defs><mask id="hole"><rect width="300" height="400" fill="#fff"/><ellipse cx="150" cy="184" rx="93" ry="123" fill="#000"/></mask></defs>
+      <rect width="300" height="400" fill="rgba(5,10,20,.55)" mask="url(#hole)"/>
+      <ellipse cx="150" cy="184" rx="93" ry="123" fill="none" stroke="#5eead4" stroke-width="2.5" stroke-dasharray="9 7"/>
+    </svg>
+    <div id="count"></div>
+    <div id="flash"></div>
+  </div>
+  <div id="zoomrow">🔍 <input id="zoom" type="range" min="1" max="4" step="0.01" value="1"> <span>trascina la foto per centrarla</span></div>
+  <div class="row">
+    <button id="shoot" class="main">📸 Scatta</button>
+    <label class="btn" for="file">🖼 Scegli una foto</label>
+    <input id="file" type="file" accept="image/*" hidden>
+  </div>
+  <p id="err"></p>
+</section>
+
+<section id="step2" hidden>
+  <div id="preview"><button id="viewbtn">🧍 Tutto il corpo</button></div>
+  <p class="small">Ecco il tuo avatar! Sistema i colori se serve.</p>
+  <div class="grid">
+    <label class="field">Pelle <input id="cSkin" type="color"></label>
+    <label class="field">Capelli <input id="cHair" type="color"></label>
+    <label class="field">Vestiti <input id="cTop" type="color"></label>
+    <label class="field">Senza capelli <input id="bald" type="checkbox"></label>
+  </div>
+  <h2>Occhi</h2>
+  <div class="chips" id="eyes"></div>
+  <label class="check"><input id="useFace" type="checkbox" checked> Metti la mia faccia vera sulla testa</label>
+  <h2>Come si chiama il tuo compagno?</h2>
+  <input id="pet" maxlength="16" placeholder="Zeph" autocomplete="off">
+  <div class="row">
+    <button id="redo">↺ Rifai la foto</button>
+    <button id="save" class="main">✅ Usa questo avatar</button>
+  </div>
+  <p class="small">La foto resta solo su questo dispositivo: non viene mandata a nessuno.</p>
+</section>
+
+<div class="card">
+  <h2>✨ Vuoi un avatar 3D realistico?</h2>
+  <p class="small">Sul sito Avaturn fai un selfie e ti crea un avatar 3D vero, con il tuo viso. Alla fine scarica il file <b>.glb</b> e scegli «Il mio avatar (.glb)» nell’app: il tuo compagno diventa quell’avatar.</p>
+  <div class="row"><button id="avaturn">Apri Avaturn</button></div>
+</div>
+
+<script src="three.min.js"></script>
+<script src="zeph-core.js"></script>
+<script src="foto.js"></script>
+</body>
+</html>
