@@ -132,8 +132,15 @@ function build(THREE) {
   // applica una posa calcolata dall'Animator a questo rig
   B.apply = function (P, s) {
     applyPose(B, P);
+    const gw = s.gazeWS || 0;
+    if (gw > 0.001) {
+      const yaw = (s.gazeYawS || 0) * gw, pitch = (s.gazePitchS || 0) * gw;
+      B.head.rotation.y += yaw * 0.75; B.head.rotation.x -= pitch * 0.7;
+      B.spine.rotation.y += yaw * 0.2;
+    }
     B.eyeL.scale.y = s.eyeScale; B.eyeR.scale.y = s.eyeScale;
-    B.pupilL.position.x = s.pupilX || 0; B.pupilR.position.x = s.pupilX || 0;
+    const px = (s.pupilX || 0) + (s.gazeYawS || 0) * gw * 0.004;
+    B.pupilL.position.x = px; B.pupilR.position.x = px;
   };
 
   // per il raycasting dei clic
@@ -176,6 +183,10 @@ function Animator(avatar) {
     lookYaw: 0, lookPitch: 0, lookTYaw: 0, lookTPitch: 0, nextLookAt: 2,
     eyeScale: 1, pupilX: 0, lastRootY: 0,
     flying: false, flyW: 0,
+    // sguardo verso un punto (impostato dall'host ogni frame, in radianti
+    // nello spazio del personaggio) e sua versione smussata
+    gazeYaw: 0, gazePitch: 0, gazeW: 0, gazeYawS: 0, gazePitchS: 0, gazeWS: 0,
+    dt: 0.016,
   };
 }
 
@@ -186,6 +197,11 @@ Animator.prototype.startAction = function (name) {
 Animator.prototype.update = function (t, dt) {
   const s = this.state;
   const P = newPose();
+  s.dt = dt;
+  const gk = Math.min(1, dt * 6);
+  s.gazeYawS += (Math.max(-1.1, Math.min(1.1, s.gazeYaw || 0)) - s.gazeYawS) * gk;
+  s.gazePitchS += (Math.max(-0.5, Math.min(0.5, s.gazePitch || 0)) - s.gazePitchS) * gk;
+  s.gazeWS += (clamp01(s.gazeW || 0) - s.gazeWS) * Math.min(1, dt * 3);
   const walkW = clamp01(s.speedRatio);
   s.talkW += ((s.talking ? 1 : 0) - s.talkW) * Math.min(1, dt * 5);
 
@@ -399,10 +415,14 @@ function applyPose(B, P) {
   B.browL.position.y = 0.138 + P.brow; B.browR.position.y = 0.138 + P.brow;
 }
 
-// ---------- Driver per avatar GLB esterni (ReadyPlayerMe, Mixamo, ecc.) ----------
-// Mappa le ossa per nome e vi ritrasferisce le pose procedurali di Zeph.
-// Braccia e gambe usano l'allineamento direzionale (funziona anche se
-// l'avatar è in T-pose); busto e testa usano delta di rotazione.
+// ---------- Driver per avatar GLB esterni (Avaturn, ReadyPlayerMe, Mixamo…) ----------
+// Mappa le ossa per nome e vi trasferisce le pose procedurali di Zeph.
+// Se il file contiene un'animazione (es. l'idle in motion capture di
+// Avaturn) la usa come base e la fonde osso per osso con le pose
+// procedurali: da fermo si muove come una persona vera, quando cammina,
+// balla o gesticola subentra il movimento di Zeph.
+// Braccia e gambe usano l'allineamento direzionale (funziona anche in
+// T-pose); busto e testa usano delta di rotazione.
 const BONE_DEFS = [
   { key: 'hips', re: /hips$|pelvis/ },
   { key: 'spine', re: /spine$/ },
@@ -427,9 +447,265 @@ const BONE_DEFS = [
   { key: 'toeR', re: /righttoebase$|toebaser$|righttoe$|toer$/ },
 ];
 
+function normName(n) { return (n || '').toLowerCase().replace(/[^a-z0-9]/g, ''); }
+function smooth01(a, b, x) {
+  const u = clamp01((x - a) / (b - a));
+  return u * u * (3 - 2 * u);
+}
+
+function findBones(avatarScene) {
+  const bones = {};
+  avatarScene.traverse(o => {
+    if (!o.name) return;
+    const n = normName(o.name);
+    for (const d of BONE_DEFS) {
+      if (!bones[d.key] && d.re.test(n)) { bones[d.key] = o; break; }
+    }
+  });
+  return bones;
+}
+
+function headWeight(si, sw, i, hi) {
+  let w = 0;
+  if (si.getX(i) === hi) w += sw.getX(i);
+  if (si.getY(i) === hi) w += sw.getY(i);
+  if (si.getZ(i) === hi) w += sw.getZ(i);
+  if (si.getW(i) === hi) w += sw.getW(i);
+  return w;
+}
+
+// Bocca procedurale per avatar senza blendshape né osso della mascella:
+// trova naso e fessura delle labbra sul profilo del viso e crea un morph
+// che ruota la parte bassa del volto attorno al perno della mandibola.
+// Va chiamata sulla scena in posa di riposo, prima di scalarla.
+function buildJawMorph(THREE, avatarScene, headBone) {
+  avatarScene.updateMatrixWorld(true);
+  const headPos = new THREE.Vector3();
+  headBone.getWorldPosition(headPos);
+  const v = new THREE.Vector3();
+
+  // la mesh della pelle: quella con più vertici della testa davanti al viso
+  let best = null, bestScore = 0;
+  avatarScene.traverse(o => {
+    if (!o.isSkinnedMesh || !o.geometry.attributes.skinIndex) return;
+    if (o.geometry.morphAttributes && o.geometry.morphAttributes.position) return;
+    const hi = o.skeleton.bones.indexOf(headBone);
+    if (hi < 0) return;
+    const pos = o.geometry.attributes.position;
+    const si = o.geometry.attributes.skinIndex, sw = o.geometry.attributes.skinWeight;
+    let score = 0;
+    for (let i = 0; i < pos.count; i++) {
+      if (headWeight(si, sw, i, hi) < 0.5) continue;
+      v.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld);
+      if (Math.abs(v.x - headPos.x) < 0.03 && v.z > headPos.z + 0.06) score++;
+    }
+    if (/body|skin|head|face/i.test(o.name)) score *= 1.5;
+    if (score > bestScore) { bestScore = score; best = { mesh: o, hi }; }
+  });
+  if (!best || bestScore < 40) return null;
+
+  const mesh = best.mesh, geo = mesh.geometry, hi = best.hi;
+  const pos = geo.attributes.position;
+  const si = geo.attributes.skinIndex, sw = geo.attributes.skinWeight;
+  const N = pos.count;
+  const wp = new Float32Array(N * 3), hw = new Float32Array(N);
+  let nose = null;
+  for (let i = 0; i < N; i++) {
+    v.fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld);
+    wp[i * 3] = v.x - headPos.x; wp[i * 3 + 1] = v.y; wp[i * 3 + 2] = v.z;
+    hw[i] = headWeight(si, sw, i, hi);
+    if (hw[i] > 0.5 && Math.abs(v.x - headPos.x) < 0.015 && (!nose || v.z > nose.z)) nose = { y: v.y, z: v.z };
+  }
+  if (!nose || nose.z < headPos.z + 0.05) return null;
+
+  // profilo frontale in mezzeria sotto il naso (il punto più avanzato per fascia)
+  function profile(res, yTop, yBot) {
+    const bins = {};
+    for (let i = 0; i < N; i++) {
+      const x = wp[i * 3], y = wp[i * 3 + 1], z = wp[i * 3 + 2];
+      if (Math.abs(x) > 0.006 || y > yTop || y < yBot) continue;
+      const k = Math.round(y * res);
+      if (bins[k] === undefined || z > bins[k]) bins[k] = z;
+    }
+    return Object.keys(bins).map(Number).sort((a, b) => b - a).map(k => ({ y: k / res, z: bins[k] }));
+  }
+  // scendendo dal naso: subnasale (avvallamento), labbro superiore (sporgenza),
+  // poi il primo avvallamento successivo è la fessura tra le labbra
+  const prof = profile(400, nose.y - 0.008, nose.y - 0.06);
+  if (prof.length < 8) return null;
+  let iSub = -1, iUp = -1, iSeam = -1;
+  for (let i = 0; i < prof.length; i++) {
+    if (prof[i].y > nose.y - 0.01 || prof[i].y < nose.y - 0.032) continue;
+    if (iSub < 0 || prof[i].z < prof[iSub].z) iSub = i;
+  }
+  if (iSub < 0) return null;
+  for (let i = iSub; i < prof.length && prof[i].y > prof[iSub].y - 0.022; i++) {
+    if (iUp < 0 || prof[i].z > prof[iUp].z) iUp = i;
+  }
+  for (let i = iUp + 1; i < prof.length - 1; i++) {
+    if (prof[i + 1].z > prof[i].z + 0.0001) { iSeam = i; break; }
+  }
+  if (iUp < 0 || iSeam < 0) return null;
+  // rifinitura: i vertici più profondi del solco sono i bordi interni di
+  // entrambe le labbra, quindi la loro altezza media cade proprio nel mezzo
+  const groove = [];
+  for (let i = 0; i < N; i++) {
+    const x = wp[i * 3], y = wp[i * 3 + 1], z = wp[i * 3 + 2];
+    if (Math.abs(x) < 0.008 && Math.abs(y - prof[iSeam].y) < 0.003 && z > prof[iSeam].z - 0.012) groove.push({ y, z });
+  }
+  groove.sort((a, b) => a.z - b.z);
+  const deep = groove.slice(0, Math.min(6, groove.length));
+  const seamY = deep.length ? deep.reduce((acc, g) => acc + g.y, 0) / deep.length : prof[iSeam].y;
+
+  const hingeY = nose.y - 0.024, hingeZ = nose.z - 0.112;
+  const ANG = 0.095; // apertura massima (rad): ~9 mm tra le labbra
+  const c = Math.cos(ANG), s = Math.sin(ANG);
+  const inv = new THREE.Matrix4().copy(mesh.matrixWorld).invert();
+  const delta = new Float32Array(N * 3);
+  const p = new THREE.Vector3(), q = new THREE.Vector3();
+  let moved = 0;
+  for (let i = 0; i < N; i++) {
+    if (hw[i] < 0.05) continue;
+    const x = wp[i * 3], y = wp[i * 3 + 1], z = wp[i * 3 + 2];
+    const ax = Math.abs(x);
+    // netto sulle labbra, morbido su guance e mento per non tagliare il viso
+    const lateral = smooth01(0.016, 0.032, ax);
+    const top = seamY + 0.00012 + lateral * 0.027;
+    const bot = seamY - 0.00012 - lateral * 0.007;
+    const wy = 1 - smooth01(bot, top, y);
+    const wz = smooth01(hingeZ - 0.015, hingeZ + 0.02, z);
+    const wx = 1 - smooth01(0.055, 0.075, ax);
+    const w = wy * wz * wx * hw[i];
+    if (w < 0.001) continue;
+    const ry = y - hingeY, rz = z - hingeZ;
+    const ny = hingeY + ry * c - rz * s, nz = hingeZ + ry * s + rz * c;
+    p.set(x + headPos.x, y, z).applyMatrix4(inv);
+    q.set(x + headPos.x, y + (ny - y) * w, z + (nz - z) * w).applyMatrix4(inv);
+    delta[i * 3] = q.x - p.x; delta[i * 3 + 1] = q.y - p.y; delta[i * 3 + 2] = q.z - p.z;
+    moved++;
+  }
+  if (moved < 20) return null;
+
+  const attr = new THREE.Float32BufferAttribute(delta, 3);
+  attr.name = 'zephJawOpen';
+  geo.morphAttributes.position = [attr];
+  geo.morphTargetsRelative = true;
+  mesh.updateMorphTargets();
+
+  // le labbra sono "cucite" da una striscia di triangoli sottili nel solco:
+  // la tagliamo, così la bocca si apre davvero invece di stirarsi
+  let cut = 0;
+  if (geo.index) {
+    const idx = geo.index.array, keep = [];
+    const lipZ = deep.length ? deep[deep.length - 1].z : nose.z - 0.02;
+    for (let f = 0; f < idx.length; f += 3) {
+      const a = idx[f], b = idx[f + 1], cc = idx[f + 2];
+      const ya = wp[a * 3 + 1], yb = wp[b * 3 + 1], yc = wp[cc * 3 + 1];
+      const lo = Math.min(ya, yb, yc), hi2 = Math.max(ya, yb, yc);
+      const cx = (wp[a * 3] + wp[b * 3] + wp[cc * 3]) / 3;
+      const zmax = Math.max(wp[a * 3 + 2], wp[b * 3 + 2], wp[cc * 3 + 2]);
+      const inGroove = lo < seamY && hi2 > seamY && hi2 - lo < 0.0045 &&
+        Math.abs(cx) < 0.021 && zmax > lipZ - 0.012;
+      if (inGroove) { cut++; continue; }
+      keep.push(a, b, cc);
+    }
+    if (cut > 0 && cut < 200) geo.setIndex(keep);
+    else cut = 0;
+  }
+
+  // dietro le labbra: cavità scura e denti superiori, agganciati alla testa
+  let teeth = null;
+  if (cut) {
+    const hq = headBone.getWorldQuaternion(new THREE.Quaternion());
+    const hs = headBone.getWorldScale(new THREE.Vector3());
+    const lipFront = deep.length ? deep[0].z : nose.z - 0.02;
+    function attach(obj, x, y, z) {
+      const lp = headBone.worldToLocal(new THREE.Vector3(x, y, z));
+      obj.position.copy(lp);
+      obj.quaternion.copy(hq).invert();
+      obj.scale.set(1 / hs.x, 1 / hs.y, 1 / hs.z);
+      obj.frustumCulled = false;
+      headBone.add(obj);
+    }
+    const cavity = new THREE.Mesh(new THREE.SphereGeometry(1, 18, 12),
+      new THREE.MeshBasicMaterial({ color: 0x1a0b0b }));
+    cavity.geometry.scale(0.031, 0.015, 0.016);
+    attach(cavity, headPos.x, seamY - 0.004, lipFront - 0.021);
+    const teethGeo = new THREE.CylinderGeometry(0.018, 0.018, 0.0062, 20, 1, true, -0.66, 1.32);
+    teeth = new THREE.Mesh(teethGeo,
+      new THREE.MeshStandardMaterial({ color: 0xcdc4b2, roughness: 0.5, side: THREE.DoubleSide }));
+    teeth.name = 'zephTeeth';
+    teeth.visible = false;
+    attach(teeth, headPos.x, seamY + 0.0042, lipFront - 0.025);
+  }
+  return { m: mesh, i: mesh.morphTargetDictionary.zephJawOpen || 0, seamY, moved, cut, teeth };
+}
+
+// Dita leggermente piegate (per gli avatar senza animazione propria):
+// ogni falange ruota verso il palmo attorno a un asse calcolato a riposo.
+function relaxFingers(THREE, avatarScene) {
+  avatarScene.updateMatrixWorld(true);
+  const byName = {};
+  avatarScene.traverse(o => { if (o.name) byName[normName(o.name)] = o; });
+  const wp = o => o.getWorldPosition(new THREE.Vector3());
+  const CURL = { thumb: [0.12, 0.18, 0.14], index: [0.22, 0.38, 0.26], middle: [0.26, 0.42, 0.28], ring: [0.3, 0.46, 0.3], pinky: [0.34, 0.5, 0.32] };
+  let count = 0;
+  for (const side of ['left', 'right']) {
+    const hand = byName[side + 'hand'], mid = byName[side + 'handmiddle1'];
+    const idx = byName[side + 'handindex1'], pky = byName[side + 'handpinky1'];
+    if (!hand || !mid || !idx || !pky) continue;
+    const dir = wp(mid).sub(wp(hand)).normalize();
+    const across = wp(idx).sub(wp(pky)).normalize();
+    const palm = side === 'left' ? dir.clone().cross(across) : across.clone().cross(dir);
+    palm.normalize();
+    for (const f in CURL) {
+      for (let j = 1; j <= 3; j++) {
+        const b = byName[side + 'hand' + f + j];
+        if (!b) continue;
+        const nxt = byName[side + 'hand' + f + (j + 1)];
+        const fdir = nxt ? wp(nxt).sub(wp(b)).normalize() : dir.clone();
+        const axis = fdir.clone().cross(palm);
+        if (axis.lengthSq() < 1e-6) continue;
+        axis.normalize();
+        const wq = b.getWorldQuaternion(new THREE.Quaternion()).invert();
+        axis.applyQuaternion(wq).normalize();
+        b.quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(axis, CURL[f][j - 1]));
+        count++;
+      }
+    }
+  }
+  return count;
+}
+
 function createAvatarDriver(THREE, avatarScene, opts) {
   opts = opts || {};
   const height = opts.height || 1.75;
+
+  // ossa, bocca e dita si analizzano in posa di riposo, prima di scalare
+  avatarScene.updateMatrixWorld(true);
+  const bones = findBones(avatarScene);
+  const need = ['hips', 'armL', 'forearmL', 'armR', 'forearmR', 'uplegL', 'legL', 'uplegR', 'legR'];
+  const hasRig = need.every(kk => bones[kk]);
+  const clips = (opts.animations || []).filter(c => c && c.tracks && c.tracks.length);
+
+  // --- morph facciali (bocca e palpebre), se presenti ---
+  const mouthMorphs = [], blinkMorphs = [];
+  avatarScene.traverse(o => {
+    if (o.morphTargetDictionary && o.morphTargetInfluences) {
+      for (const key in o.morphTargetDictionary) {
+        const kn = normName(key);
+        if (/mouthopen|jawopen|visemeaa/.test(kn)) mouthMorphs.push({ m: o, i: o.morphTargetDictionary[key] });
+        else if (/blink|eyesclosed/.test(kn)) blinkMorphs.push({ m: o, i: o.morphTargetDictionary[key] });
+      }
+    }
+  });
+  let jaw = null;
+  if (!mouthMorphs.length && !bones.jaw && bones.head && opts.autoJaw !== false) {
+    try { jaw = buildJawMorph(THREE, avatarScene, bones.head); } catch (e) { jaw = null; }
+    if (jaw) mouthMorphs.push(jaw);
+  }
+  let fingersRelaxed = 0;
+  if (hasRig && !clips.length) fingersRelaxed = relaxFingers(THREE, avatarScene);
 
   const root = new THREE.Group();
   const inner = new THREE.Group();
@@ -443,45 +719,52 @@ function createAvatarDriver(THREE, avatarScene, opts) {
   const baseY = -bbox.min.y * k;
   inner.position.y = baseY;
 
+  // ombre, niente culling (le ossa spostano la mesh) e texture più nitide
+  const aniso = opts.anisotropy || 1;
   avatarScene.traverse(o => {
-    if (o.isMesh || o.isSkinnedMesh) { o.castShadow = true; o.frustumCulled = false; }
-  });
-
-  // --- ricerca delle ossa per nome ---
-  const bones = {};
-  avatarScene.traverse(o => {
-    if (!o.name) return;
-    const n = o.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-    for (const d of BONE_DEFS) {
-      if (!bones[d.key] && d.re.test(n)) { bones[d.key] = o; break; }
-    }
-  });
-  const need = ['hips', 'armL', 'forearmL', 'armR', 'forearmR', 'uplegL', 'legL', 'uplegR', 'legR'];
-  const hasRig = need.every(kk => bones[kk]);
-
-  // --- morph facciali (bocca e palpebre), se presenti ---
-  const mouthMorphs = [], blinkMorphs = [];
-  avatarScene.traverse(o => {
-    if (o.morphTargetDictionary && o.morphTargetInfluences) {
-      for (const key in o.morphTargetDictionary) {
-        const kn = key.toLowerCase().replace(/[^a-z0-9]/g, '');
-        if (/mouthopen|jawopen|visemeaa/.test(kn)) mouthMorphs.push({ m: o, i: o.morphTargetDictionary[key] });
-        else if (/blink|eyesclosed/.test(kn)) blinkMorphs.push({ m: o, i: o.morphTargetDictionary[key] });
+    if (!o.isMesh && !o.isSkinnedMesh) return;
+    o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false;
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    for (const m of mats) {
+      if (!m) continue;
+      for (const t of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap']) {
+        if (m[t] && aniso > 1) { m[t].anisotropy = aniso; m[t].needsUpdate = true; }
       }
     }
   });
+
+  const blinkGain = 1.1;
   function applyMorphs(P, s) {
     const open = Math.min(1, P.mouth * 0.85);
     for (const mm of mouthMorphs) mm.m.morphTargetInfluences[mm.i] = open;
-    const blink = Math.min(1, Math.max(0, (1 - s.eyeScale) * 1.1));
+    // i denti si vedono solo a bocca aperta (chiusa resta la linea scura)
+    if (jaw && jaw.teeth) jaw.teeth.visible = open > 0.12;
+    const blink = Math.min(1, Math.max(0, (1 - s.eyeScale) * blinkGain));
     for (const bm of blinkMorphs) bm.m.morphTargetInfluences[bm.i] = blink;
   }
 
-  const driver = { root, inner, bones, hasRig, isAvatarDriver: true };
+  const driver = {
+    root, inner, bones, hasRig, isAvatarDriver: true,
+    hasMocap: false, mocapName: null, hasJaw: !!jaw,
+    faceMorphs: mouthMorphs.length + blinkMorphs.length, fingersRelaxed,
+    jawInfo: jaw ? { seamY: jaw.seamY, moved: jaw.moved, cut: jaw.cut } : null,
+  };
+
+  let mixer = null;
+  function startMocap() {
+    if (!clips.length) return;
+    const clip = clips.find(c => /idle/i.test(c.name)) || clips[0];
+    mixer = new THREE.AnimationMixer(avatarScene);
+    mixer.clipAction(clip).play();
+    driver.hasMocap = true;
+    driver.mocapName = clip.name;
+  }
 
   if (!hasRig) {
     // niente scheletro riconoscibile: modalità "statuetta" (dondola e salta)
+    startMocap();
     driver.apply = function (P, s) {
+      if (mixer) mixer.update(Math.min(0.1, s.dt || 0.016));
       inner.position.y = baseY + P.rootY;
       inner.rotation.x = P.spine.x * 0.4;
       inner.rotation.z = P.body.z * 0.6;
@@ -495,7 +778,7 @@ function createAvatarDriver(THREE, avatarScene, opts) {
   const ref = build(THREE);
   ref.root.updateMatrixWorld(true);
 
-  // dati di riposo per ogni osso mappato
+  // dati di riposo per ogni osso mappato (prima che parta il mocap)
   avatarScene.updateMatrixWorld(true);
   const rest = new Map();
   const qw = new THREE.Quaternion();
@@ -529,11 +812,19 @@ function createAvatarDriver(THREE, avatarScene, opts) {
   if (!dirs.legL && dirs.uplegL) dirs.legL = dirs.uplegL.clone();
   if (!dirs.legR && dirs.uplegR) dirs.legR = dirs.uplegR.clone();
 
+  startMocap();
+  const mocapQ = new Map();
+  if (mixer) for (const kk in bones) mocapQ.set(bones[kk], new THREE.Quaternion());
+
   const q1 = new THREE.Quaternion(), q2 = new THREE.Quaternion(),
         q3 = new THREE.Quaternion(), q4 = new THREE.Quaternion(),
         qRoot = new THREE.Quaternion(), qRootInv = new THREE.Quaternion();
   const e1 = new THREE.Euler();
   const va = new THREE.Vector3(), vb = new THREE.Vector3();
+  const qa = new THREE.Quaternion(), qb = new THREE.Quaternion();
+  const want = new THREE.Vector3(), cur = new THREE.Vector3();
+  // asse "davanti" della testa, nel suo sistema locale a riposo
+  const headFwd = bones.head ? new THREE.Vector3(0, 0, 1).applyQuaternion(rest.get(bones.head).worldInv).normalize() : null;
 
   // ruota l'osso in modo che il suo segmento punti come dirChar (spazio personaggio)
   function alignBone(boneKey, dirChar) {
@@ -546,15 +837,32 @@ function createAvatarDriver(THREE, avatarScene, opts) {
     q3.setFromUnitVectors(va, vb);
     b.quaternion.copy(q4.copy(pW).invert()).multiply(q3).multiply(pW).multiply(r.local);
   }
-  // applica una rotazione (euler, spazio personaggio) sopra la posa di riposo
+  // rotazione (euler, spazio personaggio) sopra la posa di riposo
   function rotateBone(boneKey, ex, ey, ez) {
     const b = bones[boneKey];
     if (!b) return;
-    const r = rest.get(b);
+    const base = q2.copy(rest.get(b).local);
     const pW = b.parent.getWorldQuaternion(q1);
-    q2.setFromEuler(e1.set(ex, ey, ez, 'XYZ'));
-    q3.copy(qRoot).multiply(q2).multiply(qRootInv);
-    b.quaternion.copy(q4.copy(pW).invert()).multiply(q3).multiply(pW).multiply(r.local);
+    q4.setFromEuler(e1.set(ex, ey, ez, 'XYZ'));
+    q3.copy(qRoot).multiply(q4).multiply(qRootInv);
+    b.quaternion.copy(q4.copy(pW).invert()).multiply(q3).multiply(pW).multiply(base);
+  }
+  // gira l'osso (collo o testa) perché il viso punti verso wantWorld, per una frazione w
+  function aimBone(boneKey, wantWorld, w) {
+    const b = bones[boneKey];
+    if (!b || !headFwd) return;
+    cur.copy(headFwd).applyQuaternion(bones.head.getWorldQuaternion(qa)).normalize();
+    q3.setFromUnitVectors(cur, wantWorld);
+    q4.identity().slerp(q3, w);
+    const pW = b.parent.getWorldQuaternion(q1);
+    qb.copy(pW).invert().multiply(q4).multiply(pW).multiply(b.quaternion);
+    b.quaternion.copy(qb);
+  }
+  // fonde la posa procedurale appena calcolata con quella del mocap
+  function mix(boneKey, w) {
+    const b = bones[boneKey];
+    if (!b || !mixer || w >= 0.999) return;
+    b.quaternion.slerp(mocapQ.get(b), 1 - w);
   }
 
   // pesi per distribuire la rotazione del busto sulle ossa disponibili
@@ -563,48 +871,80 @@ function createAvatarDriver(THREE, avatarScene, opts) {
     : spineChain.length === 2 ? [0.6, 0.4]
     : spineChain.length === 1 ? [1] : [];
 
-  const mpos = {};
-  function mp(obj, name) {
-    (mpos[name] = mpos[name] || new THREE.Vector3());
-    return obj.getWorldPosition(mpos[name]);
+  // posizioni delle articolazioni del rig di riferimento (vettori riusati)
+  const J = {};
+  function jp(name, obj) { return obj.getWorldPosition(J[name] || (J[name] = new THREE.Vector3())); }
+  const seg = new THREE.Vector3();
+  function limb(boneKey, fromObj, toObj, w) {
+    seg.copy(jp(boneKey + 'b', toObj)).sub(jp(boneKey + 'a', fromObj));
+    alignBone(boneKey, seg);
+    mix(boneKey, w);
   }
 
   driver.apply = function (P, s) {
+    // 0. motion capture: il mixer mette la posa "vera", che poi fondiamo
+    if (mixer) {
+      mixer.update(Math.min(0.1, s.dt || 0.016));
+      for (const [b, q] of mocapQ) q.copy(b.quaternion);
+    }
+
     // 1. aggiorna il rig di riferimento (in spazio personaggio: root identità)
     ref.apply(P, s);
     ref.root.updateMatrixWorld(true);
-
     root.getWorldQuaternion(qRoot);
     qRootInv.copy(qRoot).invert();
 
+    // quanto conta la posa procedurale per ogni parte del corpo
+    const a = s.action;
+    const actW = a ? envelope(a.t, a.dur) : 0;
+    const waveW = a && a.name === 'wave' ? actW : 0;
+    const fullW = a && a.name !== 'wave' ? actW : 0;
+    const talkW = s.talkW || 0;
+    const pBody = mixer ? Math.max(clamp01(s.speedRatio || 0), fullW, s.flyW || 0) : 1;
+    const pArmL = mixer ? Math.max(pBody, talkW * 0.9) : 1;
+    const pArmR = mixer ? Math.max(pArmL, waveW) : 1;
+    const pHead = mixer ? Math.max(pBody, talkW * 0.55, waveW * 0.3) : 1;
+
     // 2. bacino e busto
-    rotateBone('hips', P.body.x, P.body.y, P.body.z);
+    rotateBone('hips', P.body.x, P.body.y, P.body.z); mix('hips', pBody);
     for (let i = 0; i < spineChain.length; i++) {
       const f = spineW[i];
       rotateBone(spineChain[i], P.spine.x * f, P.spine.y * f, P.spine.z * f);
+      mix(spineChain[i], pBody);
     }
     if (bones.neck) {
-      rotateBone('neck', P.head.x * 0.35, P.head.y * 0.35, P.head.z * 0.35);
-      rotateBone('head', P.head.x * 0.65, P.head.y * 0.65, P.head.z * 0.65);
+      rotateBone('neck', P.head.x * 0.35, P.head.y * 0.35, P.head.z * 0.35); mix('neck', pHead);
+      rotateBone('head', P.head.x * 0.65, P.head.y * 0.65, P.head.z * 0.65); mix('head', pHead);
     } else {
-      rotateBone('head', P.head.x, P.head.y, P.head.z);
+      rotateBone('head', P.head.x, P.head.y, P.head.z); mix('head', pHead);
     }
     if (bones.jaw && !mouthMorphs.length) rotateBone('jaw', P.mouth * 0.3, 0, 0);
 
     // 3. arti per allineamento direzionale (robusto anche in T-pose)
     const M = ref.markers;
-    alignBone('armL', mp(ref.elL, 'elL').clone().sub(mp(ref.shL, 'shL')));
-    alignBone('forearmL', mp(M.wristL, 'wrL').clone().sub(mp(ref.elL, 'elL2')));
-    alignBone('armR', mp(ref.elR, 'elR').clone().sub(mp(ref.shR, 'shR')));
-    alignBone('forearmR', mp(M.wristR, 'wrR').clone().sub(mp(ref.elR, 'elR2')));
-    alignBone('uplegL', mp(ref.kneeL, 'knL').clone().sub(mp(ref.hipL, 'hpL')));
-    alignBone('legL', mp(ref.footL, 'ftL').clone().sub(mp(ref.kneeL, 'knL2')));
-    alignBone('footL', mp(M.toeL, 'toL').clone().sub(mp(ref.footL, 'ftL2')));
-    alignBone('uplegR', mp(ref.kneeR, 'knR').clone().sub(mp(ref.hipR, 'hpR')));
-    alignBone('legR', mp(ref.footR, 'ftR').clone().sub(mp(ref.kneeR, 'knR2')));
-    alignBone('footR', mp(M.toeR, 'toR').clone().sub(mp(ref.footR, 'ftR2')));
+    limb('armL', ref.shL, ref.elL, pArmL);
+    limb('forearmL', ref.elL, M.wristL, pArmL);
+    limb('armR', ref.shR, ref.elR, pArmR);
+    limb('forearmR', ref.elR, M.wristR, pArmR);
+    limb('uplegL', ref.hipL, ref.kneeL, pBody);
+    limb('legL', ref.kneeL, ref.footL, pBody);
+    limb('footL', ref.footL, M.toeL, pBody);
+    limb('uplegR', ref.hipR, ref.kneeR, pBody);
+    limb('legR', ref.kneeR, ref.footR, pBody);
+    limb('footR', ref.footR, M.toeR, pBody);
 
-    // 4. saltelli/molleggio e faccia
+    // 4. sguardo: il viso MIRA il punto indicato dall'host (camera o mouse),
+    //    qualunque cosa stia facendo il mocap; il collo fa il 40% del lavoro
+    const gw = s.gazeWS || 0;
+    if (gw > 0.001 && headFwd) {
+      const yaw = s.gazeYawS || 0, pitch = s.gazePitchS || 0;
+      want.set(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch))
+        .applyQuaternion(qRoot).normalize();
+      if (bones.neck) aimBone('neck', want, gw * 0.4);
+      aimBone('head', want, gw);
+    }
+
+    // 5. saltelli/molleggio e faccia
     inner.position.y = baseY + P.rootY;
     applyMorphs(P, s);
   };

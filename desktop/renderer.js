@@ -100,9 +100,12 @@ const anim = new ZephCore.Animator(zeph);
 const actor = { obj: zeph.root };
 let avatarDriver = null;
 
-function setAvatarScene(avScene) {
+function setAvatarScene(avScene, animations) {
   try {
-    const driver = ZephCore.createAvatarDriver(THREE, avScene, { height: 1.75 });
+    const driver = ZephCore.createAvatarDriver(THREE, avScene, {
+      height: 1.75, animations,
+      anisotropy: renderer.capabilities.getMaxAnisotropy(),
+    });
     if (avatarDriver) scene.remove(avatarDriver.root);
     avatarDriver = driver;
     zeph.root.visible = false;
@@ -117,7 +120,7 @@ function tryLoadAvatar() {
   if (bridge && bridge.loadAvatar) {
     const ab = bridge.loadAvatar();
     if (ab && ab.byteLength) {
-      new THREE.GLTFLoader().parse(ab, '', g => setAvatarScene(g.scene),
+      new THREE.GLTFLoader().parse(ab, '', g => setAvatarScene(g.scene, g.animations),
         err => console.error('avatar.glb non leggibile:', err));
     }
   }
@@ -475,6 +478,8 @@ function cursorOverDock(mx, my) {
 
 window.addEventListener('mousemove', e => {
   state.mouseX = e.clientX;
+  state.mouseY = e.clientY;
+  state.mouseAt = performance.now();
   // presa: se trascini dopo aver premuto su Zeph, lo sollevi
   if (grab.pending && !grab.on && Math.abs(e.clientX - grab.sx) + Math.abs(e.clientY - grab.sy) > 12) {
     grab.on = true; grab.falling = false;
@@ -585,6 +590,26 @@ window.addEventListener('resize', () => {
   camera.updateProjectionMatrix();
 });
 
+// ---------- Sguardo verso il mouse ----------
+// il cursore sta sul piano dello schermo, circa 3 metri "davanti" a Zeph;
+// se il mouse resta fermo a lungo, torna a guardarsi intorno
+function updateGaze() {
+  const st = anim.state;
+  if (state.mouseX == null || grab.on) { st.gazeW = 0; return; }
+  const mx = (state.mouseX / W() * 2 - 1) * worldHalfWidth();
+  const my = (H() - state.mouseY) / PX_PER_WORLD - 0.05;
+  const headY = actor.obj.position.y + 1.6 + st.lastRootY;
+  const dx = mx - state.x, dy = my - headY, dz = 3;
+  let yaw = Math.atan2(dx, dz) - state.heading;
+  yaw = Math.atan2(Math.sin(yaw), Math.cos(yaw));
+  st.gazeYaw = yaw;
+  st.gazePitch = Math.atan2(dy, Math.hypot(dx, dz));
+  const idle = (performance.now() - (state.mouseAt || 0)) / 1000;
+  const act = st.action;
+  st.gazeW = (idle < 6 ? 1 : Math.max(0, 1 - (idle - 6) / 2)) *
+    (act && act.name !== 'wave' ? 0 : 1) * (1 - 0.5 * Math.min(1, state.speed / WALK_SPEED));
+}
+
 // ---------- Loop ----------
 const sparkles = ZephCore.createSparkles(THREE, scene);
 let prevActionName = null;
@@ -599,6 +624,7 @@ function tick() {
   updateMovement(dt);
   updateWander(t);
   updateChatter(t);
+  updateGaze();
   anim.update(t, dt);
   updateDogStrip(t, dt);
   updateBubblePosition();
@@ -658,6 +684,6 @@ setTimeout(() => {
 // gancio per test
 window.zephDesktop = {
   state, anim, speak, botRespond, setAvatarScene,
-  loadAvatarUrl: url => { if (typeof THREE.GLTFLoader === 'function') new THREE.GLTFLoader().load(url, g => setAvatarScene(g.scene)); },
+  loadAvatarUrl: url => { if (typeof THREE.GLTFLoader === 'function') new THREE.GLTFLoader().load(url, g => setAvatarScene(g.scene, g.animations)); },
 };
 })();

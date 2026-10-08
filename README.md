@@ -7,12 +7,21 @@ Zeph è un personaggio 3D a corpo intero che **cammina, salta, balla e ti parla 
 
 ## 🧑 Usa il TUO avatar (.glb)
 
-1. Creati un avatar gratis su [readyplayer.me](https://readyplayer.me) e scarica il file **.glb** (va bene anche qualsiasi modello con scheletro umanoide in stile Mixamo).
+1. Creati un avatar gratis su [avaturn.me](https://avaturn.me) o [readyplayer.me](https://readyplayer.me) (anche dalla tua foto) e scarica il file **.glb** — va bene qualsiasi modello con scheletro umanoide in stile Mixamo.
 2. **Nel browser:** premi «🧑 Il tuo avatar» e scegli il file, oppure **trascinalo dentro la pagina**.
 3. **Sul desktop:** salva il file come `avatars/avatar.glb` nella cartella del progetto e riavvia Zeph: lo carica da solo.
 4. Per provare subito c'è un avatar di esempio: `avatars/esempio.glb`.
 
-L'avatar eredita tutto: camminata, salti, balli, gesti mentre parla, e — se il modello ha i morph facciali (ReadyPlayerMe li ha) — anche bocca e palpebre animate. Se il modello non ha uno scheletro riconoscibile, viene portato in giro «rigido» ma funziona comunque. Nel browser l'avatar scelto viene **ricordato** per la volta successiva.
+L'avatar eredita tutto: camminata, salti, balli, gesti mentre parla. In più Zeph lo rende più vivo:
+
+- **Motion capture**: se il file contiene un'animazione (gli avatar Avaturn hanno un idle registrato da una persona vera), da fermo la usa — respiro, peso che si sposta, dita naturali — e la fonde osso per osso con camminata, gesti e balli.
+- **La bocca si muove quando parla**, anche se l'avatar non ha espressioni facciali: Zeph trova le labbra sulla mesh, separa il solco tra le labbra e aggiunge mascella, cavità e denti.
+- **Ti guarda**: nel browser gira la testa verso di te (o verso Nina quando le passa accanto), sul desktop **segue il cursore del mouse**.
+- Palpebre e bocca usano i blendshape quando il modello li ha (ReadyPlayerMe); texture più nitide con il filtro anisotropico.
+
+Se il modello non ha uno scheletro riconoscibile, viene portato in giro «rigido» ma funziona comunque. Nel browser l'avatar scelto viene **ricordato** per la volta successiva.
+
+> 🔒 `avatars/avatar.glb` è escluso da git (`.gitignore`): se è il tuo volto, resta solo sul tuo PC anche se il repository è pubblico.
 
 ## 🚀 Zeph assistente: apre app, siti, messaggi e promemoria
 
