@@ -1,4 +1,4 @@
-# 🚀 DEEP FIELD — MK-XXVI
+# 🚀 DEEP FIELD — MK-XXVII
 
 Gioco spaziale 3D completo in un singolo file HTML. Niente da installare: apri `index.html` in un browser moderno (serve internet per le librerie Three.js/PeerJS da CDN) e gioca.
 
@@ -30,13 +30,14 @@ Gioco spaziale 3D completo in un singolo file HTML. Niente da installare: apri `
 | ESC | pausa / impostazioni (qualità, audio, salvataggio) |
 | P | modalità foto (nasconde l'HUD) |
 
-### A piedi sulla superficie (prima persona)
+### A piedi sulla superficie (prima o terza persona)
 | Tasto | Azione |
 |---|---|
 | CLIC | blocca il mouse / **spara col blaster** |
 | WASD | cammina |
 | SHIFT | corri |
 | SPAZIO | salta (gravità diversa su ogni mondo!) |
+| C | **visuale in terza persona**: vedi il tuo astronauta 3D che cammina, corre e salta |
 | F | raccogli minerali / manufatti / **parla con NPC** / accetta missioni |
 | Q | **portal gun**: apri un portale → attraversalo e finisci **in un'altra dimensione!** |
 | B | torna alla nave / torna a casa dalla dimensione |
@@ -77,7 +78,14 @@ Gioco spaziale 3D completo in un singolo file HTML. Niente da installare: apri `
 - **Nemici**: droni pirata, **intercettori veloci**, **mine a ricerca** che ti inseguono ed esplodono (abbattile prima!), corvette miniboss, ammiraglia boss — le imboscate sono più frequenti e numerose nei sistemi ad alto PERICOLO
 - **Città aliene ovunque**: oltre a Nyx Prime, le metropoli al neon possono sorgere su mondi di cristallo, tossici, ghiacciati e desertici
 - **🌿 Erba 3D** sui mondi con vegetazione (qualità ALTA) e **texture planetarie a risoluzione maggiorata**
-- **Grafica**: PBR con riflessi, ombre dinamiche, normal map, raggi solari volumetrici, lens flare, tunnel iperspaziale, luna, illuminazione notturna, FXAA, aberrazione cromatica
+- **🎨 Grafica "vero 3D" (MK-XXVII)**:
+  - **Personaggi articolati**: romani, centurioni con elmo e corazza di bronzo, mercanti, turisti, lo scienziato col camice e la portal gun in mano e il nipote — tutti con spalle, gomiti, ginocchia, mani, volto (occhi, naso, orecchie, sopracciglia), capelli e vestiti; camminata animata con piegamento di gomiti e ginocchia
+  - **Avatar astronauta** in terza persona con casco a visiera dorata e zaino vitale
+  - **Nave scolpita**: fusoliera a ogiva tornita, ali a freccia estruse con smussi, derive gemelle inclinate, gondole motore con ugelli incandescenti, calotta in vetro con il pilota dentro e **pannellatura procedurale** (giunzioni, rivetti, griglie, portelli, stencil) con mappe di colore, rugosità e rilievo
+  - **Cielo atmosferico**: foschia all'orizzonte, alone del sole, tramonti arancioni verso il sole e **nuvole procedurali animate** illuminate dal lato del sole (colorate in base all'atmosfera di ogni pianeta)
+  - **Terreno realistico**: roccia stratificata proiettata in triplanare sui pendii, variazione di colore su larga scala anti-ripetizione e rilievo di dettaglio
+  - **Sampietrini veri** a Roma con rilievo in normal map, **erba a fili affusolati**, **portale** a vortice leggibile anche di giorno, particelle morbide (niente più quadrati)
+  - PBR con riflessi, ombre dinamiche, raggi solari volumetrici, lens flare, tunnel iperspaziale, luna, illuminazione notturna, FXAA, aberrazione cromatica
 - **Audio 100% procedurale** (WebAudio): motore, laser, esplosioni, warp, ambiente
 - **Salvataggio automatico** dei progressi (crediti, potenziamenti, missili, missioni) nel browser: riprendi da dove avevi lasciato
 - **Menu di pausa** (ESC) con qualità grafica regolabile (per PC meno potenti), audio e modalità foto
@@ -93,7 +101,7 @@ Usa il servizio gratuito PeerJS. Per un server proprio: `index.html?ph=tuoserver
 
 ## 🛠️ Debug (console del browser)
 
-`DF.gotoPlanet(n)` · `DF.land()` · `DF.takeoff()` · `DF.spawnCorvette()` · `DF.spawnDread()` · `DF.spawnMines(5)` · `DF.addCredits(500)` · `DF.openHangar()` · `DF.setShip(0..3)` · `DF.shipsInfo()` · `DF.offers()` · `DF.accept(0)` · `DF.findBH()` · `DF.tpBH()` · `DF.tpWreck()` · `DF.setTime(0.8)` (0=notte, 0.25=alba) · `DF.talkGiver()` · `DF.state()` · `DF.net()`
+`DF.gotoPlanet(n)` · `DF.land()` · `DF.takeoff()` · `DF.spawnCorvette()` · `DF.spawnDread()` · `DF.spawnMines(5)` · `DF.addCredits(500)` · `DF.openHangar()` · `DF.setShip(0..3)` · `DF.shipsInfo()` · `DF.offers()` · `DF.accept(0)` · `DF.findBH()` · `DF.tpBH()` · `DF.tpWreck()` · `DF.setTP(true)` · `DF.orbit(2.3,10,3)` (vista orbitale della nave) · `DF.faceDuo()` · `DF.setTime(0.8)` · `DF.talkGiver()` · `DF.state()` · `DF.net()`
 
 ---
 
