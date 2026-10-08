@@ -43,6 +43,7 @@ import android.view.WindowManager;
 import android.view.animation.AccelerateInterpolator;
 import android.webkit.ConsoleMessage;
 import android.webkit.JavascriptInterface;
+import android.webkit.RenderProcessGoneDetail;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
@@ -576,6 +577,17 @@ public class ZephService extends Service {
         @Override
         public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest req) { return true; }
 
+        // se Android chiude il motore della pagina (poca memoria), Zeph ricompare da solo
+        @Override
+        public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+            Log.w(TAG, "WebView chiusa da Android, la ricreo");
+            main.post(() -> {
+                destroyOverlay();
+                if (running) createOverlay();
+            });
+            return true;
+        }
+
         private Map<String, String> headers() {
             Map<String, String> h = new HashMap<>();
             h.put("Access-Control-Allow-Origin", "*");
@@ -643,7 +655,7 @@ public class ZephService extends Service {
             }
         }
 
-        @JavascriptInterface public void notify(String text) { main.post(() -> reminder(text)); }
+        @JavascriptInterface public void remind(String text) { main.post(() -> reminder(text)); }
 
         @JavascriptInterface public void openChat() { main.post(() -> ZephService.this.openChat(false)); }
     }

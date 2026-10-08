@@ -297,7 +297,7 @@ function botRespond(text) {
     setTimeout(() => {
       anim.startAction('jump');
       speak('Ehi! Promemoria: ' + r.text);
-      if (A) A.notify(r.text);
+      if (A) A.remind(r.text);
     }, r.seconds * 1000);
   }
   if (out.music === 'on') startMusic();
