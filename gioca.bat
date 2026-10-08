@@ -1,6 +1,6 @@
 @echo off
-REM Avvia il gioco direttamente dal file .py (serve Python)
+REM Avvia il gioco 3D direttamente dal file .py (serve Python)
 cd /d "%~dp0"
-python -c "import pygame" 2>nul || python -m pip install pygame
-python rick_and_morty.py
+python -c "import panda3d, numpy" 2>nul || python -m pip install panda3d numpy
+python rick_morty_3d.py
 if errorlevel 1 pause
