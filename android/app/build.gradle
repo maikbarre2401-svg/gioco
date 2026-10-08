@@ -1,0 +1,48 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'it.zeph.compagno'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'it.zeph.compagno'
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    // le pagine web e le librerie 3D vengono copiate dal resto del progetto
+    sourceSets {
+        main {
+            assets.srcDirs += layout.buildDirectory.dir('zephWeb').get().asFile
+        }
+    }
+}
+
+// Copia nell'app: la pagina dell'overlay (android/web), il motore 3D e,
+// se passato con -PzephAvatar=percorso/avatar.glb, il tuo avatar.
+def zephWebOut = layout.buildDirectory.dir('zephWeb').get().asFile
+def repoRoot = rootProject.file('..')
+tasks.register('zephWebAssets', Sync) {
+    from(new File(repoRoot, 'three.min.js'))
+    from(new File(repoRoot, 'gltf-loader.js'))
+    from(new File(repoRoot, 'zeph-core.js'))
+    from(rootProject.file('web'))
+    def av = project.findProperty('zephAvatar')
+    if (av) {
+        from(file(av)) { rename { 'avatar.glb' } }
+    }
+    into zephWebOut
+}
+preBuild.dependsOn 'zephWebAssets'
+tasks.configureEach { t ->
+    if (t.name.startsWith('merge') && t.name.endsWith('Assets')) t.dependsOn 'zephWebAssets'
+}

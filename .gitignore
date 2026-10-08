@@ -1,2 +1,10 @@
 # avatar personale: resta solo sul tuo PC (il repository è pubblico)
 avatars/avatar.glb
+# strumenti e file generati per Android (crea_apk.py)
+android/.strumenti/
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+Zeph.apk
+__pycache__/
