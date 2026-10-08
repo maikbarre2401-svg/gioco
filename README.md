@@ -4,6 +4,7 @@ Zeph è un personaggio 3D a corpo intero che **cammina, salta, balla e ti parla 
 
 1. **🖥️ Sul desktop (stile Desktop Goose)** — cammina sul bordo dello schermo, sopra le tue finestre
 2. **🌐 Nel browser** — in un mondo naturale con colline, montagne, alberi e farfalle
+3. **📱 Sul telefono Android** — sopra tutte le app, con la notifica fissa per controllarlo: istruzioni in [`android/README.md`](android/README.md), APK pronto nella [release «android»](https://github.com/maikbarre2401-svg/gioco/releases/tag/android)
 
 ## 🧑 Usa il TUO avatar (.glb)
 
