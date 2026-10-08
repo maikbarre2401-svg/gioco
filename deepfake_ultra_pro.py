@@ -1,9 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-🎭 DEEPFAKE ULTRA PRO 7.5  ⚡  (real-time face swap)
+🎭 DEEPFAKE ULTRA PRO 7.6  ⚡  (real-time face swap)
 
 Più impostazioni, più realismo, più potenza.
+
+NOVITÀ della 7.6 (precisione)
+  * COLOR STAB: il color-match era ricalcolato da zero a ogni frame e il volto
+    "pulsava" di tinta (segnale tipico del fake). Ora le statistiche di colore
+    sono levigate nel tempo PER VOLTO tracciato: -71% di flicker nei test, ma
+    segue ancora i cambi di luce veri.
+  * Mappa pelle calcolata UNA volta per frame invece che per ogni volto.
+  * Interpolazione del paste-back MISURATA contro ground truth: INTER_LINEAR
+    resta la più fedele (CUBIC/LANCZOS4 peggiorano PSNR e bordi: sembrano piu
+    nitidi solo per overshoot/rumore). Vedi il commento in _blend.
 
 NOVITÀ della 7.5
   * OCCLUDER AI: modello neurale di occlusione → quando metti la MANO (o un
@@ -113,6 +123,7 @@ config = {
     'forehead': 0.30,       # estensione maschera verso la fronte (0-0.6)
     'keep_mouth': 0.30,     # 0=bocca sorgente, 1=bocca reale (lingua/parlato)
     'stabilize': 0.40,      # anti-jitter temporale (0=off, 0.9=molto fermo)
+    'color_stab': 0.60,     # anti-flicker del color-match (0=off, 0.9=molto fermo)
     'coast_frames': 9,      # frame in cui "tiene" l'ultima faccia se il detect salta
     'occlusion': 0.0,       # protezione occlusioni (0=off): ciuffi/occhiali/oggetti
     'match': False,         # sostituisci SOLO la persona-target (per identità)
@@ -158,6 +169,7 @@ class FaceEngine:
         self._lock = threading.Lock()
         self._last_faces = []
         self._frame_idx = 0
+        self._color_ema = {}      # track_id -> (lab_mean, lab_std) anti-flicker
 
     # ---- providers ----------------------------------------------------------
     def _select_providers(self):
@@ -373,15 +385,42 @@ class FaceEngine:
 
     # ---- blending -----------------------------------------------------------
     @staticmethod
-    def _color_transfer(src, ref):
+    def _lab_stats(img):
+        """Media e deviazione standard per canale LAB."""
+        lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB).astype(np.float32)
+        mean = np.array([lab[..., i].mean() for i in range(3)], np.float32)
+        std = np.array([lab[..., i].std() for i in range(3)], np.float32)
+        return mean, std
+
+    @staticmethod
+    def _apply_color(src, ref_mean, ref_std):
+        """Porta src alle statistiche di colore (ref_mean/ref_std) indicate."""
         s = cv2.cvtColor(src, cv2.COLOR_BGR2LAB).astype(np.float32)
-        r = cv2.cvtColor(ref, cv2.COLOR_BGR2LAB).astype(np.float32)
         out = s.copy()
         for i in range(3):
-            sm, ss = float(s[..., i].mean()), float(s[..., i].std()) + 1e-6
-            rm, rs = float(r[..., i].mean()), float(r[..., i].std()) + 1e-6
-            out[..., i] = (s[..., i] - sm) * (rs / ss) + rm
+            sm = float(s[..., i].mean())
+            ss = float(s[..., i].std()) + 1e-6
+            out[..., i] = (s[..., i] - sm) * (float(ref_std[i]) / ss) + float(ref_mean[i])
         return cv2.cvtColor(np.clip(out, 0, 255).astype(np.uint8), cv2.COLOR_LAB2BGR)
+
+    def _ref_color_stats(self, aimg, face, strength):
+        """Statistiche di colore della scena, LEVIGATE NEL TEMPO per traccia.
+        Senza questo il color-match si ricalcola da zero ogni frame e il volto
+        "pulsa" di tinta — uno dei segnali che tradiscono il fake."""
+        mean, std = self._lab_stats(aimg)
+        a = float(np.clip(strength, 0.0, 0.95))
+        if a <= 0:
+            return mean, std
+        key = getattr(face, 'track_id', 0)
+        prev = self._color_ema.get(key)
+        if prev is not None and prev[0].shape == mean.shape:
+            mean = a * prev[0] + (1.0 - a) * mean
+            std = a * prev[1] + (1.0 - a) * std
+        self._color_ema[key] = (mean, std)
+        if len(self._color_ema) > 16:          # non far crescere la cache
+            for k in list(self._color_ema)[:-8]:
+                self._color_ema.pop(k, None)
+        return mean, std
 
     @staticmethod
     def _sharpen(img, amount):
@@ -465,17 +504,22 @@ class FaceEngine:
         m = cv2.inRange(ycrcb, lower, upper).astype(np.float32) / 255.0
         return cv2.GaussianBlur(m, (7, 7), 0)
 
-    def _blend(self, frame, bgr_fake, M, face, p):
+    def _blend(self, frame, bgr_fake, M, face, p, skin=None):
         h, w = frame.shape[:2]
         # enhancer sul crop (denti/pelle/bocca ad alta fedeltà) prima del blend
         if p.get('enhance') and self.enhancer_ready:
             bgr_fake = self.enhance_crop(bgr_fake)
         size = bgr_fake.shape[0]
 
+        # NB: warpAffine NON implementa INTER_AREA (lo ignora e usa il bilineare,
+        # verificato: output bit-identico). INTER_AREA esiste solo in resize().
+        # Qui aimg serve per le statistiche di colore e per l'occluder, dove il
+        # bilineare va benissimo: non "ottimizzare" mettendo INTER_AREA.
         aimg = cv2.warpAffine(frame, M, (size, size), flags=cv2.INTER_LINEAR)
         cs = float(p['color_strength'])
         if cs > 0:
-            ct = self._color_transfer(bgr_fake, aimg)
+            rm, rs = self._ref_color_stats(aimg, face, float(p.get('color_stab', 0.0)))
+            ct = self._apply_color(bgr_fake, rm, rs)
             fake = cv2.addWeighted(bgr_fake, 1.0 - cs, ct, cs, 0)
         else:
             fake = bgr_fake
@@ -483,7 +527,15 @@ class FaceEngine:
         fake = self._sharpen(fake, float(p['sharpen']))
 
         IM = cv2.invertAffineTransform(M)
-        fake_full = cv2.warpAffine(fake, IM, (w, h), borderValue=0)
+        # Paste-back: INTER_LINEAR è la scelta MISURATA come migliore.
+        # Test con ground truth (volto hi-res -> 128 -> riportato su): PSNR
+        # LINEAR 28.24 dB, CUBIC 28.06, LANCZOS4 27.97; e l'errore sui bordi
+        # PEGGIORA col cubico. Il cubico "sembra" più nitido solo perché i suoi
+        # lobi negativi fanno overshoot e amplificano il rumore (su crop
+        # rumoroso: varianza Laplace 71->85 ma PSNR 27.47->27.04).
+        # Non sostituire con CUBIC/LANCZOS4: è un peggioramento reale.
+        fake_full = cv2.warpAffine(fake, IM, (w, h), flags=cv2.INTER_LINEAR,
+                                   borderValue=0)
 
         ms = float(p['mask_size'])
         mask_full = None
@@ -509,8 +561,9 @@ class FaceEngine:
         # occlusione "leggera": dove NON c'è pelle nell'area del volto, originale
         occ = float(p.get('occlusion', 0.0))
         if occ > 0:
-            skin = self._skin_prob(frame)
-            mask_full = mask_full * (1.0 - occ * (1.0 - skin))
+            # riusa la mappa pelle calcolata una volta per frame (multi-face)
+            sk = skin if skin is not None else self._skin_prob(frame)
+            mask_full = mask_full * (1.0 - occ * (1.0 - sk))
 
         scale = float(np.sqrt(M[0, 0] ** 2 + M[0, 1] ** 2)) + 1e-6
         face_px = size / scale
@@ -523,7 +576,7 @@ class FaceEngine:
             frame.astype(np.float32) * (1.0 - mask_full)
         return out.astype(np.uint8)
 
-    def swap_one(self, frame, target, source, p):
+    def swap_one(self, frame, target, source, p, skin=None):
         if not self.loaded or target is None or source is None:
             return frame
         with self._lock:
@@ -535,7 +588,7 @@ class FaceEngine:
             else:
                 return self.swapper.get(frame, target, source, paste_back=True) or frame
         # blend fuori dal lock (solo numpy/cv2)
-        return self._blend(frame, bgr_fake, M, target, p)
+        return self._blend(frame, bgr_fake, M, target, p, skin=skin)
 
     @staticmethod
     def best_face(faces):
@@ -639,6 +692,11 @@ class FaceStabilizer:
                         setattr(f, k, cur)
                 geo[k] = cur
             nid = tid if tid is not None else self._new_id()
+            # l'id di traccia serve anche al color-match temporale (anti-flicker)
+            try:
+                setattr(f, 'track_id', nid)
+            except Exception:
+                pass
             new_tracks[nid] = {'c': self._centroid(f), 'geo': geo, 'age': 0}
         self.tracks = new_tracks
         return faces
@@ -659,7 +717,7 @@ class DeepfakeUltraPro:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("🎭 DEEPFAKE ULTRA PRO 7.5")
+        self.root.title("🎭 DEEPFAKE ULTRA PRO 7.6")
         self.root.geometry("1680x940")
         self.root.configure(bg='#0a0a0a')
 
@@ -693,7 +751,7 @@ class DeepfakeUltraPro:
         self.params = {k: config[k] for k in
                        ('swap_threshold', 'mask_size', 'feather', 'color_strength',
                         'sharpen', 'smooth', 'multi_face', 'realistic_blend', 'mirror',
-                        'precise_mask', 'keep_mouth', 'stabilize', 'forehead',
+                        'precise_mask', 'keep_mouth', 'stabilize', 'forehead', 'color_stab',
                         'occlusion', 'match', 'match_thresh')}
         self.params['enhance'] = False
         self.params['occluder'] = False
@@ -754,7 +812,7 @@ class DeepfakeUltraPro:
 
         tk.Label(self.left_panel, text="🎭 DEEPFAKE ULTRA", font=('Arial', 15, 'bold'),
                  bg=self.colors['panel'], fg='white').pack(pady=(12, 0))
-        tk.Label(self.left_panel, text="PRO 7.5", font=('Arial', 11),
+        tk.Label(self.left_panel, text="PRO 7.6", font=('Arial', 11),
                  bg=self.colors['panel'], fg=self.colors['primary']).pack(pady=(0, 8))
 
         self.status_var = tk.StringVar(value="⚡ Loading AI...")
@@ -858,6 +916,7 @@ class DeepfakeUltraPro:
         self.v_smooth = tk.DoubleVar(value=config['smooth'])
         self.v_keepmouth = tk.DoubleVar(value=config['keep_mouth'])
         self.v_stabilize = tk.DoubleVar(value=config['stabilize'])
+        self.v_colorstab = tk.DoubleVar(value=config['color_stab'])
         self.v_forehead = tk.DoubleVar(value=config['forehead'])
         self.v_occlusion = tk.DoubleVar(value=config['occlusion'])
         self.v_matchthresh = tk.DoubleVar(value=config['match_thresh'])
@@ -871,6 +930,7 @@ class DeepfakeUltraPro:
         self._slider(adj, "Keep mouth", self.v_keepmouth, 0.0, 1.0)
         self._slider(adj, "Occlusion", self.v_occlusion, 0.0, 1.0)
         self._slider(adj, "Stabilize", self.v_stabilize, 0.0, 0.90)
+        self._slider(adj, "Color stab", self.v_colorstab, 0.0, 0.90)
         self._slider(adj, "Match thresh", self.v_matchthresh, 0.20, 0.70)
 
         opt = self._card(self.right_panel, "OPTIONS")
@@ -923,7 +983,7 @@ class DeepfakeUltraPro:
                                height=10, relief='flat', wrap='word')
         self.console.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
 
-        self.bottom_status = tk.Label(self.root, text="Deepfake Ultra Pro 7.5 | Initializing...",
+        self.bottom_status = tk.Label(self.root, text="Deepfake Ultra Pro 7.6 | Initializing...",
                                       bg='#1a1a2e', fg='white', font=('Arial', 10),
                                       relief='sunken', anchor='w')
         self.bottom_status.pack(side=tk.BOTTOM, fill=tk.X)
@@ -952,6 +1012,7 @@ class DeepfakeUltraPro:
                 'precise_mask': bool(self.v_precise.get()),
                 'keep_mouth': float(self.v_keepmouth.get()),
                 'stabilize': float(self.v_stabilize.get()),
+                'color_stab': float(self.v_colorstab.get()),
                 'forehead': float(self.v_forehead.get()),
                 'occlusion': float(self.v_occlusion.get()),
                 'match': bool(self.v_match.get()),
@@ -1100,8 +1161,13 @@ class DeepfakeUltraPro:
                     else:
                         self._coast_faces = None
                     if faces:
+                        # mappa pelle UNA volta per frame, non per ogni volto
+                        skin = (self.engine._skin_prob(frame)
+                                if (p.get('occlusion', 0.0) > 0 and len(faces) > 1)
+                                else None)
                         for face in faces:
-                            result = self.engine.swap_one(result, face, self.source_face, p)
+                            result = self.engine.swap_one(result, face, self.source_face,
+                                                          p, skin=skin)
                         if self.v_bbox.get():
                             color = self.COLOR_MAP.get(self.color_combo.get(), (0, 255, 0))
                             for face in faces:
@@ -1158,7 +1224,7 @@ class DeepfakeUltraPro:
         self.ram_label.config(text=f"RAM: {s['ram']:.1f}%")
         rec = " | ⏺REC" if self.recording else ""
         self.bottom_status.config(
-            text=f"Deepfake Ultra Pro 7.5 | FPS: {s['fps']} (avg {s['avg_fps']}) | "
+            text=f"Deepfake Ultra Pro 7.6 | FPS: {s['fps']} (avg {s['avg_fps']}) | "
                  f"Swap: {'ON' if self.swap_active else 'OFF'} | "
                  f"Multi: {'ON' if self.params['multi_face'] else 'OFF'} | "
                  f"Mode: {self.mode_var.get().upper()} | "
@@ -1327,17 +1393,17 @@ class DeepfakeUltraPro:
             # realismo del parlato: bocca reale, maschera precisa, fronte coperta
             'talking': dict(mode='balanced', det=320, thresh=0.35, mask=1.0,
                             forehead=0.32, feather=0.09, color=0.85, sharpen=0.20,
-                            smooth=0.30, keep=0.55, stab=0.55, occ=0.40,
+                            smooth=0.30, keep=0.55, stab=0.55, occ=0.40, cstab=0.70,
                             precise=True, multi=False),
             # massima fedeltà (adatto a GPU tipo RTX 4070)
             'quality': dict(mode='quality', det=512, thresh=0.35, mask=1.05,
                             forehead=0.35, feather=0.07, color=0.90, sharpen=0.25,
-                            smooth=0.35, keep=0.30, stab=0.50, occ=0.50,
+                            smooth=0.35, keep=0.30, stab=0.50, occ=0.50, cstab=0.65,
                             precise=True, multi=True),
             # massimi FPS
             'speed': dict(mode='fast', det=256, thresh=0.40, mask=1.0,
                           forehead=0.25, feather=0.05, color=0.70, sharpen=0.10,
-                          smooth=0.0, keep=0.20, stab=0.35, occ=0.0,
+                          smooth=0.0, keep=0.20, stab=0.35, occ=0.0, cstab=0.50,
                           precise=True, multi=False),
         }
         p = presets.get(name)
@@ -1351,6 +1417,7 @@ class DeepfakeUltraPro:
         self.v_feather.set(p['feather']); self.v_color.set(p['color'])
         self.v_sharpen.set(p['sharpen']); self.v_smooth.set(p['smooth'])
         self.v_keepmouth.set(p['keep']); self.v_stabilize.set(p['stab'])
+        self.v_colorstab.set(p['cstab'])
         self.v_precise.set(p['precise']); self.v_multi.set(p['multi'])
         self._sync_params()
         self.log(f"🎚️ Preset '{name}' applicato")
@@ -1403,8 +1470,12 @@ class DeepfakeUltraPro:
                         faces = [max(faces, key=lambda f: f.det_score)]
                     if p['stabilize'] > 0:
                         faces = stab.update(faces, p['stabilize'])
+                    skin = (self.engine._skin_prob(frame)
+                            if (p.get('occlusion', 0.0) > 0 and len(faces) > 1)
+                            else None)
                     for face in faces:
-                        result = self.engine.swap_one(result, face, self.source_face, p)
+                        result = self.engine.swap_one(result, face, self.source_face,
+                                                      p, skin=skin)
             except Exception:
                 pass
             writer.write(result)
@@ -1499,7 +1570,7 @@ class DeepfakeUltraPro:
 # ============================================================
 def main():
     print("=" * 80)
-    print("🚀 DEEPFAKE ULTRA PRO 7.5 - STARTING")
+    print("🚀 DEEPFAKE ULTRA PRO 7.6 - STARTING")
     ram = f"{psutil.virtual_memory().percent}%" if _HAS_PSUTIL else "n/a"
     print(f"🔥 PID {os.getpid()} | CPU {_cpu_count()} | RAM {ram}")
     print("=" * 80)

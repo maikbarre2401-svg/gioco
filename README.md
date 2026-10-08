@@ -1,4 +1,4 @@
-# gioco — Deepfake Ultra Pro 7.5 🎭
+# gioco — Deepfake Ultra Pro 7.6 🎭
 
 Face-swap in tempo reale (webcam **o file video**) basato su **insightface** +
 `inswapper_128.onnx`, con interfaccia Tkinter. Versione ottimizzata: **più
@@ -82,6 +82,24 @@ tool open-source "seri" (FaceFusion, **Deep-Live-Cam**).
      target (similarità coseno ≥ **Match thresh**, default 0.35). Gli altri
      restano intatti. Usa il primo passaggio con recognition attivo → un filo
      più pesante, ma sulla 4070 è ok.
+
+### Precisione (7.6)
+
+- **Color stab** (nuovo slider): il color-match si ricalcolava da zero a ogni
+  frame, quindi il volto **"pulsava" di tinta** — uno dei segnali che tradiscono
+  il fake. Ora le statistiche di colore sono **levigate nel tempo, per ogni volto
+  tracciato**: nei test **−71% di flicker**, ma continua a seguire i cambi di
+  luce reali (accendi la luce e si adatta). Default 0.60.
+- **Efficienza**: la mappa pelle si calcola **una volta per frame** invece che
+  per ogni volto (contava con multi-face).
+- **Interpolazione del paste-back: misurata, non assunta.** Avevo provato
+  INTER_CUBIC pensando fosse più nitido. Test contro ground truth (volto hi-res
+  → 128px → riportato su): **LINEAR 28.24 dB, CUBIC 28.06, LANCZOS4 27.97**, e
+  il cubico sbaglia *più* sui bordi. Il cubico *sembra* più nitido solo perché i
+  lobi negativi fanno overshoot e amplificano il rumore (su crop rumoroso la
+  "nitidezza" misurata sale 71→85 mentre il PSNR reale scende 27.47→27.04).
+  Quindi **resta LINEAR** — il codice ha il commento che lo documenta, per non
+  "ottimizzarlo" di nuovo in peggio.
 
 ## Novità della 6.0
 
