@@ -4,7 +4,19 @@
    cammina dentro, sopra le tue finestre, come Desktop Goose. */
 'use strict';
 const { app, BrowserWindow, Tray, Menu, ipcMain, screen, nativeImage, shell } = require('electron');
-const { spawn } = require('child_process');
+const { spawn: rawSpawn } = require('child_process');
+
+// avvia un programma senza mai far chiudere Zeph se manca (es. playerctl su Linux)
+function spawn(cmd, args, opts) {
+  try {
+    const p = rawSpawn(cmd, args, opts);
+    p.on('error', () => {});
+    p.unref();
+    return p;
+  } catch (e) {
+    return null;
+  }
+}
 const path = require('path');
 
 // trasparenza su Linux
@@ -169,6 +181,19 @@ app.whenReady().then(() => {
         else if (process.platform === 'darwin') spawn('open', ['-a', cmd], { detached: true, stdio: 'ignore' });
         else spawn(cmd, [], { detached: true, stdio: 'ignore' });
       } catch (err) { /* app non disponibile su questo sistema */ }
+    } else if (a.type === 'media' && ['play', 'pause', 'next', 'prev'].indexOf(a.key) !== -1) {
+      // tasti multimediali: comandano Spotify, YouTube nel browser, il lettore di Windows…
+      try {
+        if (process.platform === 'win32') {
+          const code = a.key === 'next' ? 176 : a.key === 'prev' ? 177 : 179;
+          spawn('powershell', ['-NoProfile', '-Command',
+            '$w=New-Object -ComObject WScript.Shell; $w.SendKeys([char]' + code + ')'],
+            { detached: true, stdio: 'ignore' });
+        } else if (process.platform === 'linux') {
+          const cmd = { play: 'play', pause: 'pause', next: 'next', prev: 'previous' }[a.key];
+          spawn('playerctl', [cmd], { detached: true, stdio: 'ignore' });
+        }
+      } catch (err) { /* niente tasti multimediali */ }
     } else if (a.type === 'volume' && ['up', 'down', 'mute'].indexOf(a.dir) !== -1) {
       // tasti multimediali di sistema: sicuro e reversibile
       try {

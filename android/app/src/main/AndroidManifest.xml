@@ -12,6 +12,8 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- la pagina 3D gira in una WebView (nessun dato esce dal telefono) -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- sveglie e timer veri nell'app Orologio -->
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
 
     <!-- app che Zeph sa aprire (da Android 11 vanno dichiarate) -->
     <queries>
@@ -91,6 +93,33 @@
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Compagno animato che resta visibile sopra le altre app" />
+        </service>
+
+        <!-- «Condividi → Zeph»: legge ad alta voce il testo condiviso -->
+        <activity
+            android:name=".ShareActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:label="Leggi con Zeph"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
+
+        <!-- pulsante «Zeph» nelle Impostazioni rapide -->
+        <service
+            android:name=".ZephTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_stat_zeph"
+            android:label="Zeph"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
         </service>
 
         <receiver

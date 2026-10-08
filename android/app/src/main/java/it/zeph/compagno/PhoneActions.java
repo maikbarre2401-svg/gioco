@@ -4,10 +4,15 @@ import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.hardware.camera2.CameraAccessException;
+import android.hardware.camera2.CameraCharacteristics;
+import android.hardware.camera2.CameraManager;
 import android.media.AudioManager;
 import android.net.Uri;
+import android.provider.AlarmClock;
 import android.provider.MediaStore;
 import android.provider.Settings;
+import android.view.KeyEvent;
 
 import org.json.JSONObject;
 
@@ -26,8 +31,77 @@ final class PhoneActions {
             case "appUrl": return openAppUrl(c, o.optString("url"));
             case "app": return openApp(c, o.optString("id"));
             case "volume": return volume(c, o.optString("dir"));
+            case "torch": return torch(c, o.optBoolean("on", true));
+            case "alarm": return alarm(c, o.optInt("h", -1), o.optInt("m", 0));
+            case "timer": return timer(c, o.optInt("seconds", 0));
+            case "dial": return dial(c, o.optString("number", ""));
+            case "media": return media(c, o.optString("key"));
             default: return false;
         }
+    }
+
+    /** Torcia: non serve il permesso della fotocamera per accenderla. */
+    private static boolean torch(Context c, boolean on) {
+        CameraManager cm = c.getSystemService(CameraManager.class);
+        if (cm == null) return false;
+        try {
+            for (String id : cm.getCameraIdList()) {
+                CameraCharacteristics ch = cm.getCameraCharacteristics(id);
+                Boolean flash = ch.get(CameraCharacteristics.FLASH_INFO_AVAILABLE);
+                Integer facing = ch.get(CameraCharacteristics.LENS_FACING);
+                if (Boolean.TRUE.equals(flash) && facing != null && facing == CameraCharacteristics.LENS_FACING_BACK) {
+                    cm.setTorchMode(id, on);
+                    return true;
+                }
+            }
+        } catch (CameraAccessException | IllegalArgumentException | SecurityException e) {
+            return false;
+        }
+        return false;
+    }
+
+    /** Sveglia vera nell'app Orologio del telefono. */
+    private static boolean alarm(Context c, int h, int m) {
+        if (h < 0 || h > 23 || m < 0 || m > 59) return false;
+        Intent i = new Intent(AlarmClock.ACTION_SET_ALARM)
+            .putExtra(AlarmClock.EXTRA_HOUR, h)
+            .putExtra(AlarmClock.EXTRA_MINUTES, m)
+            .putExtra(AlarmClock.EXTRA_MESSAGE, "Sveglia di Zeph")
+            .putExtra(AlarmClock.EXTRA_SKIP_UI, true);
+        return start(c, i);
+    }
+
+    /** Timer vero nell'app Orologio (suona anche se Zeph è chiuso). */
+    private static boolean timer(Context c, int seconds) {
+        if (seconds <= 0 || seconds > 24 * 3600) return false;
+        Intent i = new Intent(AlarmClock.ACTION_SET_TIMER)
+            .putExtra(AlarmClock.EXTRA_LENGTH, seconds)
+            .putExtra(AlarmClock.EXTRA_MESSAGE, "Timer di Zeph")
+            .putExtra(AlarmClock.EXTRA_SKIP_UI, true);
+        return start(c, i);
+    }
+
+    /** Apre il telefono col numero già scritto: la chiamata la fai tu. */
+    private static boolean dial(Context c, String number) {
+        String n = number.replaceAll("[^0-9+]", "");
+        return start(c, new Intent(Intent.ACTION_DIAL, n.isEmpty() ? null : Uri.parse("tel:" + n)));
+    }
+
+    /** Tasti multimediali: comandano Spotify, YouTube Music e le altre app musicali. */
+    private static boolean media(Context c, String key) {
+        AudioManager am = c.getSystemService(AudioManager.class);
+        if (am == null) return false;
+        int code;
+        switch (key) {
+            case "play": code = KeyEvent.KEYCODE_MEDIA_PLAY; break;
+            case "pause": code = KeyEvent.KEYCODE_MEDIA_PAUSE; break;
+            case "next": code = KeyEvent.KEYCODE_MEDIA_NEXT; break;
+            case "prev": code = KeyEvent.KEYCODE_MEDIA_PREVIOUS; break;
+            default: return false;
+        }
+        am.dispatchMediaKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, code));
+        am.dispatchMediaKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, code));
+        return true;
     }
 
     private static boolean start(Context c, Intent i) {

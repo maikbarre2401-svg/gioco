@@ -1433,6 +1433,22 @@ function updateBubblePosition() {
 function botRespond(text) {
   const out = ZephCore.botReply(text, botCtx);
   if (!out) return;
+  if (out.phoneOnly) {
+    out.say = 'Questa la so fare sul telefono! Installa l’app Zeph per Android e chiedimelo lì.';
+  }
+  if (out.media) out.say = 'Dal browser non posso comandare la musica delle altre app: chiedimelo dall’app sul PC o sul telefono!';
+  if (out.weatherQuery) {
+    speak(ZephCore.pick(['Un attimo che guardo fuori…', 'Controllo il cielo…']));
+    ZephCore.weatherReport(out.weatherQuery).then(r => {
+      // il mio mondo si adegua al meteo vero
+      let extra = '';
+      if (r.kind === 'rain') { setWeather('rain'); extra = ' Ho fatto piovere anche qui!'; }
+      else if (r.kind === 'snow') { setWeather('snow'); extra = ' E ho fatto nevicare anche qui!'; }
+      else if (r.kind === 'clear' && env.weather !== 'clear') { setWeather('clear'); extra = ' Qui ho fatto tornare il sole!'; }
+      speak(r.say + extra);
+    });
+    return;
+  }
 
   if (out.stop) { state.wander = false; state.target = null; syncWanderChip(); }
   if (out.wander || out.follow) { state.wander = true; syncWanderChip(); }

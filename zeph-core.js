@@ -183,6 +183,7 @@ function Animator(avatar) {
     lookYaw: 0, lookPitch: 0, lookTYaw: 0, lookTPitch: 0, nextLookAt: 2,
     eyeScale: 1, pupilX: 0, lastRootY: 0,
     flying: false, flyW: 0,
+    sleeping: false, sleepW: 0,
     // sguardo verso un punto (impostato dall'host ogni frame, in radianti
     // nello spazio del personaggio) e sua versione smussata
     gazeYaw: 0, gazePitch: 0, gazeW: 0, gazeYawS: 0, gazePitchS: 0, gazeWS: 0,
@@ -202,6 +203,8 @@ Animator.prototype.update = function (t, dt) {
   s.gazeYawS += (Math.max(-1.1, Math.min(1.1, s.gazeYaw || 0)) - s.gazeYawS) * gk;
   s.gazePitchS += (Math.max(-0.5, Math.min(0.5, s.gazePitch || 0)) - s.gazePitchS) * gk;
   s.gazeWS += (clamp01(s.gazeW || 0) - s.gazeWS) * Math.min(1, dt * 3);
+  s.sleepW += ((s.sleeping ? 1 : 0) - s.sleepW) * Math.min(1, dt * 1.2);
+  if (s.sleepW > 0.001) s.gazeWS *= 1 - s.sleepW;
   const walkW = clamp01(s.speedRatio);
   s.talkW += ((s.talking ? 1 : 0) - s.talkW) * Math.min(1, dt * 5);
 
@@ -221,7 +224,7 @@ Animator.prototype.update = function (t, dt) {
   }
   s.lookYaw += (s.lookTYaw - s.lookYaw) * Math.min(1, dt * 3);
   s.lookPitch += (s.lookTPitch - s.lookPitch) * Math.min(1, dt * 3);
-  const lookW = (1 - s.talkW) * (1 - walkW * 0.7);
+  const lookW = (1 - s.talkW) * (1 - walkW * 0.7) * (1 - s.sleepW);
   P.head.y += s.lookYaw * lookW;
   P.head.x += s.lookPitch * lookW;
   s.pupilX = s.lookYaw * 0.012 * lookW;
@@ -277,6 +280,21 @@ Animator.prototype.update = function (t, dt) {
     P.head.x += -0.08 * w;
     P.rootY += (0.05 + Math.sin(t * 2.3) * 0.07) * w;
     P.mouth = Math.max(P.mouth, 0.2 * w);
+  }
+
+  // sonno: si siede, si accascia e ciondola la testa, respirando piano
+  if (s.sleepW > 0.001) {
+    const w = s.sleepW, br = Math.sin(t * 0.9);
+    P.rootY += -0.52 * w;
+    P.legL.x += -1.35 * w; P.legR.x += -1.3 * w;
+    P.legL.z += 0.12 * w; P.legR.z += -0.12 * w;
+    P.kneeL += 1.45 * w; P.kneeR += 1.4 * w;
+    P.spine.x += (0.38 + br * 0.03) * w;
+    P.head.x += (0.42 + br * 0.04) * w;
+    P.head.z += 0.12 * w;
+    P.shL.x += -0.55 * w; P.shR.x += -0.55 * w;
+    P.shL.z += -0.05 * w; P.shR.z += 0.05 * w;
+    P.elL.x += -0.85 * w; P.elR.x += -0.85 * w;
   }
 
   // bocca sincronizzata col parlato
@@ -382,6 +400,7 @@ Animator.prototype.update = function (t, dt) {
     if (s.blinkT > 0.14) s.blinkT = -1;
     else eyeScale = 0.08 + 0.92 * Math.abs(s.blinkT / 0.07 - 1);
   }
+  if (s.sleepW > 0.3) eyeScale = Math.min(eyeScale, 1 - 0.92 * clamp01((s.sleepW - 0.3) / 0.5));
   s.eyeScale = eyeScale;
 
   s.lastRootY = P.rootY;
@@ -900,7 +919,7 @@ function createAvatarDriver(THREE, avatarScene, opts) {
     const waveW = a && a.name === 'wave' ? actW : 0;
     const fullW = a && a.name !== 'wave' ? actW : 0;
     const talkW = s.talkW || 0;
-    const pBody = mixer ? Math.max(clamp01(s.speedRatio || 0), fullW, s.flyW || 0) : 1;
+    const pBody = mixer ? Math.max(clamp01(s.speedRatio || 0), fullW, s.flyW || 0, s.sleepW || 0) : 1;
     const pArmL = mixer ? Math.max(pBody, talkW * 0.9) : 1;
     const pArmR = mixer ? Math.max(pArmL, waveW) : 1;
     const pHead = mixer ? Math.max(pBody, talkW * 0.55, waveW * 0.3) : 1;
@@ -1302,6 +1321,145 @@ const INDOVINELLI = [
   { q: 'Ripete tutto quello che dici senza aver studiato le lingue. Che cos’è?', a: /\beco\b/, sol: 'l’eco' },
 ];
 
+// ---------- conoscenze per il cervello ----------
+const MESI = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 'luglio', 'agosto',
+  'settembre', 'ottobre', 'novembre', 'dicembre'];
+const COMPLIMENTI = [
+  'Sei una delle persone più simpatiche che abbiano mai toccato questo schermo!',
+  'Hai un gusto fantastico: hai scelto me come compagno!',
+  'Ce la puoi fare. Anzi: ce la stai già facendo!',
+  'Ogni grande cosa è iniziata con un piccolo passo. E tu ne hai fatti tanti!',
+  'Oggi sei carico come una batteria al cento per cento!',
+  'Il mondo è più bello con te dentro. Fidati, io lo vedo da qui!',
+];
+function readPrefs() {
+  try { return JSON.parse(localStorage.getItem('zephPrefs') || '{}'); } catch (e) { return {}; }
+}
+const UNITS = {
+  km: ['len', 1000, 'chilometri'], chilometri: ['len', 1000, 'chilometri'], chilometro: ['len', 1000, 'chilometri'],
+  m: ['len', 1, 'metri'], metri: ['len', 1, 'metri'], metro: ['len', 1, 'metri'],
+  cm: ['len', 0.01, 'centimetri'], centimetri: ['len', 0.01, 'centimetri'], mm: ['len', 0.001, 'millimetri'],
+  miglia: ['len', 1609.344, 'miglia'], miglio: ['len', 1609.344, 'miglia'],
+  piedi: ['len', 0.3048, 'piedi'], piede: ['len', 0.3048, 'piedi'],
+  pollici: ['len', 0.0254, 'pollici'], pollice: ['len', 0.0254, 'pollici'], iarde: ['len', 0.9144, 'iarde'],
+  kg: ['mass', 1, 'chili'], chili: ['mass', 1, 'chili'], chilo: ['mass', 1, 'chili'], chilogrammi: ['mass', 1, 'chili'],
+  g: ['mass', 0.001, 'grammi'], grammi: ['mass', 0.001, 'grammi'], etti: ['mass', 0.1, 'etti'],
+  libbre: ['mass', 0.45359237, 'libbre'], libbra: ['mass', 0.45359237, 'libbre'], once: ['mass', 0.0283495, 'once'],
+  litri: ['vol', 1, 'litri'], litro: ['vol', 1, 'litri'], ml: ['vol', 0.001, 'millilitri'], galloni: ['vol', 3.78541, 'galloni'],
+  'km/h': ['speed', 1, 'chilometri orari'], kmh: ['speed', 1, 'chilometri orari'], mph: ['speed', 1.609344, 'miglia orarie'],
+  celsius: ['temp', 'C', 'gradi Celsius'], '°c': ['temp', 'C', 'gradi Celsius'], gradi: ['temp', 'C', 'gradi Celsius'],
+  fahrenheit: ['temp', 'F', 'gradi Fahrenheit'], '°f': ['temp', 'F', 'gradi Fahrenheit'], kelvin: ['temp', 'K', 'kelvin'],
+};
+function unitOf(u) { return UNITS[u] || null; }
+function fmtNum(v) {
+  const r = Math.round(v * 100) / 100;
+  return String(r).replace('.', ',');
+}
+function convert(v, a, b) {
+  if (a[0] !== b[0]) return null;
+  let out;
+  if (a[0] === 'temp') {
+    const c = a[1] === 'C' ? v : a[1] === 'F' ? (v - 32) * 5 / 9 : v - 273.15;
+    out = b[1] === 'C' ? c : b[1] === 'F' ? c * 9 / 5 + 32 : c + 273.15;
+  } else {
+    out = v * a[1] / b[1];
+  }
+  return fmtNum(v) + ' ' + a[2] + ' sono ' + fmtNum(out) + ' ' + b[2] + '!';
+}
+function easter(y) { // algoritmo gregoriano anonimo
+  const a = y % 19, b = Math.floor(y / 100), c = y % 100, d = Math.floor(b / 4), e = b % 4;
+  const f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30, i = Math.floor(c / 4), k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31), day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(y, month - 1, day);
+}
+function daysUntil(what) {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const y = today.getFullYear();
+  let make, label;
+  if (/natale/.test(what)) { make = yy => new Date(yy, 11, 25); label = 'a Natale'; }
+  else if (/capodanno/.test(what)) { make = yy => new Date(yy + 1, 0, 1); label = 'a Capodanno'; }
+  else if (/pasqua/.test(what)) { make = easter; label = 'a Pasqua'; }
+  else if (/ferragosto/.test(what)) { make = yy => new Date(yy, 7, 15); label = 'a Ferragosto'; }
+  else if (/halloween/.test(what)) { make = yy => new Date(yy, 9, 31); label = 'ad Halloween'; }
+  else if (/valentino/.test(what)) { make = yy => new Date(yy, 1, 14); label = 'a San Valentino'; }
+  else if (/befana/.test(what)) { make = yy => new Date(yy, 0, 6); label = 'alla Befana'; }
+  else if (/estate/.test(what)) { make = yy => new Date(yy, 5, 21); label = 'all’estate'; }
+  else {
+    const c = readPrefs().compleanno;
+    if (!c) return 'Non so ancora quando è il tuo compleanno! Dimmi «il mio compleanno è il 12 marzo».';
+    const [g, mi] = c.split('/').map(Number);
+    make = yy => new Date(yy, mi - 1, g);
+    label = 'al tuo compleanno';
+  }
+  let target = make(y);
+  if (/capodanno/.test(what)) target = new Date(y + 1, 0, 1);
+  if (target < today) target = make(y + 1);
+  const n = Math.round((target - today) / 864e5);
+  if (n === 0) return label === 'al tuo compleanno' ? 'È OGGI il tuo compleanno! Tanti auguri!!!' : 'È oggi! Festa!';
+  return (n === 1 ? 'Manca 1 giorno ' : 'Mancano ' + n + ' giorni ') + label + '!';
+}
+
+// meteo vero da Open-Meteo (gratuito, senza chiavi): restituisce { say, code }
+const WMO = {
+  0: 'cielo sereno', 1: 'quasi sereno', 2: 'poco nuvoloso', 3: 'nuvoloso', 45: 'nebbia', 48: 'nebbia gelata',
+  51: 'pioviggine leggera', 53: 'pioviggine', 55: 'pioviggine fitta', 56: 'pioviggine gelata', 57: 'pioviggine gelata',
+  61: 'pioggia leggera', 63: 'pioggia', 65: 'pioggia forte', 66: 'pioggia gelata', 67: 'pioggia gelata forte',
+  71: 'neve leggera', 73: 'neve', 75: 'neve forte', 77: 'nevischio', 80: 'qualche rovescio', 81: 'rovesci',
+  82: 'rovesci violenti', 85: 'rovesci di neve', 86: 'forti rovesci di neve', 95: 'temporale',
+  96: 'temporale con grandine', 99: 'temporale con grandine forte',
+};
+function weatherKind(code) {
+  if (code >= 71 && code <= 77 || code === 85 || code === 86) return 'snow';
+  if (code >= 51 && code <= 67 || code >= 80) return 'rain';
+  return code <= 2 ? 'clear' : 'cloudy';
+}
+function getJson(url) {
+  const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+  const timer = ctl ? setTimeout(() => ctl.abort(), 9000) : null;
+  return fetch(url, ctl ? { signal: ctl.signal } : {}).then(r => {
+    if (timer) clearTimeout(timer);
+    if (!r.ok) throw new Error('http ' + r.status);
+    return r.json();
+  });
+}
+function aCity(name) { return (/^[aeiouàèéìòù]/i.test(name) ? 'ad ' : 'a ') + name; }
+function weatherReport(q) {
+  q = q || {};
+  const city = q.city || readPrefs()['città'];
+  if (!city) {
+    return Promise.resolve({ say: 'Di quale città? Dimmi «che tempo fa a Roma», oppure «la mia città è …» e me la ricordo.' });
+  }
+  const geo = 'https://geocoding-api.open-meteo.com/v1/search?count=1&language=it&format=json&name=' + encodeURIComponent(city);
+  return getJson(geo).then(g => {
+    const p = g && g.results && g.results[0];
+    if (!p) return { say: 'Non trovo la città «' + city + '»… è scritta giusta?' };
+    const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + p.latitude + '&longitude=' + p.longitude +
+      '&current=temperature_2m,weather_code,wind_speed_10m' +
+      '&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max' +
+      '&timezone=auto&forecast_days=2';
+    return getJson(url).then(f => {
+      const d = f.daily, R = Math.round;
+      if (q.when === 'domani') {
+        const code = d.weather_code[1], pp = d.precipitation_probability_max ? d.precipitation_probability_max[1] : null;
+        return { code, kind: weatherKind(code),
+          say: 'Domani ' + aCity(p.name) + ': ' + (WMO[code] || 'tempo variabile') + ', minima ' + R(d.temperature_2m_min[1]) +
+            ' e massima ' + R(d.temperature_2m_max[1]) + ' gradi' +
+            (pp != null && pp >= 40 ? ', con il ' + pp + ' per cento di probabilità di pioggia' : '') + '.' };
+      }
+      const c = f.current, code = c.weather_code;
+      const t0 = R(c.temperature_2m);
+      const extra = t0 >= 30 ? ' Che caldo, bevi tanta acqua!' : t0 <= 3 ? ' Brrr, copriti bene!' :
+        weatherKind(code) === 'rain' ? ' Prendi l’ombrello!' : '';
+      return { code, kind: weatherKind(code),
+        say: 'Adesso ' + aCity(p.name) + ' ci sono ' + t0 + ' gradi, ' + (WMO[code] || 'tempo variabile') +
+          (c.wind_speed_10m >= 30 ? ', e tira vento' : '') + '. Oggi massima ' + R(d.temperature_2m_max[0]) + '.' + extra };
+    });
+  }).catch(() => ({ say: 'Non riesco a collegarmi al servizio del meteo: c’è internet?' }));
+}
+
 function actionIntent(t, ctx) {
   let m;
 
@@ -1316,6 +1474,109 @@ function actionIntent(t, ctx) {
     ctx.pending = 'quiz'; ctx.quizIdx = idx;
     return { say: 'Indovinello! ' + INDOVINELLI[idx].q };
   }
+  // ---------- comandi del telefono (altrove Zeph spiega che servono sul telefono) ----------
+  if (/^(?:accendi|attiva|apri)\s+(?:la\s+|il\s+)?(?:torcia|luce|flash)\b/.test(t)) {
+    return { torch: true, phoneOnly: true, say: pick(['Torcia accesa! Ecco un po’ di luce.', 'Luce! Così non inciampi.']) };
+  }
+  if (/^(?:spegni|disattiva|chiudi)\s+(?:la\s+|il\s+)?(?:torcia|luce|flash)\b/.test(t)) {
+    return { torch: false, phoneOnly: true, say: 'Torcia spenta!' };
+  }
+  m = t.match(/(?:svegliami|(?:metti|imposta|punta)\s+(?:una\s+|la\s+)?sveglia|^sveglia)\s+(?:alle|per le|a|all')\s*(\d{1,2})(?:(?:[:.]|\s+e\s+)(\d{1,2}|mezza|un quarto|quarto|tre quarti))?(?:\s+(?:di\s+)?(sera|pomeriggio|mattina|notte))?/);
+  if (m) {
+    let h = parseInt(m[1], 10);
+    const mm = { mezza: 30, 'un quarto': 15, quarto: 15, 'tre quarti': 45 };
+    const min = m[2] ? (mm[m[2]] !== undefined ? mm[m[2]] : parseInt(m[2], 10)) : 0;
+    if ((m[3] === 'sera' || m[3] === 'pomeriggio') && h < 12) h += 12;
+    if (h > 23 || min > 59) return { say: 'Quell’orario non esiste nemmeno su Marte! Riprova, tipo «svegliami alle 7 e 30».' };
+    const hh = h + (min ? ' e ' + (min < 10 ? '0' + min : min) : '');
+    return { alarm: { h, m: min }, phoneOnly: true, say: 'Sveglia puntata alle ' + hh + '! Dormi tranquillo, ci penso io.', action: 'wave' };
+  }
+  m = t.match(/^(?:metti|imposta|fai partire|avvia)?\s*(?:un\s+|il\s+)?timer\s+(?:di|da|per)?\s*(\d+)\s*(secondi|secondo|minuti|minuto|ore|ora)/);
+  if (m) {
+    const n = parseInt(m[1], 10);
+    const secs = n * (m[2][0] === 's' ? 1 : m[2][0] === 'm' ? 60 : 3600);
+    return { timer: { seconds: secs }, remind: { seconds: secs, text: 'Il timer di ' + n + ' ' + m[2] + ' è finito!' },
+      say: 'Timer di ' + n + ' ' + m[2] + ' partito!' };
+  }
+  m = t.match(/^(?:chiama|telefona(?:\s+a)?)\s+([+\d][\d\s.]{4,})$/);
+  if (m) {
+    const num = m[1].replace(/[^\d+]/g, '');
+    return { dial: num, phoneOnly: true, say: 'Ti preparo la chiamata: premi il tasto verde!' };
+  }
+  if (/^(?:chiama|telefona(?:\s+a)?)\s+\S+/.test(t) && !/cane|cucciolo|rocky/.test(t)) {
+    return { dial: '', phoneOnly: true, say: 'Ti apro il telefono: cerca il nome lì, oppure dimmi il numero, tipo «chiama 333 1234567».' };
+  }
+  if (/^(?:metti in |fai )?pausa(?: la musica| la canzone)?!?$|^ferma la canzone$/.test(t)) return { media: 'pause', say: 'Pausa!' };
+  if (/^(?:riprendi|fai ripartire|continua|play)(?: la musica| la canzone)?!?$/.test(t)) return { media: 'play', say: 'Si riparte!' };
+  if (/(?:prossima|successiva|altra) canzone|canzone (?:successiva|dopo)|salta (?:la |questa )?canzone|^avanti!?$/.test(t)) return { media: 'next', say: 'Avanti la prossima!' };
+  if (/canzone (?:precedente|di prima)|torna alla canzone|^indietro!?$/.test(t)) return { media: 'prev', say: 'Torniamo a quella di prima!' };
+
+  // ---------- meteo vero ----------
+  m = t.match(/la mia città è\s+(.+)|^(?:abito|vivo|sto)\s+(?:a|ad|in)\s+(.+)/);
+  if (m) {
+    const c = (m[1] || m[2]).replace(/[.!?]+$/, '').trim();
+    const C = c.replace(/\b\w/g, x => x.toUpperCase());
+    return { setPref: { k: 'città', v: C }, say: 'Segnato: abiti a ' + C + '! Ora chiedimi «che tempo fa?»' };
+  }
+  if (/che tempo (?:fa|farà|fara|c'è|ce)|\bmeteo\b|previsioni|(?:piove|pioverà|nevica|nevicherà|fa caldo|fa freddo)\s+(?:a|ad|in|oggi|domani|adesso|fuori)\b|^(?:piove|nevica)\??$|quanti gradi (?:ci sono|fa|fanno)|temperatura (?:a|di|ad|in|oggi|domani|fuori)/.test(t)) {
+    const when = /domani/.test(t) ? 'domani' : 'oggi';
+    const cm = t.replace(/\b(?:oggi|domani|stasera|adesso|ora|fuori)\b/g, ' ')
+      .match(/\b(?:a|ad|in|di|per)\s+([a-zà-ù'][a-zà-ù' ]*?)\s*\??\s*$/);
+    let city = cm ? cm[1].trim() : null;
+    if (city && /^(?:che|quanto|oggi|domani|me|te)$/.test(city)) city = null;
+    return { weatherQuery: { city, when } };
+  }
+
+  // ---------- numeri, fortuna e conversioni ----------
+  m = t.match(/(?:converti\s+|quant[oiae]\s+(?:sono|fanno|fa)\s+)?(-?\d+(?:[.,]\d+)?)\s*([a-z°/]+)\s+(?:in|a)\s+([a-z°/]+)/);
+  if (m && unitOf(m[2]) && unitOf(m[3])) {
+    const r = convert(parseFloat(m[1].replace(',', '.')), unitOf(m[2]), unitOf(m[3]));
+    if (r) return { say: r };
+  }
+  m = t.match(/(?:tira|lancia)\s+(?:un\s+|il\s+|i\s+)?(?:(\d|due|tre|quattro|cinque)\s+)?dad[oi]/);
+  if (m) {
+    const words = { due: 2, tre: 3, quattro: 4, cinque: 5 };
+    const n = m[1] ? (words[m[1]] || parseInt(m[1], 10)) : 1;
+    const rolls = []; for (let i = 0; i < Math.min(5, n); i++) rolls.push(1 + ((Math.random() * 6) | 0));
+    const sum = rolls.reduce((a, b) => a + b, 0);
+    return { say: rolls.length === 1 ? 'È uscito… ' + rolls[0] + '!' : 'Sono usciti ' + rolls.join(', ') + ': totale ' + sum + '!', action: 'jump' };
+  }
+  if (/testa o croce|(?:tira|lancia)\s+(?:una\s+|la\s+)?moneta/.test(t)) {
+    return { say: 'Lancio… è uscito ' + (Math.random() < 0.5 ? 'TESTA' : 'CROCE') + '!', action: 'flip' };
+  }
+  m = t.match(/numero (?:a caso|casuale)(?:\s+(?:da|tra)\s+(-?\d+)\s+(?:a|e)\s+(-?\d+))?/);
+  if (m) {
+    let lo = m[1] ? parseInt(m[1], 10) : 1, hi = m[2] ? parseInt(m[2], 10) : 100;
+    if (lo > hi) { const x = lo; lo = hi; hi = x; }
+    return { say: 'Il numero è… ' + (lo + Math.floor(Math.random() * (hi - lo + 1))) + '!' };
+  }
+
+  // ---------- date ----------
+  if (/che giorno (?:è|e|sarà|sara) domani|domani che giorno (?:è|e|sarà)/.test(t)) {
+    const d = new Date(Date.now() + 864e5).toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' });
+    return { say: 'Domani è ' + d + '!' };
+  }
+  m = t.match(/il mio compleanno è (?:il\s+)?(\d{1,2})\s*(?:\/|-|\s)\s*(\d{1,2}|gennaio|febbraio|marzo|aprile|maggio|giugno|luglio|agosto|settembre|ottobre|novembre|dicembre)/);
+  if (m) {
+    const mi = /\d/.test(m[2]) ? parseInt(m[2], 10) : MESI.indexOf(m[2]) + 1;
+    const g = parseInt(m[1], 10);
+    if (mi < 1 || mi > 12 || g < 1 || g > 31) return { say: 'Uhm, quella data non mi torna. Scrivi tipo «il mio compleanno è il 12 marzo».' };
+    return { setPref: { k: 'compleanno', v: g + '/' + mi }, say: 'Segnato: il tuo compleanno è il ' + g + ' ' + MESI[mi - 1] + '! Me lo ricorderò.', action: 'dance' };
+  }
+  m = t.match(/quanti giorni mancano (?:a |al |alla |all'|ad |per |a |)\s*(natale|capodanno|pasqua|ferragosto|halloween|san valentino|befana|la befana|(?:il )?mio compleanno|l'estate|estate)/);
+  if (m) return { say: daysUntil(m[1]) };
+
+  // ---------- emozioni ----------
+  if (/sono triste|sono giù|tirami su|mi sento solo|giornata (?:brutta|no)/.test(t)) {
+    return { say: pick([
+      'Mi dispiace… vieni qui, ti faccio un balletto per tirarti su!',
+      'Le giornate storte passano, e io sono qui con te. Un abbraccio virtuale fortissimo!',
+      'Respira con me: dentro… fuori… Va già un po’ meglio? Sono qui per te.']), action: 'dance' };
+  }
+  if (/complimento|dimmi qualcosa di bello|motivami|dammi la carica|incoraggiami/.test(t)) {
+    return { say: pick(COMPLIMENTI), action: 'wave' };
+  }
+
   // calcoli a voce
   m = t.match(/quanto fa (.+)/);
   if (m) {
@@ -1546,7 +1807,7 @@ const RULES = [
   { re: /(come stai|come va|tutto bene)/, fn: () => ({ say: pick(['Benissimo! Le mie gambe 3D oggi sono al top! E tu?', 'Alla grande! Un po’ di poligoni scricchiolano ma va bene così.', 'Molto bene, grazie! E tu come stai?']) }) },
   { re: /(chi sei|come ti chiami|il tuo nome|cosa sei)/, fn: () => ({ say: 'Sono Zeph! Un personaggio 3D fatto di poligoni e simpatia. Vivo qui sul tuo schermo!', action: 'wave' }) },
   { re: /(quanti anni)/, fn: () => ({ say: 'Sono nato pochi secondi fa, quando mi hai acceso! Quindi… sono giovanissimo.' }) },
-  { re: /(cosa sai fare|aiuto|help|comandi|istruzioni)/, fn: () => ({ say: 'Apro le vere app del PC, alzo il volume, ti dico la batteria, comando cielo e meteo, chiamo Rocky e gli lancio la palla («lancia la palla»), metto la musica e ballo a tempo («metti la musica»), gioco a sasso carta forbice, faccio indovinelli e calcoli («quanto fa 25 per 4»), cambio look («cambia look»)… e molto altro!' }) },
+  { re: /(cosa sai fare|aiuto|help|comandi|istruzioni)/, fn: () => ({ say: 'Tantissime cose! Ti dico il meteo vero («che tempo fa a Roma»), apro le app, accendo la torcia, punto sveglie e timer, controllo la musica («prossima canzone»), converto misure («10 km in miglia»), tiro dadi e monete, conto i giorni a Natale, faccio indovinelli e calcoli, ballo, volo… e ti tengo compagnia!' }) },
   { re: /(grazie|gentile)/, fn: () => ({ say: pick(['Prego! È un piacere!', 'Figurati! Per te, sempre!']) }) },
   { re: /(ti voglio bene|ti amo|sei bello|sei forte|bravo)/, fn: () => ({ say: 'Ooh, grazie! Anche tu sei il mio umano preferito!', action: 'wave' }) },
   { re: /(buonanotte|vado a dormire|a domani)/, fn: () => ({ say: 'Buonanotte! Io resto di guardia allo schermo. A presto!', action: 'wave' }) },
@@ -1614,7 +1875,10 @@ const LEXICON = ['balla', 'salta', 'saluta', 'vola', 'atterra', 'corri', 'rallen
   'tramonto', 'alba', 'piovere', 'nevicare', 'sereno', 'cane', 'rocky', 'whatsapp', 'youtube',
   'google', 'gmail', 'telegram', 'spotify', 'netflix', 'instagram', 'tiktok', 'impostazioni',
   'calcolatrice', 'volume', 'batteria', 'stelle', 'cinema', 'seguimi', 'fermati', 'ciao',
-  'curiosità', 'apri', 'cerca', 'ricordami', 'messaggio', 'sasso', 'carta', 'forbice', 'look'];
+  'curiosità', 'apri', 'cerca', 'ricordami', 'messaggio', 'sasso', 'carta', 'forbice', 'look',
+  'torcia', 'sveglia', 'svegliami', 'timer', 'chiama', 'tempo', 'meteo', 'dado', 'moneta', 'pausa',
+  'canzone', 'prossima', 'precedente', 'complimento', 'compleanno', 'natale', 'capodanno', 'pasqua',
+  'converti', 'accendi', 'spegni', 'dormi', 'svegliati'];
 
 function levenshtein(a, b) {
   if (Math.abs(a.length - b.length) > 2) return 99;
@@ -1704,7 +1968,7 @@ function createSparkles(THREE, scene, count) {
 
 global.ZephCore = {
   build, Animator, botReply, pick, createAvatarDriver, createSparkles,
-  buildDog, updateDog, bark, chime, boom, ambience, music,
+  buildDog, updateDog, bark, chime, boom, ambience, music, weatherReport,
   FRASI_PASSEGGIO, FRASI_DESKTOP, BARZELLETTE,
   HIP_Y, HEIGHT: 1.75,
 };

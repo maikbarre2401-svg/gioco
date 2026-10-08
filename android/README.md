@@ -16,6 +16,17 @@ Zeph — o **il tuo avatar** — vive sullo schermo del telefono, sopra tutte le
   i movimenti in motion capture e muove la bocca quando parla.
 - Opzioni: grandezza (piccolo / medio / grande), **modalità fantasma** (i tocchi passano attraverso),
   esclusione dal risparmio batteria.
+- **Controlla il telefono**: «accendi la torcia», «svegliami alle 7 e mezza» e «timer di 10 minuti»
+  (veri, nell'app Orologio), «chiama 333 1234567» (apre il telefono col numero, la chiamata la fai tu),
+  «pausa», «play», «prossima canzone» (comanda Spotify, YouTube Music…).
+- **Meteo vero** di qualsiasi città: «che tempo fa a Roma», «che tempo farà domani a Milano»;
+  dì «la mia città è …» e poi basta «che tempo fa?».
+- **Scrivigli dalla notifica** (💬 Scrivi, anche dettando col microfono della tastiera) e aggiungi il
+  pulsante **«Zeph» nelle Impostazioni rapide** per accenderlo e spegnerlo al volo.
+- **Condividi → «Leggi con Zeph»** da qualsiasi app: ti legge ad alta voce messaggi, articoli, note.
+- **Reagisce al telefono**: quando colleghi il caricatore, quando la batteria è scarica, quando metti le cuffie.
+- **Di notte si addormenta** (seduto, con lo «Zzz…») se lo lasci tranquillo; toccalo per svegliarlo.
+  Toccalo tre volte di fila: soffre il solletico!
 
 ## Il modo più facile: scarica l'APK già pronto
 

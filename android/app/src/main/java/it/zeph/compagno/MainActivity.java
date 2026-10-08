@@ -148,13 +148,18 @@ public class MainActivity extends Activity {
 
         section(box, "Come si usa");
         box.addView(text(
-            "• Tocca Zeph: reagisce (saluta, balla, salta…)\n" +
-            "• Tienilo premuto: si apre la chat\n" +
+            "• Tocca Zeph: reagisce (saluta, balla, salta…). Toccalo tante volte: soffre il solletico!\n" +
+            "• Tienilo premuto: si apre la chat (scrivi o parla)\n" +
             "• Trascinalo: lo sollevi, e se lo lasci cade giù\n" +
-            "• Dalla notifica: 🎤 Parla, 🙈 Nascondi / 👁 Mostra, ✖ Chiudi\n" +
+            "• Dalla notifica: 💬 Scrivi (anche dettando), 🙈 Nascondi / 👁 Mostra, ✖ Chiudi\n" +
+            "• Nelle Impostazioni rapide (tendina dall'alto) aggiungi il pulsante «Zeph» per accenderlo al volo\n" +
+            "• Da qualsiasi app: Condividi → «Leggi con Zeph» e te lo legge ad alta voce\n" +
+            "• Di notte, se lo lasci tranquillo, si addormenta. Toccalo per svegliarlo\n" +
             "• Chiudi l'app quando vuoi: Zeph resta sullo schermo\n\n" +
-            "Prova a dirgli: «apri whatsapp», «apri impostazioni wifi», «alza il volume», " +
-            "«quanta batteria ho?», «ricordami tra 10 minuti della pasta», «balla», «vola», «barzelletta».",
+            "Prova a dirgli: «che tempo fa a Roma», «accendi la torcia», «svegliami alle 7 e mezza», " +
+            "«timer di 10 minuti», «prossima canzone», «chiama 333 1234567», «apri whatsapp», " +
+            "«apri impostazioni wifi», «alza il volume», «quanta batteria ho?», «10 km in miglia», " +
+            "«tira un dado», «quanti giorni mancano a Natale», «balla», «barzelletta».",
             14, 0xDDFFFFFF));
 
         setContentView(scroll);

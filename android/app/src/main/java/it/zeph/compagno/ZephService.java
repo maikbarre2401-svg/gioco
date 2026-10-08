@@ -8,8 +8,10 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.app.RemoteInput;
 import android.app.Service;
 import android.content.BroadcastReceiver;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -24,10 +26,12 @@ import android.hardware.display.DisplayManager;
 import android.net.Uri;
 import android.os.BatteryManager;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.provider.Settings;
+import android.service.quicksettings.TileService;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
 import android.util.DisplayMetrics;
@@ -80,6 +84,9 @@ public class ZephService extends Service {
     static final String ACTION_CMD = "it.zeph.compagno.CMD";
     static final String ACTION_RELOAD = "it.zeph.compagno.RELOAD";
     static final String ACTION_AVATAR = "it.zeph.compagno.AVATAR";
+    static final String ACTION_READ = "it.zeph.compagno.READ";
+    static final String ACTION_REPLY = "it.zeph.compagno.REPLY";
+    static final String KEY_REPLY = "zeph_reply";
     static final String EXTRA_TEXT = "text";
     static final String EXTRA_CMD = "cmd";
 
@@ -113,6 +120,7 @@ public class ZephService extends Service {
     private int curX, curLift;
     private int reminderId = 100;
     private BroadcastReceiver screenRx;
+    private BroadcastReceiver phoneRx;
 
     // ---------------------------------------------------------------- ciclo di vita
 
@@ -154,6 +162,27 @@ public class ZephService extends Service {
         f.addAction(Intent.ACTION_SCREEN_OFF);
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(screenRx, f, Context.RECEIVER_NOT_EXPORTED);
         else registerReceiver(screenRx, f);
+
+        // quello che succede al telefono: Zeph ci reagisce
+        phoneRx = new BroadcastReceiver() {
+            @Override public void onReceive(Context c, Intent i) {
+                if (isInitialStickyBroadcast()) return; // stato già presente all'avvio: niente commenti
+                String a = i.getAction();
+                String ev = null;
+                if (Intent.ACTION_POWER_CONNECTED.equals(a)) ev = "charger";
+                else if (Intent.ACTION_POWER_DISCONNECTED.equals(a)) ev = "unplug";
+                else if (Intent.ACTION_BATTERY_LOW.equals(a)) ev = "batteryLow";
+                else if (Intent.ACTION_HEADSET_PLUG.equals(a)) ev = i.getIntExtra("state", 0) == 1 ? "headset" : null;
+                if (ev != null && !hidden) js("zephEvent('" + ev + "')");
+            }
+        };
+        IntentFilter pf = new IntentFilter();
+        pf.addAction(Intent.ACTION_POWER_CONNECTED);
+        pf.addAction(Intent.ACTION_POWER_DISCONNECTED);
+        pf.addAction(Intent.ACTION_BATTERY_LOW);
+        pf.addAction(Intent.ACTION_HEADSET_PLUG);
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(phoneRx, pf, Context.RECEIVER_NOT_EXPORTED);
+        else registerReceiver(phoneRx, pf);
     }
 
     @Override
@@ -174,8 +203,10 @@ public class ZephService extends Service {
             stopSelf();
             return START_NOT_STICKY;
         }
+        boolean wasRunning = running;
         running = true;
         Prefs.setRunning(this, true);
+        if (!wasRunning) updateTile();
         if (frame == null) createOverlay();
 
         if (ACTION_TOGGLE.equals(action)) setHidden(!hidden);
@@ -184,6 +215,17 @@ public class ZephService extends Service {
             js("zephChat(" + JSONObject.quote(intent.getStringExtra(EXTRA_TEXT)) + ")");
         } else if (ACTION_CMD.equals(action) && intent.hasExtra(EXTRA_CMD)) {
             js("zephCmd(" + JSONObject.quote(intent.getStringExtra(EXTRA_CMD)) + ")");
+        } else if (ACTION_REPLY.equals(action)) {
+            Bundle r = RemoteInput.getResultsFromIntent(intent);
+            CharSequence said = r != null ? r.getCharSequence(KEY_REPLY) : null;
+            if (said != null && said.toString().trim().length() > 0) {
+                if (hidden) setHidden(false);
+                js("zephChat(" + JSONObject.quote(said.toString().trim()) + ")");
+            }
+            refreshNotification(); // toglie la rotellina dalla notifica
+        } else if (ACTION_READ.equals(action) && intent.hasExtra(EXTRA_TEXT)) {
+            if (hidden) setHidden(false);
+            js("zephRead(" + JSONObject.quote(intent.getStringExtra(EXTRA_TEXT)) + ")");
         } else if (ACTION_AVATAR.equals(action)) {
             js("zephReloadAvatar()");
         } else if (ACTION_RELOAD.equals(action)) {
@@ -193,10 +235,19 @@ public class ZephService extends Service {
         return START_STICKY; // se Android lo chiude per memoria, lo fa ripartire
     }
 
+    /** Aggiorna il pulsante «Zeph» nelle Impostazioni rapide. */
+    private void updateTile() {
+        try {
+            TileService.requestListeningState(this, new ComponentName(this, ZephTileService.class));
+        } catch (Exception ignored) { }
+    }
+
     @Override
     public void onDestroy() {
         running = false;
+        updateTile();
         try { unregisterReceiver(screenRx); } catch (Exception ignored) { }
+        try { unregisterReceiver(phoneRx); } catch (Exception ignored) { }
         destroyOverlay();
         if (tts != null) tts.shutdown();
         super.onDestroy();
@@ -238,19 +289,24 @@ public class ZephService extends Service {
         PendingIntent openApp = PendingIntent.getActivity(this, 1,
             new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-        PendingIntent mic = PendingIntent.getActivity(this, 2,
-            new Intent(this, ChatActivity.class).putExtra(ChatActivity.EXTRA_MIC, true)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-            PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        // la risposta scritta (o dettata con il microfono della tastiera) arriva al servizio
+        int replyFlags = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_MUTABLE : 0);
+        PendingIntent replyPi = PendingIntent.getService(this, 2,
+            new Intent(this, ZephService.class).setAction(ACTION_REPLY), replyFlags);
+        RemoteInput input = new RemoteInput.Builder(KEY_REPLY).setLabel("Scrivi a Zeph…").build();
+        Notification.Action reply = new Notification.Action.Builder(icon, "💬 Scrivi", replyPi)
+            .addRemoteInput(input)
+            .setAllowGeneratedReplies(false)
+            .build();
         return new Notification.Builder(this, CH_MAIN)
             .setSmallIcon(R.drawable.ic_stat_zeph)
             .setContentTitle(hidden ? "Zeph è nascosto" : "Zeph è sul tuo schermo")
             .setContentText(hidden ? "Premi «Mostra» per farlo tornare"
-                : "Toccalo per farlo reagire · tienilo premuto per parlargli")
+                : "Scrivigli da qui · toccalo per farlo reagire · tienilo premuto per la chat")
             .setOngoing(true)
             .setShowWhen(false)
             .setContentIntent(openApp)
-            .addAction(new Notification.Action.Builder(icon, "🎤 Parla", mic).build())
+            .addAction(reply)
             .addAction(new Notification.Action.Builder(icon, hidden ? "👁 Mostra" : "🙈 Nascondi",
                 servicePi(ACTION_TOGGLE, 3)).build())
             .addAction(new Notification.Action.Builder(icon, "✖ Chiudi", servicePi(ACTION_STOP, 4)).build())
@@ -551,7 +607,11 @@ public class ZephService extends Service {
         @Override
         public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest req) {
             Uri u = req.getUrl();
-            if (!HOST.equals(u.getHost())) return notFound(); // niente rete esterna
+            String h = u.getHost();
+            if (h != null && (h.equals("api.open-meteo.com") || h.equals("geocoding-api.open-meteo.com"))) {
+                return null; // il meteo vero: lasciato passare
+            }
+            if (!HOST.equals(h)) return notFound(); // nessun'altra rete esterna
             String path = u.getPath();
             if (path == null || path.equals("/")) path = "/overlay.html";
             path = path.substring(1);

@@ -63,6 +63,13 @@ Scrivigli (in chat, browser o desktop):
 - **«dimmi una curiosità»** — ne sa sedici, da imparare qualcosa ogni volta
 - **«il mio colore preferito è il blu»** — impara i tuoi gusti (colore, animale, cibo, numero…) e li ricorda: «qual è il mio colore preferito?»
 - **«ultra hd»** / «grafica normale» 🖥 — grafica ULTRA con bagliori luminosi (bloom), luce ambientale catturata dal cielo e ombre ad alta risoluzione; se il PC arranca, Zeph abbassa la grafica da solo e ti avvisa
+- **🌦 «che tempo fa a Roma?»** — meteo vero di qualsiasi città, anche «domani»; dì «la mia città è …» e lo ricorda. Nel browser il mondo si adegua: se piove davvero, piove anche nel prato
+- **🧮 «10 km in miglia», «30 gradi in fahrenheit»** — conversioni; **«tira un dado»**, **«testa o croce»**, **«numero a caso da 1 a 10»**
+- **📅 «quanti giorni mancano a Natale?»** (e a Pasqua, Capodanno, al tuo compleanno: «il mio compleanno è il 12 marzo»), «che giorno è domani?»
+- **💛 «sono triste»**, **«fammi un complimento»** — ti tira su
+- **⏯ «pausa», «prossima canzone»** — comanda la musica delle altre app (app desktop e telefono)
+- **😴 Di notte si addormenta** se lo lasci tranquillo, e **soffre il solletico** (tre clic di fila)
+- **📱 Solo sul telefono**: torcia, sveglie e timer veri, chiamate, «Leggi con Zeph», risposte dalla notifica — vedi [`android/README.md`](android/README.md)
 - **🏆 «missioni»** — 10 obiettivi da completare (saluta Nina, raccogli le stelle, vinci a sasso carta forbice, vola…): pannello con i progressi, premi pirotecnici e salvataggio automatico
 - **«fuochi d'artificio»** 🎆 — razzi veri con scia, esplosione di colori e BOTTO (meglio di notte!)
 - **🐦 Suoni d'ambiente** — uccellini di giorno, grilli di notte e vento leggero, tutti sintetizzati

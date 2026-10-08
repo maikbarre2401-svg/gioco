@@ -104,6 +104,7 @@ const state = {
   wander: true, running: false, flying: false, flyLerp: 0,
   muted: false, visible: true, grabbed: false,
   nextWanderAt: 4, nextChatterAt: 30, nextStretchAt: 45,
+  lastTouch: 0, nextZzzAt: 0, taps: [],
 };
 const WALK = 1.0, RUN = 2.1; // metri al secondo (in scala personaggio)
 const botCtx = {};
@@ -173,7 +174,7 @@ function placeWindow(t) {
 }
 
 function updateWander(t) {
-  if (!state.wander || state.grabbed) return;
+  if (!state.wander || state.grabbed || anim.state.sleeping) return;
   if (state.targetX !== null || state.speed > 0.1 || anim.state.talking || anim.state.action) return;
   if (t > state.nextWanderAt) {
     state.targetX = Math.random() * maxX();
@@ -191,6 +192,7 @@ const FRASI_TELEFONO = [
   'Toccami, che ti faccio vedere una cosa!',
 ];
 function updateChatter(t) {
+  if (anim.state.sleeping) return;
   if (t > state.nextChatterAt) {
     state.nextChatterAt = t + 60 + Math.random() * 90;
     if (!anim.state.talking && !anim.state.action && !state.grabbed) speak(ZephCore.pick(FRASI_TELEFONO));
@@ -216,10 +218,10 @@ function fallbackTalk(text) {
   clearTimeout(fakeTimer);
   fakeTimer = setTimeout(stopTalk, Math.min(8000, Math.max(1600, 900 + text.length * 62)));
 }
-function speak(text) {
+function speak(text, bubbleText) {
   ++speakSeq;
   anim.state.gestureLead = Math.random() < 0.5 ? -1 : 1;
-  showBubble(text);
+  showBubble(bubbleText || text);
   clearTimeout(fakeTimer); clearTimeout(watchdog);
   const ok = A && !state.muted && A.speak(text);
   if (!ok) { fallbackTalk(text); return; }
@@ -233,6 +235,42 @@ window.zephTts = function (ev) {
   else if (ev === 'word') anim.state.mouthPulse = 1;
   else if (ev === 'end') stopTalk();
 };
+
+// ---------- Sonno: di notte, se lo lasci tranquillo, si addormenta ----------
+const SLEEP_AFTER = 90; // secondi senza essere toccato
+function isNight() {
+  if (state.forceNight !== undefined) return state.forceNight;
+  const h = new Date().getHours();
+  return h >= 23 || h < 7;
+}
+function touched() { state.lastTouch = clock.elapsedTime; }
+// svegliato da un tocco, un messaggio o un comando: risponde comunque al resto
+function wake(quiet) {
+  touched();
+  if (!anim.state.sleeping) return false;
+  anim.state.sleeping = false;
+  if (A) A.bubbleHide();
+  if (!quiet) speak(ZephCore.pick(['Uaaah… ero nel mondo dei sogni!', 'Mmh? Eccomi, eccomi!', 'Che sonno… dimmi tutto!']));
+  return true;
+}
+function updateSleep(t) {
+  const st = anim.state;
+  if (!st.sleeping) {
+    if (isNight() && t - state.lastTouch > SLEEP_AFTER && !st.talking && !st.action &&
+        state.speed < 0.05 && !musicOn && !state.grabbed && !state.flying) {
+      st.sleeping = true;
+      state.targetX = null;
+      state.nextZzzAt = t + 2;
+    }
+    return;
+  }
+  if (!isNight()) { wake(true); return; }
+  if (t > state.nextZzzAt) {
+    state.nextZzzAt = t + 7 + Math.random() * 5;
+    showBubble(ZephCore.pick(['Zzz…', 'Zzz… zzz…', 'Ronf… zzz…']));
+    hideBubble(2600);
+  }
+}
 
 // ---------- Musica ----------
 let musicOn = false;
@@ -291,6 +329,34 @@ function botRespond(text) {
     phone({ type: 'volume', dir: out.volume });
     out.say = out.say.replace(/del PC/g, 'del telefono');
   }
+  if (out.torch !== undefined && !phone({ type: 'torch', on: out.torch })) {
+    out.say = 'Uffa, su questo telefono non riesco a usare la torcia.';
+  }
+  if (out.alarm && !phone({ type: 'alarm', h: out.alarm.h, m: out.alarm.m })) {
+    out.say = 'Non riesco a puntare la sveglia: c’è l’app Orologio sul telefono?';
+  }
+  if (out.timer) {
+    // il timer vero dell'Orologio suona anche se Zeph è chiuso: allora niente doppione
+    if (phone({ type: 'timer', seconds: out.timer.seconds })) {
+      delete out.remind;
+      out.say += ' L’ho messo anche nell’Orologio del telefono.';
+    }
+  }
+  if (out.dial !== undefined && !phone({ type: 'dial', number: out.dial })) {
+    out.say = 'Non riesco ad aprire il telefono per chiamare.';
+  }
+  if (out.media) {
+    if (out.media === 'pause' && musicOn) stopMusic();
+    phone({ type: 'media', key: out.media });
+  }
+  if (out.weatherQuery) {
+    speak(ZephCore.pick(['Un attimo che guardo fuori…', 'Controllo il cielo…', 'Vediamo cosa dicono le nuvole…']));
+    ZephCore.weatherReport(out.weatherQuery).then(r => {
+      if (r.kind === 'rain' || r.kind === 'snow') anim.startAction('stretch');
+      else if (r.kind === 'clear') anim.startAction('wave');
+      speak(r.say);
+    });
+  }
   if (out.battery) out.say = batteryReport();
   if (out.remind) {
     const r = out.remind;
@@ -340,11 +406,46 @@ const TAP_REPLIES = [
   { say: 'Hop, salto mortale!', action: 'flip' },
 ];
 window.zephTap = function () {
+  if (wake()) return;
+  const now = clock.elapsedTime;
+  state.taps = state.taps.filter(x => now - x < 1.6);
+  state.taps.push(now);
+  if (state.taps.length >= 3) {
+    // tre tocchi in fretta: solletico!
+    state.taps = [];
+    anim.startAction('spin');
+    sparkles.burst(0, 1.1, 0, 14);
+    speak(ZephCore.pick(['Ahahah! No, il solletico no!', 'Ihihih, basta, basta, soffro il solletico!', 'Ahah! Smettila, mi fai ridere troppo!']));
+    return;
+  }
   const r = ZephCore.pick(TAP_REPLIES);
   if (r.action) anim.startAction(r.action);
   speak(r.say);
 };
+const EVENTS = {
+  charger: { say: ['Ahh, energia! Che bello, grazie!', 'Gnam, la corrente! Mi sento già più carico!'], action: 'dance' },
+  unplug: { say: ['Staccato! Ora cerchiamo di risparmiare un po’.', 'Ok, si va a batteria!'], action: 'wave' },
+  batteryLow: { say: ['Ehi, la batteria è quasi scarica! Mettimi in carica, per favore.', 'Mi sento debole… la batteria sta finendo!'], action: 'stretch' },
+  headset: { say: ['Cuffie! Vuoi un po’ di musica? Dimmi «play».', 'Ooh, le cuffie! Si ascolta qualcosa?'], action: 'jump' },
+};
+window.zephEvent = function (ev) {
+  const e = EVENTS[ev];
+  if (!e) return;
+  wake(true);
+  if (e.action) anim.startAction(e.action);
+  speak(ZephCore.pick(e.say));
+};
+// «Condividi → Zeph»: legge il testo ad alta voce
+window.zephRead = function (text) {
+  wake(true);
+  text = String(text || '').trim();
+  if (!text) return;
+  const short = text.length > 150 ? text.slice(0, 147).trim() + '…' : text;
+  anim.startAction('wave');
+  speak(text, '📖 ' + short);
+};
 window.zephGrab = function () {
+  wake(true);
   state.grabbed = true;
   state.targetX = null;
   anim.state.action = null;
@@ -357,8 +458,9 @@ window.zephDrop = function (x) {
   sparkles.burst(0, 0.12, 0, 12);
   if (Math.random() < 0.7) speak(ZephCore.pick(['Ahia! Però che volo!', 'Uff! Avvisami la prossima volta!', 'Wiii! Di nuovo!']));
 };
-window.zephChat = function (text) { botRespond(String(text || '')); };
+window.zephChat = function (text) { wake(true); botRespond(String(text || '')); };
 window.zephCmd = function (cmd) {
+  wake(true);
   const map = { saluta: 'ciao', balla: 'balla', salta: 'salta', flip: 'salto mortale', barzelletta: 'barzelletta', curiosita: 'dimmi una curiosità' };
   if (map[cmd]) botRespond(map[cmd]);
   else if (cmd === 'music:on') botRespond('metti la musica');
@@ -401,11 +503,12 @@ function tick() {
   updateMovement(dt);
   updateWander(t);
   updateChatter(t);
+  updateSleep(t);
   anim.update(t, dt);
   placeWindow(t);
 
   const act = anim.state.action;
-  if (musicOn && !act && !anim.state.talking && state.speed < 0.1 && !state.grabbed) anim.startAction('dance');
+  if (musicOn && !act && !anim.state.talking && state.speed < 0.1 && !state.grabbed && !anim.state.sleeping) anim.startAction('dance');
   if (act && (act.name === 'dance' || act.name === 'spin') && Math.random() < dt * 6) {
     sparkles.burst((Math.random() - 0.5) * 0.8, 0.9 + Math.random() * 0.6, 0, 2);
   }
@@ -415,13 +518,14 @@ function tick() {
   if (state.flyLerp > 0.3 && Math.random() < dt * 18) sparkles.burst((Math.random() - 0.5) * 0.2, 0.2, 0, 1);
   if (t > state.nextStretchAt) {
     state.nextStretchAt = t + 50 + Math.random() * 40;
-    if (!act && !anim.state.talking && state.speed < 0.1 && !musicOn) anim.startAction('stretch');
+    if (!act && !anim.state.talking && state.speed < 0.1 && !musicOn && !anim.state.sleeping) anim.startAction('stretch');
   }
   sparkles.update(dt, camera);
   renderer.render(scene, camera);
 }
 
 loadAvatar();
+touched();
 tick();
 setTimeout(() => {
   anim.startAction('wave');
@@ -432,5 +536,5 @@ setTimeout(() => {
 }, 1200);
 
 // gancio per i test
-window.zephPhone = { state, anim, botRespond, get host() { return host; } };
+window.zephPhone = { state, anim, botRespond, wake, get host() { return host; } };
 })();
