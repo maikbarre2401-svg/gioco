@@ -55,5 +55,8 @@ jobs:
             echo "Nessun cambiamento"
           else
             git commit -m "Dati citta' da OpenStreetMap (c) OpenStreetMap contributors, ODbL"
-            git push origin HEAD:${{ github.ref_name }}
+            for i in 1 2 3 4; do
+              git pull --rebase -X theirs origin "${{ github.ref_name }}" && git push origin "HEAD:${{ github.ref_name }}" && break
+              sleep $((i * 5))
+            done
           fi

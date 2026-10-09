@@ -329,6 +329,11 @@ def main():
                 rec["mat"] = t["building:material"]
             if t.get("roof:shape"):
                 rec["rs"] = t["roof:shape"]
+            if t.get("roof:colour"):
+                rec["rc"] = t["roof:colour"]
+            rh = parse_len(t.get("roof:height"))
+            if rh is not None:
+                rec["rh"] = round(rh, 1)
             if not rec["r"]:
                 continue
             (parts if is_part else buildings).append(rec)
@@ -340,7 +345,8 @@ def main():
                 continue
             rec = dict(k=hw, p=Q(geom))
             for tag, key in (("lanes", "l"), ("oneway", "o"), ("layer", "y"), ("bridge", "b"), ("tunnel", "t"),
-                             ("name", "n"), ("width", "w"), ("service", "s"), ("sidewalk", "sw")):
+                             ("name", "n"), ("width", "w"), ("service", "s"), ("sidewalk", "sw"),
+                             ("footway", "f"), ("junction", "j"), ("maxspeed", "ms"), ("access", "ac")):
                 if tag in t:
                     rec[key] = t[tag]
             roads.append(rec)
