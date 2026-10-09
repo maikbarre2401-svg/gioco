@@ -79,6 +79,13 @@ python crea_apk.py --installa            # e lo installa sul telefono collegato 
 Su Windows basta un doppio clic su **`crea_apk.bat`**, oppure trascinaci sopra il tuo `avatar.glb`.
 Il file finito è `Zeph.apk` nella cartella principale del progetto.
 
+**Se lo scaricamento si interrompe** (per esempio `WinError 10054`, «connessione interrotta
+forzatamente dall'host remoto»): di solito è un antivirus o un firewall che controlla le connessioni
+sicure, una rete di scuola/lavoro o una VPN. Lo script riprova da solo, passa ai server di riserva
+(GitHub) e al programma di download di Windows; se non basta ti dice quale file scaricare a mano e
+dove metterlo. In alternativa: rilancia con un'altra rete (l'hotspot del telefono), oppure salta
+del tutto questo passaggio e scarica l'APK già pronto dal link qui sopra.
+
 ## Primo avvio sul telefono
 
 1. Apri l'app **Zeph**.

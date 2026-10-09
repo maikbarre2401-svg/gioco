@@ -11,6 +11,7 @@ Java 17 (se non c'è già), Android SDK e Gradle. Le volte dopo è veloce.
 Funziona su Windows, macOS e Linux; serve solo Python 3.8 o più recente.
 """
 import argparse
+import http.client
 import os
 import platform
 import re
@@ -18,7 +19,10 @@ import shutil
 import stat
 import subprocess
 import sys
+import ssl
 import tarfile
+import time
+import urllib.error
 import urllib.request
 import zipfile
 
@@ -32,6 +36,7 @@ CMDLINE_TOOLS = '11076708'
 SDK_PACCHETTI = ['platforms;android-34', 'build-tools;34.0.0', 'platform-tools']
 APK_DEBUG = os.path.join(QUI, 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk')
 APK_FINALE = os.path.join(REPO, 'Zeph.apk')
+APK_PRONTO = 'https://github.com/maikbarre2401-svg/gioco/releases/tag/android'
 
 try:
     sys.stdout.reconfigure(errors='replace')  # niente crash su console vecchie
@@ -50,14 +55,9 @@ def fallisci(msg):
 
 # ------------------------------------------------------------------ scaricamenti
 
-def scarica(url, dest):
-    if os.path.exists(dest):
-        return dest
-    os.makedirs(os.path.dirname(dest), exist_ok=True)
-    tmp = dest + '.parziale'
-    print('    scarico ' + url, flush=True)
+def _scarica_python(url, tmp):
     req = urllib.request.Request(url, headers={'User-Agent': 'zeph-crea-apk'})
-    with urllib.request.urlopen(req) as r, open(tmp, 'wb') as f:
+    with urllib.request.urlopen(req, timeout=60) as r, open(tmp, 'wb') as f:
         totale = int(r.headers.get('Content-Length') or 0)
         fatto, ultimo = 0, -1
         while True:
@@ -71,8 +71,92 @@ def scarica(url, dest):
                 if perc != ultimo and perc % 10 == 0:
                     print('    %3d%%  (%d MB)' % (perc, fatto >> 20), flush=True)
                     ultimo = perc
-    os.replace(tmp, dest)
-    return dest
+        if totale and fatto < totale:
+            raise OSError('scaricamento incompleto (%d di %d MB)' % (fatto >> 20, totale >> 20))
+
+
+def _scarica_sistema(url, tmp):
+    """Il programma di download del sistema (curl, o PowerShell su Windows): usa le impostazioni
+    di rete di Windows (proxy, certificati dell'antivirus) e spesso passa dove Python viene bloccato."""
+    if os.path.exists(tmp):
+        os.remove(tmp)
+    curl = shutil.which('curl.exe' if WIN else 'curl')
+    if curl:
+        print('    provo con curl…', flush=True)
+        r = subprocess.run([curl, '-L', '--fail', '-#', '--retry', '3', '--retry-delay', '3', '--connect-timeout', '30',
+                            '-A', 'zeph-crea-apk', '-o', tmp, url])
+        if r.returncode == 0 and os.path.exists(tmp) and os.path.getsize(tmp) > 0:
+            return True
+    if WIN:
+        print('    provo con PowerShell…', flush=True)
+        comando = ("$ProgressPreference='SilentlyContinue'; "
+                   "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; "
+                   "Invoke-WebRequest -UseBasicParsing -Uri '%s' -OutFile '%s'" % (url, tmp.replace("'", "''")))
+        r = subprocess.run(['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', comando])
+        if r.returncode == 0 and os.path.exists(tmp) and os.path.getsize(tmp) > 0:
+            return True
+    return False
+
+
+def _valido(percorso, nome=None):
+    # un antivirus o un proxy a volte restituisce una pagina web al posto del file: la scartiamo
+    nome = nome or percorso  # il nome vero (il file temporaneo finisce in .parziale)
+    if not os.path.exists(percorso) or os.path.getsize(percorso) == 0:
+        return False
+    if nome.endswith('.zip'):
+        return zipfile.is_zipfile(percorso)
+    if nome.endswith('.tar.gz'):
+        try:
+            with tarfile.open(percorso) as t:
+                t.next()
+            return True
+        except (tarfile.TarError, OSError, EOFError):
+            return False
+    return True
+
+
+def scarica(urls, dest, cosa='un file'):
+    """Scarica dal primo indirizzo che funziona: 3 tentativi ciascuno, poi il downloader del sistema."""
+    if isinstance(urls, str):
+        urls = [urls]
+    if os.path.exists(dest):
+        if _valido(dest):
+            return dest
+        os.remove(dest)  # rimasto rotto da un tentativo precedente
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    tmp = dest + '.parziale'
+    for url in urls:
+        for tentativo in range(1, 4):
+            print('    scarico ' + url + ('' if tentativo == 1 else '  (tentativo %d)' % tentativo), flush=True)
+            try:
+                _scarica_python(url, tmp)
+                if _valido(tmp, dest):
+                    os.replace(tmp, dest)
+                    return dest
+                print('    il file arrivato non è valido', flush=True)
+            except (urllib.error.URLError, ssl.SSLError, ConnectionError, TimeoutError, OSError, http.client.HTTPException) as e:
+                motivo = getattr(e, 'reason', e)
+                print('    interrotto: %s' % motivo, flush=True)
+                if isinstance(e, urllib.error.HTTPError) and e.code == 404:
+                    break  # qui il file non c'è: inutile riprovare
+            time.sleep(2 * tentativo)
+        if _scarica_sistema(url, tmp) and _valido(tmp, dest):
+            os.replace(tmp, dest)
+            return dest
+        print('    niente da fare con questo indirizzo, provo il prossimo…', flush=True)
+    if os.path.exists(tmp):
+        os.remove(tmp)
+    fallisci(
+        'non riesco a scaricare %s: la connessione viene interrotta.\n'
+        'Succede con alcuni antivirus o firewall che controllano le connessioni sicure, con reti di scuola o\n'
+        'di lavoro, con alcune VPN, o se la rete è lenta.\n\n'
+        'Cosa puoi fare:\n'
+        '  1) NON serve crearlo tu: l\'app pronta è qui  %s\n'
+        '     (il tuo avatar lo scegli dentro l\'app con «Scegli il mio avatar»)\n'
+        '  2) Riprova più tardi, oppure con un\'altra rete (per esempio l\'hotspot del telefono)\n'
+        '  3) Spegni per un attimo il controllo HTTPS/web dell\'antivirus e rilancia\n'
+        '  4) Oppure scarica a mano questo file:\n       %s\n     e mettilo qui:\n       %s\n     poi rilancia: lo userò senza scaricarlo di nuovo.'
+        % (cosa, APK_PRONTO, urls[0], dest))
 
 
 def estrai(archivio, dest):
@@ -138,8 +222,13 @@ def scarica_java():
     arch = {'AMD64': 'x64', 'x86_64': 'x64', 'arm64': 'aarch64', 'aarch64': 'aarch64'}.get(platform.machine())
     if not so or not arch:
         fallisci('non so scaricare Java per questo sistema: installa Java 17 da https://adoptium.net')
-    url = 'https://api.adoptium.net/v3/binary/latest/17/ga/%s/%s/jdk/hotspot/normal/eclipse' % (so, arch)
-    archivio = scarica(url, os.path.join(STRUMENTI, 'scaricati', 'jdk17' + ('.zip' if so == 'windows' else '.tar.gz')))
+    est = '.zip' if so == 'windows' else '.tar.gz'
+    urls = [
+        'https://api.adoptium.net/v3/binary/latest/17/ga/%s/%s/jdk/hotspot/normal/eclipse' % (so, arch),
+        # riserva: la stessa Java 17 pubblicata su GitHub
+        'https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.12%%2B7/OpenJDK17U-jdk_%s_%s_hotspot_17.0.12_7%s' % (arch, so, est),
+    ]
+    archivio = scarica(urls, os.path.join(STRUMENTI, 'scaricati', 'jdk17' + est), 'Java 17')
     estrai(archivio, os.path.join(STRUMENTI, 'jdk'))
     rendi_eseguibili(os.path.join(STRUMENTI, 'jdk'))
     home = trova_java()
@@ -171,7 +260,7 @@ def prepara_sdk(java_home, sdk):
     if not sdkmanager(sdk):
         so = {'Windows': 'win', 'Darwin': 'mac', 'Linux': 'linux'}[platform.system()]
         url = 'https://dl.google.com/android/repository/commandlinetools-%s-%s_latest.zip' % (so, CMDLINE_TOOLS)
-        archivio = scarica(url, os.path.join(STRUMENTI, 'scaricati', 'cmdline-tools.zip'))
+        archivio = scarica(url, os.path.join(STRUMENTI, 'scaricati', 'cmdline-tools.zip'), 'gli strumenti di Android')
         tmp = os.path.join(sdk, 'cmdline-tools', '_tmp')
         shutil.rmtree(tmp, ignore_errors=True)
         estrai(archivio, tmp)
@@ -191,7 +280,8 @@ def prepara_sdk(java_home, sdk):
     passo('Installo ' + ', '.join(mancanti) + ' (qualche minuto)')
     r = subprocess.run([sm, '--sdk_root=' + sdk] + mancanti, input='y\n' * 10, text=True, env=env)
     if r.returncode != 0:
-        fallisci('sdkmanager non è riuscito a installare i pacchetti Android')
+        fallisci('sdkmanager non è riuscito a installare i pacchetti Android (spesso è la rete: riprova, o usa\n'
+                 'un\'altra connessione). Oppure scarica l\'app già pronta: ' + APK_PRONTO)
 
 
 # ------------------------------------------------------------------ Gradle
@@ -200,8 +290,15 @@ def prepara_gradle():
     home = os.path.join(STRUMENTI, 'gradle-' + GRADLE_VER)
     eseguibile = os.path.join(home, 'bin', 'gradle.bat' if WIN else 'gradle')
     if not os.path.exists(eseguibile):
-        url = 'https://services.gradle.org/distributions/gradle-%s-bin.zip' % GRADLE_VER
-        archivio = scarica(url, os.path.join(STRUMENTI, 'scaricati', 'gradle-%s-bin.zip' % GRADLE_VER))
+        nome = 'gradle-%s-bin.zip' % GRADLE_VER
+        urls = [
+            # services.gradle.org rimanda comunque qui: si va dritti su GitHub, poi le riserve
+            'https://github.com/gradle/gradle-distributions/releases/download/v%s.0/%s' % (GRADLE_VER, nome),
+            'https://services.gradle.org/distributions/' + nome,
+            'https://downloads.gradle.org/distributions/' + nome,
+            'https://mirrors.cloud.tencent.com/gradle/' + nome,
+        ]
+        archivio = scarica(urls, os.path.join(STRUMENTI, 'scaricati', nome), 'Gradle ' + GRADLE_VER)
         estrai(archivio, STRUMENTI)
         rendi_eseguibili(home)
     return eseguibile
@@ -269,4 +366,9 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        fallisci('interrotto. Rilancia quando vuoi: riparto da dove ero rimasto.')
+    except Exception as e:  # niente muri di errori: una spiegazione e cosa fare
+        fallisci('qualcosa è andato storto: %s\nRiprova; se continua, l\'app pronta è qui: %s' % (e, APK_PRONTO))
