@@ -1588,7 +1588,8 @@ class MaikSubsApp(App):
     def request_permissions(self):
         if platform == "android":
             try:
-                from android.permissions import Permission, request_permissions
+                # Il modulo "android" esiste solo dentro l'APK: sul PC l'editor non lo trova, è normale.
+                from android.permissions import Permission, request_permissions  # pyright: ignore[reportMissingImports]
                 request_permissions([Permission.POST_NOTIFICATIONS])
             except Exception:
                 pass

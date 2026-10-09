@@ -73,7 +73,7 @@ Il file `.github/workflows/build-apk.yml` compila l'APK su GitHub a ogni modific
 Buildozer non funziona direttamente su Windows: usa WSL con Ubuntu.
 
 ```bash
-sudo apt install -y python3-pip openjdk-17-jdk autoconf automake libtool pkg-config \
+sudo apt install -y python3-pip openjdk-17-jdk autoconf automake libtool libltdl-dev pkg-config \
   zlib1g-dev libncurses-dev cmake libffi-dev libssl-dev zip unzip git
 pip install --upgrade buildozer "cython<3.1"
 

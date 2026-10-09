@@ -26,7 +26,7 @@ jobs:
       - name: Install system packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y autoconf automake libtool pkg-config zlib1g-dev \
+          sudo apt-get install -y autoconf automake libtool libltdl-dev pkg-config zlib1g-dev \
             libncurses-dev cmake libffi-dev libssl-dev zip unzip
 
       - name: Install Buildozer
