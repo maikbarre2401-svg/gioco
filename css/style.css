@@ -260,6 +260,10 @@ input[type="range"] { width: 100%; accent-color: var(--cyan); }
   transition: opacity .4s;
 }
 .boot.done { opacity: 0; pointer-events: none; }
+/* Safety net: the overlay disappears on its own even if a script fails to run. */
+.boot { animation: boot-out .4s 3.5s forwards; }
+@keyframes boot-out { to { opacity: 0; visibility: hidden; pointer-events: none; } }
+main:not(:has(.screen.active)) .screen[data-screen="home"] { display: flex; flex-direction: column; gap: 14px; }
 .boot pre { margin: 0; font: 12px/1.7 var(--f-mono); color: var(--cyan); white-space: pre-wrap; }
 .boot pre .ok { color: var(--ok); }
 .boot pre .hot { color: var(--magenta); }
@@ -282,4 +286,5 @@ input[type="range"] { width: 100%; accent-color: var(--cyan); }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
+  .boot { display: none; }
 }
