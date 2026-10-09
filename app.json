@@ -1,0 +1,72 @@
+{
+  "expo": {
+    "name": "Maik Subs",
+    "slug": "maik-subs",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "maiksubs",
+    "userInterfaceStyle": "automatic",
+    "description": "Tutti i tuoi abbonamenti sotto controllo: totali, promemoria prima dei rinnovi e statistiche. Creato da Maik.",
+    "ios": {
+      "bundleIdentifier": "com.maik.subs",
+      "supportsTablet": true,
+      "icon": "./assets/images/icon.png",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "CFBundleAllowMixedLocalizations": true
+      }
+    },
+    "android": {
+      "package": "com.maik.subs",
+      "adaptiveIcon": {
+        "backgroundColor": "#6A4BFA",
+        "foregroundImage": "./assets/images/android-icon-foreground.png",
+        "backgroundImage": "./assets/images/android-icon-background.png",
+        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+      },
+      "permissions": ["android.permission.POST_NOTIFICATIONS", "android.permission.USE_BIOMETRIC"],
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "output": "single",
+      "favicon": "./assets/images/favicon.png",
+      "name": "Maik Subs",
+      "themeColor": "#6A4BFA"
+    },
+    "locales": {
+      "it": "./locales/it.json",
+      "en": "./locales/en.json"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#6A4BFA",
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 120
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/notification-icon.png",
+          "color": "#6A4BFA"
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Usa Face ID per proteggere i tuoi abbonamenti."
+        }
+      ],
+      "expo-sharing",
+      "expo-localization"
+    ],
+    "experiments": {
+      "typedRoutes": false,
+      "reactCompiler": true
+    }
+  }
+}
