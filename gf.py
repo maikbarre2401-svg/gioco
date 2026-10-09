@@ -76,7 +76,7 @@ VIDEO_EXTS = (".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v")
 CREATOR = "MAIKGOST"
 CREATOR_TAG = f"created by {CREATOR}"
 APP_NAME = "ORION // SPY OSINT CINEMA PRO"
-APP_VERSION = "6.0"
+APP_VERSION = "7.0"
 
 
 # ===========================================================================
@@ -1692,6 +1692,7 @@ class TabView(tk.Frame):
         self.bgc = bg or bg_of(parent)
         super().__init__(parent, bg=self.bgc)
         self.font = font or (UI, 10, "bold")
+        self.cfont = (self.font[0], max(8, self.font[1] - 1), "bold")
         self.on_change = on_change
         self.bar = tk.Canvas(self, height=height, bg=self.bgc, highlightthickness=0)
         self.bar.pack(fill="x")
@@ -1701,7 +1702,7 @@ class TabView(tk.Frame):
         self.tabs = []
         self.cur = self.hover = -1
         self.ind, self.ind_to = [0.0, 0.0], [0.0, 0.0]
-        self.bar.bind("<Configure>", self._draw)
+        self.bar.bind("<Configure>", self._resized)
         self.bar.bind("<Motion>", self._motion)
         self.bar.bind("<Leave>", self._leave)
         self.bar.bind("<Button-1>", self._click)
@@ -1718,11 +1719,39 @@ class TabView(tk.Frame):
         return f
 
     def _layout(self):
+        """Larghezza naturale; se non c'è spazio, schede uguali con etichette accorciate."""
+        n, w = len(self.tabs), self.bar.winfo_width()
+        natural = [text_w(t["label"], self.font) + 34 for t in self.tabs]
+        avail = w - 12 if w > 1 else 10 ** 6
+        compact = sum(natural) + 4 * n > avail
+        if not compact:
+            widths, labels = natural, [t["label"] for t in self.tabs]
+        else:
+            each = max(44, (avail - 4 * n) / max(1, n))
+            widths = [each] * n
+            labels = [self._fit(t["label"], each - 12, self.cfont) for t in self.tabs]
         x = 6
-        for t in self.tabs:
-            tw = text_w(t["label"], self.font) + 34
-            t["x0"], t["x1"] = x, x + tw
+        for t, tw, lab in zip(self.tabs, widths, labels):
+            t["x0"], t["x1"], t["shown"], t["cf"] = x, x + tw, lab, compact
             x += tw + 4
+        if self.cur >= 0:
+            t = self.tabs[self.cur]
+            self.ind_to = [t["x0"], t["x1"]]
+
+    def _fit(self, label, maxw, font):
+        if text_w(label, font) <= maxw:
+            return label
+        s = label
+        while len(s) > 2 and text_w(s + "…", font) > maxw:
+            s = s[:-1]
+        return s.rstrip() + "…"
+
+    def ensure_built(self, i):
+        """Costruisce il contenuto di una scheda pigra senza mostrarla."""
+        t = self.tabs[i]
+        if not t["built"]:
+            t["built"] = True
+            t["builder"](t["frame"])
 
     def select(self, i, user=False):
         if not (0 <= i < len(self.tabs)) or i == self.cur:
@@ -1743,6 +1772,11 @@ class TabView(tk.Frame):
         self._draw()
         if self.on_change:
             self.on_change(i)
+
+    def _resized(self, _=None):
+        self._layout()
+        self.ind = list(self.ind_to)
+        self._draw()
 
     def _hit(self, x):
         for i, t in enumerate(self.tabs):
@@ -1796,7 +1830,8 @@ class TabView(tk.Frame):
                 col = THEME["white"]
             else:
                 col = THEME["dim"]
-            c.create_text((x0 + x1) / 2, h / 2 + 2, text=t["label"], fill=col, font=self.font)
+            c.create_text((x0 + x1) / 2, h / 2 + 2, text=t.get("shown", t["label"]), fill=col,
+                          font=self.cfont if t.get("cf") else self.font)
         a, b = self.ind
         if b > a:
             c.create_line(a + 8, h - 2, b - 8, h - 2, fill=acc, width=3)
@@ -1972,8 +2007,8 @@ class StatusBar(tk.Frame):
         tk.Frame(self, bg=THEME["line"], height=1).pack(fill="x", side="top")
         self.left = tk.Canvas(self, width=600, height=27, bg=bgc, highlightthickness=0)
         self.left.pack(side="left")
-        tk.Label(self, text="ESC stop · CTRL+G galleria · CTRL+P slideshow · CTRL+E esporta · "
-                            "F11 schermo intero", font=(MONO, 8), bg=bgc,
+        tk.Label(self, text="CTRL+K comandi · ESC stop · CTRL+G galleria · CTRL+M missioni · "
+                            "CTRL+T terminale · F11", font=(MONO, 8), bg=bgc,
                  fg=THEME["dim"]).pack(side="right", padx=10)
         self.mid = tk.Canvas(self, height=27, bg=bgc, highlightthickness=0)
         self.mid.pack(side="left", fill="x", expand=True)
@@ -2022,8 +2057,9 @@ class HeaderBar(tk.Canvas):
     """Intestazione animata: logo, equalizzatore, indicatori di sistema, orologio."""
     H = 84
 
-    def __init__(self, parent, on_settings):
+    def __init__(self, parent, on_settings, info=None):
         super().__init__(parent, height=self.H, bg=THEME["bg"], highlightthickness=0)
+        self.info = info
         self.logo = ImageTk.PhotoImage(render_logo(66, THEME["accent"])) if PIL_OK else None
         self.bg_img = None
         self.geo = {}
@@ -2097,7 +2133,8 @@ class HeaderBar(tk.Canvas):
         w, h = self.winfo_width(), self.H
         now = datetime.now()
         self.itemconfig("clock", text=now.strftime("%H:%M:%S"))
-        self.itemconfig("date", text=now.strftime("%Y-%m-%d") + f"  ·  OPERATOR {CREATOR}")
+        self.itemconfig("date", text=now.strftime("%Y-%m-%d") + "  ·  " +
+                        (self.info() if self.info else f"OPERATOR {CREATOR}"))
         bb = self.bbox("clock")
         if bb:
             p = (math.sin(self.frame * 0.25) + 1) / 2
@@ -3400,6 +3437,1528 @@ class Slideshow:
 
 
 # ===========================================================================
+#  MODALITÀ MISSIONE  —  casi di FANTASIA: indizi, deduzione, minigioco
+#  (tutti i personaggi sono inventati, nessun riferimento a persone reali)
+# ===========================================================================
+FICT_FIRST = ["Aurelio", "Dara", "Ilya", "Kenji", "Lior", "Mara", "Nadia", "Oren", "Petra",
+              "Quinn", "Rhea", "Soren", "Talia", "Ugo", "Vera", "Wren", "Xenia", "Yara", "Zeno",
+              "Iris", "Bastian", "Celeste", "Dorian", "Elsa"]
+FICT_LAST = ["Vantelli", "Okonkwo", "Draganov", "Ishikawa", "Lindqvist", "Marchetti", "Ferrand",
+             "Haldane", "Kowal", "Moreira", "Novak", "Ruiz-Kaan", "Sterling", "Tavares", "Voss",
+             "Wexler", "Arkadi", "Belmonte", "Castellan", "Duvall"]
+CODENAMES = ["VIPER", "NOMAD", "ORACLE", "SPECTRE", "RAVEN", "CIPHER", "ECHO", "MANTIS", "JACKAL",
+             "GHOST", "FALCO", "KRAKEN", "LYNX", "COBRA", "SABLE", "ONYX", "HALO", "VECTOR", "ZERO",
+             "NOVA"]
+CASE_TITLES = ["GHIACCIO NERO", "FALCO D'ARGENTO", "MEZZANOTTE", "LAMA SILENTE", "ECLISSI",
+               "VETRO ROTTO", "NEBBIA ROSSA", "SPECCHIO", "ZERO ASSOLUTO", "TEMPESTA",
+               "ORIZZONTE", "CRISALIDE"]
+CASE_EVENTS = ["un archivio cifrato è stato copiato dal server centrale",
+               "il prototipo QUASAR è sparito dal laboratorio",
+               "le chiavi del satellite ORION-3 sono state messe in vendita",
+               "l'identità di un agente sotto copertura è trapelata",
+               "un drone sperimentale è stato dirottato",
+               "il codice sorgente del sistema AEGIS è finito online"]
+SUSPECT_ROLES = ["Analista", "Hacker", "Corriere", "Diplomatico", "Ingegnere", "Pilota",
+                 "Fotografo", "Crittografo", "Logista", "Interprete"]
+CLUE_SOURCES = ["intercettazione SIGINT", "telecamera di sorveglianza", "registro dell'hotel",
+                "analisi forense", "informatore", "tabulati telefonici", "satellite ORION-3",
+                "log del server"]
+# chiave: (etichetta, icona, valori possibili, frase se vero, frase se negato)
+CLUE_ATTRS = {
+    "city": ("POSIZIONE", "⌖", ["Lisbona", "Praga", "Istanbul", "Oslo", "Marsiglia"],
+             "Quella notte la talpa si trovava a {v}.", "Quella notte la talpa NON era a {v}."),
+    "device": ("DISPOSITIVO", "▣", ["iPhone", "Android", "laptop Linux", "telefono satellitare"],
+               "Tracce digitali: la talpa usa un {v}.", "Tracce digitali: la talpa NON usa un {v}."),
+    "vehicle": ("VEICOLO", "◢", ["moto nera", "SUV grigio", "auto elettrica", "scooter rosso"],
+                "Le telecamere riprendono la talpa con: {v}.", "La talpa NON si sposta con: {v}."),
+    "habit": ("ATTIVITÀ", "◷", ["di notte", "all'alba", "nel pomeriggio"],
+              "La talpa è attiva soprattutto {v}.", "La talpa non è mai attiva {v}."),
+    "lang": ("LINGUA", "✦", ["russo", "giapponese", "portoghese", "arabo", "tedesco"],
+             "Intercettazione: la talpa parla {v}.", "Intercettazione: la talpa NON parla {v}."),
+    "mark": ("SEGNI", "◎", ["tatuaggio", "cicatrice", "occhiali", "nessuno"],
+             "Segno distintivo della talpa: {v}.", "Segno distintivo della talpa diverso da: {v}."),
+}
+N_CASES = 12
+RANKS = [(0, "RECLUTA"), (500, "AGENTE"), (1500, "AGENTE SPECIALE"), (3000, "ANALISTA SENIOR"),
+         (6000, "CAPO SEZIONE"), (10000, "DIRETTORE ORION")]
+AGENT_FILE = os.path.join(APP_DIR, "orion_agent.json")
+
+
+def build_case(n):
+    """Caso n (deterministico): sospetti inventati, una talpa, indizi che – messi
+    tutti insieme – identificano un solo colpevole."""
+    rng = random.Random(f"orion-case-{n}")
+    k = min(8, 4 + (n + 1) // 2)
+    attrs = list(CLUE_ATTRS)[:min(6, 4 + n // 3)]
+    firsts, lasts = rng.sample(FICT_FIRST, k), rng.sample(FICT_LAST, k)
+    codes, roles = rng.sample(CODENAMES, k), [rng.choice(SUSPECT_ROLES) for _ in range(k)]
+    while True:
+        suspects = [{"code": codes[i], "name": f"{firsts[i]} {lasts[i]}", "role": roles[i],
+                     "age": rng.randint(26, 61), "seed": f"case{n}-{i}",
+                     "attrs": {a: rng.choice(CLUE_ATTRS[a][2]) for a in attrs}} for i in range(k)]
+        culprit = rng.randrange(k)
+        cv = suspects[culprit]["attrs"]
+        if all(any(s["attrs"][a] != cv[a] for a in attrs)
+               for i, s in enumerate(suspects) if i != culprit):
+            break
+    min_clues = min(k - 1, 2 + n // 2)              # i casi difficili richiedono più prove
+    for attempt in range(25):
+        remaining = set(range(k)) - {culprit}       # innocenti non ancora esclusi
+        clues, used = [], set()
+
+        def add(a, v, neg):
+            used.add((a, v, neg))
+            clues.append({"attr": a, "value": v, "neg": neg})
+
+        for _ in range(60):
+            if not remaining:
+                break
+            options = []                               # tutte le prove vere ancora utili
+            for a in attrs:
+                elim = {i for i in remaining if suspects[i]["attrs"][a] != cv[a]}
+                if elim and (a, cv[a], False) not in used:
+                    options.append((len(elim), a, cv[a], False, elim))
+                for v in {suspects[i]["attrs"][a] for i in remaining} - {cv[a]}:
+                    if (a, v, True) not in used:
+                        options.append((sum(1 for i in remaining if suspects[i]["attrs"][a] == v),
+                                        a, v, True, {i for i in remaining if suspects[i]["attrs"][a] == v}))
+            if not options:
+                break
+            options.sort(key=lambda o: o[0])
+            # più il caso è difficile, più spesso scelgo prove "sottili" (escludono pochi sospetti)
+            pool = options[:3] if rng.random() < min(0.85, 0.3 + 0.06 * n) else options
+            _, a, v, neg, elim = rng.choice(pool)
+            add(a, v, neg)
+            remaining -= elim
+        if len(clues) >= min_clues and not remaining:
+            break
+    for i in sorted(remaining):                    # rete di sicurezza: sempre risolvibile
+        a = next(a for a in attrs if suspects[i]["attrs"][a] != cv[a])
+        if (a, cv[a], False) not in used:
+            add(a, cv[a], False)
+    for _ in range(rng.randint(1, 2)):             # prove ridondanti, come nella realtà
+        a = rng.choice(attrs)
+        if (a, cv[a], False) not in used:
+            add(a, cv[a], False)
+    rng.shuffle(clues)
+    for j, c in enumerate(clues):
+        c["id"] = j
+        c["source"] = rng.choice(CLUE_SOURCES)
+        c["encrypted"] = rng.random() < min(0.6, 0.22 + 0.04 * n)
+        c["text"] = CLUE_ATTRS[c["attr"]][4 if c["neg"] else 3].format(v=c["value"])
+    city = rng.choice(["Ginevra", "Rotterdam", "Helsinki", "Valencia", "Trieste", "Cracovia"])
+    date = (datetime(2031, 1, 1) + timedelta(days=rng.randint(0, 364))).strftime("%d/%m/%Y")
+    event = rng.choice(CASE_EVENTS)
+    return {"n": n, "title": "OPERAZIONE " + CASE_TITLES[(n - 1) % len(CASE_TITLES)],
+            "city": city, "date": date, "event": event, "attrs": attrs,
+            "difficulty": min(5, 1 + n // 3),
+            "briefing": (f"Nella notte del {date}, a {city}, {event}. Solo {k} agenti avevano "
+                         f"accesso: uno di loro è una talpa. Analizza le prove, escludi gli "
+                         f"innocenti e accusa il colpevole prima di finire l'energia."),
+            "suspects": suspects, "culprit": culprit, "clues": clues, "energy": len(clues) + 2}
+
+
+def case_candidates(case, revealed):
+    """Sospetti compatibili con tutte le prove già rivelate."""
+    cl = [c for c in case["clues"] if c["id"] in revealed]
+
+    def ok(s, c):
+        same = s["attrs"][c["attr"]] == c["value"]
+        return not same if c["neg"] else same
+
+    return [i for i, s in enumerate(case["suspects"]) if all(ok(s, c) for c in cl)]
+
+
+def most_informative_attr(case, cands):
+    """L'attributo che divide meglio i sospetti rimasti (quello su cui indagare)."""
+    best, best_n = None, 1
+    for a in case["attrs"]:
+        n = len({case["suspects"][i]["attrs"][a] for i in cands})
+        if n > best_n:
+            best, best_n = a, n
+    return best
+
+
+class AgentProfile:
+    """Esperienza e casi completati, salvati in orion_agent.json."""
+
+    def __init__(self):
+        self.xp, self.cases = 0, {}
+        try:
+            with open(AGENT_FILE, encoding="utf-8") as f:
+                raw = json.load(f)
+            if isinstance(raw.get("xp"), int):
+                self.xp = max(0, raw["xp"])
+            if isinstance(raw.get("cases"), dict):
+                self.cases = {k: v for k, v in raw["cases"].items() if isinstance(v, dict)}
+        except (OSError, ValueError, AttributeError):
+            pass
+
+    def save(self):
+        try:
+            with open(AGENT_FILE, "w", encoding="utf-8") as f:
+                json.dump({"xp": self.xp, "cases": self.cases}, f, indent=2)
+        except OSError:
+            pass
+
+    def rank(self):
+        """(nome grado, xp del grado successivo o None, progresso 0..1)."""
+        cur = RANKS[0]
+        for i, (need, name) in enumerate(RANKS):
+            if self.xp >= need:
+                cur, nxt = (need, name), (RANKS[i + 1] if i + 1 < len(RANKS) else None)
+        need, name = cur
+        if nxt is None:
+            return name, None, 1.0
+        return name, nxt[0], (self.xp - need) / (nxt[0] - need)
+
+    def status(self, n):
+        st = self.cases.get(str(n), {}).get("status")
+        if st:
+            return st
+        return "new" if self.unlocked(n) else "locked"
+
+    def unlocked(self, n):
+        return n == 1 or str(n - 1) in self.cases
+
+    def solved_count(self):
+        return sum(1 for v in self.cases.values() if v.get("status") == "solved")
+
+    def record(self, n, solved, score):
+        """Registra l'esito. L'esperienza si guadagna solo la prima volta."""
+        first = str(n) not in self.cases
+        if first:
+            self.cases[str(n)] = {"status": "solved" if solved else "failed", "score": score}
+            self.xp += score
+        elif solved and self.cases[str(n)].get("status") == "failed":
+            self.cases[str(n)] = {"status": "solved", "score": score}
+        self.save()
+        return first
+
+
+class BreachProtocol:
+    """Minigioco di intrusione: scegli i codici alternando riga e colonna per
+    comporre la sequenza richiesta prima che scada il tempo."""
+    CODES = ["1C", "55", "BD", "E9", "7A", "FF"]
+    CELL = 66
+
+    def __init__(self, root, on_done, size=5, seq_len=3, seconds=30):
+        self.on_done, self.size, self.seconds = on_done, size, seconds
+        rng = random.Random()
+        self.grid = [[rng.choice(self.CODES) for _ in range(size)] for _ in range(size)]
+        r, c, path = 0, rng.randrange(size), []       # sequenza sempre risolvibile
+        path.append((r, c))
+        for step in range(1, seq_len):
+            if step % 2:
+                r = rng.choice([x for x in range(size) if x != r])
+            else:
+                c = rng.choice([x for x in range(size) if x != c])
+            path.append((r, c))
+        self.target = [self.grid[rr][cc] for rr, cc in path]
+        self.bufsize = seq_len + 2
+        self.buffer, self.used = [], set()
+        self.mode = ("row", 0)
+        self.hover = None
+        self.t0 = time.time()
+        self.result = None
+        self.win = tk.Toplevel(root)
+        self.win.title("BREACH PROTOCOL — ORION")
+        self.win.configure(bg=THEME["bg"])
+        self.win.geometry("780x560")
+        self.win.transient(root)
+        self.win.protocol("WM_DELETE_WINDOW", lambda: self.finish(False))
+        self.win.bind("<Escape>", lambda e: self.finish(False))
+        self.cv = tk.Canvas(self.win, bg=THEME["bg"], highlightthickness=0)
+        self.cv.pack(fill="both", expand=True)
+        self.cv.bind("<Motion>", self._motion)
+        self.cv.bind("<Button-1>", self._click)
+        NeonButton(self.win, "✕  ANNULLA", lambda: self.finish(False), color=THEME["red"],
+                   width=130, height=34).place(relx=1.0, rely=1.0, x=-18, y=-16, anchor="se")
+        self.win.after(30, self.win.lift)
+        try:
+            self.win.grab_set()
+        except tk.TclError:
+            pass
+        sfx("open")
+        Anim(self.cv, 50, self._tick)
+
+    def _cell_at(self, x, y):
+        x0, y0, C = 40, 120, self.CELL
+        c, r = int((x - x0) // C), int((y - y0) // C)
+        if 0 <= r < self.size and 0 <= c < self.size:
+            return r, c
+        return None
+
+    def _active(self, rc):
+        kind, idx = self.mode
+        return rc not in self.used and (rc[0] == idx if kind == "row" else rc[1] == idx)
+
+    def _motion(self, e):
+        self.hover = self._cell_at(e.x, e.y)
+
+    def _click(self, e):
+        rc = self._cell_at(e.x, e.y)
+        if self.result is not None or rc is None or not self._active(rc):
+            return
+        r, c = rc
+        self.used.add(rc)
+        self.buffer.append(self.grid[r][c])
+        self.mode = ("col", c) if self.mode[0] == "row" else ("row", r)
+        sfx("click")
+        n = len(self.target)
+        if any(self.buffer[i:i + n] == self.target for i in range(len(self.buffer) - n + 1)):
+            self.finish(True)
+        elif len(self.buffer) >= self.bufsize:
+            self.finish(False)
+
+    def finish(self, ok):
+        if self.result is not None:
+            return
+        self.result = ok
+        sfx("done" if ok else "alert")
+        self.t_end = time.time()
+
+    def _close(self):
+        try:
+            self.win.grab_release()
+            self.win.destroy()
+        except tk.TclError:
+            pass
+        if callable(self.on_done):
+            self.on_done(bool(self.result))
+
+    def _tick(self):
+        if self.result is None and time.time() - self.t0 >= self.seconds:
+            self.finish(False)
+        if self.result is not None and time.time() - self.t_end > 1.0:
+            self._close()
+            return False
+        self._draw()
+
+    def _draw(self):
+        c, acc, bg = self.cv, THEME["accent"], THEME["bg"]
+        c.delete("all")
+        w = c.winfo_width()
+        c.create_text(40, 30, anchor="w", text="◢ BREACH PROTOCOL", fill=acc, font=(DISPLAY, 16, "bold"))
+        c.create_text(40, 54, anchor="w", fill=THEME["dim"], font=(MONO, 9),
+                      text="riga evidenziata → poi colonna → poi riga…  ·  componi la sequenza")
+        left = max(0.0, self.seconds - (time.time() - self.t0)) if self.result is None else 0
+        c.create_text(40, 84, anchor="w", text=f"TEMPO {left:4.1f}s", fill=THEME["amber"],
+                      font=(MONO, 12, "bold"))
+        c.create_rectangle(170, 79, 170 + 210, 89, outline=THEME["line2"])
+        c.create_rectangle(170, 79, 170 + 210 * left / self.seconds, 89, fill=THEME["amber"], outline="")
+        x0, y0, C = 40, 120, self.CELL
+        kind, idx = self.mode
+        if self.result is None:
+            if kind == "row":
+                c.create_rectangle(x0 - 4, y0 + idx * C, x0 + self.size * C + 4, y0 + (idx + 1) * C,
+                                   fill=mix(bg, acc, 0.12), outline=mix(bg, acc, 0.5))
+            else:
+                c.create_rectangle(x0 + idx * C, y0 - 4, x0 + (idx + 1) * C, y0 + self.size * C + 4,
+                                   fill=mix(bg, acc, 0.12), outline=mix(bg, acc, 0.5))
+        for r in range(self.size):
+            for cc in range(self.size):
+                cx, cy = x0 + cc * C + C / 2, y0 + r * C + C / 2
+                used = (r, cc) in self.used
+                act = self.result is None and self._active((r, cc))
+                if act and self.hover == (r, cc):
+                    c.create_polygon(chamfer(cx - 26, cy - 20, cx + 26, cy + 20, 6), fill=acc, outline="")
+                    col = "#000000"
+                else:
+                    col = THEME["line2"] if used else (THEME["white"] if act else THEME["dim"])
+                c.create_text(cx, cy, text="[ ]" if used else self.grid[r][cc], fill=col,
+                              font=(MONO, 16, "bold"))
+        bx = x0 + self.size * C + 50
+        c.create_text(bx, 128, anchor="w", text="SEQUENZA DA INSERIRE", fill=THEME["dim"],
+                      font=(MONO, 9, "bold"))
+        for i, code in enumerate(self.target):
+            x = bx + i * 62
+            c.create_polygon(chamfer(x, 142, x + 54, 182, 7), fill=mix(bg, THEME["magenta"], 0.15),
+                             outline=THEME["magenta"])
+            c.create_text(x + 27, 162, text=code, fill="#ffffff", font=(MONO, 15, "bold"))
+        c.create_text(bx, 214, anchor="w", text=f"BUFFER  ({len(self.buffer)}/{self.bufsize})",
+                      fill=THEME["dim"], font=(MONO, 9, "bold"))
+        for i in range(self.bufsize):
+            x = bx + i * 52
+            filled = i < len(self.buffer)
+            c.create_rectangle(x, 228, x + 44, 264, outline=acc if filled else THEME["line2"],
+                               fill=mix(bg, acc, 0.12) if filled else bg)
+            if filled:
+                c.create_text(x + 22, 246, text=self.buffer[i], fill=acc, font=(MONO, 13, "bold"))
+        if self.result is not None:
+            col = THEME["green"] if self.result else THEME["red"]
+            txt = "◉ ACCESSO OTTENUTO — prova decrittata" if self.result else "✕ VIOLAZIONE FALLITA"
+            c.create_rectangle(0, 300, max(w, 780), 360, fill="#000000", outline=col)
+            c.create_text(max(w, 780) / 2, 330, text=txt, fill=col, font=(DISPLAY, 18, "bold"))
+
+
+class SuspectCard(_HoverCard):
+    """Scheda sospetto: clic = escludi/includi, pulsante ACCUSA (doppio clic per confermare)."""
+
+    def __init__(self, parent, s, thumb, attrs, on_toggle, on_accuse):
+        super().__init__(parent, 250, 212)
+        self.s, self.attrs, self.on_toggle, self.on_accuse = s, attrs, on_toggle, on_accuse
+        self.thumb = ImageTk.PhotoImage(thumb) if thumb is not None else None
+        self.crossed = False
+        self.reveal = None             # None | "culprit" | "innocent" (a caso chiuso)
+        self.armed = 0.0
+        self.config(cursor="hand2")
+        self.bind("<Button-1>", self._click)
+        self._draw()
+
+    def set_state(self, crossed, reveal):
+        self.crossed, self.reveal = crossed, reveal
+        self._draw()
+
+    def _btn_box(self):
+        return 84, 70, 184, 94
+
+    def _click(self, e):
+        x0, y0, x1, y1 = self._btn_box()
+        if self.reveal is None and x0 <= e.x <= x1 and y0 <= e.y <= y1:
+            if time.time() - self.armed < 3:
+                self.armed = 0.0
+                self.on_accuse()
+            else:
+                self.armed = time.time()
+                sfx("alert")
+                self._draw()
+                self.after(3100, self._draw)
+            return
+        if self.reveal is None:
+            self.on_toggle()
+
+    def _draw(self):
+        self.delete("all")
+        W, H, s, card = self.W, self.H, self.s, THEME["card"]
+        acc, dim, red = THEME["accent"], THEME["dim"], THEME["red"]
+        edge = (THEME["green"] if self.reveal == "culprit" else
+                acc if self.hover and not self.crossed else THEME["line2"])
+        self.create_polygon(chamfer(1, 1, W - 2, H - 2, 12), fill=card, outline=edge,
+                            width=2 if self.reveal == "culprit" else 1)
+        if self.thumb:
+            self.create_image(10, 10, image=self.thumb, anchor="nw")
+        self.create_text(84, 18, anchor="w", text=s["code"], fill="#ffffff", font=(DISPLAY, 13, "bold"))
+        self.create_text(84, 37, anchor="w", text=s["name"], fill=THEME["text"], font=(UI, 9, "bold"))
+        self.create_text(84, 54, anchor="w", text=f"{s['role'].upper()} · {s['age']}", fill=dim,
+                         font=(MONO, 8, "bold"))
+        for i, a in enumerate(self.attrs):
+            y = 110 + i * 16
+            label, icon = CLUE_ATTRS[a][0], CLUE_ATTRS[a][1]
+            self.create_text(12, y, anchor="w", text=f"{icon} {label}", fill=dim, font=(MONO, 7, "bold"))
+            self.create_text(104, y, anchor="w", text=s["attrs"][a], fill=THEME["text"],
+                             font=(UI, 8, "bold"))
+        if self.reveal is None:
+            x0, y0, x1, y1 = self._btn_box()
+            armed = time.time() - self.armed < 3
+            self.create_polygon(chamfer(x0, y0, x1, y1, 6), outline=red,
+                                fill=red if armed else mix(card, red, 0.12))
+            self.create_text((x0 + x1) / 2, (y0 + y1) / 2, text="CONFERMA?" if armed else "⚠ ACCUSA",
+                             fill="#000000" if armed else red, font=(UI, 9, "bold"))
+            self.create_text(W - 10, H - 9, anchor="e", text="clic = escludi" if not self.crossed else
+                             "clic = reintegra", fill=mix(card, dim, 0.8), font=(MONO, 7))
+        else:
+            label = "◉ TALPA" if self.reveal == "culprit" else "innocente"
+            self.create_text(84, 82, anchor="w", text=label, font=(DISPLAY, 12, "bold"),
+                             fill=THEME["green"] if self.reveal == "culprit" else dim)
+        if self.crossed:
+            self.create_line(14, 14, W - 14, H - 14, fill=mix(card, red, 0.7), width=3)
+            self.create_line(W - 14, 14, 14, H - 14, fill=mix(card, red, 0.7), width=3)
+            self.create_rectangle(10, H / 2 - 14, W - 10, H / 2 + 14, fill=card, outline=red)
+            self.create_text(W / 2, H / 2, text="ESCLUSO", fill=red, font=(DISPLAY, 13, "bold"))
+
+
+class CaseStrip(tk.Canvas):
+    """Profilo agente + casi come esagoni numerati (si adatta alla larghezza)."""
+    HEX = 40
+
+    def __init__(self, parent, view):
+        super().__init__(parent, height=64, bg=bg_of(parent), highlightthickness=0, cursor="hand2")
+        self.view, self.hover, self.cells = view, None, []
+        self.bind("<Configure>", lambda e: self.draw())
+        self.bind("<Motion>", self._motion)
+        self.bind("<Leave>", lambda e: self._set_hover(None))
+        self.bind("<Button-1>", self._click)
+
+    def _hit(self, x, y):
+        for n, cx, cy in self.cells:
+            if (x - cx) ** 2 + (y - cy) ** 2 <= 18 ** 2:
+                return n
+        return None
+
+    def _set_hover(self, n):
+        if n != self.hover:
+            self.hover = n
+            self.draw()
+
+    def _motion(self, e):
+        self._set_hover(self._hit(e.x, e.y))
+
+    def _click(self, e):
+        n = self._hit(e.x, e.y)
+        if n:
+            self.view.open_case(n)
+
+    def draw(self):
+        self.delete("all")
+        w, ag, pan = self.winfo_width(), self.view.app.agent, bg_of(self)
+        name, nxt, prog = ag.rank()
+        lvl = [r[1] for r in RANKS].index(name) + 1
+        self.create_polygon(hexagon(26, 30, 22, math.pi / 6), fill=mix(pan, THEME["magenta"], 0.2),
+                            outline=THEME["magenta"], width=2)
+        self.create_text(26, 30, text=str(lvl), fill="#ffffff", font=(DISPLAY, 13, "bold"))
+        self.create_text(58, 14, anchor="w", text=name, fill="#ffffff", font=(DISPLAY, 11, "bold"))
+        self.create_text(58, 32, anchor="w", fill=THEME["dim"], font=(MONO, 8, "bold"),
+                         text=f"{ag.xp} XP · {ag.solved_count()}/{N_CASES} risolti")
+        self.create_line(58, 46, 220, 46, fill=THEME["line2"], width=4)
+        self.create_line(58, 46, 58 + 162 * prog, 46, fill=THEME["magenta"], width=4)
+        self.create_text(58, 58, anchor="w", fill=THEME["dim"], font=(MONO, 7),
+                         text=f"prossimo grado a {nxt} XP" if nxt else "grado massimo")
+        x0 = 246 if w >= 246 + 6 * self.HEX else 10
+        y0 = 30 if x0 > 10 else 92
+        per_row = max(1, int((w - x0 - 8) // self.HEX))
+        cur = self.view.case["n"] if self.view.case else None
+        colors = {"solved": THEME["green"], "failed": THEME["red"], "new": THEME["accent"],
+                  "locked": THEME["line2"]}
+        self.cells = []
+        for i, n in enumerate(range(1, N_CASES + 1)):
+            cx = x0 + 20 + (i % per_row) * self.HEX
+            cy = y0 + (i // per_row) * 46
+            st = ag.status(n)
+            col = colors[st]
+            on = n == cur
+            self.create_polygon(hexagon(cx, cy, 18 if (on or n == self.hover) else 16, math.pi / 6),
+                                fill=col if on else mix(pan, col, 0.14), outline=col,
+                                width=2 if n == self.hover else 1)
+            self.create_text(cx, cy, text="⊘" if st == "locked" else f"{n:02d}",
+                             fill="#000000" if on else (THEME["dim"] if st == "locked" else col),
+                             font=(MONO, 9, "bold"))
+            self.cells.append((n, cx, cy))
+        h = int(max(64, self.cells[-1][2] + 24)) if self.cells else 64
+        if int(self["height"]) != h:
+            self.config(height=h)
+        if self.hover:
+            st = ag.status(self.hover)
+            txt = (f"CASO {self.hover:02d} · {CASE_TITLES[(self.hover - 1) % len(CASE_TITLES)]} · "
+                   f"{'★' * min(5, 1 + self.hover // 3)} · {st}")
+            self.create_text(w - 6, 6, anchor="ne", text=txt, fill=THEME["text"], font=(MONO, 8, "bold"))
+
+
+class MissionsView(tk.Frame):
+    """Sala operativa: profilo agente, elenco casi, sospetti, prove, ORION-AI."""
+
+    def __init__(self, parent, app):
+        super().__init__(parent, bg=THEME["panel"])
+        self.app = app
+        pan = THEME["panel"]
+        right = tk.Frame(self, bg=pan, width=336)
+        right.pack(side="right", fill="y", padx=(6, 10), pady=10)
+        right.pack_propagate(False)
+        mid = tk.Frame(self, bg=pan)
+        mid.pack(side="left", fill="both", expand=True, padx=(10, 0), pady=10)
+
+        top = HudPanel(mid, "◢ AGENTE & CASI", THEME["magenta"])
+        top.pack(fill="x")
+        self.strip = CaseStrip(top.body, self)
+        self.strip.pack(fill="x")
+        brief = HudPanel(mid, "◢ BRIEFING MISSIONE", THEME["accent"])
+        brief.pack(fill="x", pady=(8, 0))
+        wrap, self.brief_text = make_console(brief.body, size=10, height=4)
+        wrap.pack(fill="x")
+        sus = HudPanel(mid, "◢ SOSPETTI", THEME["accent2"])
+        sus.pack(fill="both", expand=True, pady=(8, 0))
+        self.sus_inner = make_scroll(sus.body, pan)
+
+        ev = HudPanel(right, "◢ PROVE", THEME["amber"])
+        ev.pack(fill="both", expand=True)
+        self.energy_cv = tk.Canvas(ev.body, height=34, bg=pan, highlightthickness=0)
+        self.energy_cv.pack(fill="x")
+        self.energy_cv.bind("<Configure>", lambda e: self._draw_energy())
+        self.clue_inner = make_scroll(ev.body, pan)
+        ai = HudPanel(right, "◢ ORION-AI · DEDUZIONE", THEME["green"])
+        ai.pack(fill="x", pady=(8, 0))
+        self.ai_cv = tk.Canvas(ai.body, height=168, bg=pan, highlightthickness=0)
+        self.ai_cv.pack(fill="x")
+        self.ai_cv.bind("<Configure>", lambda e: self._draw_ai())
+        NeonButton(ai.body, "◉  CHIEDI A ORION-AI  (−1 ⚡)", self.ask_ai, color=THEME["green"],
+                   height=32, sound=None).pack(fill="x", pady=(6, 0))
+        self.cards = []
+        m = app.mission
+        if m:
+            self._render_case()
+        else:
+            n = next((i for i in range(1, N_CASES + 1) if app.agent.status(i) == "new"), 1)
+            self.open_case(n, quiet=True)
+
+    # ---- stato ---------------------------------------------------------
+    @property
+    def case(self):
+        return self.app.mission["case"] if self.app.mission else None
+
+    @property
+    def st(self):
+        return self.app.mission["state"] if self.app.mission else None
+
+    def open_case(self, n, quiet=False):
+        ag = self.app.agent
+        if not ag.unlocked(n):
+            sfx("alert")
+            self.app.toast(f"Caso {n:02d} bloccato: completa prima il caso {n - 1:02d}",
+                           THEME["amber"], "⊘")
+            return
+        case = build_case(n)
+        self.app.mission = {"case": case, "state": {"revealed": set(), "decrypted": set(),
+                                                    "energy": case["energy"], "crossed": set(),
+                                                    "ai": None, "breach_ok": 0, "result": None}}
+        if not quiet:
+            sfx("open")
+            self.app._feed(f"◆ missione aperta: caso {n:02d} · {case['title']}", "warn")
+        self._render_case()
+
+    # ---- azioni ----------------------------------------------------------
+    def _spend(self):
+        st = self.st
+        if st is None or st["result"] is not None:
+            self.app.toast("Apri un caso attivo dall'elenco", THEME["amber"], "!")
+            return False
+        if st["energy"] <= 0:
+            sfx("alert")
+            self.app.toast("Energia esaurita: accusa un sospetto", THEME["red"], "⚡")
+            return False
+        st["energy"] -= 1
+        self._draw_energy()
+        return True
+
+    def analyze(self, cid):
+        st, case = self.st, self.case
+        if st is None or cid in st["revealed"]:
+            return
+        clue = case["clues"][cid]
+        if clue["encrypted"] and cid not in st["decrypted"]:
+            if not self._spend():
+                return
+            seq = 3 if case["difficulty"] < 3 else 4
+            BreachProtocol(self.app.root, lambda ok, c=cid: self._breach_done(c, ok), seq_len=seq,
+                           seconds=max(18, 34 - case["n"]))
+            return
+        if not self._spend():
+            return
+        st["revealed"].add(cid)
+        sfx("toast")
+        self.app._feed(f"prova #{cid + 1:02d}: {clue['text']}", "v")
+        self._render_clues()
+
+    def _breach_done(self, cid, ok):
+        if self.st is None or not self.winfo_exists():
+            return
+        if ok:
+            self.st["decrypted"].add(cid)
+            self.st["revealed"].add(cid)
+            self.st["breach_ok"] += 1
+            self.app.toast("Prova decrittata", THEME["green"], "◉")
+            self.app._feed(f"prova #{cid + 1:02d} decrittata: {self.case['clues'][cid]['text']}", "ok")
+        else:
+            self.app.toast("Decrittazione fallita: puoi riprovare", THEME["red"], "✕")
+        self._render_clues()
+
+    def ask_ai(self):
+        if not self._spend():
+            return
+        self.st["ai"] = self.analysis()
+        sfx("done")
+        self._draw_ai()
+        cands, attr = self.st["ai"]
+        names = ", ".join(self.case["suspects"][i]["code"] for i in cands)
+        self.app._feed(f"ORION-AI: {len(cands)} sospetti compatibili ({names})", "ok")
+
+    def analysis(self):
+        """(sospetti compatibili, attributo più utile) in base alle prove rivelate."""
+        cands = case_candidates(self.case, self.st["revealed"])
+        return cands, most_informative_attr(self.case, cands)
+
+    def toggle(self, i):
+        cr = self.st["crossed"]
+        cr.symmetric_difference_update({i})
+        sfx("click")
+        self.cards[i].set_state(i in cr, None)
+
+    def accuse(self, i):
+        st, case = self.st, self.case
+        if st is None or st["result"] is not None:
+            return
+        ok = i == case["culprit"]
+        score = (300 + 60 * st["energy"] + 80 * st["breach_ok"] + 40 * case["difficulty"]) if ok else 25
+        st["result"] = "solved" if ok else "failed"
+        first = self.app.agent.record(case["n"], ok, score)
+        culprit = case["suspects"][case["culprit"]]
+        if ok:
+            sfx("done")
+            msg = f"TALPA SMASCHERATA: {culprit['code']}" + (f" · +{score} XP" if first else " · (già risolto)")
+            self.app.toast(msg, THEME["green"], "◉")
+        else:
+            sfx("alert")
+            msg = f"Accusa sbagliata: la talpa era {culprit['code']}" + (f" · +{score} XP" if first else "")
+            self.app.toast(msg, THEME["red"], "✕")
+        self.app._feed(("✔ " if ok else "✕ ") + msg, "ok" if ok else "bad")
+        self._render_case()
+
+    # ---- disegno -----------------------------------------------------------
+    def _draw_energy(self):
+        c, st = self.energy_cv, self.st
+        c.delete("all")
+        if st is None:
+            return
+        w, tot = c.winfo_width(), self.case["energy"]
+        c.create_text(2, 10, anchor="w", text=f"⚡ ENERGIA {st['energy']}/{tot}", fill=THEME["amber"],
+                      font=(MONO, 9, "bold"))
+        sw = (w - 4 - 3 * (tot - 1)) / max(1, tot)
+        for i in range(tot):
+            x0 = 2 + i * (sw + 3)
+            c.create_polygon(x0 + 3, 20, x0 + sw + 3, 20, x0 + sw, 30, x0, 30, outline="",
+                             fill=THEME["amber"] if i < st["energy"] else mix(THEME["panel"], THEME["amber"], 0.15))
+
+    def _render_clues(self):
+        for w in self.clue_inner.winfo_children():
+            w.destroy()
+        case, st = self.case, self.st
+        if case is None:
+            return
+        done = st["result"] is not None
+        for clue in case["clues"]:
+            cid = clue["id"]
+            shown = cid in st["revealed"] or done
+            row = tk.Canvas(self.clue_inner, height=58, bg=THEME["panel"], highlightthickness=0)
+            row.pack(fill="x", pady=2)
+
+            def draw(_=None, row=row, clue=clue, shown=shown, cid=cid):
+                row.delete("all")
+                w, card = row.winfo_width(), THEME["card"]
+                col = (THEME["green"] if shown else THEME["magenta"] if clue["encrypted"]
+                       else THEME["amber"])
+                row.create_polygon(chamfer(1, 1, w - 2, 56, 8), fill=card, outline=mix(card, col, 0.6))
+                row.create_text(12, 14, anchor="w", font=(MONO, 8, "bold"), fill=col,
+                                text=f"PROVA #{cid + 1:02d} · {clue['source'].upper()}")
+                if shown:
+                    row.create_text(12, 36, anchor="w", text=clue["text"], fill="#ffffff",
+                                    font=(UI, 9, "bold"), width=w - 24)
+                else:
+                    lock = "⊘ CIFRATA" if (clue["encrypted"] and cid not in st["decrypted"]) else "◇ DA ANALIZZARE"
+                    row.create_text(12, 36, anchor="w", text=lock, fill=THEME["dim"], font=(UI, 9, "bold"))
+                    act = "DECRITTA ⚡1" if clue["encrypted"] and cid not in st["decrypted"] else "ANALIZZA ⚡1"
+                    row.create_polygon(chamfer(w - 120, 24, w - 10, 48, 6), fill=mix(card, col, 0.15),
+                                       outline=col)
+                    row.create_text(w - 65, 36, text=act, fill=col, font=(UI, 8, "bold"))
+
+            row.bind("<Configure>", draw)
+            if not shown:
+                row.config(cursor="hand2")
+                row.bind("<Button-1>", lambda e, c=cid: self.analyze(c))
+
+    def _draw_ai(self):
+        c, st = self.ai_cv, self.st
+        c.delete("all")
+        w = c.winfo_width()
+        if st is None:
+            return
+        if st["ai"] is None:
+            c.create_text(4, 18, anchor="w", text="Nessuna analisi ancora.", fill=THEME["dim"],
+                          font=(UI, 9, "bold"))
+            c.create_text(4, 40, anchor="nw", width=w - 8, fill=THEME["dim"], font=(UI, 8),
+                          text="ORION-AI incrocia le prove rivelate con i profili dei sospetti e calcola "
+                               "chi è ancora compatibile. Ogni analisi costa 1 energia.")
+            return
+        cands, attr = st["ai"]
+        sus = self.case["suspects"]
+        p = 1 / max(1, len(cands))
+        for k, (i, s) in enumerate(enumerate(sus)):
+            y = 10 + k * 15
+            if y > 112:
+                break
+            val = p if i in cands else 0.0
+            col = THEME["green"] if val >= 0.99 else THEME["accent"] if val > 0 else THEME["line2"]
+            c.create_text(4, y, anchor="w", text=s["code"], fill=THEME["text"] if val else THEME["dim"],
+                          font=(MONO, 8, "bold"))
+            c.create_line(78, y, w - 46, y, fill=THEME["line"], width=6)
+            if val:
+                c.create_line(78, y, 78 + (w - 124) * val, y, fill=col, width=6)
+            c.create_text(w - 4, y, anchor="e", text=f"{int(val * 100)}%", fill=col, font=(MONO, 8, "bold"))
+        if len(cands) == 1:
+            tip = f"Tutto indica {sus[cands[0]]['code']}. Procedi con l'accusa."
+        elif attr:
+            tip = (f"{len(cands)} sospetti compatibili. Indizio più utile: "
+                   f"{CLUE_ATTRS[attr][0].lower()} ({CLUE_ATTRS[attr][1]}).")
+        else:
+            tip = f"{len(cands)} sospetti compatibili: servono altre prove."
+        c.create_text(4, 132, anchor="nw", text="▸ " + tip, width=w - 8, fill=THEME["green"],
+                      font=(UI, 9, "bold"))
+
+    def _render_case(self):
+        self.strip.draw()
+        case, st = self.case, self.st
+        if case is None:
+            return
+        head = [(f"CASO {case['n']:02d} · {case['title']}   ", "h"),
+                ("★" * case["difficulty"] + "\n", "warn"), (case["briefing"] + "\n", "v"),
+                ("personaggi e fatti di FANTASIA · ", "k"),
+                ("clic su una scheda per escludere un sospetto · ACCUSA due volte per confermare", "k")]
+        if st["result"]:
+            cul = case["suspects"][case["culprit"]]
+            head.insert(2, (("✔ CASO RISOLTO" if st["result"] == "solved" else "✕ CASO FALLITO") +
+                             f" — la talpa era {cul['code']} ({cul['name']})\n",
+                             "ok" if st["result"] == "solved" else "bad"))
+        self.app._type(self.brief_text, head)
+        for w in self.sus_inner.winfo_children():
+            w.destroy()
+        grid = tk.Frame(self.sus_inner, bg=THEME["panel"])
+        grid.pack(fill="both", expand=True, padx=4, pady=4)
+        self.cards = []
+        for i, s in enumerate(case["suspects"]):
+            img = self.app._portrait_img(s["seed"], (240, 290), "", "", True, None)
+            thumb = img.crop((20, 0, 220, 240)).resize((64, 77), Image.LANCZOS) if img else None
+            card = SuspectCard(grid, s, thumb, case["attrs"], lambda i=i: self.toggle(i),
+                               lambda i=i: self.accuse(i))
+            reveal = None
+            if st["result"]:
+                reveal = "culprit" if i == case["culprit"] else "innocent"
+            card.set_state(i in st["crossed"], reveal)
+            self.cards.append(card)
+        ResponsiveGrid(grid, 250, pad=5).set(self.cards)
+        self._render_clues()
+        self._draw_energy()
+        self._draw_ai()
+
+
+# ===========================================================================
+#  ORION-AI  —  assistente locale a regole (nessuna rete, nessun dato reale)
+# ===========================================================================
+class OrionAI:
+    """Risponde a domande in linguaggio naturale sul dossier simulato e sulla
+    missione attiva, con semplici regole a parole chiave."""
+
+    def __init__(self, app):
+        self.app = app
+
+    def answer(self, q):
+        ql = q.lower()
+        d, m = self.app.results, self.app.mission
+        rules = [
+            (("ciao", "salve", "buongiorno", "hey"), self._hello),
+            (("grazie",), lambda: [("Sempre al servizio, operatore.", "v")]),
+            (("aiuto", "cosa puoi", "cosa sai fare", "help"), self._help),
+            (("talpa", "sospett", "colpevole", "chi è stato", "indizi", "missione", "caso"),
+             lambda: self._mission(m)),
+            (("grado", "livello", "xp", "rank", "esperienza"), self._rank),
+            (("pericol", "minaccia", "threat"), lambda: self._threat(d)),
+            (("dove", "luog", "città", "posizion", "mappa"), lambda: self._where(d)),
+            (("rischio", "risk", "esposiz", "privacy"), lambda: self._risk(d)),
+            (("foto", "immagin", "galleria"), lambda: self._photos(d)),
+            (("social", "piattaform", "follower"), lambda: self._social(d)),
+            (("chi è", "identit", "alias", "profil"), lambda: self._ids(d)),
+            (("consigli", "cosa faccio", "prossim"), lambda: self._advice(d, m)),
+            (("barzelletta", "scherzo", "battuta"), self._joke),
+            (("vero", "reale", "esiste"), lambda: [("Niente di ciò che vedi è reale: ORION è un "
+                                                    "simulatore e genera dati casuali.", "warn")]),
+        ]
+        for keys, fn in rules:
+            if any(k in ql for k in keys):
+                return fn()
+        return [("Non ho capito. Chiedimi del dossier (minaccia, luoghi, rischio, foto, social) "
+                 "o della missione (sospetti, indizi). Oppure digita 'help'.", "k")]
+
+    def _need(self, d):
+        return [("Nessun dossier attivo: usa 'scan <nome>' o il pannello TARGET ACQUISITION.", "warn")]
+
+    def _hello(self):
+        return [(f"Ciao operatore. Grado attuale: {self.app.agent.rank()[0]}. "
+                 "Come posso aiutarti?", "v")]
+
+    def _help(self):
+        return [("Posso riassumere il dossier simulato attivo, aiutarti a dedurre la talpa nelle "
+                 "missioni e guidarti nei comandi. Prova: 'chi è il più pericoloso?', "
+                 "'dove si trova?', 'chi sospetti?', 'help'.", "v")]
+
+    def _rank(self):
+        name, nxt, prog = self.app.agent.rank()
+        extra = f"mancano {nxt - self.app.agent.xp} XP al prossimo grado" if nxt else "grado massimo"
+        return [(f"Grado {name} · {self.app.agent.xp} XP · {extra}.", "v")]
+
+    def _threat(self, d):
+        if not d:
+            return self._need(d)
+        order = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
+        it = sorted(d["identities"], key=lambda i: (order[i["threat"]], -i["confidence"]))[0]
+        return [(f"Profilo più critico: {it['name']} · minaccia {it['threat']} · "
+                 f"confidence {it['confidence']}% · {it['location']}. ", "v"),
+                ("(dati simulati)", "k")]
+
+    def _where(self, d):
+        if not d:
+            return self._need(d)
+        locs = ", ".join(f"{i['name']} → {i['location']}" for i in d["identities"])
+        return [(f"Posizioni rilevate: {locs}. Apri la scheda MAPPA o il GLOBO 3D. ", "v"),
+                ("(dati simulati)", "k")]
+
+    def _risk(self, d):
+        if not d:
+            return self._need(d)
+        fp, s = d["footprint"], d["summary"]
+        lvl = "alto" if s["risk"] >= 70 else "medio" if s["risk"] >= 45 else "basso"
+        return [(f"Rischio {s['risk']}/100 ({lvl}): esposizione {fp['exposure']}/100, privacy "
+                 f"{fp['privacy']}/100, {fp['breaches']} breach simulati.", "v")]
+
+    def _photos(self, d):
+        if not d:
+            return self._need(d)
+        matched = sum(1 for p in d["photos"] if p["matched"])
+        return [(f"{len(d['photos'])} asset visivi, {matched} con match. Apri la GALLERIA (Ctrl+G).", "v")]
+
+    def _social(self, d):
+        if not d:
+            return self._need(d)
+        top = max(d["socials"], key=lambda p: p["posts"])
+        return [(f"{len(d['socials'])} piattaforme simulate; la più attiva è {top['platform']} "
+                 f"({top['posts']} post).", "v")]
+
+    def _ids(self, d):
+        if not d:
+            return self._need(d)
+        return [("Identità correlate: " + "; ".join(
+            f"{i['name']} ({i['confidence']}%)" for i in d["identities"]) + ".", "v")]
+
+    def _mission(self, m):
+        if not m:
+            return [("Nessuna missione aperta: digita 'missioni' o apri la scheda MISSIONI.", "warn")]
+        case, st = m["case"], m["state"]
+        if st["result"]:
+            cul = case["suspects"][case["culprit"]]
+            return [(f"Caso chiuso: la talpa era {cul['code']}. Apri un nuovo caso.", "v")]
+        cands = case_candidates(case, st["revealed"])
+        attr = most_informative_attr(case, cands)
+        if st["ai"] is not None and st["ai"][0] == cands:      # analisi già pagata: nomi visibili
+            names = ", ".join(case["suspects"][i]["code"] for i in cands)
+            if len(cands) == 1:
+                return [(f"Resta solo {names}. Accusa con 'accusa {names}'.", "ok")]
+            return [(f"Compatibili con le prove rivelate: {names}.", "v")]
+        if len(cands) == 1:
+            return [("Le prove rivelate indicano un solo sospetto. Usa 'ai' (⚡1) per vederlo, "
+                     "oppure deducilo dalle schede.", "ok")]
+        tip = f" L'indizio più utile riguarda: {CLUE_ATTRS[attr][0].lower()}." if attr else ""
+        return [(f"Con {len(st['revealed'])} prove rivelate restano {len(cands)} sospetti "
+                 f"compatibili.{tip}", "v"), (" Per i nomi usa 'ai' (⚡1).", "k")]
+
+    def _advice(self, d, m):
+        if m and not m["state"]["result"]:
+            return self._mission(m)
+        if not d:
+            return [("Inizia con 'scan <nome>' oppure gioca una missione con 'missioni'.", "v")]
+        return [("Controlla la scheda RETE per i collegamenti e la TIMELINE per gli eventi critici.", "v")]
+
+    def _joke(self):
+        return [(random.choice([
+            "Perché l'hacker è andato in vacanza? Aveva bisogno di un nuovo firewall… in spiaggia.",
+            "Il mio unico bug conosciuto? Dire 'quasi pronto' al 99%.",
+            "Ho provato a decrittare il frigorifero: password '1234'. Classico.",
+        ]), "v")]
+
+
+class TerminalView(tk.Frame):
+    """Terminale ORION: comandi da 'film hacker' + domande in linguaggio naturale."""
+    PROMPT = "orion@maikgost:~$ "
+
+    def __init__(self, parent, app):
+        super().__init__(parent, bg=THEME["panel"])
+        self.app, self.ai = app, OrionAI(app)
+        self.hidx = len(app.term_history)
+        wrap, self.out = make_console(self, size=10)
+        wrap.pack(fill="both", expand=True, padx=12, pady=(12, 6))
+        row = tk.Frame(self, bg=THEME["bg2"], highlightthickness=1, highlightbackground=THEME["line2"])
+        row.pack(fill="x", padx=12, pady=(0, 12))
+        tk.Label(row, text=self.PROMPT, font=(MONO, 11, "bold"), bg=THEME["bg2"],
+                 fg=THEME["green"]).pack(side="left", padx=(10, 0))
+        self.entry = tk.Entry(row, font=(MONO, 11), bg=THEME["bg2"], fg=THEME["white"], relief="flat",
+                              insertbackground=THEME["green"], highlightthickness=0, bd=0)
+        self.entry.pack(side="left", fill="x", expand=True, ipady=8)
+        self.entry.bind("<Return>", self._enter)
+        self.entry.bind("<Up>", lambda e: self._hist(-1))
+        self.entry.bind("<Down>", lambda e: self._hist(1))
+        self.entry.bind("<Tab>", self._complete)
+        self.entry.bind("<Control-l>", lambda e: self.clear())
+        self.queue, self.busy = [], False
+        self.commands = {
+            "help": (self.c_help, "elenco comandi"), "clear": (lambda a: self.clear(), "pulisce lo schermo"),
+            "scan": (self.c_scan, "scan <nome> · avvia una scansione simulata"),
+            "random": (lambda a: self.app.random_target(), "bersaglio casuale"),
+            "regen": (lambda a: self.app.regenerate(), "variante del dossier"),
+            "stop": (lambda a: self.app.stop_search(), "ferma la scansione"),
+            "dossier": (self.c_dossier, "riepilogo del dossier attivo"),
+            "tab": (self.c_tab, "tab <nome> · apre una scheda (mappa, rete, social…)"),
+            "globo": (self.c_globe, "mappa: globo 3D on/off"),
+            "galleria": (lambda a: self.app.open_gallery(), "apre la galleria"),
+            "slideshow": (lambda a: self.app.open_slideshow(), "avvia lo slideshow"),
+            "esporta": (lambda a: self.app.export_report(), "esporta il dossier"),
+            "tema": (self.c_theme, "tema <ciano|neon|magenta|viola|ambra|rosso>"),
+            "missioni": (self.c_cases, "elenco dei casi"),
+            "caso": (self.c_case, "caso <n> · apre una missione"),
+            "prove": (self.c_clues, "prove della missione attiva"),
+            "analizza": (self.c_analyze, "analizza <n> · rivela una prova (⚡1)"),
+            "ai": (self.c_ai, "analisi completa ORION-AI (⚡1)"),
+            "accusa": (self.c_accuse, "accusa <NOME IN CODICE>"),
+            "grado": (lambda a: self.say(self.ai._rank()), "grado e XP dell'agente"),
+            "matrix": (self.c_matrix, "effetto pioggia di dati"),
+            "about": (self.c_about, "informazioni"),
+        }
+        self.say([("ORION SHELL v" + APP_VERSION + "  —  terminale di SIMULAZIONE\n", "h"),
+                  ("digita 'help' per i comandi, oppure fai una domanda a ORION-AI "
+                   "(es. 'chi è il più pericoloso?')\n", "k")], instant=True)
+
+    # ---- output ----------------------------------------------------------
+    def say(self, chunks, instant=False):
+        if chunks and not chunks[-1][0].endswith("\n"):
+            chunks = list(chunks) + [("\n", "k")]
+        if instant or not self.app.settings.get("typewriter", True):
+            self._insert(chunks)
+            return
+        self.queue.extend(chunks)
+        if not self.busy:
+            self.busy = True
+            self._drain()
+
+    def _insert(self, chunks):
+        self.out.config(state="normal")
+        for t, g in chunks:
+            self.out.insert("end", t, g)
+        self.out.see("end")
+        self.out.config(state="disabled")
+
+    def _drain(self):
+        try:
+            if not self.queue:
+                self.busy = False
+                return
+            t, g = self.queue[0]
+            part, rest = t[:48], t[48:]
+            self._insert([(part, g)])
+            if rest:
+                self.queue[0] = (rest, g)
+            else:
+                self.queue.pop(0)
+            self.after(12, self._drain)
+        except tk.TclError:
+            pass
+
+    def clear(self):
+        self.out.config(state="normal")
+        self.out.delete("1.0", "end")
+        self.out.config(state="disabled")
+        return "break"
+
+    # ---- input -----------------------------------------------------------
+    def _hist(self, d):
+        h = self.app.term_history
+        if not h:
+            return "break"
+        self.hidx = max(0, min(len(h), self.hidx + d))
+        self.entry.delete(0, "end")
+        if self.hidx < len(h):
+            self.entry.insert(0, h[self.hidx])
+        return "break"
+
+    def _complete(self, _):
+        txt = self.entry.get()
+        if " " not in txt:
+            opts = [c for c in self.commands if c.startswith(txt.lower())]
+            if len(opts) == 1:
+                self.entry.delete(0, "end")
+                self.entry.insert(0, opts[0] + " ")
+            elif opts:
+                self.say([("  ".join(opts), "k")], instant=True)
+        return "break"
+
+    def _enter(self, _):
+        line = self.entry.get().strip()
+        self.entry.delete(0, "end")
+        if not line:
+            return "break"
+        h = self.app.term_history
+        if not h or h[-1] != line:
+            h.append(line)
+            del h[:-200]
+        self.hidx = len(h)
+        self._insert([(self.PROMPT, "ok"), (line + "\n", "v")])
+        self.run(line)
+        return "break"
+
+    def run(self, line):
+        cmd, _, arg = line.partition(" ")
+        fn = self.commands.get(cmd.lower())
+        sfx("click")
+        if fn:
+            try:
+                fn[0](arg.strip())
+            except tk.TclError:
+                pass
+        else:
+            self.say([("ORION-AI › ", "h2")] + self.ai.answer(line))
+
+    # ---- comandi -----------------------------------------------------------
+    def c_help(self, a):
+        out = [("COMANDI DISPONIBILI\n", "h")]
+        for name, (_, desc) in self.commands.items():
+            out += [(f"  {name:<11}", "ok"), (desc + "\n", "k")]
+        out.append(("Qualsiasi altra frase viene girata a ORION-AI (motore locale a regole).", "k"))
+        self.say(out, instant=True)
+
+    def c_scan(self, a):
+        if not a:
+            self.say([("uso: scan <nome>", "warn")])
+            return
+        self.app.input.delete(0, "end")
+        self.app.input.insert(0, a)
+        self.app.start_search()
+        self.say([(f"scansione simulata avviata su '{a}'…", "v")])
+
+    def c_dossier(self, a):
+        d = self.app.results
+        if not d:
+            self.say(self.ai._need(d))
+            return
+        s = d["summary"]
+        self.say([(f"DOSSIER {d['case_id']} · {d['target']}\n", "h"),
+                  (f"  minaccia {s['threat']} · rischio {s['risk']}/100 · confidence {s['confidence']}%\n", "v"),
+                  (f"  {len(d['identities'])} identità · {len(d['socials'])} social · "
+                   f"{len(d['photos'])} foto · SIMULAZIONE", "k")])
+
+    def c_tab(self, a):
+        names = ["intelligence", "social", "identità", "rete", "mappa", "timeline", "footprint",
+                 "profilo", "missioni", "terminale"]
+        idx = next((i for i, n in enumerate(names) if a and n.startswith(a.lower())), None)
+        if idx is None:
+            self.say([("schede: " + ", ".join(names), "warn")])
+            return
+        self.app.tabs.select(idx, user=True)
+
+    def c_globe(self, a):
+        self.app.toggle_globe()
+        self.say([(f"mappa in modalità {'GLOBO 3D' if self.app.map_mode == 'globe' else 'PLANISFERO'}", "v")])
+
+    def c_theme(self, a):
+        col = next((c for n, c in ACCENTS if n.lower() == a.lower()), None)
+        if not col:
+            self.say([("temi: " + ", ".join(n.lower() for n, _ in ACCENTS), "warn")])
+            return
+        self.say([(f"tema {a.lower()} applicato", "ok")], instant=True)
+        self.app.set_accent(col)
+
+    def c_cases(self, a):
+        ag = self.app.agent
+        out = [("CASI DISPONIBILI\n", "h")]
+        tags = {"solved": "ok", "failed": "bad", "new": "v", "locked": "k"}
+        for n in range(1, N_CASES + 1):
+            st = ag.status(n)
+            out.append((f"  {n:02d}  {CASE_TITLES[(n - 1) % len(CASE_TITLES)]:<18} {st}\n", tags[st]))
+        out.append(("usa 'caso <n>' per aprirne uno", "k"))
+        self.say(out, instant=True)
+
+    def _mv(self):
+        mv = self.app.missions_view()
+        if mv is None:
+            self.say([("apri prima una missione con 'caso <n>'", "warn")])
+        return mv
+
+    def c_case(self, a):
+        if not a.isdigit() or not 1 <= int(a) <= N_CASES:
+            self.say([(f"uso: caso <1-{N_CASES}>", "warn")])
+            return
+        mv = self.app.missions_view(build=True)
+        mv.open_case(int(a))
+        case = self.app.mission["case"] if self.app.mission else None
+        if case and case["n"] == int(a):
+            self.say([(f"{case['title']}\n", "h"), (case["briefing"] + "\n", "v"),
+                      ("sospetti: " + ", ".join(s["code"] for s in case["suspects"]), "k")])
+
+    def c_clues(self, a):
+        m = self.app.mission
+        if not m:
+            self.say([("nessuna missione aperta", "warn")])
+            return
+        st = m["state"]
+        out = [(f"PROVE · energia {st['energy']}\n", "h")]
+        for c in m["case"]["clues"]:
+            if c["id"] in st["revealed"] or st["result"]:
+                out.append((f"  #{c['id'] + 1:02d}  {c['text']}\n", "v"))
+            else:
+                out.append((f"  #{c['id'] + 1:02d}  {'⊘ cifrata' if c['encrypted'] else '◇ da analizzare'}"
+                            f" · {c['source']}\n", "k"))
+        self.say(out, instant=True)
+
+    def c_analyze(self, a):
+        mv = self._mv()
+        if mv and a.isdigit():
+            mv.analyze(int(a) - 1)
+            self.c_clues("")
+        elif mv:
+            self.say([("uso: analizza <numero prova>", "warn")])
+
+    def c_ai(self, a):
+        mv = self._mv()
+        if mv and mv.st and mv.st["result"] is None and mv.st["energy"] > 0:
+            mv.ask_ai()
+            self.say([("ORION-AI › ", "h2")] + self.ai._mission(self.app.mission))
+        elif mv:
+            mv.ask_ai()
+
+    def c_accuse(self, a):
+        mv = self._mv()
+        if not mv:
+            return
+        idx = next((i for i, s in enumerate(mv.case["suspects"]) if s["code"].lower() == a.lower()), None)
+        if idx is None:
+            self.say([("uso: accusa <" + "|".join(s["code"] for s in mv.case["suspects"]) + ">", "warn")])
+            return
+        mv.accuse(idx)
+        res = mv.st["result"]
+        self.say([("✔ talpa smascherata!" if res == "solved" else "✕ accusa sbagliata", "ok" if res == "solved" else "bad")])
+
+    def c_matrix(self, a):
+        rng = random.Random()
+        lines = ["".join(rng.choice(DATA_GLYPHS + "    ") for _ in range(64)) for _ in range(10)]
+        self.say([("\n".join(lines), "bar")])
+
+    def c_about(self, a):
+        self.say([(f"{APP_NAME} v{APP_VERSION} — created by {CREATOR}\n", "h"),
+                  ("Simulatore/gioco: tutti i dati sono generati, nessuna ricerca reale. "
+                   "ORION-AI è un motore locale a regole.", "k")])
+
+
+class CommandPalette:
+    """Tavolozza comandi (Ctrl+K): cerca un'azione e premi Invio."""
+
+    def __init__(self, root, actions):
+        self.root, self.actions, self.sel = root, actions, 0
+        self.frame = tk.Frame(root, bg=THEME["panel2"], highlightthickness=1,
+                              highlightbackground=THEME["accent"])
+        self.frame.place(relx=0.5, y=110, anchor="n", width=640)
+        tk.Label(self.frame, text="◢ COMANDI  ·  ↑↓ scegli · Invio esegui · Esc chiudi",
+                 font=(MONO, 9, "bold"), bg=THEME["panel2"], fg=THEME["accent"]).pack(
+            anchor="w", padx=12, pady=(10, 4))
+        self.entry = tk.Entry(self.frame, font=(UI, 13), bg=THEME["bg2"], fg=THEME["white"],
+                              insertbackground=THEME["accent"], relief="flat", highlightthickness=0)
+        self.entry.pack(fill="x", padx=12, ipady=8)
+        self.cv = tk.Canvas(self.frame, height=9 * 32 + 8, bg=THEME["panel2"], highlightthickness=0)
+        self.cv.pack(fill="x", padx=12, pady=(6, 10))
+        self.entry.bind("<KeyRelease>", self._key)
+        self.entry.bind("<Down>", lambda e: self._move(1))
+        self.entry.bind("<Up>", lambda e: self._move(-1))
+        self.entry.bind("<Return>", lambda e: self._run())
+        self.entry.bind("<Escape>", lambda e: self.close())
+        self.cv.bind("<Button-1>", self._click)
+        self.entry.focus_set()
+        self.items = list(actions)
+        self._draw()
+        sfx("open")
+
+    def _score(self, q, label):
+        l = label.lower()
+        if not q:
+            return 1
+        if q in l:
+            return 3 if l.startswith(q) else 2
+        it = iter(l)
+        return 1 if all(ch in it for ch in q) else 0
+
+    def _key(self, e):
+        if e.keysym in ("Up", "Down", "Return", "Escape"):
+            return
+        q = self.entry.get().strip().lower()
+        scored = [(self._score(q, a[0]), i, a) for i, a in enumerate(self.actions)]
+        self.items = [a for s, i, a in sorted(scored, key=lambda t: (-t[0], t[1])) if s > 0]
+        self.sel = 0
+        self._draw()
+
+    def _move(self, d):
+        if self.items:
+            self.sel = (self.sel + d) % min(9, len(self.items))
+            self._draw()
+        return "break"
+
+    def _click(self, e):
+        i = int((e.y - 4) // 32)
+        if 0 <= i < min(9, len(self.items)):
+            self.sel = i
+            self._run()
+
+    def _run(self):
+        if not self.items:
+            return "break"
+        fn = self.items[self.sel][2]
+        self.close()
+        self.root.after(10, fn)
+        return "break"
+
+    def close(self):
+        try:
+            self.frame.destroy()
+        except tk.TclError:
+            pass
+
+    def _draw(self):
+        c = self.cv
+        c.delete("all")
+        w = 616
+        if not self.items:
+            c.create_text(10, 20, anchor="w", text="nessun comando trovato", fill=THEME["dim"],
+                          font=(UI, 10))
+            return
+        for i, (label, hint, _) in enumerate(self.items[:9]):
+            y = 4 + i * 32
+            if i == self.sel:
+                c.create_polygon(chamfer(0, y, w, y + 28, 7), fill=mix(THEME["panel2"], THEME["accent"], 0.2),
+                                 outline=THEME["accent"])
+            c.create_text(12, y + 14, anchor="w", text=label,
+                          fill=THEME["white"] if i == self.sel else THEME["text"], font=(UI, 10, "bold"))
+            c.create_text(w - 10, y + 14, anchor="e", text=hint, fill=THEME["dim"], font=(MONO, 8))
+
+
+# ===========================================================================
+#  GLOBO 3D  —  mondo a punti in proiezione ortografica, trascinabile
+# ===========================================================================
+_GLOBE_PTS = None
+
+
+def globe_points():
+    """Punti 3D (x, y, z) delle terre emerse, densità uniforme sulla sfera."""
+    global _GLOBE_PTS
+    if _GLOBE_PTS is None:
+        pts, lat = [], -86.0
+        while lat <= 86.0:
+            la = math.radians(lat)
+            step = 2.0 / max(0.12, math.cos(la))
+            lon = -180.0
+            while lon < 180.0:
+                if land_at(lat, lon):
+                    lo = math.radians(lon)
+                    pts.append((math.cos(la) * math.sin(lo), math.sin(la), math.cos(la) * math.cos(lo)))
+                lon += step
+            lat += 2.0
+        _GLOBE_PTS = pts
+    return _GLOBE_PTS
+
+
+def _unit(lat, lon):
+    la, lo = math.radians(lat), math.radians(lon)
+    return math.cos(la) * math.sin(lo), math.sin(la), math.cos(la) * math.cos(lo)
+
+
+_SPHERE_CACHE = {}
+
+
+def _sphere_base(S, accent):
+    key = (S, accent)
+    if key in _SPHERE_CACHE:
+        return _SPHERE_CACHE[key]
+    acc = hex_to_rgb(accent)
+    img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    m = S // 2
+    R = int(S / 2 - 22)
+    glow = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    ImageDraw.Draw(glow).ellipse([m - R - 6, m - R - 6, m + R + 6, m + R + 6], outline=acc + (150,), width=10)
+    img = Image.alpha_composite(img, glow.filter(ImageFilter.GaussianBlur(9)))
+    disc = _vgrad((2 * R, 2 * R), mix(THEME["bg2"], accent, 0.16), THEME["bg"]).convert("RGBA")
+    mask = Image.new("L", (2 * R, 2 * R), 0)
+    ImageDraw.Draw(mask).ellipse([0, 0, 2 * R - 1, 2 * R - 1], fill=235)
+    disc.putalpha(mask)
+    img.alpha_composite(disc, (m - R, m - R))
+    ImageDraw.Draw(img).ellipse([m - R, m - R, m + R, m + R], outline=acc + (170,), width=1)
+    return _cache_put_lru(_SPHERE_CACHE, key, img, limit=4)
+
+
+class Globe3D(_BackdropMixin):
+    """Globo olografico: rotazione automatica, trascinamento, zoom con la rotella."""
+
+    def __init__(self, canvas, data, accent=None):
+        self.c = canvas
+        self.accent = accent or THEME["accent"]
+        self.frame, self.zoom = 0, 1.0
+        self.markers = ([(it["geo"][0], it["geo"][1], it["name"], it["threat"])
+                         for it in data["identities"]] if data else [])
+        self.lon0 = self.markers[0][1] if self.markers else 10.0
+        self.lat0 = max(-50.0, min(50.0, self.markers[0][0])) if self.markers else 25.0
+        self.drag, self.last_drag = None, 0.0
+        self.grat = []
+        for lon in range(-180, 180, 30):
+            self.grat += [_unit(lat, lon) for lat in range(-80, 81, 4)]
+        for lat in range(-60, 61, 30):
+            self.grat += [_unit(lat, lon) for lon in range(-180, 180, 4)]
+        self.pts = globe_points()
+        self._init_bg()
+        self.img = None
+        canvas.bind("<ButtonPress-1>", self._press)
+        canvas.bind("<B1-Motion>", self._move)
+        canvas.bind("<ButtonRelease-1>", lambda e: setattr(self, "drag", None))
+        for ev in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            canvas.bind(ev, self._wheel)
+        canvas.bind("<Motion>", lambda e: None)
+        self.anim = Anim(canvas, 45, self._tick)
+
+    def stop(self):
+        self.anim.stop()
+        for ev in ("<ButtonPress-1>", "<B1-Motion>", "<ButtonRelease-1>", "<MouseWheel>",
+                   "<Button-4>", "<Button-5>"):
+            try:
+                self.c.unbind(ev)
+            except tk.TclError:
+                pass
+
+    def _press(self, e):
+        self.drag = (e.x, e.y, self.lon0, self.lat0)
+
+    def _move(self, e):
+        if self.drag:
+            x, y, lo, la = self.drag
+            k = 0.32 / self.zoom
+            self.lon0 = lo - (e.x - x) * k
+            self.lat0 = max(-75.0, min(75.0, la + (e.y - y) * k))
+            self.last_drag = time.time()
+
+    def _wheel(self, e):
+        up = e.num == 4 or getattr(e, "delta", 0) > 0
+        self.zoom = max(0.6, min(1.9, self.zoom * (1.1 if up else 1 / 1.1)))
+        return "break"
+
+    def _project(self, v, cx, cy, R, cl, sl, cp, sp):
+        x, y, z = v
+        xr, zr = x * cl - z * sl, x * sl + z * cl
+        yy, zz = y * cp - zr * sp, y * sp + zr * cp
+        return cx + R * xr, cy - R * yy, zz
+
+    def _rebuild_base(self, w, h, S, gx, gy):
+        """Sfondo + sfera fusi in un'unica immagine opaca (Tk non deve fondere l'alfa)."""
+        acc, c = self.accent, self.c
+        ox, oy = int(gx - S / 2), int(gy - S / 2)
+        if self.bg is not None:
+            crop = render_backdrop(w, h, acc, (0.5, 0.5), 26).crop((ox, oy, ox + S, oy + S))
+        else:
+            crop = Image.new("RGB", (S, S), hex_to_rgb(THEME["bg"]))
+        base = crop.convert("RGBA")
+        base.alpha_composite(_sphere_base(S, acc))
+        self.base = base.convert("RGB")
+        self.photo = ImageTk.PhotoImage(self.base)
+        c.delete("all")
+        if self.bg is not None:
+            c.create_image(0, 0, image=self.bg, anchor="nw")
+        c.create_image(ox, oy, image=self.photo, anchor="nw")
+        bgc = THEME["bg"]
+        brackets(c, 12, 12, w - 12, h - 12, 26, mix(bgc, acc, 0.6))
+        c.create_polygon(chamfer(18, 14, 380, 60, 10), fill=mix(bgc, acc, 0.06), outline=mix(bgc, acc, 0.4))
+        c.create_text(28, 28, anchor="w", text="◍ GLOBO 3D", fill=acc, font=(DISPLAY, 12, "bold"))
+        c.create_text(28, 47, anchor="w", fill=THEME["text"], font=(MONO, 9),
+                      text="trascina per ruotare · rotella per lo zoom")
+        c.create_text(w - 24, h - 24, anchor="e", text=f"dati SIM · by {CREATOR}", fill=THEME["dim"],
+                      font=(MONO, 8))
+        return ox, oy
+
+    def _tick(self):
+        c = self.c
+        if not visible(c):
+            return 300
+        w, h = c.winfo_width(), c.winfo_height()
+        if w <= 1:
+            return 100
+        self._ensure_bg((w, h), lambda: render_backdrop(w, h, self.accent, (0.5, 0.5), 26))
+        self.frame += 1
+        if not self.drag and time.time() - self.last_drag > 1.5:
+            self.lon0 += 0.22
+        acc, bgc = self.accent, THEME["bg"]
+        R = int(min(w, h) * 0.40 * self.zoom)
+        S = 2 * R + 44
+        gx, gy = w / 2, h / 2 + 10
+        key = (w, h, S, self.bg is not None)
+        if key != getattr(self, "_base_key", None):
+            self._base_key = key
+            self._origin = self._rebuild_base(w, h, S, gx, gy)
+        ox, oy = self._origin
+        cx = cy = S / 2
+        cl, sl = math.cos(math.radians(self.lon0)), math.sin(math.radians(self.lon0))
+        cp, sp = math.cos(math.radians(self.lat0)), math.sin(math.radians(self.lat0))
+        img = self.base.copy()
+        d = ImageDraw.Draw(img)
+        back, f1, f2, f3 = [], [], [], []
+        for x, y, z in self.pts:
+            xr, zr = x * cl - z * sl, x * sl + z * cl
+            yy, zz = y * cp - zr * sp, y * sp + zr * cp
+            p = (cx + R * xr, cy - R * yy)
+            if zz < 0:
+                back.append(p)
+            elif zz < 0.35:
+                f1.append(p)
+            elif zz < 0.7:
+                f2.append(p)
+            else:
+                f3.append(p)
+        a = hex_to_rgb(acc)
+        b0 = hex_to_rgb(bgc)
+        d.point(back, fill=hex_to_rgb(mix(bgc, acc, 0.18)))
+        grat = [self._project(v, cx, cy, R, cl, sl, cp, sp) for v in self.grat]
+        d.point([(x, y) for x, y, z in grat if z > 0], fill=hex_to_rgb(mix(bgc, acc, 0.32)))
+        for pts, t, big in ((f1, 0.5, False), (f2, 0.75, True), (f3, 1.0, True)):
+            col = tuple(int(lerp(b0[i], a[i], t)) for i in range(3))
+            d.point(pts, fill=col)
+            if big:
+                d.point([(x + 1, y) for x, y in pts], fill=col)
+                d.point([(x, y + 1) for x, y in pts], fill=col)
+                d.point([(x + 1, y + 1) for x, y in pts], fill=col)
+        self.photo.paste(img)
+        c.delete("dyn")
+        proj = [self._project(_unit(lat, lon), cx, cy, R, cl, sl, cp, sp) + (name, threat)
+                for (lat, lon, name, threat) in self.markers]
+        for i in range(len(self.markers) - 1):
+            va, vb = _unit(*self.markers[i][:2]), _unit(*self.markers[i + 1][:2])
+            om = math.acos(max(-1.0, min(1.0, sum(p * q for p, q in zip(va, vb)))))
+            if om < 1e-6:
+                continue
+            arc = []
+            for k in range(25):
+                t = k / 24
+                s1, s2 = math.sin((1 - t) * om) / math.sin(om), math.sin(t * om) / math.sin(om)
+                lift = 1 + 0.16 * math.sin(math.pi * t)
+                v = tuple((s1 * va[j] + s2 * vb[j]) * lift for j in range(3))
+                arc.append(self._project(v, cx, cy, R, cl, sl, cp, sp))
+            seg = []
+            for x, y, z in arc + [(0, 0, -1)]:
+                if z > -0.05:
+                    seg += [ox + x, oy + y]
+                else:
+                    if len(seg) >= 4:
+                        c.create_line(*seg, fill=mix(bgc, acc, 0.8), width=2, smooth=True, tags="dyn")
+                    seg = []
+            t = (self.frame * 0.02 + i * 0.37) % 1.0
+            x, y, z = arc[int(t * 24)]
+            if z > -0.05:
+                c.create_oval(ox + x - 4, oy + y - 4, ox + x + 4, oy + y + 4, fill="#ffffff",
+                              outline=acc, tags="dyn")
+        for x, y, z, name, threat in proj:
+            if z <= 0.02:
+                continue
+            col = threat_color(threat)
+            X, Y = ox + x, oy + y
+            for k in range(2):
+                rad = 5 + ((self.frame * 1.4 + k * 20) % 40)
+                c.create_oval(X - rad, Y - rad, X + rad, Y + rad, tags="dyn",
+                              outline=mix(bgc, col, max(0.05, 1 - rad / 45)))
+            c.create_oval(X - 4, Y - 4, X + 4, Y + 4, fill=col, outline="#ffffff", tags="dyn")
+            f = (UI, 9, "bold")
+            bw = text_w(name, f) + 18
+            c.create_line(X, Y, X + 18, Y - 18, X + 26, Y - 18, fill=col, tags="dyn")
+            c.create_polygon(chamfer(X + 26, Y - 30, X + 26 + bw, Y - 6, 6), fill=mix(bgc, col, 0.15),
+                             outline=col, tags="dyn")
+            c.create_text(X + 35, Y - 18, anchor="w", text=name, fill="#ffffff", font=f, tags="dyn")
+        lon = ((self.lon0 + 180) % 360) - 180
+        c.create_text(w - 24, 30, anchor="e", fill=acc, font=(MONO, 9, "bold"), tags="dyn",
+                      text=f"CENTRO {abs(self.lat0):.1f}°{'N' if self.lat0 >= 0 else 'S'}  "
+                           f"{abs(lon):.1f}°{'E' if lon >= 0 else 'W'}  ·  ZOOM ×{self.zoom:.1f}")
+
+
+# ===========================================================================
 #  APP PRINCIPALE
 # ===========================================================================
 QUICK_TARGETS = ["Mario Rossi", "John Smith", "Anna Müller", "Luca Bianchi", "Marco Esposito",
@@ -3428,6 +4987,12 @@ class SpyOSINTApp:
         self._settings_win = None
         self.net_anim = None
         self.geo_anim = None
+        self.agent = AgentProfile()
+        self.mission = None                 # caso attivo (sopravvive alla ricostruzione UI)
+        self.term_history = []
+        self.map_mode = "flat"
+        self._missions = None
+        self._palette = None
 
         self.settings = self._load_settings()
         THEME["accent"] = self.settings["accent"]
@@ -3471,6 +5036,9 @@ class SpyOSINTApp:
         r.bind("<Control-comma>", lambda e: self.open_settings())
         r.bind("<F5>", lambda e: self.regenerate())
         r.bind("<F11>", lambda e: self._toggle_fullscreen())
+        r.bind("<Control-k>", lambda e: self.toggle_palette())
+        r.bind("<Control-m>", lambda e: self.tabs.select(8, user=True))
+        r.bind("<Control-t>", lambda e: self.tabs.select(9, user=True))
 
     def _toggle_fullscreen(self):
         try:
@@ -3590,7 +5158,8 @@ class SpyOSINTApp:
         self.hazard = tk.Canvas(r, height=22, bg="#140c02", highlightthickness=0)
         self.hazard.pack(fill="x")
         self.hazard.bind("<Configure>", lambda e: self._draw_hazard())
-        self.header = HeaderBar(r, self.open_settings)
+        self.header = HeaderBar(r, self.open_settings,
+                                info=lambda: f"OPERATOR {CREATOR} · {self.agent.rank()[0]}")
         self.header.btn.sound = None
         self.header.pack(fill="x")
         self.status = StatusBar(r)
@@ -3615,9 +5184,11 @@ class SpyOSINTApp:
                 c.create_polygon(x, 22, x + 8, 22, x + 30, 0, x + 22, 0, fill=mix("#140c02", amb, 0.7),
                                  outline="")
         c.create_rectangle(170, 0, w - 170, 22, fill="#140c02", outline="")
-        c.create_text(w / 2, 11, fill=amb, font=(UI, 9, "bold"),
-                      text="⚠  SIMULAZIONE — nessuna ricerca reale · dati casuali a scopo di "
-                           f"intrattenimento   ◆   {APP_NAME} · created by {CREATOR}")
+        long_txt = ("⚠  SIMULAZIONE — nessuna ricerca reale · dati casuali a scopo di "
+                    f"intrattenimento   ◆   {APP_NAME} · created by {CREATOR}")
+        short_txt = f"⚠  SIMULAZIONE — dati casuali, nessuna ricerca reale  ◆  by {CREATOR}"
+        txt = long_txt if text_w(long_txt, (UI, 9, "bold")) < w - 360 else short_txt
+        c.create_text(w / 2, 11, fill=amb, font=(UI, 9, "bold"), text=txt)
 
     def _build_left(self, parent):
         pan, acc = THEME["panel"], THEME["accent"]
@@ -3662,7 +5233,9 @@ class SpyOSINTApp:
                  ("⇩  ESPORTA", THEME["amber"], self.export_report),
                  ("⧉  COPIA", THEME["accent2"], self.copy_summary),
                  ("⚄  CASUALE", THEME["green"], self.random_target),
-                 ("↻  RIGENERA", THEME["text"], self.regenerate)]
+                 ("↻  RIGENERA", THEME["text"], self.regenerate),
+                 ("◆  MISSIONI", THEME["amber"], lambda: self.tabs.select(8, user=True)),
+                 ("›  TERMINALE", THEME["green"], lambda: self.tabs.select(9, user=True))]
         for i, (txt, col, cmd) in enumerate(specs):
             NeonButton(grid, txt, cmd, color=col, height=34, sound=None).grid(
                 row=i // 2, column=i % 2, sticky="ew", padx=3, pady=3)
@@ -3703,9 +5276,12 @@ class SpyOSINTApp:
         tab_geo = self.tabs.add("⌖ MAPPA", bg=THEME["bg"])
         geo_bar = tk.Frame(tab_geo, bg=pan)
         geo_bar.pack(fill="x")
-        NeonButton(geo_bar, "◎  APRI MAPPA 3D MAPBOX", self._open_mapbox_3d, width=250, height=32,
-                   sound="open").pack(side="left", padx=8, pady=6)
-        tk.Label(geo_bar, text="globo 3D + terreno nel browser · richiede token Mapbox (⚙ Impostazioni)",
+        self.globe_btn = NeonButton(geo_bar, "◍  GLOBO 3D" if self.map_mode == "flat" else "▭  PLANISFERO",
+                                    self.toggle_globe, width=170, height=32, color=THEME["green"])
+        self.globe_btn.pack(side="left", padx=(8, 4), pady=6)
+        NeonButton(geo_bar, "◎  MAPPA MAPBOX (browser)", self._open_mapbox_3d, width=240, height=32,
+                   sound="open").pack(side="left", padx=4, pady=6)
+        tk.Label(geo_bar, text="Mapbox richiede un token (⚙ Impostazioni)",
                  font=(UI, 9), bg=pan, fg=THEME["dim"]).pack(side="left", padx=6)
         self.geo_canvas = tk.Canvas(tab_geo, bg=THEME["bg2"], highlightthickness=0)
         self.geo_canvas.pack(fill="both", expand=True)
@@ -3718,8 +5294,77 @@ class SpyOSINTApp:
             wrap.pack(fill="both", expand=True, padx=12, pady=12)
             cons.append(txt)
         self.foot_text, self.behav_text = cons
+        self.tabs.add("◆ MISSIONI", bg=pan, builder=self._build_missions)
+        self.tabs.add("› TERMINALE", bg=pan, builder=self._build_terminal)
         self._type(self.foot_text, [("⊕ DIGITAL FOOTPRINT\n", "h"), ("avvia una scansione", "k")])
         self._type(self.behav_text, [("∿ ANALISI COMPORTAMENTALE\n", "h"), ("avvia una scansione", "k")])
+
+    def _build_missions(self, frame):
+        self._missions = MissionsView(frame, self)
+        self._missions.pack(fill="both", expand=True)
+
+    def _build_terminal(self, frame):
+        self.terminal = TerminalView(frame, self)
+        self.terminal.pack(fill="both", expand=True)
+        self.root.after(50, self.terminal.entry.focus_set)
+
+    def missions_view(self, build=False):
+        mv = self._missions
+        if mv is not None and mv.winfo_exists():
+            return mv
+        if build:
+            self.tabs.ensure_built(8)
+            return self._missions
+        return None
+
+    def _make_geo(self, data):
+        cls = Globe3D if self.map_mode == "globe" else GeoMap
+        return cls(self.geo_canvas, data, THEME["accent"])
+
+    def toggle_globe(self):
+        self.map_mode = "globe" if self.map_mode == "flat" else "flat"
+        self.globe_btn.config(text="▭  PLANISFERO" if self.map_mode == "globe" else "◍  GLOBO 3D")
+        if self.geo_anim:
+            self.geo_anim.stop()
+        self.geo_anim = None
+        self.geo_canvas.delete("all")
+        if self.settings.get("bg_anim", True):
+            self.geo_anim = self._make_geo(self.results)
+        self.tabs.select(4)
+
+    def set_accent(self, color):
+        self.settings = sanitize_settings({**self.settings, "accent": color})
+        THEME["accent"] = self.settings["accent"]
+        self._save_settings()
+        self.root.after(30, self._rebuild_ui)
+
+    def toggle_palette(self):
+        if self._palette is not None:
+            self._palette.close()
+            if not self._palette.frame.winfo_exists():
+                self._palette = None
+                return
+        names = ["INTELLIGENCE", "SOCIAL", "IDENTITÀ", "RETE", "MAPPA", "TIMELINE", "FOOTPRINT",
+                 "PROFILO", "MISSIONI", "TERMINALE"]
+        acts = [("Avvia scansione", "Invio", self.start_search),
+                ("Bersaglio casuale", "Ctrl+R", self.random_target),
+                ("Rigenera dossier", "F5", self.regenerate),
+                ("Ferma scansione", "Esc", self.stop_search),
+                ("Apri galleria", "Ctrl+G", self.open_gallery),
+                ("Avvia slideshow", "Ctrl+P", self.open_slideshow),
+                ("Esporta dossier", "Ctrl+E", self.export_report),
+                ("Copia sommario", "", self.copy_summary),
+                ("Globo 3D / planisfero", "mappa", self.toggle_globe),
+                ("Mappa Mapbox nel browser", "token", self._open_mapbox_3d),
+                ("Impostazioni", "Ctrl+,", self.open_settings),
+                ("Schermo intero", "F11", self._toggle_fullscreen)]
+        acts += [(f"Vai a: {n}", f"scheda {i + 1}", lambda i=i: self.tabs.select(i, user=True))
+                 for i, n in enumerate(names)]
+        acts += [(f"Missione: caso {n:02d} · {CASE_TITLES[(n - 1) % len(CASE_TITLES)]}", self.agent.status(n),
+                  lambda n=n: (self.tabs.select(8, user=True), self.missions_view(True).open_case(n)))
+                 for n in range(1, N_CASES + 1)]
+        acts += [(f"Tema: {n}", "accento", lambda c=c: self.set_accent(c)) for n, c in ACCENTS]
+        self._palette = CommandPalette(self.root, acts)
 
     def _placeholder(self, inner, title):
         for w in inner.winfo_children():
@@ -3768,7 +5413,7 @@ class SpyOSINTApp:
         if self.results or not self.settings.get("bg_anim", True):
             return
         self.net_anim = NetworkGraph(self.net_canvas, None, THEME["accent"])
-        self.geo_anim = GeoMap(self.geo_canvas, None, THEME["accent"])
+        self.geo_anim = self._make_geo(None)
 
     def _rebuild_ui(self):
         """Ricostruisce l'interfaccia (es. dopo il cambio del colore accento)."""
@@ -3776,14 +5421,17 @@ class SpyOSINTApp:
             if anim:
                 anim.stop()
         self.net_anim = self.geo_anim = None
+        cur = self.tabs.cur if self.tabs.winfo_exists() else 0
         for w in self.root.winfo_children():
             if not isinstance(w, tk.Toplevel):
                 w.destroy()
         self._typing.clear()
+        self._missions = self._palette = None
         self._style()
         self._build_ui()
         if self.results:
             self._render(self.results)
+        self.tabs.select(max(0, cur))
 
     # ---- feedback: stato, avanzamento, feed, toast -------------------
     def _status(self, msg, color=None):
@@ -4092,7 +5740,7 @@ class SpyOSINTApp:
             self.geo_canvas.delete("all")
             if self.settings.get("bg_anim", True):
                 self.net_anim = NetworkGraph(self.net_canvas, data, THEME["accent"])
-                self.geo_anim = GeoMap(self.geo_canvas, data, THEME["accent"])
+                self.geo_anim = self._make_geo(data)
             else:
                 for cv, msg in [(self.net_canvas, "⬡ RETE"), (self.geo_canvas, "⌖ MAPPA")]:
                     cv.create_text(max(400, cv.winfo_width() // 2), 220, justify="center",

@@ -36,6 +36,20 @@ Requisiti: Python 3.8+ con tkinter (incluso nell'installer ufficiale di Windows)
   scansione facciale (mesh dei punti del viso), slideshow con transizioni glitch.
 - **Effetti sonori** sintetizzati (nessun file da scaricare) e **impostazioni**
   con interruttori, colore accento, durata intro, video d'avvio.
+- **Globo 3D** olografico nella scheda MAPPA: ruota da solo, si trascina col mouse,
+  rotella per lo zoom, rotte animate tra le posizioni.
+- **Missioni** (scheda MISSIONI): 12 casi con personaggi **di fantasia**. Una talpa
+  si nasconde tra i sospetti: analizza le prove (costano energia), escludi gli
+  innocenti e accusa il colpevole. Le prove cifrate si sbloccano col minigioco
+  **Breach Protocol**. Punti esperienza, gradi da RECLUTA a DIRETTORE ORION e
+  progressi salvati.
+- **ORION-AI**: assistente di deduzione locale (regole, nessuna rete). Calcola i
+  sospetti ancora compatibili, le probabilità e quale indizio conviene cercare.
+- **Terminale** (scheda TERMINALE): comandi da film hacker (`help`, `scan <nome>`,
+  `caso 3`, `prove`, `analizza 2`, `ai`, `accusa VIPER`, `tema viola`, `matrix`…),
+  cronologia con ↑/↓, completamento con Tab, e domande libere a ORION-AI
+  ("chi è il più pericoloso?", "chi sospetti?").
+- **Tavolozza comandi** (Ctrl+K) per trovare e lanciare qualsiasi azione.
 
 ## Comandi rapidi
 
@@ -50,6 +64,9 @@ Requisiti: Python 3.8+ con tkinter (incluso nell'installer ufficiale di Windows)
 | F5 | rigenera (variante del dossier) |
 | F11 | schermo intero |
 | Ctrl+, | impostazioni |
+| Ctrl+K | tavolozza comandi |
+| Ctrl+M | missioni |
+| Ctrl+T | terminale |
 
 ## Schermate
 
@@ -59,12 +76,15 @@ Requisiti: Python 3.8+ con tkinter (incluso nell'installer ufficiale di Windows)
 | ![Rete](docs/04_rete.jpg) | ![Mappa](docs/05_mappa.jpg) |
 | ![Timeline](docs/06_timeline.jpg) | ![Intro galleria](docs/07_intro.jpg) |
 | ![Galleria](docs/08_galleria.jpg) | ![Slideshow](docs/09_slideshow.jpg) |
+| ![Missioni](docs/10_missioni.jpg) | ![Breach Protocol](docs/11_breach.jpg) |
+| ![Terminale](docs/12_terminale.jpg) | ![Globo 3D](docs/13_globo3d.jpg) |
+| ![Tavolozza comandi](docs/14_comandi.jpg) | |
 
 ## File creati dall'app
 
 Accanto a `gf.py` vengono creati `orion_settings.json` (impostazioni, compreso
-l'eventuale token Mapbox), `orion_cache.db` (cache dei dossier) e la cartella
-`orion_faces/` (volti IA scaricati). Sono esclusi da git tramite `.gitignore`.
+l'eventuale token Mapbox), `orion_cache.db` (cache dei dossier), `orion_agent.json`
+(esperienza e casi completati) e la cartella `orion_faces/` (volti IA scaricati). Sono esclusi da git tramite `.gitignore`.
 
 ---
 Creato da **MAIKGOST**.

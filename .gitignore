@@ -2,6 +2,7 @@
 orion_settings.json
 orion_cache.db
 orion_faces/
+orion_agent.json
 dossier_*.txt
 dossier_*.json
 __pycache__/
