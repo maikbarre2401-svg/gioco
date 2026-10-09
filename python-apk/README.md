@@ -54,7 +54,7 @@ assets/          icona e schermata di avvio
 ## 1. Provarla sul computer
 
 ```bash
-pip install "kivy[base]" plyer
+pip install "kivy[base]==2.3.0" plyer
 python main.py
 ```
 
