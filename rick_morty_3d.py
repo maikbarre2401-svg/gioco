@@ -86,7 +86,8 @@ from panda3d.core import (  # noqa: E402
     BitMask32, CardMaker, ColorBlendAttrib, DirectionalLight, Geom, GeomNode, GeomTriangles, GeomVertexArrayFormat,
     GeomVertexData, GeomVertexFormat, KeyboardButton, LMatrix4f, LVecBase4f, MouseButton, NodePath, PTA_LVecBase4f,
     SamplerState, Shader, TextNode, Texture, TextureStage, TransformState, TransparencyAttrib, Vec3, Vec4,
-    WindowProperties, ClockObject, AudioSound, CullFaceAttrib,
+    WindowProperties, ClockObject, AudioSound, CullFaceAttrib, LODNode, Point3,
+    RenderState, FrameBufferProperties,
 )
 
 # =============================================================================
@@ -771,16 +772,14 @@ class Mesh:
 # =============================================================================
 #  SHADER (luce realistica: sole + ombre morbide, cielo, riflessi, nebbia)
 # =============================================================================
-WORLD_VS = """
-#version 130
-uniform mat4 p3d_ModelViewProjectionMatrix;
+WORLD_VS_BODY = """uniform mat4 p3d_ModelViewProjectionMatrix;
 uniform mat4 p3d_ModelViewMatrix;
 uniform mat4 p3d_ModelMatrix;
 uniform struct p3d_LightSourceParameters {
   vec4 color;
   sampler2DShadow shadowMap;
   mat4 shadowViewMatrix;
-} p3d_LightSource[1];
+} p3d_LightSource[NLIGHT];
 in vec4 p3d_Vertex;
 in vec3 p3d_Normal;
 in vec4 p3d_Color;
@@ -790,6 +789,9 @@ out vec3 v_nrm;
 out vec4 v_col;
 out vec2 v_uv;
 out vec4 v_shd;
+#ifdef CASCADE
+out vec4 v_shd2;
+#endif
 void main() {
   vec4 wp = p3d_ModelMatrix * p3d_Vertex;
   v_pos = wp.xyz;
@@ -799,17 +801,20 @@ void main() {
   vec4 vp = p3d_ModelViewMatrix * p3d_Vertex;
   vec3 vn = normalize(mat3(p3d_ModelViewMatrix) * p3d_Normal);
   v_shd = p3d_LightSource[0].shadowViewMatrix * vec4(vp.xyz + vn * 0.07, 1.0);
+#ifdef CASCADE
+  v_shd2 = p3d_LightSource[1].shadowViewMatrix * vec4(vp.xyz + vn * 0.6, 1.0);
+#endif
   gl_Position = p3d_ModelViewProjectionMatrix * p3d_Vertex;
 }
 """
 
-WORLD_FS = """
-#version 130
+
+WORLD_FS_BODY = """
 uniform struct p3d_LightSourceParameters {
   vec4 color;
   sampler2DShadow shadowMap;
   mat4 shadowViewMatrix;
-} p3d_LightSource[1];
+} p3d_LightSource[NLIGHT];
 uniform sampler2D p3d_Texture0;
 uniform sampler2D emit_tex;
 uniform vec4 p3d_ColorScale;
@@ -828,11 +833,21 @@ uniform vec4 u_spot_pos;
 uniform vec4 u_spot_dir;
 uniform vec3 u_tint;
 uniform float u_texel;
+#ifdef FACADE
+uniform sampler2DArray u_fac_alb;
+uniform sampler2DArray u_fac_nrm;
+uniform vec4 u_fac_grid[32];
+uniform vec4 u_fac_info[32];
+#endif
 in vec3 v_pos;
 in vec3 v_nrm;
 in vec4 v_col;
 in vec2 v_uv;
 in vec4 v_shd;
+#ifdef CASCADE
+in vec4 v_shd2;
+uniform float u_texel2;
+#endif
 out vec4 o_color;
 
 float shadow_term() {
@@ -848,17 +863,49 @@ float shadow_term() {
   return s / 8.0;
 }
 
+#ifdef CASCADE
+float shadow_far() {
+  vec4 c = v_shd2;
+  float t = u_texel2 * c.w;
+  float s = textureProj(p3d_LightSource[1].shadowMap, c) * 2.0;
+  s += textureProj(p3d_LightSource[1].shadowMap, c + vec4(-t, 0.0, 0.0, 0.0));
+  s += textureProj(p3d_LightSource[1].shadowMap, c + vec4( t, 0.0, 0.0, 0.0));
+  s += textureProj(p3d_LightSource[1].shadowMap, c + vec4(0.0, -t, 0.0, 0.0));
+  s += textureProj(p3d_LightSource[1].shadowMap, c + vec4(0.0,  t, 0.0, 0.0));
+  return s / 6.0;
+}
+#endif
+
 vec3 aces(vec3 x) {
   return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
 }
 
 void main() {
+  vec4 mat = u_mat;
+#ifdef FACADE
+  float layer = floor(v_col.a * 255.0 + 0.5);
+  vec4 gi = u_fac_grid[int(layer)];
+  vec4 tx = texture(u_fac_alb, vec3(v_uv, layer));
+  vec4 base = vec4(tx.rgb * v_col.rgb * p3d_ColorScale.rgb, 1.0);
+  float glass = tx.a * gi.w;
+  vec4 nt = texture(u_fac_nrm, vec3(v_uv, layer));
+  vec3 nm = nt.xyz * 2.0 - 1.0;
+  float emask = nt.a;
+  mat = mix(u_mat, vec4(1.1, 140.0, 1.0, 0.0), glass);
+#else
   vec4 tx = texture(p3d_Texture0, v_uv);
   vec4 base = tx * v_col * p3d_ColorScale;
   if (base.a < 0.03) discard;
+#endif
   vec3 alb = pow(base.rgb, vec3(2.2)) * u_tint;
   vec3 N = normalize(v_nrm);
   if (!gl_FrontFacing) N = -N;
+#ifdef FACADE
+  if (abs(N.z) < 0.7) {
+    vec3 T = normalize(cross(vec3(0.0, 0.0, 1.0), N));
+    N = normalize(T * nm.x + vec3(0.0, 0.0, 1.0) * nm.y + N * max(nm.z, 0.2));
+  }
+#endif
   vec3 toc = u_cam - v_pos;
   float dist = length(toc);
   vec3 V = toc / max(dist, 0.001);
@@ -866,19 +913,29 @@ void main() {
   float sh = 0.0;
   if (ndl > 0.0) {
     vec3 sc = v_shd.xyz / v_shd.w;
-    if (sc.x > 0.0 && sc.x < 1.0 && sc.y > 0.0 && sc.y < 1.0) sh = shadow_term(); else sh = 1.0;
+    float edge = min(min(sc.x, 1.0 - sc.x), min(sc.y, 1.0 - sc.y));
+    float sn = 1.0;
+    if (edge > 0.0) sn = shadow_term();
+#ifdef CASCADE
+    float sf = 1.0;
+    vec3 sc2 = v_shd2.xyz / v_shd2.w;
+    if (sc2.x > 0.0 && sc2.x < 1.0 && sc2.y > 0.0 && sc2.y < 1.0 && edge < 0.08) sf = shadow_far();
+    sh = mix(sf, sn, smoothstep(0.0, 0.08, edge));
+#else
+    sh = sn;
+#endif
   }
   float diff = max(ndl, 0.0) * sh;
   vec3 H = normalize(u_sun_dir + V);
-  float gloss = u_mat.y;
-  float spec = pow(max(dot(N, H), 0.0), gloss) * u_mat.x * (gloss + 2.0) / 8.0;
+  float gloss = mat.y;
+  float spec = pow(max(dot(N, H), 0.0), gloss) * mat.x * (gloss + 2.0) / 8.0;
   float hemi = N.z * 0.5 + 0.5;
   vec3 amb = mix(u_gnd_col, u_sky_col, hemi);
   float ao = mix(0.55, 1.0, clamp(v_pos.z * 0.45 + 0.1, 0.0, 1.0));
   if (N.z > 0.7) ao = 1.0;
   vec3 col = alb * (amb * ao + u_sun_col * diff) + u_sun_col * spec * sh;
   vec3 R = reflect(-V, N);
-  float fres = u_mat.z * (0.06 + 0.94 * pow(1.0 - max(dot(N, V), 0.0), 5.0));
+  float fres = mat.z * (0.06 + 0.94 * pow(1.0 - max(dot(N, V), 0.0), 5.0));
   vec3 env = mix(u_gnd_col * 0.7, u_sky_col * 1.6 + u_sun_col * 0.05, smoothstep(-0.15, 0.35, R.z));
   col = mix(col, env + u_sun_col * spec * sh, clamp(fres, 0.0, 1.0));
   for (int i = 0; i < 8; i++) {
@@ -899,15 +956,36 @@ void main() {
     float cone = smoothstep(u_spot_dir.w, u_spot_dir.w + 0.1, cs);
     col += alb * vec3(1.0, 0.93, 0.8) * 6.0 * cone * max(dot(N, l), 0.0) / (1.0 + d * d * 0.02);
   }
+#ifdef FACADE
+  vec2 cell = floor(v_uv * gi.xy);
+  float hsh = fract(sin(dot(cell + vec2(layer * 7.13, layer * 3.71), vec2(12.9898, 78.233))) * 43758.5453);
+  float lit = step(1.0 - gi.z, hsh);
+  vec3 lcol = mix(vec3(1.0, 0.70, 0.40), vec3(0.60, 0.76, 1.0), step(0.8, fract(hsh * 7.0)));
+  float ltype = u_fac_info[int(layer)].x;
+  if (ltype > 1.5) lcol = vec3(0.80, 0.92, 1.0);
+  else if (ltype > 0.5) lcol = base.rgb * 2.4 + 0.1;
+  vec3 em = emask * lit * lcol * (0.25 + 0.55 * fract(hsh * 13.0)) * u_night * 0.95;
+  col = mix(col, col * 0.35, emask * u_night * (1.0 - lit));
+#else
   vec3 em = pow(texture(emit_tex, v_uv).rgb, vec3(2.2)) * u_mat.w * (u_night * 0.85);
+#endif
   col += em;
-  float fog = 1.0 - exp(-max(dist - u_fog.z, 0.0) * u_fog.x);
-  fog *= exp(-max(v_pos.z, 0.0) * u_fog.y);
+  float kz = u_fog.y * (v_pos.z - u_cam.z);
+  float hf = abs(kz) > 0.001 ? (1.0 - exp(-kz)) / kz : 1.0;
+  float od = u_fog.x * max(dist - u_fog.z, 0.0) * exp(-u_fog.y * max(u_cam.z, 0.0)) * hf;
+  float fog = 1.0 - exp(-od);
   col = mix(col, u_fog_col, clamp(fog, 0.0, u_fog.w));
   col = aces(col);
   o_color = vec4(pow(col, vec3(1.0 / 2.2)), base.a);
 }
 """
+
+
+def world_shader_src(facade=False, cascade=False):
+    head = "#version 130\n" + ("#define NLIGHT 2\n#define CASCADE 1\n" if cascade else "#define NLIGHT 1\n")
+    vs = head + WORLD_VS_BODY
+    fs = head + ("#define FACADE 1\n" if facade else "") + WORLD_FS_BODY
+    return vs, fs
 
 SKY_VS = """
 #version 130
@@ -1060,10 +1138,12 @@ class Environment:
         render = base.render
         self.q = self.QUALITY[clamp(quality, 0, 2)]
         base.cam.node().setCameraMask(MASK_MAIN)
-        self.world_shader = Shader.make(Shader.SL_GLSL, WORLD_VS, WORLD_FS)
+        self.cascade = quality >= 1
+        self.world_shader = Shader.make(Shader.SL_GLSL, *world_shader_src(False, self.cascade))
         self.sky_shader = Shader.make(Shader.SL_GLSL, SKY_VS, SKY_FS)
         self.fx_shader = Shader.make(Shader.SL_GLSL, FX_VS, FX_FS)
         self.sign_shader = Shader.make(Shader.SL_GLSL, FX_VS, SIGN_FS)
+        self.facade_shader = Shader.make(Shader.SL_GLSL, *world_shader_src(True, self.cascade))
         self.root = render.attachNewNode("mondo")
         self.root.setShader(self.world_shader)
         self.white = solid_texture((255, 255, 255), "bianco")
@@ -1081,7 +1161,7 @@ class Environment:
         render.setShaderInput("u_texel", 1.0 / self.q["shadow"])
         render.setShaderInput("u_night", 0.0)
         render.setShaderInput("u_cam", Vec3(0, 0, 0))
-        render.setShaderInput("u_fog", Vec4(0.00075, 0.006, 60.0, 0.9))
+        render.setShaderInput("u_fog", Vec4(0.0008, 0.003, 60.0, 0.9))
         render.setShaderInput("u_glow", 0.0)
         self.tint = Vec3(1, 1, 1)
         # sole con ombre
@@ -1091,13 +1171,29 @@ class Environment:
         lens = self.sun.getLens()
         lens.setFilmSize(self.q["film"], self.q["film"])
         lens.setNearFar(10, 900)
+        self.sun.setPriority(10)
         self.sun_np = render.attachNewNode(self.sun)
         self.root.setLight(self.sun_np)
+        # seconda mappa d'ombra, larga 1.5 km: i grattacieli proiettano l'ombra sulla citta'
+        if self.cascade:
+            sz = 2048 if quality == 1 else 4096
+            self.sun2 = DirectionalLight("sole_lontano")
+            self.sun2.setShadowCaster(True, sz, sz)
+            self.sun2.setCameraMask(MASK_SHADOW)
+            self.sun2.setPriority(5)
+            self.sun2.setColor((0, 0, 0, 1))
+            lens2 = self.sun2.getLens()
+            lens2.setFilmSize(1500, 1500)
+            lens2.setNearFar(20, 3200)
+            self.sun2_np = render.attachNewNode(self.sun2)
+            self.root.setLight(self.sun2_np)
+            render.setShaderInput("u_texel2", 1.0 / sz)
+            self.step2 = 1500.0 / sz * 4
         # cielo
         sky = Mesh()
         sky.ellipsoid(0, 0, 0, 1, 1, 1, (255, 255, 255), seg=32, rings=16)
         self.sky = render.attachNewNode(sky.node("cielo"))
-        self.sky.setScale(2000)
+        self.sky.setScale(5000)
         self.sky.setShader(self.sky_shader)
         self.sky.setAttrib(CullFaceAttrib.makeReverse())
         self.sky.setBin("background", 0)
@@ -1107,15 +1203,26 @@ class Environment:
         self.sky.hide(MASK_SHADOW | MASK_MAP)
         self.sky.setShaderInput("u_clouds", make_texture(tex_clouds(), "nuvole"))
         self.sky.setShaderInput("u_cloud", 0.55)
-        base.camLens.setNearFar(0.08, 3200)
+        base.camLens.setNearFar(0.2, 9000)
         self.hour = 10.0
         self.night = 0.0
         self.light_dir = Vec3(0, 0, 1)
         self.sun_dir = Vec3(0, 0, 1)
         self.fog_col = Vec3(0.6, 0.7, 0.8)
         self.lights = []
+        self.post = None
+        if quality >= 1 and not OFFSCREEN_NO_POST:
+            try:
+                self.post = PostFX(base)
+            except Exception:  # noqa: BLE001
+                import traceback
+                traceback.print_exc()
+                self.post = None
 
     # ---------------------------------------------------------------------
+    def set_fog(self, density, height, start, maximum):
+        self.base.render.setShaderInput("u_fog", Vec4(density, height, start, maximum))
+
     def set_tint(self, rgb):
         self.tint = Vec3(*rgb)
         self.base.render.setShaderInput("u_tint", self.tint)
@@ -1187,6 +1294,14 @@ class Environment:
         fy = round(focus[1] / step) * step
         self.sun_np.setPos(fx + L.x * 400, fy + L.y * 400, L.z * 400)
         self.sun_np.lookAt(fx, fy, 0)
+        if self.cascade:
+            s2 = self.step2
+            gx = round(focus[0] / s2) * s2
+            gy = round(focus[1] / s2) * s2
+            self.sun2_np.setPos(gx + L.x * 1600, gy + L.y * 1600, L.z * 1600)
+            self.sun2_np.lookAt(gx, gy, 0)
+        if self.post is not None:
+            self.post.update(self.night)
         # luci puntiformi (lampioni, esplosioni, sirene...)
         lights = lights or []
         for i in range(8):
@@ -1203,6 +1318,921 @@ class Environment:
             r.setShaderInput("u_spot_dir", Vec4(dx, dy, dz, 0.86))
         else:
             r.setShaderInput("u_spot_pos", Vec4(0, 0, 0, 0))
+
+
+# =============================================================================
+#  POST-PRODUZIONE: occlusione ambientale (SSAO), bagliore (bloom), antialiasing (FXAA)
+# =============================================================================
+OFFSCREEN_NO_POST = os.environ.get("RM3D_NOPOST") == "1"
+
+POST_VS = """
+#version 130
+uniform mat4 p3d_ModelViewProjectionMatrix;
+in vec4 p3d_Vertex;
+in vec2 p3d_MultiTexCoord0;
+out vec2 v_uv;
+void main() {
+  gl_Position = p3d_ModelViewProjectionMatrix * p3d_Vertex;
+  v_uv = p3d_MultiTexCoord0;
+}
+"""
+
+AO_FS = """
+#version 130
+uniform sampler2D u_depth;
+uniform vec4 u_ao;
+uniform vec2 u_px;
+in vec2 v_uv;
+out vec4 o_color;
+float lin(float d) { return u_ao.x * u_ao.y / (u_ao.y - d * (u_ao.y - u_ao.x)); }
+void main() {
+  float z0 = lin(texture(u_depth, v_uv).r);
+  if (z0 > 300.0) { o_color = vec4(1.0); return; }
+  float w0 = 1.0 / z0;
+  float wl = 1.0 / lin(texture(u_depth, v_uv - vec2(u_px.x, 0.0)).r);
+  float wr = 1.0 / lin(texture(u_depth, v_uv + vec2(u_px.x, 0.0)).r);
+  float wd = 1.0 / lin(texture(u_depth, v_uv - vec2(0.0, u_px.y)).r);
+  float wu = 1.0 / lin(texture(u_depth, v_uv + vec2(0.0, u_px.y)).r);
+  float gx = abs(wr - w0) < abs(w0 - wl) ? (wr - w0) : (w0 - wl);
+  float gy = abs(wu - w0) < abs(w0 - wd) ? (wu - w0) : (w0 - wd);
+  float rad = clamp(0.75 / z0, 0.003, 0.07);
+  float ang = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853;
+  float ca = cos(ang);
+  float sa = sin(ang);
+  float occ = 0.0;
+  for (int i = 0; i < 12; i++) {
+    float fi = float(i);
+    float r = (fi + 0.5) / 12.0;
+    float a = fi * 2.39996;
+    vec2 k = vec2(cos(a), sin(a)) * r;
+    k = vec2(k.x * ca - k.y * sa, k.x * sa + k.y * ca);
+    vec2 off = k * rad * vec2(1.0 / u_ao.z, 1.0);
+    vec2 opx = off / u_px;
+    float ws = 1.0 / lin(texture(u_depth, v_uv + off).r);
+    float we = max(w0 + gx * opx.x + gy * opx.y, 1e-5);
+    float dz = 1.0 / we - 1.0 / ws;
+    occ += smoothstep(0.03, 0.22, dz) * (1.0 - smoothstep(1.0, 2.6, dz));
+  }
+  float ao = 1.0 - u_ao.w * occ / 12.0;
+  o_color = vec4(ao, ao, ao, 1.0);
+}
+"""
+
+BRIGHT_FS = """
+#version 130
+uniform sampler2D u_scene;
+uniform vec4 u_bloom;
+uniform vec2 u_px;
+in vec2 v_uv;
+out vec4 o_color;
+void main() {
+  vec3 c = texture(u_scene, v_uv + vec2(-u_px.x, -u_px.y)).rgb;
+  c += texture(u_scene, v_uv + vec2(u_px.x, -u_px.y)).rgb;
+  c += texture(u_scene, v_uv + vec2(-u_px.x, u_px.y)).rgb;
+  c += texture(u_scene, v_uv + vec2(u_px.x, u_px.y)).rgb;
+  c *= 0.25;
+  float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  float k = smoothstep(u_bloom.x, u_bloom.x + 0.22, l);
+  o_color = vec4(c * k, 1.0);
+}
+"""
+
+BLUR_FS = """
+#version 130
+uniform sampler2D u_src;
+uniform vec2 u_dir;
+in vec2 v_uv;
+out vec4 o_color;
+void main() {
+  vec3 c = texture(u_src, v_uv).rgb * 0.227;
+  c += (texture(u_src, v_uv + u_dir * 1.385).rgb + texture(u_src, v_uv - u_dir * 1.385).rgb) * 0.316;
+  c += (texture(u_src, v_uv + u_dir * 3.231).rgb + texture(u_src, v_uv - u_dir * 3.231).rgb) * 0.070;
+  o_color = vec4(c, 1.0);
+}
+"""
+
+COMP_FS = """
+#version 130
+uniform sampler2D u_scene;
+uniform sampler2D u_aotex;
+uniform sampler2D u_bloomtex;
+uniform vec4 u_bloom;
+uniform vec2 u_aopx;
+in vec2 v_uv;
+out vec4 o_color;
+void main() {
+  vec3 c = texture(u_scene, v_uv).rgb;
+  float ao = texture(u_aotex, v_uv + vec2(u_aopx.x, u_aopx.y)).r + texture(u_aotex, v_uv + vec2(-u_aopx.x, u_aopx.y)).r
+           + texture(u_aotex, v_uv + vec2(u_aopx.x, -u_aopx.y)).r + texture(u_aotex, v_uv + vec2(-u_aopx.x, -u_aopx.y)).r;
+  ao *= 0.25;
+  c *= pow(clamp(ao, 0.0, 1.0), 0.4545);
+  vec3 b = texture(u_bloomtex, v_uv).rgb * u_bloom.y;
+  c = 1.0 - (1.0 - c) * (1.0 - min(b, vec3(1.0)));
+  vec2 q = v_uv - 0.5;
+  c *= 1.0 - dot(q, q) * 0.32;
+  o_color = vec4(c, 1.0);
+}
+"""
+
+FXAA_FS = """
+#version 130
+uniform sampler2D u_comp;
+uniform vec2 u_rcp;
+in vec2 v_uv;
+out vec4 o_color;
+void main() {
+  vec3 L = vec3(0.299, 0.587, 0.114);
+  vec3 nw = texture(u_comp, v_uv + vec2(-1.0, -1.0) * u_rcp).rgb;
+  vec3 ne = texture(u_comp, v_uv + vec2(1.0, -1.0) * u_rcp).rgb;
+  vec3 sw = texture(u_comp, v_uv + vec2(-1.0, 1.0) * u_rcp).rgb;
+  vec3 se = texture(u_comp, v_uv + vec2(1.0, 1.0) * u_rcp).rgb;
+  vec3 m = texture(u_comp, v_uv).rgb;
+  float lnw = dot(nw, L), lne = dot(ne, L), lsw = dot(sw, L), lse = dot(se, L), lm = dot(m, L);
+  float lmin = min(lm, min(min(lnw, lne), min(lsw, lse)));
+  float lmax = max(lm, max(max(lnw, lne), max(lsw, lse)));
+  vec2 dir = vec2(-((lnw + lne) - (lsw + lse)), (lnw + lsw) - (lne + lse));
+  float red = max((lnw + lne + lsw + lse) * 0.03125, 1.0 / 128.0);
+  float rmin = 1.0 / (min(abs(dir.x), abs(dir.y)) + red);
+  dir = clamp(dir * rmin, vec2(-8.0), vec2(8.0)) * u_rcp;
+  vec3 a = 0.5 * (texture(u_comp, v_uv + dir * (1.0 / 3.0 - 0.5)).rgb + texture(u_comp, v_uv + dir * (2.0 / 3.0 - 0.5)).rgb);
+  vec3 b = a * 0.5 + 0.25 * (texture(u_comp, v_uv - dir * 0.5).rgb + texture(u_comp, v_uv + dir * 0.5).rgb);
+  float lb = dot(b, L);
+  o_color = vec4((lb < lmin || lb > lmax) ? a : b, 1.0);
+}
+"""
+
+
+class PostFX:
+    def __init__(self, base):
+        from direct.filter.FilterManager import FilterManager
+        self.base = base
+        self.fm = FilterManager(base.win, base.cam)
+        self.t_scene = Texture("scena")
+        self.t_depth = Texture("profondita")
+        fb = FrameBufferProperties()
+        fb.setRgbColor(True)
+        fb.setRgbaBits(8, 8, 8, 8)
+        fb.setDepthBits(24)
+        self.final = self.fm.renderSceneInto(colortex=self.t_scene, depthtex=self.t_depth, fbprops=fb)
+        if self.final is None:
+            raise RuntimeError("post-produzione non disponibile")
+        self.t_ao = Texture("ao")
+        self.q_ao = self.fm.renderQuadInto(colortex=self.t_ao, div=2)
+        self.t_br = Texture("luce")
+        self.q_br = self.fm.renderQuadInto(colortex=self.t_br, div=4)
+        self.t_bh = Texture("sfoca_h")
+        self.q_bh = self.fm.renderQuadInto(colortex=self.t_bh, div=4)
+        self.t_bv = Texture("sfoca_v")
+        self.q_bv = self.fm.renderQuadInto(colortex=self.t_bv, div=4)
+        self.t_comp = Texture("composizione")
+        self.q_comp = self.fm.renderQuadInto(colortex=self.t_comp)
+        for t in (self.t_scene, self.t_ao, self.t_br, self.t_bh, self.t_bv, self.t_comp):
+            t.setMinfilter(SamplerState.FT_linear)
+            t.setMagfilter(SamplerState.FT_linear)
+            t.setWrapU(SamplerState.WM_clamp)
+            t.setWrapV(SamplerState.WM_clamp)
+        mk = lambda fs: Shader.make(Shader.SL_GLSL, POST_VS, fs)
+        self.q_ao.setShader(mk(AO_FS))
+        self.q_ao.setShaderInput("u_depth", self.t_depth)
+        self.q_br.setShader(mk(BRIGHT_FS))
+        self.q_br.setShaderInput("u_scene", self.t_scene)
+        blur = mk(BLUR_FS)
+        self.q_bh.setShader(blur)
+        self.q_bh.setShaderInput("u_src", self.t_br)
+        self.q_bv.setShader(blur)
+        self.q_bv.setShaderInput("u_src", self.t_bh)
+        self.q_comp.setShader(mk(COMP_FS))
+        self.q_comp.setShaderInput("u_scene", self.t_scene)
+        self.q_comp.setShaderInput("u_aotex", self.t_ao)
+        self.q_comp.setShaderInput("u_bloomtex", self.t_bv)
+        self.final.setShader(mk(FXAA_FS))
+        self.final.setShaderInput("u_comp", self.t_comp)
+        self.update(0.0)
+
+    def update(self, night):
+        win = self.base.win
+        w, h = max(1, win.getXSize()), max(1, win.getYSize())
+        lens = self.base.camLens
+        self.q_ao.setShaderInput("u_ao", Vec4(lens.getNear(), lens.getFar(), w / float(h), 0.85))
+        self.q_ao.setShaderInput("u_px", (1.0 / w, 1.0 / h))
+        bloom = Vec4(lerp(0.78, 0.55, night), lerp(0.42, 0.9, night), 0, 0)
+        self.q_br.setShaderInput("u_bloom", bloom)
+        self.q_br.setShaderInput("u_px", (1.0 / w, 1.0 / h))
+        self.q_bh.setShaderInput("u_dir", (4.0 / w, 0.0))
+        self.q_bv.setShaderInput("u_dir", (0.0, 4.0 / h))
+        self.q_comp.setShaderInput("u_bloom", bloom)
+        self.q_comp.setShaderInput("u_aopx", (1.0 / w, 1.0 / h))
+        self.final.setShaderInput("u_rcp", (1.0 / w, 1.0 / h))
+
+
+# =============================================================================
+#  GEOMETRIA 2D: triangolazione di poligoni con buchi, linee spezzate, raster
+# =============================================================================
+class _ENode:
+    __slots__ = ("i", "x", "y", "prev", "next", "steiner")
+
+    def __init__(self, i, x, y):
+        self.i = i
+        self.x = x
+        self.y = y
+        self.prev = None
+        self.next = None
+        self.steiner = False
+
+
+def _e_insert(i, x, y, last):
+    p = _ENode(i, x, y)
+    if last is None:
+        p.prev = p
+        p.next = p
+    else:
+        p.next = last.next
+        p.prev = last
+        last.next.prev = p
+        last.next = p
+    return p
+
+
+def _e_remove(p):
+    p.next.prev = p.prev
+    p.prev.next = p.next
+
+
+def _e_area(p, q, r):
+    return (q.y - p.y) * (r.x - q.x) - (q.x - p.x) * (r.y - q.y)
+
+
+def _e_equals(a, b):
+    return a.x == b.x and a.y == b.y
+
+
+def _e_signed_area(pts, start, end):
+    s = 0.0
+    j = end - 1
+    for i in range(start, end):
+        s += (pts[j][0] - pts[i][0]) * (pts[i][1] + pts[j][1])
+        j = i
+    return s
+
+
+def _e_linked(pts, start, end, clockwise):
+    last = None
+    if clockwise == (_e_signed_area(pts, start, end) > 0):
+        for i in range(start, end):
+            last = _e_insert(i, pts[i][0], pts[i][1], last)
+    else:
+        for i in range(end - 1, start - 1, -1):
+            last = _e_insert(i, pts[i][0], pts[i][1], last)
+    if last is not None and _e_equals(last, last.next):
+        _e_remove(last)
+        last = last.next
+    return last
+
+
+def _e_filter(start, end=None):
+    if start is None:
+        return start
+    if end is None:
+        end = start
+    p = start
+    while True:
+        again = False
+        if not p.steiner and (_e_equals(p, p.next) or _e_area(p.prev, p, p.next) == 0):
+            _e_remove(p)
+            p = end = p.prev
+            if p is p.next:
+                break
+            again = True
+        else:
+            p = p.next
+        if not (again or p is not end):
+            break
+    return end
+
+
+def _e_in_tri(ax, ay, bx, by, cx, cy, px, py):
+    return ((cx - px) * (ay - py) >= (ax - px) * (cy - py) and
+            (ax - px) * (by - py) >= (bx - px) * (ay - py) and
+            (bx - px) * (cy - py) >= (cx - px) * (by - py))
+
+
+def _e_is_ear(ear):
+    a, b, c = ear.prev, ear, ear.next
+    if _e_area(a, b, c) >= 0:
+        return False
+    p = ear.next.next
+    while p is not ear.prev:
+        if (_e_in_tri(a.x, a.y, b.x, b.y, c.x, c.y, p.x, p.y) and _e_area(p.prev, p, p.next) >= 0):
+            return False
+        p = p.next
+    return True
+
+
+def _e_sign(v):
+    return (v > 0) - (v < 0)
+
+
+def _e_on_seg(p, q, r):
+    return min(p.x, r.x) <= q.x <= max(p.x, r.x) and min(p.y, r.y) <= q.y <= max(p.y, r.y)
+
+
+def _e_intersects(p1, q1, p2, q2):
+    o1 = _e_sign(_e_area(p1, q1, p2))
+    o2 = _e_sign(_e_area(p1, q1, q2))
+    o3 = _e_sign(_e_area(p2, q2, p1))
+    o4 = _e_sign(_e_area(p2, q2, q1))
+    if o1 != o2 and o3 != o4:
+        return True
+    if o1 == 0 and _e_on_seg(p1, p2, q1):
+        return True
+    if o2 == 0 and _e_on_seg(p1, q2, q1):
+        return True
+    if o3 == 0 and _e_on_seg(p2, p1, q2):
+        return True
+    if o4 == 0 and _e_on_seg(p2, q1, q2):
+        return True
+    return False
+
+
+def _e_locally_inside(a, b):
+    if _e_area(a.prev, a, a.next) < 0:
+        return _e_area(a, b, a.next) >= 0 and _e_area(a, a.prev, b) >= 0
+    return _e_area(a, b, a.prev) < 0 or _e_area(a, a.next, b) < 0
+
+
+def _e_middle_inside(a, b):
+    p = a
+    inside = False
+    px, py = (a.x + b.x) / 2, (a.y + b.y) / 2
+    while True:
+        if (((p.y > py) != (p.next.y > py)) and p.next.y != p.y and
+                (px < (p.next.x - p.x) * (py - p.y) / (p.next.y - p.y) + p.x)):
+            inside = not inside
+        p = p.next
+        if p is a:
+            break
+    return inside
+
+
+def _e_intersects_poly(a, b):
+    p = a
+    while True:
+        if (p.i != a.i and p.next.i != a.i and p.i != b.i and p.next.i != b.i and _e_intersects(p, p.next, a, b)):
+            return True
+        p = p.next
+        if p is a:
+            break
+    return False
+
+
+def _e_valid_diag(a, b):
+    return (a.next.i != b.i and a.prev.i != b.i and not _e_intersects_poly(a, b) and
+            (_e_locally_inside(a, b) and _e_locally_inside(b, a) and _e_middle_inside(a, b) and
+             (_e_area(a.prev, a, b.prev) or _e_area(a, b.prev, b)) or
+             _e_equals(a, b) and _e_area(a.prev, a, a.next) > 0 and _e_area(b.prev, b, b.next) > 0))
+
+
+def _e_split(a, b):
+    a2 = _ENode(a.i, a.x, a.y)
+    b2 = _ENode(b.i, b.x, b.y)
+    an, bp = a.next, b.prev
+    a.next = b
+    b.prev = a
+    a2.next = an
+    an.prev = a2
+    b2.next = a2
+    a2.prev = b2
+    bp.next = b2
+    b2.prev = bp
+    return b2
+
+
+def _e_cure(start, tris):
+    p = start
+    while True:
+        a, b = p.prev, p.next.next
+        if (not _e_equals(a, b) and _e_intersects(a, p, p.next, b) and _e_locally_inside(a, b) and
+                _e_locally_inside(b, a)):
+            tris.extend((a.i, p.i, b.i))
+            _e_remove(p)
+            _e_remove(p.next)
+            p = start = b
+        p = p.next
+        if p is start:
+            break
+    return _e_filter(p)
+
+
+def _e_split_earcut(start, tris):
+    a = start
+    while True:
+        b = a.next.next
+        while b is not a.prev:
+            if a.i != b.i and _e_valid_diag(a, b):
+                c = _e_split(a, b)
+                a = _e_filter(a, a.next)
+                c = _e_filter(c, c.next)
+                _e_earcut_linked(a, tris, 0)
+                _e_earcut_linked(c, tris, 0)
+                return
+            b = b.next
+        a = a.next
+        if a is start:
+            break
+
+
+def _e_earcut_linked(ear, tris, pas):
+    if ear is None:
+        return
+    stop = ear
+    guard = 0
+    while ear.prev is not ear.next:
+        guard += 1
+        if guard > 200000:
+            return
+        prev, nxt = ear.prev, ear.next
+        if _e_is_ear(ear):
+            tris.extend((prev.i, ear.i, nxt.i))
+            _e_remove(ear)
+            ear = nxt.next
+            stop = nxt.next
+            continue
+        ear = nxt
+        if ear is stop:
+            if pas == 0:
+                _e_earcut_linked(_e_filter(ear), tris, 1)
+            elif pas == 1:
+                ear = _e_cure(_e_filter(ear), tris)
+                _e_earcut_linked(ear, tris, 2)
+            elif pas == 2:
+                _e_split_earcut(ear, tris)
+            break
+
+
+def _e_leftmost(start):
+    p = start
+    left = start
+    while True:
+        if p.x < left.x or (p.x == left.x and p.y < left.y):
+            left = p
+        p = p.next
+        if p is start:
+            break
+    return left
+
+
+def _e_sector_contains(m, p):
+    return _e_area(m.prev, m, p.prev) < 0 and _e_area(p.next, m, m.next) < 0
+
+
+def _e_bridge(hole, outer):
+    p = outer
+    hx, hy = hole.x, hole.y
+    qx = -math.inf
+    m = None
+    while True:
+        if hy <= p.y and hy >= p.next.y and p.next.y != p.y:
+            x = p.x + (hy - p.y) * (p.next.x - p.x) / (p.next.y - p.y)
+            if hx >= x > qx:
+                qx = x
+                m = p if p.x < p.next.x else p.next
+                if x == hx:
+                    return m
+        p = p.next
+        if p is outer:
+            break
+    if m is None:
+        return None
+    stop = m
+    mx, my = m.x, m.y
+    tan_min = math.inf
+    p = m
+    while True:
+        if (hx >= p.x >= mx and hx != p.x and
+                _e_in_tri(hx if hy < my else qx, hy, mx, my, qx if hy < my else hx, hy, p.x, p.y)):
+            tan = abs(hy - p.y) / (hx - p.x)
+            if _e_locally_inside(p, hole) and (tan < tan_min or (tan == tan_min and (
+                    p.x > m.x or (p.x == m.x and _e_sector_contains(m, p))))):
+                m = p
+                tan_min = tan
+        p = p.next
+        if p is stop:
+            break
+    return m
+
+
+def earcut(outer, holes=()):
+    """Triangola un poligono (lista di (x, y)) con eventuali buchi. Ritorna indici nella lista
+    concatenata outer + holes[0] + holes[1] + ..."""
+    pts = list(outer)
+    hole_idx = []
+    for h in holes:
+        if len(h) >= 3:
+            hole_idx.append(len(pts))
+            pts.extend(h)
+    tris = []
+    end0 = hole_idx[0] if hole_idx else len(pts)
+    node = _e_linked(pts, 0, end0, True)
+    if node is None or node.next is node.prev:
+        return tris
+    if hole_idx:
+        queue = []
+        for k, s in enumerate(hole_idx):
+            e = hole_idx[k + 1] if k + 1 < len(hole_idx) else len(pts)
+            lst = _e_linked(pts, s, e, False)
+            if lst is None:
+                continue
+            if lst is lst.next:
+                lst.steiner = True
+            queue.append(_e_leftmost(lst))
+        queue.sort(key=lambda n: (n.x, n.y))
+        for h in queue:
+            b = _e_bridge(h, node)
+            if b is None:
+                continue
+            c = _e_split(b, h)
+            _e_filter(c, c.next)
+            node = _e_filter(b, b.next)
+    _e_earcut_linked(node, tris, 0)
+    return tris
+
+
+def ring_area(pts):
+    """area con segno (positiva = antioraria)"""
+    a = 0.0
+    n = len(pts)
+    for i in range(n):
+        x0, y0 = pts[i]
+        x1, y1 = pts[(i + 1) % n]
+        a += x0 * y1 - x1 * y0
+    return a * 0.5
+
+
+def is_convex(pts):
+    n = len(pts)
+    if n < 4:
+        return True
+    sgn = 0
+    for i in range(n):
+        ax, ay = pts[i]
+        bx, by = pts[(i + 1) % n]
+        cx, cy = pts[(i + 2) % n]
+        cr = (bx - ax) * (cy - by) - (by - ay) * (cx - bx)
+        if abs(cr) < 1e-9:
+            continue
+        s = 1 if cr > 0 else -1
+        if sgn == 0:
+            sgn = s
+        elif s != sgn:
+            return False
+    return True
+
+
+def triangulate(outer, holes=()):
+    if not holes and is_convex(outer):
+        return [k for i in range(1, len(outer) - 1) for k in (0, i, i + 1)]
+    return earcut(outer, holes)
+
+
+def point_in_ring(x, y, pts):
+    inside = False
+    n = len(pts)
+    j = n - 1
+    for i in range(n):
+        xi, yi = pts[i]
+        xj, yj = pts[j]
+        if (yi > y) != (yj > y) and x < (xj - xi) * (y - yi) / ((yj - yi) or 1e-12) + xi:
+            inside = not inside
+        j = i
+    return inside
+
+
+def clean_ring(pts, eps=0.05):
+    """toglie l'ultimo punto se uguale al primo e i punti doppi"""
+    out = []
+    for p in pts:
+        if not out or abs(p[0] - out[-1][0]) > eps or abs(p[1] - out[-1][1]) > eps:
+            out.append(p)
+    if len(out) > 1 and abs(out[0][0] - out[-1][0]) <= eps and abs(out[0][1] - out[-1][1]) <= eps:
+        out.pop()
+    return out
+
+
+# ------------------------------------------------------------------ linee spezzate
+class Polyline:
+    """linea spezzata con lunghezze cumulative: punto e direzione a una certa distanza"""
+    __slots__ = ("P", "S", "L")
+
+    def __init__(self, pts):
+        self.P = np.asarray(pts, np.float64).reshape(-1, 2)
+        d = np.hypot(np.diff(self.P[:, 0]), np.diff(self.P[:, 1]))
+        self.S = np.concatenate([[0.0], np.cumsum(d)])
+        self.L = float(self.S[-1])
+
+    def at(self, s):
+        P, S = self.P, self.S
+        if s <= 0:
+            i = 0
+        elif s >= self.L:
+            i = len(S) - 2
+        else:
+            i = int(np.searchsorted(S, s, "right")) - 1
+            i = min(max(i, 0), len(S) - 2)
+        seg = S[i + 1] - S[i]
+        t = (s - S[i]) / seg if seg > 1e-9 else 0.0
+        x0, y0 = P[i]
+        x1, y1 = P[i + 1]
+        dx, dy = x1 - x0, y1 - y0
+        l = math.hypot(dx, dy) or 1.0
+        return x0 + dx * t, y0 + dy * t, dx / l, dy / l
+
+    def at_many(self, ss):
+        """come at() ma per un array di distanze: ritorna X, Y, TX, TY"""
+        P, S = self.P, self.S
+        ss = np.clip(np.asarray(ss, np.float64), 0.0, self.L)
+        i = np.clip(np.searchsorted(S, ss, "right") - 1, 0, len(S) - 2)
+        seg = S[i + 1] - S[i]
+        t = np.where(seg > 1e-9, (ss - S[i]) / np.where(seg > 1e-9, seg, 1.0), 0.0)
+        A = P[i]
+        D = P[i + 1] - A
+        l = np.hypot(D[:, 0], D[:, 1])
+        l = np.where(l > 1e-12, l, 1.0)
+        return A[:, 0] + D[:, 0] * t, A[:, 1] + D[:, 1] * t, D[:, 0] / l, D[:, 1] / l
+
+    def piece(self, s0, s1):
+        """punti tra s0 e s1 (inclusi gli estremi interpolati)"""
+        s0 = max(0.0, s0)
+        s1 = min(self.L, s1)
+        if s1 <= s0:
+            return np.zeros((0, 2))
+        a = self.at(s0)
+        b = self.at(s1)
+        inner = self.P[(self.S > s0 + 1e-6) & (self.S < s1 - 1e-6)]
+        return np.vstack([[a[:2]], inner, [b[:2]]])
+
+    def project(self, x, y):
+        """distanza lungo la linea del punto piu' vicino a (x, y), e distanza laterale"""
+        P = self.P
+        a = P[:-1]
+        d = P[1:] - a
+        l2 = (d * d).sum(1)
+        l2[l2 < 1e-12] = 1e-12
+        t = np.clip(((x - a[:, 0]) * d[:, 0] + (y - a[:, 1]) * d[:, 1]) / l2, 0, 1)
+        cx = a[:, 0] + d[:, 0] * t
+        cy = a[:, 1] + d[:, 1] * t
+        dd = (cx - x) ** 2 + (cy - y) ** 2
+        i = int(np.argmin(dd))
+        return float(self.S[i] + t[i] * math.sqrt(l2[i])), math.sqrt(dd[i])
+
+
+def offset_line(P, off):
+    """sposta una linea spezzata lateralmente (off > 0 = a destra) con giunti a mitra limitati"""
+    P = np.asarray(P, np.float64)
+    n = len(P)
+    if n < 2:
+        return P.copy()
+    d = np.diff(P, axis=0)
+    l = np.hypot(d[:, 0], d[:, 1])
+    l[l < 1e-9] = 1e-9
+    d /= l[:, None]
+    nr = np.stack([d[:, 1], -d[:, 0]], 1)        # normale destra di ogni segmento
+    N = np.zeros((n, 2))
+    N[0] = nr[0]
+    N[-1] = nr[-1]
+    if n > 2:
+        m = nr[:-1] + nr[1:]
+        ml = np.hypot(m[:, 0], m[:, 1])
+        ml[ml < 1e-9] = 1e-9
+        m /= ml[:, None]
+        cosh = (m * nr[1:]).sum(1)
+        k = 1.0 / np.maximum(cosh, 0.35)
+        N[1:-1] = m * k[:, None]
+    return P + N * off
+
+
+def ribbon(m, P, w_left, w_right, z, color, uv_scale=None, along_uv=None, nrm=(0, 0, 1)):
+    """striscia orizzontale lungo P tra -w_left (sinistra) e +w_right (destra); uv nel mondo (x/uv, y/uv)
+    oppure lungo la linea (along_uv=(scala_u, scala_v))"""
+    L = offset_line(P, -w_left)
+    R = offset_line(P, w_right)
+    n = len(P)
+    if n < 2:
+        return
+    col = _col(color)
+    V = np.zeros((2 * n, 12), np.float32)
+    V[0::2, 0:2] = L
+    V[1::2, 0:2] = R
+    V[:, 2] = z
+    V[:, 3:6] = nrm
+    V[:, 6:10] = col
+    if along_uv is not None:
+        su, sv = along_uv
+        S = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(np.asarray(P, np.float64), axis=0).T))])
+        V[0::2, 10] = 0.0
+        V[1::2, 10] = (w_left + w_right) / su
+        V[0::2, 11] = S / sv
+        V[1::2, 11] = S / sv
+    else:
+        k = uv_scale or 8.0
+        V[:, 10] = V[:, 0] / k
+        V[:, 11] = V[:, 1] / k
+    i = np.arange(n - 1, dtype=np.uint32) * 2
+    I = np.stack([i, i + 1, i + 3, i, i + 3, i + 2], 1).reshape(-1)
+    m.chunks.append((V, I))
+
+
+def wall_strip(m, P, z0, z1, color, outward_right=True, uv=None, v_base=0.0):
+    """muro verticale lungo P (normale verso destra se outward_right)"""
+    P = np.asarray(P, np.float64)
+    n = len(P)
+    if n < 2:
+        return
+    col = _col(color)
+    a, b = P[:-1], P[1:]
+    if not outward_right:
+        a, b = b[::-1], a[::-1]
+    d = b - a
+    l = np.hypot(d[:, 0], d[:, 1])
+    ok = l > 1e-4
+    a, b, d, l = a[ok], b[ok], d[ok], l[ok]
+    k = len(a)
+    if k == 0:
+        return
+    nx, ny = d[:, 1] / l, -d[:, 0] / l
+    V = np.zeros((4 * k, 12), np.float32)
+    V[0::4, 0:2] = a
+    V[1::4, 0:2] = b
+    V[2::4, 0:2] = b
+    V[3::4, 0:2] = a
+    V[0::4, 2] = z0
+    V[1::4, 2] = z0
+    V[2::4, 2] = z1
+    V[3::4, 2] = z1
+    for j in range(4):
+        V[j::4, 3] = nx
+        V[j::4, 4] = ny
+    V[:, 6:10] = col
+    if uv is not None:
+        su, sv = uv
+        s = np.concatenate([[0.0], np.cumsum(l)])[:-1]
+        V[0::4, 10] = s / su
+        V[3::4, 10] = s / su
+        V[1::4, 10] = (s + l) / su
+        V[2::4, 10] = (s + l) / su
+        V[0::4, 11] = (z0 - v_base) / sv
+        V[1::4, 11] = (z0 - v_base) / sv
+        V[2::4, 11] = (z1 - v_base) / sv
+        V[3::4, 11] = (z1 - v_base) / sv
+    else:
+        V[1::4, 10] = 1
+        V[2::4, 10] = 1
+        V[2::4, 11] = 1
+        V[3::4, 11] = 1
+    i = np.arange(k, dtype=np.uint32) * 4
+    I = np.stack([i, i + 1, i + 2, i, i + 2, i + 3], 1).reshape(-1)
+    m.chunks.append((V, I))
+
+
+def flat_poly(m, outer, holes, z, color, uv_scale=8.0, up=True):
+    """poligono orizzontale triangolato (tetti, parchi, piazze)"""
+    tri = triangulate(outer, holes)
+    if not tri:
+        return
+    pts = list(outer)
+    for h in holes:
+        if len(h) >= 3:
+            pts.extend(h)
+    A = np.asarray(pts, np.float64)
+    V = np.zeros((len(A), 12), np.float32)
+    V[:, 0:2] = A
+    V[:, 2] = z
+    V[:, 5] = 1.0 if up else -1.0
+    V[:, 6:10] = _col(color)
+    V[:, 10] = A[:, 0] / uv_scale
+    V[:, 11] = A[:, 1] / uv_scale
+    I = np.asarray(tri, np.uint32)
+    if not up:
+        I = I.reshape(-1, 3)[:, ::-1].reshape(-1)
+    else:
+        # earcut produce triangoli orari: li giriamo verso l'alto
+        T = I.reshape(-1, 3)
+        a, b, c = A[T[:, 0]], A[T[:, 1]], A[T[:, 2]]
+        cr = (b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1]) - (b[:, 1] - a[:, 1]) * (c[:, 0] - a[:, 0])
+        flip = cr < 0
+        T[flip] = T[flip][:, ::-1]
+        I = T.reshape(-1)
+    m.chunks.append((V, I.astype(np.uint32)))
+
+
+# ------------------------------------------------------------------ raster
+class Raster:
+    """griglia 2D che copre [-L, L] x [-L, L] con celle di lato res metri"""
+
+    def __init__(self, L, res=1.0, dtype=np.float32, fill=0):
+        self.L = float(L)
+        self.res = float(res)
+        self.n = int(math.ceil(2 * L / res))
+        self.a = np.full((self.n, self.n), fill, dtype)
+
+    def idx(self, x, y):
+        k = 1.0 / self.res
+        return int((y + self.L) * k), int((x + self.L) * k)
+
+    def get(self, x, y, default=0):
+        k = 1.0 / self.res
+        iy = int((y + self.L) * k)
+        ix = int((x + self.L) * k)
+        if 0 <= ix < self.n and 0 <= iy < self.n:
+            return self.a[iy, ix]
+        return default
+
+    def fill_rings(self, rings, val, mode="set"):
+        """riempie i poligoni (regola pari/dispari: i buchi restano vuoti)"""
+        k = 1.0 / self.res
+        segs = []
+        for r in rings:
+            A = (np.asarray(r, np.float64) + self.L) * k
+            if len(A) < 3:
+                continue
+            B = np.roll(A, -1, axis=0)
+            segs.append(np.hstack([A, B]))
+        if not segs:
+            return None
+        E = np.vstack(segs)
+        ymin, ymax = E[:, [1, 3]].min(), E[:, [1, 3]].max()
+        xmin, xmax = E[:, [0, 2]].min(), E[:, [0, 2]].max()
+        r0 = max(0, int(math.ceil(ymin - 0.5)))
+        r1 = min(self.n - 1, int(math.floor(ymax - 0.5)))
+        c0 = max(0, int(math.floor(xmin)) - 1)
+        c1 = min(self.n - 1, int(math.ceil(xmax)) + 1)
+        if r1 < r0 or c1 < c0:
+            return None
+        yc = np.arange(r0, r1 + 1) + 0.5
+        Y0, Y1 = E[:, 1][None, :], E[:, 3][None, :]
+        X0, X1 = E[:, 0][None, :], E[:, 2][None, :]
+        cond = (Y0 <= yc[:, None]) != (Y1 <= yc[:, None])
+        with np.errstate(divide="ignore", invalid="ignore"):
+            xi = X0 + (yc[:, None] - Y0) * (X1 - X0) / (Y1 - Y0)
+        xi = np.where(cond, xi, np.inf)
+        xi.sort(axis=1)
+        W = c1 - c0 + 2
+        diff = np.zeros((len(yc), W + 1), np.int32)
+        cnt = cond.sum(1)
+        maxc = int(cnt.max()) if len(cnt) else 0
+        for j in range(0, maxc - 1, 2):
+            xa = xi[:, j]
+            xb = xi[:, j + 1]
+            ok = np.isfinite(xa) & np.isfinite(xb)
+            if not ok.any():
+                continue
+            ca = np.clip(np.ceil(xa[ok] - 0.5).astype(np.int64) - c0, 0, W)
+            cb = np.clip(np.ceil(xb[ok] - 0.5).astype(np.int64) - c0, 0, W)
+            rows = np.nonzero(ok)[0]
+            np.add.at(diff, (rows, ca), 1)
+            np.add.at(diff, (rows, cb), -1)
+        mask = np.cumsum(diff, axis=1)[:, :W] > 0
+        mask = mask[:, :c1 - c0 + 1]
+        sub = self.a[r0:r1 + 1, c0:c1 + 1]
+        if mode == "max":
+            np.maximum(sub, np.where(mask, val, sub), out=sub)
+        elif mode == "add":
+            sub[mask] += val
+        elif mode == "where0":
+            sub[mask & (sub == 0)] = val
+        elif mode == "min":
+            np.minimum(sub, np.where(mask, val, sub), out=sub)
+        else:
+            sub[mask] = val
+        return (r0, c0, mask)
+
+    def stamp_line(self, P, half_w, val, mode="set"):
+        """disegna una linea spessa (strade): celle entro half_w dalla linea"""
+        P = np.asarray(P, np.float64)
+        if len(P) < 2:
+            return
+        for i in range(len(P) - 1):
+            ax, ay = P[i]
+            bx, by = P[i + 1]
+            dx, dy = bx - ax, by - ay
+            l = math.hypot(dx, dy)
+            if l < 1e-6:
+                continue
+            nx, ny = -dy / l * half_w, dx / l * half_w
+            quad = [(ax + nx, ay + ny), (bx + nx, by + ny), (bx - nx, by - ny), (ax - nx, ay - ny)]
+            self.fill_rings([quad], val, mode)
+
+    def stamp_disc(self, x, y, r, val):
+        iy, ix = self.idx(x, y)
+        k = int(math.ceil(r / self.res))
+        r0, r1 = max(0, iy - k), min(self.n, iy + k + 1)
+        c0, c1 = max(0, ix - k), min(self.n, ix + k + 1)
+        if r1 <= r0 or c1 <= c0:
+            return
+        yy, xx = np.mgrid[r0:r1, c0:c1]
+        cx = (xx + 0.5) * self.res - self.L
+        cy = (yy + 0.5) * self.res - self.L
+        m = (cx - x) ** 2 + (cy - y) ** 2 <= r * r
+        self.a[r0:r1, c0:c1][m] = val
 
 
 # =============================================================================
@@ -1250,6 +2280,7 @@ class StaticWorld:
     CS = 16.0
 
     def __init__(self):
+        self.limit = WORLD_LIMIT
         self.boxes = []      # (x0, y0, x1, y1, z0, z1, tag)
         self.circles = []    # (x, y, r, z1, tag)
         self.gb = {}
@@ -1292,6 +2323,9 @@ class StaticWorld:
 
     @staticmethod
     def terrain(x, y):
+        f = GROUND_FN[0]
+        if f is not None:
+            return f(x, y)
         if abs(x) > HALF + ROAD_W / 2 or abs(y) > HALF + ROAD_W / 2:
             return 0.0
         lx = (x + HALF) % CELL
@@ -1299,6 +2333,9 @@ class StaticWorld:
         if ROAD_W / 2 <= lx <= CELL - ROAD_W / 2 and ROAD_W / 2 <= ly <= CELL - ROAD_W / 2:
             return CURB
         return 0.0
+
+    def hb_blocked(self, x, y):
+        return False
 
     def support(self, x, y, z, r=0.3):
         """altezza della superficie su cui si appoggia un corpo a quota z (tetti inclusi)"""
@@ -1353,7 +2390,7 @@ class StaticWorld:
                 y = oy + dy / d * rr
                 nrm = (dx / d, dy / d)
                 hit = True
-        lim = WORLD_LIMIT
+        lim = self.limit
         if abs(x) > lim or abs(y) > lim:
             x = clamp(x, -lim, lim)
             y = clamp(y, -lim, lim)
@@ -1485,6 +2522,76 @@ class City:
         self.root = env.root.attachNewNode("citta")
         self._finalize()
         self.map_img = self._make_map()
+        self.map_r = MAP_R
+        self.limit = WORLD_LIMIT
+        self.ped_rings = [RectRing(r) for r in self.ped_rects]
+        self._net()
+
+    def _net(self):
+        """grafo stradale della griglia (lo stesso formato della citta' vera)"""
+        net = RoadNet()
+        for i in range(NB + 1):
+            for j in range(NB + 1):
+                net.node((i, j), rc(i), rc(j))
+        trim = ROAD_W / 2 + 1.5
+        for i in range(NB + 1):
+            for j in range(NB + 1):
+                for (di, dj) in ((1, 0), (0, 1)):
+                    a, b = (i, j), (i + di, j + dj)
+                    if b[0] > NB or b[1] > NB:
+                        continue
+                    ch = Chain()
+                    ch.id = len(net.chains)
+                    ch.k = "residential"
+                    ch.pl = Polyline([(rc(a[0]), rc(a[1])), (rc(b[0]), rc(b[1]))])
+                    ch.n0, ch.n1 = net.key2node[a], net.key2node[b]
+                    ch.ow = 0
+                    ch.lf = ch.lb = 1
+                    ch.lane_w = (LANE - 0.3) * 2
+                    ch.hw = ROAD_W / 2
+                    ch.park = False
+                    ch.speed = 12.5
+                    ch.traffic = True
+                    ch.sw = SIDE_W
+                    ch.name = ""
+                    ch.trim = [trim, trim]
+                    ch.signal = [False, False]
+                    ch.group = [0, 0]
+                    ch.cut = None
+                    net.chains.append(ch)
+                    net.out[ch.n0].append((ch.id, 1))
+                    net.out[ch.n1].append((ch.id, -1))
+        net.finish()
+        self.net = net
+
+    def update(self, dt, t):
+        pass
+
+    def ped_link(self, ring, end):
+        return None
+
+    def free_point_near(self, x, y, roads_ok=False, rmax=60.0):
+        return (x, y)
+
+    def mission_starts(self):
+        parks = self.spots.get("parchi", [(0, 0)])
+        center_park = min(parks, key=lambda p: abs(p[0]) + abs(p[1]))
+        sx, sy, _h = self.spots["casa"]
+        return [None, (sx + 3, sy - 6), self.spots["polizia"], self.spots["cronenberg"],
+                (center_park[0], center_park[1] - 13)]
+
+    def seed_spots(self):
+        parks = self.spots.get("parchi", [])
+        spots = []
+        if parks:
+            spots.append((parks[0][0] + 12, parks[0][1] - 10, CURB))
+        roofs = sorted(self.rooftops, key=lambda r: abs(r[2] - 22) + abs(r[0]) * 0.02 + abs(r[1]) * 0.02)
+        spots.append(roofs[0])
+        sx, sy = self.spots["scuola"]
+        spots.append((sx, sy + 40, CURB))
+        spots.append((-HALF - 60, HALF * 0.3, 0.0))
+        spots.append((HALF * 0.5, -HALF - 40, 0.0))
+        return spots
 
     # ------------------------------------------------------------------ materiali
     def _textures(self):
@@ -2190,6 +3297,3136 @@ class City:
 
 
 # =============================================================================
+#  CITTA' VERA: collisioni con poligoni, grafo stradale, percorsi pedonali
+# =============================================================================
+GROUND_FN = [None]          # funzione dell'altezza del suolo della citta' attiva
+
+
+def find_city_data(name="losangeles"):
+    cands = []
+    if getattr(sys, "_MEIPASS", None):
+        cands.append(os.path.join(sys._MEIPASS, "citta"))
+    if getattr(sys, "frozen", False):
+        cands.append(os.path.join(os.path.dirname(sys.executable), "citta"))
+    cands.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "citta"))
+    cands.append(os.path.join(os.getcwd(), "citta"))
+    for d in cands:
+        p = os.path.join(d, name + ".json.gz")
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def city_title(name):
+    t = {"losangeles": "Los Angeles", "newyork": "New York", "sanfrancisco": "San Francisco"}.get(name)
+    return t or name.replace("_", " ").title()
+
+
+def list_cities():
+    """nomi delle citta' vere disponibili (file citta/<nome>.json.gz)"""
+    names = []
+    dirs = []
+    if getattr(sys, "_MEIPASS", None):
+        dirs.append(os.path.join(sys._MEIPASS, "citta"))
+    if getattr(sys, "frozen", False):
+        dirs.append(os.path.join(os.path.dirname(sys.executable), "citta"))
+    dirs.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "citta"))
+    dirs.append(os.path.join(os.getcwd(), "citta"))
+    for d in dirs:
+        if os.path.isdir(d):
+            for f in sorted(os.listdir(d)):
+                if f.endswith(".json.gz") and f[:-8] not in names:
+                    names.append(f[:-8])
+    return names
+
+
+def load_city_data(path):
+    import gzip
+    with gzip.open(path, "rt", encoding="utf-8") as f:
+        return json.load(f)
+
+
+class RealWorld(StaticWorld):
+    """collisioni: oltre a scatole e cilindri, edifici come prismi a base poligonale"""
+    ECS = 8.0
+
+    def __init__(self, L, limit):
+        StaticWorld.__init__(self)
+        self.limit = limit
+        self.solids = []            # (anello esterno, buchi, z0, z1)
+        self.eg = {}                # cella -> lati (ax, ay, bx, by, nx, ny, id)
+        self.hb = Raster(L, 1.0, np.int16, -1)       # id dell'edificio a terra
+        self.hh = Raster(L, 1.0, np.float32, 0.0)    # altezza del tetto
+
+    def add_solid(self, outer, holes, z0, z1, raster=True):
+        sid = len(self.solids)
+        self.solids.append((outer, holes, z0, z1))
+        cs = self.ECS
+        for ring in [outer] + list(holes):
+            n = len(ring)
+            for i in range(n):
+                ax, ay = float(ring[i][0]), float(ring[i][1])
+                bx, by = float(ring[(i + 1) % n][0]), float(ring[(i + 1) % n][1])
+                dx, dy = bx - ax, by - ay
+                l = math.hypot(dx, dy)
+                if l < 1e-3:
+                    continue
+                e = (ax, ay, bx, by, dy / l, -dx / l, sid)
+                for ix in range(int(math.floor(min(ax, bx) / cs)), int(math.floor(max(ax, bx) / cs)) + 1):
+                    for iy in range(int(math.floor(min(ay, by) / cs)), int(math.floor(max(ay, by) / cs)) + 1):
+                        self.eg.setdefault((ix, iy), []).append(e)
+        if raster and z0 < 2.5:
+            rings = [outer] + list(holes)
+            self.hb.fill_rings(rings, sid)
+            self.hh.fill_rings(rings, z1, "max")
+        return sid
+
+    def hb_blocked(self, x, y):
+        return self.hb.get(x, y, -1) >= 0
+
+    def inside(self, sid, x, y):
+        outer, holes, _z0, _z1 = self.solids[sid]
+        if not point_in_ring(x, y, outer):
+            return False
+        for h in holes:
+            if point_in_ring(x, y, h):
+                return False
+        return True
+
+    def _edges_near(self, x0, y0, x1, y1):
+        cs = self.ECS
+        out = []
+        for ix in range(int(math.floor(x0 / cs)), int(math.floor(x1 / cs)) + 1):
+            for iy in range(int(math.floor(y0 / cs)), int(math.floor(y1 / cs)) + 1):
+                l = self.eg.get((ix, iy))
+                if l:
+                    out.extend(l)
+        return out
+
+    def push_circle(self, x, y, z, r, h=1.8, step=0.55):
+        hit = False
+        nrm = (0.0, 0.0)
+        solids = self.solids
+        for _it in range(2):
+            moved = False
+            for (ax, ay, bx, by, nx, ny, sid) in self._edges_near(x - r, y - r, x + r, y + r):
+                s = solids[sid]
+                if z + step >= s[3] or z + h <= s[2]:
+                    continue
+                dx, dy = bx - ax, by - ay
+                l2 = dx * dx + dy * dy
+                t = ((x - ax) * dx + (y - ay) * dy) / l2
+                t = 0.0 if t < 0 else (1.0 if t > 1 else t)
+                cx, cy = ax + dx * t, ay + dy * t
+                ex, ey = x - cx, y - cy
+                d2 = ex * ex + ey * ey
+                if d2 >= r * r:
+                    continue
+                if (x - ax) * nx + (y - ay) * ny >= 0:
+                    d = math.sqrt(d2)
+                    if d > 1e-6:
+                        x, y = cx + ex / d * r, cy + ey / d * r
+                        nrm = (ex / d, ey / d)
+                    else:
+                        x, y = cx + nx * r, cy + ny * r
+                        nrm = (nx, ny)
+                elif self.inside(sid, x, y):
+                    x, y = cx + nx * r, cy + ny * r
+                    nrm = (nx, ny)
+                else:
+                    continue
+                hit = moved = True
+            if not moved:
+                break
+        # dentro un edificio senza lati vicini (teletrasporto, spawn): esci dal lato piu' vicino
+        sid = int(self.hb.get(x, y, -1))
+        if sid >= 0:
+            s = solids[sid]
+            if not (z + step >= s[3] or z + h <= s[2]) and self.inside(sid, x, y):
+                best = None
+                for ring in [s[0]] + list(s[1]):
+                    A = np.asarray(ring, np.float64)
+                    B = np.roll(A, -1, axis=0)
+                    D = B - A
+                    l2 = np.maximum((D * D).sum(1), 1e-9)
+                    t = np.clip(((x - A[:, 0]) * D[:, 0] + (y - A[:, 1]) * D[:, 1]) / l2, 0, 1)
+                    C = A + D * t[:, None]
+                    dd = (C[:, 0] - x) ** 2 + (C[:, 1] - y) ** 2
+                    i = int(np.argmin(dd))
+                    if best is None or dd[i] < best[0]:
+                        l = math.sqrt(l2[i])
+                        best = (dd[i], C[i, 0], C[i, 1], D[i, 1] / l, -D[i, 0] / l)
+                if best is not None:
+                    _d, cx, cy, nx, ny = best
+                    x, y = cx + nx * (r + 0.05), cy + ny * (r + 0.05)
+                    nrm = (nx, ny)
+                    hit = True
+        x, y, hit2, nrm2 = StaticWorld.push_circle(self, x, y, z, r, h, step)
+        if hit2:
+            return x, y, True, nrm2
+        return x, y, hit, nrm
+
+    def support(self, x, y, z, r=0.3):
+        g = StaticWorld.support(self, x, y, z, r)
+        hv = float(self.hh.get(x, y, 0.0))
+        if g < hv <= z + 0.55:
+            g = hv
+        return g
+
+    def raycast(self, ox, oy, oz, dx, dy, dz, maxd, ground=True):
+        best = StaticWorld.raycast(self, ox, oy, oz, dx, dy, dz, maxd, ground)
+        bt = best[0] if best else maxd
+        h = self._ray_raster(ox, oy, oz, dx, dy, dz, bt)
+        if h is not None and h[0] < bt:
+            return h
+        return best
+
+    def _ray_raster(self, ox, oy, oz, dx, dy, dz, maxd):
+        step = 0.5
+        n = int(maxd / step) + 2
+        t = np.minimum(np.arange(n, dtype=np.float64) * step, maxd)
+        xs = ox + dx * t
+        ys = oy + dy * t
+        zs = oz + dz * t
+        R = self.hh
+        k = 1.0 / R.res
+        ix = ((xs + R.L) * k).astype(np.int64)
+        iy = ((ys + R.L) * k).astype(np.int64)
+        ok = (ix >= 0) & (iy >= 0) & (ix < R.n) & (iy < R.n)
+        H = np.where(ok, R.a[np.clip(iy, 0, R.n - 1), np.clip(ix, 0, R.n - 1)], 0.0)
+        ins = zs < H - 0.02
+        if not ins.any():
+            return None
+        enter = ins[1:] & ~ins[:-1]
+        if not enter.any():
+            return None
+        i = int(np.argmax(enter)) + 1
+        hv = float(H[i])
+        if dz < -1e-6 and zs[i - 1] >= hv - 0.05:
+            tr = (hv - oz) / dz
+            if 0 <= tr <= maxd:
+                return tr, (0, 0, 1)
+        sid = int(self.hb.a[iy[i], ix[i]]) if ok[i] else -1
+        t0, t1 = t[i - 1] - 1.0, t[i] + 1.0
+        bestt = None
+        bn = None
+        cands = self._edges_near(min(xs[i - 1], xs[i]) - 1.5, min(ys[i - 1], ys[i]) - 1.5,
+                                 max(xs[i - 1], xs[i]) + 1.5, max(ys[i - 1], ys[i]) + 1.5)
+        for (ax, ay, bx, by, nx, ny, s_id) in cands:
+            if sid >= 0 and s_id != sid:
+                s = self.solids[s_id]
+                if s[3] < hv - 0.5:
+                    continue
+            ex, ey = bx - ax, by - ay
+            den = dx * ey - dy * ex
+            if abs(den) < 1e-9:
+                continue
+            tt = ((ax - ox) * ey - (ay - oy) * ex) / den
+            u = ((ax - ox) * dy - (ay - oy) * dx) / den
+            if 0 <= u <= 1 and t0 <= tt <= t1 and (bestt is None or tt < bestt):
+                if dx * nx + dy * ny < 0:
+                    bestt, bn = tt, (nx, ny, 0)
+        if bestt is not None:
+            return max(0.0, bestt), bn
+        l = math.hypot(dx, dy) or 1.0
+        return float(t[i - 1]), (-dx / l, -dy / l, 0)
+
+
+# ------------------------------------------------------------------ percorsi dei pedoni
+class RectRing:
+    """marciapiede ad anello attorno a un isolato rettangolare (citta' procedurale)"""
+    closed = True
+
+    def __init__(self, r):
+        self.r = r
+        x0, y0, x1, y1 = r
+        self.length = 2 * ((x1 - x0) + (y1 - y0))
+        self.center = ((x0 + x1) / 2, (y0 + y1) / 2)
+
+    def point(self, p, o):
+        x0, y0, x1, y1 = self.r
+        w, hh = x1 - x0, y1 - y0
+        p %= self.length
+        if p < w:
+            return x0 + p, y0 + o
+        p -= w
+        if p < hh:
+            return x1 - o, y0 + p
+        p -= hh
+        if p < w:
+            return x1 - p, y1 - o
+        p -= w
+        return x0 + o, y1 - p
+
+    def project(self, x, y):
+        x0, y0, x1, y1 = self.r
+        w, hh = x1 - x0, y1 - y0
+        cands = [(abs(y - y0), clamp(x - x0, 0, w)), (abs(x - x1), w + clamp(y - y0, 0, hh)),
+                 (abs(y - y1), w + hh + clamp(x1 - x, 0, w)), (abs(x - x0), 2 * w + hh + clamp(y1 - y, 0, hh))]
+        return min(cands)[1]
+
+
+class PathRing:
+    """percorso pedonale aperto (marciapiede tra due incroci, vialetto nel parco)"""
+    closed = False
+
+    def __init__(self, pts):
+        self.pl = Polyline(pts)
+        self.length = self.pl.L
+        m = self.pl.at(self.length / 2)
+        self.center = (m[0], m[1])
+        self.ends = (tuple(self.pl.P[0]), tuple(self.pl.P[-1]))
+        self.links = ([], [])
+
+    def point(self, p, o):
+        x, y, tx, ty = self.pl.at(p)
+        return x + ty * o, y - tx * o
+
+    def project(self, x, y):
+        return self.pl.project(x, y)[0]
+
+
+# ------------------------------------------------------------------ grafo stradale
+class Chain:
+    """tratto di strada tra due nodi del grafo"""
+    __slots__ = ("id", "k", "pl", "n0", "n1", "ow", "lf", "lb", "hw", "park", "speed", "traffic", "trim",
+                 "sw", "name", "lane_w", "group", "signal", "cut")
+
+    def lane_offset(self, d, lane):
+        """distanza laterale (a destra del senso di marcia) del centro della corsia"""
+        if self.ow:
+            n = self.lf
+            return -n * self.lane_w / 2 + self.lane_w * (lane + 0.5)
+        return 0.3 + self.lane_w * (lane + 0.5)
+
+    def lanes(self, d):
+        if self.ow:
+            return self.lf if d > 0 else 0
+        return self.lf if d > 0 else self.lb
+
+    def point(self, d, lane, s):
+        L = self.pl.L
+        x, y, tx, ty = self.pl.at(s if d > 0 else L - s)
+        if d < 0:
+            tx, ty = -tx, -ty
+        o = self.lane_offset(d, lane)
+        return x + ty * o, y - tx * o, tx, ty
+
+
+class RoadNet:
+    def __init__(self):
+        self.nodes = []          # (x, y)
+        self.out = []            # nodo -> [(catena, verso)]
+        self.chains = []
+        self.signal = set()
+        self.key2node = {}
+
+    def node(self, key, x, y):
+        i = self.key2node.get(key)
+        if i is None:
+            i = self.key2node[key] = len(self.nodes)
+            self.nodes.append((x, y))
+            self.out.append([])
+        return i
+
+    def finish(self):
+        self.N = np.asarray(self.nodes, np.float64).reshape(-1, 2)
+        self.traffic_nodes = np.array([i for i, o in enumerate(self.out)
+                                       if any(self.chains[c].traffic for c, _d in o)], np.int64)
+        samp = []
+        for c in self.chains:
+            if not c.traffic:
+                continue
+            n = max(1, int(c.pl.L // 25))
+            for k in range(n):
+                s = (k + 0.5) * c.pl.L / n
+                x, y, _tx, _ty = c.pl.at(s)
+                samp.append((x, y, c.id, s))
+        self.samples = np.asarray(samp, np.float64).reshape(-1, 4)
+
+    def end_node(self, c, d):
+        ch = self.chains[c]
+        return ch.n1 if d > 0 else ch.n0
+
+    def nearest_node(self, x, y, traffic=True):
+        idx = self.traffic_nodes if traffic and len(self.traffic_nodes) else np.arange(len(self.nodes))
+        P = self.N[idx]
+        i = int(np.argmin((P[:, 0] - x) ** 2 + (P[:, 1] - y) ** 2))
+        return int(idx[i])
+
+    def options(self, node, came=None, traffic=True):
+        res = []
+        for (c, d) in self.out[node]:
+            ch = self.chains[c]
+            if traffic and not ch.traffic:
+                continue
+            if ch.ow and d < 0:
+                continue
+            if came is not None and c == came[0] and d == -came[1]:
+                continue
+            res.append((c, d))
+        return res
+
+    def astar(self, a, b, max_iter=6000):
+        import heapq
+        N = self.N
+        bx, by = N[b]
+        openh = [(0.0, a)]
+        g = {a: 0.0}
+        prev = {a: None}
+        it = 0
+        while openh and it < max_iter:
+            it += 1
+            _f, n = heapq.heappop(openh)
+            if n == b:
+                break
+            for (c, d) in self.out[n]:
+                ch = self.chains[c]
+                if not ch.traffic and ch.k != "service":
+                    continue
+                m = ch.n1 if d > 0 else ch.n0
+                ng = g[n] + ch.pl.L
+                if ng < g.get(m, 1e18):
+                    g[m] = ng
+                    prev[m] = (n, c, d)
+                    hx, hy = N[m]
+                    heapq.heappush(openh, (ng + math.hypot(hx - bx, hy - by), m))
+        if b not in prev:
+            return None
+        steps = []
+        n = b
+        while prev[n] is not None:
+            p, c, d = prev[n]
+            steps.append((c, d))
+            n = p
+        steps.reverse()
+        return steps
+
+
+# =============================================================================
+#  TEXTURE DELLA CITTA' VERA: facciate (texture array con rilievo e vetri), suoli
+# =============================================================================
+FPX = 512          # pixel per tessera di facciata (12 m x 12 m)
+
+
+def _px(m, n=FPX):
+    return int(round(m * n / 12.0))
+
+
+def _streaks(seed, n=FPX, amount=0.12):
+    """sporco verticale (colature della pioggia)"""
+    rng = np.random.default_rng(seed)
+    cols = rng.random(n // 4 + 2).astype(np.float32)
+    x = np.linspace(0, len(cols) - 2, n)
+    i = x.astype(int)
+    f = x - i
+    line = cols[i] * (1 - f) + cols[i + 1] * f
+    v = value_noise(n, 6, seed + 3)
+    s = (line[None, :] ** 3) * (0.4 + 0.6 * v)
+    return 1.0 - s * amount
+
+
+def _wall(seed, rgb, var=16, grain_amt=10, n=FPX, streak=0.10):
+    nz = fbm(n, 6, 5, seed)
+    g = grain((n, n), seed + 1, grain_amt)
+    a = np.empty((n, n, 3), np.float32)
+    for c in range(3):
+        a[..., c] = rgb[c] + (nz - 0.5) * var * 2 + g
+    a *= _streaks(seed + 5, n, streak)[..., None]
+    return a
+
+
+def _bricks(seed, rgb, n=FPX, mortar=(178, 170, 158), bh=8, bw=24):
+    rng = np.random.default_rng(seed)
+    a = np.zeros((n, n, 3), np.float32)
+    H = np.zeros((n, n), np.float32)
+    base = np.array(rgb, np.float32)
+    for r in range(n // bh + 1):
+        off = (r % 2) * (bw // 2)
+        y0 = r * bh
+        for c in range(-1, n // bw + 2):
+            x0 = c * bw + off
+            col = base * rng.uniform(0.82, 1.14) + rng.uniform(-6, 6)
+            xa, xb = max(0, x0), min(n, x0 + bw - 2)
+            if xb > xa:
+                a[y0:y0 + bh - 2, xa:xb] = col
+                H[y0:y0 + bh - 2, xa:xb] = 0.25
+    m = H == 0
+    a[m] = mortar
+    a += (fbm(n, 8, 4, seed + 2)[..., None] - 0.5) * 26 + grain((n, n), seed + 4, 12)[..., None]
+    a *= _streaks(seed + 9, n, 0.08)[..., None]
+    return a, H
+
+
+def _sky_glass(h, w, seed, tint=(1.0, 1.0, 1.0), dark=1.0):
+    """vetro: riflesso del cielo + un po' di interno"""
+    rng = np.random.default_rng(seed)
+    gy = np.linspace(0, 1, max(h, 1))[:, None]
+    base = np.stack([46 + 60 * (1 - gy), 58 + 72 * (1 - gy), 72 + 88 * (1 - gy)], -1) * dark
+    base = np.broadcast_to(base, (h, w, 3)).copy()
+    base *= np.array(tint, np.float32)
+    base += rng.uniform(-6, 6)
+    return base
+
+
+class FacadePainter:
+    """dipinge una facciata: albedo (rgb + riflessione), altezza (rilievo), maschera luci"""
+
+    def __init__(self, alb, height=None, n=FPX):
+        self.n = n
+        self.A = alb.astype(np.float32)
+        self.R = np.zeros((n, n), np.float32)      # riflessione (vetro)
+        self.E = np.zeros((n, n), np.float32)      # maschera luci notturne
+        self.H = np.zeros((n, n), np.float32) if height is None else height.astype(np.float32)
+
+    def rect(self, x0, z0, x1, z1, col=None, h=None, refl=None, emit=None, add_h=False):
+        """rettangolo in metri (x da sinistra, z dal basso della tessera)"""
+        n = self.n
+        c0, c1 = _px(x0, n), _px(x1, n)
+        r0, r1 = n - _px(z1, n), n - _px(z0, n)
+        c0, c1 = max(0, c0), min(n, c1)
+        r0, r1 = max(0, r0), min(n, r1)
+        if c1 <= c0 or r1 <= r0:
+            return None
+        if col is not None:
+            col = np.asarray(col, np.float32)
+            self.A[r0:r1, c0:c1] = col if col.ndim == 1 else col[:r1 - r0, :c1 - c0]
+        if h is not None:
+            if add_h:
+                self.H[r0:r1, c0:c1] += h
+            else:
+                self.H[r0:r1, c0:c1] = h
+        if refl is not None:
+            self.R[r0:r1, c0:c1] = refl
+        if emit is not None:
+            self.E[r0:r1, c0:c1] = emit
+        return (r0, r1, c0, c1)
+
+    def window(self, x0, z0, x1, z1, frame_col, frame=0.07, seed=0, tint=(1, 1, 1), mull_v=1, mull_h=0,
+               recess=-0.6, refl=1.0, blinds=0.35, dark=1.0):
+        rng = np.random.default_rng(seed)
+        self.rect(x0 - frame, z0 - frame, x1 + frame, z1 + frame, frame_col, 0.12)
+        r = self.rect(x0, z0, x1, z1, None, recess, refl, 1.0)
+        if r is None:
+            return
+        r0, r1, c0, c1 = r
+        g = _sky_glass(r1 - r0, c1 - c0, seed, tint, dark)
+        if rng.random() < blinds:          # tende o veneziane
+            k = rng.uniform(0.25, 0.8)
+            cut = int((r1 - r0) * k)
+            ccol = np.array(rng.choice([(190, 182, 160), (220, 214, 200), (150, 70, 60), (120, 130, 150)]), np.float32)
+            if rng.random() < 0.5:
+                g[:cut] = g[:cut] * 0.35 + ccol * 0.65
+                g[:cut:3] *= 0.85
+            else:
+                w = int((c1 - c0) * rng.uniform(0.2, 0.4))
+                g[:, :w] = g[:, :w] * 0.3 + ccol * 0.7
+        self.A[r0:r1, c0:c1] = g
+        fw = max(1, _px(0.05, self.n))
+        for k in range(1, mull_v + 1):
+            mx = c0 + (c1 - c0) * k // (mull_v + 1)
+            self.A[r0:r1, mx - fw // 2:mx + fw - fw // 2] = frame_col
+            self.H[r0:r1, mx - fw // 2:mx + fw - fw // 2] = 0.05
+            self.R[r0:r1, mx - fw // 2:mx + fw - fw // 2] = 0
+        for k in range(1, mull_h + 1):
+            my = r0 + (r1 - r0) * k // (mull_h + 1)
+            self.A[my - fw // 2:my + fw - fw // 2, c0:c1] = frame_col
+            self.H[my - fw // 2:my + fw - fw // 2, c0:c1] = 0.05
+            self.R[my - fw // 2:my + fw - fw // 2, c0:c1] = 0
+
+    def grid(self, bays, floors, ww, wh, sill, frame_col, seed, sill_col=None, lintel_col=None, **kw):
+        cw, fh = 12.0 / bays, 12.0 / floors
+        rng = np.random.default_rng(seed)
+        for k in range(floors):
+            for b in range(bays):
+                cx = (b + 0.5) * cw
+                z0 = k * fh + sill
+                x0, x1 = cx - ww / 2, cx + ww / 2
+                if sill_col is not None:
+                    self.rect(x0 - 0.12, z0 - 0.16, x1 + 0.12, z0 - 0.04, sill_col, 0.35)
+                if lintel_col is not None:
+                    self.rect(x0 - 0.1, z0 + wh + 0.05, x1 + 0.1, z0 + wh + 0.28, lintel_col, 0.2)
+                self.window(x0, z0, x1, z0 + wh, frame_col, seed=int(rng.integers(1 << 30)), **kw)
+
+    def band(self, z0, z1, col, h=0.2, refl=None):
+        self.rect(0, z0, 12, z1, col, h, refl)
+
+    def finish(self, strength=3.0):
+        """ritorna (albedo RGBA, normali RGBA) come uint8"""
+        H = self.H
+        gx = (np.roll(H, -1, 1) - np.roll(H, 1, 1)) * 0.5
+        gr = (np.roll(H, -1, 0) - np.roll(H, 1, 0)) * 0.5
+        nx = -gx * strength
+        ny = gr * strength
+        nz = np.ones_like(H)
+        l = np.sqrt(nx * nx + ny * ny + nz * nz)
+        N = np.stack([nx / l, ny / l, nz / l], -1)
+        nrm = np.concatenate([(N * 0.5 + 0.5) * 255, self.E[..., None] * 255], -1)
+        alb = np.concatenate([self.A, self.R[..., None] * 255], -1)
+        return to_u8(alb), to_u8(nrm)
+
+
+def _fac_curtain(seed, tint, frame_col, bays=8, spandrel_col=None, dark=1.0):
+    n = FPX
+    rng = np.random.default_rng(seed)
+    p = FacadePainter(np.zeros((n, n, 3), np.float32))
+    fh = 3.0
+    for k in range(4):
+        z0 = k * fh
+        # vetro della fascia del solaio (non trasparente, riflette)
+        sc = spandrel_col if spandrel_col is not None else np.array(tint) * np.array([40, 48, 58]) * dark
+        p.rect(0, z0, 12, z0 + 0.85, sc, 0.0, 0.85, 0.0)
+        g = p.rect(0, z0 + 0.85, 12, z0 + fh, None, -0.15, 1.0, 1.0)
+        r0, r1, c0, c1 = g
+        p.A[r0:r1, c0:c1] = _sky_glass(r1 - r0, c1 - c0, int(rng.integers(1 << 30)), tint, dark)
+        # interni: qualche ufficio con le veneziane
+        for b in range(bays):
+            if rng.random() < 0.3:
+                x0 = b * 12.0 / bays
+                q = p.rect(x0, z0 + 2.0, x0 + 12.0 / bays, z0 + fh)
+                if q:
+                    a0, a1, b0, b1 = q
+                    p.A[a0:a1, b0:b1] = p.A[a0:a1, b0:b1] * 0.6 + np.array([170, 170, 165]) * 0.4
+                    p.A[a0:a1:3, b0:b1] *= 0.8
+        p.rect(0, z0 + 0.82, 12, z0 + 0.9, frame_col, 0.1, 0.2, 0.0)
+    for b in range(bays + 1):
+        x = b * 12.0 / bays
+        p.rect(x - 0.05, 0, x + 0.05, 12, frame_col, 0.18, 0.3, 0.0)
+    p.H += grain((n, n), seed, 0.02)
+    return p
+
+
+def _fac_ribbon(seed):
+    """uffici anni '60-'70: fasce di cemento e finestre a nastro"""
+    n = FPX
+    p = FacadePainter(_wall(seed, (184, 180, 170), 14, 8))
+    rng = np.random.default_rng(seed)
+    for k in range(4):
+        z0 = k * 3.0
+        g = p.rect(0, z0 + 1.0, 12, z0 + 2.7, None, -0.5, 0.9, 1.0)
+        r0, r1, c0, c1 = g
+        p.A[r0:r1, c0:c1] = _sky_glass(r1 - r0, c1 - c0, int(rng.integers(1 << 30)), (0.85, 0.95, 1.0), 0.85)
+        for b in range(9):
+            x = b * 1.5
+            p.rect(x - 0.04, z0 + 1.0, x + 0.04, z0 + 2.7, (60, 62, 66), -0.2, 0.0)
+        p.rect(0, z0 + 0.95, 12, z0 + 1.02, (150, 146, 138), 0.3)
+        p.rect(0, z0 + 2.7, 12, z0 + 2.76, (150, 146, 138), 0.3)
+    return p
+
+
+def _fac_precast(seed):
+    """griglia di pannelli prefabbricati con finestre incassate"""
+    p = FacadePainter(_wall(seed, (196, 190, 178), 12, 8))
+    p.grid(4, 4, 2.2, 1.9, 0.75, (80, 82, 86), seed, recess=-1.0, mull_v=1, dark=0.9, blinds=0.45)
+    for b in range(5):
+        p.rect(b * 3.0 - 0.18, 0, b * 3.0 + 0.18, 12, (206, 200, 188), 0.5, add_h=False)
+    for k in range(5):
+        p.rect(0, k * 3.0 - 0.12, 12, k * 3.0 + 0.12, (206, 200, 188), 0.5)
+    return p
+
+
+def _fac_classic(seed, rgb, frame_col):
+    """palazzo storico in pietra/terracotta (centro storico di LA)"""
+    p = FacadePainter(_wall(seed, rgb, 14, 10, streak=0.16))
+    rng = np.random.default_rng(seed)
+    p.grid(4, 4, 1.25, 1.95, 0.8, frame_col, seed, sill_col=np.array(rgb) * 1.08,
+           lintel_col=np.array(rgb) * 0.92, mull_v=0, mull_h=1, recess=-1.2, dark=0.85, blinds=0.5)
+    for b in range(5):     # lesene
+        p.rect(b * 3.0 - 0.22, 0, b * 3.0 + 0.22, 12, np.array(rgb) * 1.05, 0.45)
+    for k in range(4):     # cornice marcapiano
+        p.rect(0, k * 3.0 - 0.06, 12, k * 3.0 + 0.1, np.array(rgb) * 0.9, 0.55)
+    del rng
+    return p
+
+
+def _fac_brick(seed, rgb):
+    a, H = _bricks(seed, rgb)
+    p = FacadePainter(a, H)
+    p.grid(4, 4, 1.35, 1.85, 0.85, (232, 228, 218), seed, sill_col=(196, 190, 178), lintel_col=(180, 170, 158),
+           mull_v=0, mull_h=1, recess=-1.0, blinds=0.45)
+    return p
+
+
+def _fac_stucco(seed, rgb, frame_col=(250, 250, 246), balcony=False):
+    """palazzine residenziali di Los Angeles (intonaco)"""
+    p = FacadePainter(_wall(seed, rgb, 10, 9, streak=0.12))
+    rng = np.random.default_rng(seed)
+    for k in range(4):
+        for b in range(4):
+            cx = 1.5 + b * 3.0
+            z0 = k * 3.0 + 0.9
+            wide = (b % 2 == 0) and rng.random() < 0.4
+            ww = 1.9 if wide else 1.2
+            p.window(cx - ww / 2, z0, cx + ww / 2, z0 + 1.45, frame_col, seed=int(rng.integers(1 << 30)),
+                     mull_v=1, recess=-0.7, blinds=0.6)
+            if balcony and b % 2 == 0:
+                p.rect(cx - 1.3, z0 - 0.9, cx + 1.3, z0 - 0.7, np.array(rgb) * 0.85, 0.9)
+                p.rect(cx - 1.3, z0 - 0.7, cx + 1.3, z0 + 0.1, (70, 72, 76), 0.6)
+                for k2 in range(14):
+                    xx = cx - 1.25 + k2 * 0.19
+                    p.rect(xx, z0 - 0.7, xx + 0.04, z0 + 0.1, (40, 40, 44), 0.7)
+                p.rect(cx - 1.3, z0 + 0.08, cx + 1.3, z0 + 0.14, (40, 40, 44), 0.7)
+    return p
+
+
+def _fac_modern_apt(seed):
+    p = FacadePainter(_wall(seed, (120, 124, 128), 8, 6, streak=0.05))
+    rng = np.random.default_rng(seed)
+    for b in range(4):      # pannelli di colore diverso
+        col = np.array(rng.choice([(200, 196, 188), (110, 114, 120), (176, 120, 86), (230, 228, 222)]), np.float32)
+        p.rect(b * 3.0, 0, b * 3.0 + 3.0, 12, col * rng.uniform(0.92, 1.05), 0.1)
+    p.grid(4, 4, 2.4, 2.25, 0.35, (40, 42, 46), seed, mull_v=1, recess=-0.5, dark=0.8, blinds=0.5)
+    for k in range(4):
+        p.rect(0, k * 3.0, 12, k * 3.0 + 0.22, (90, 92, 96), 0.7)
+    return p
+
+
+def _fac_industrial(seed):
+    """lamiera ondulata con finestre a nastro in alto"""
+    n = FPX
+    a = _wall(seed, (168, 172, 170), 10, 6, streak=0.2)
+    x = np.arange(n)
+    wave = 0.5 + 0.5 * np.sin(x * 2 * np.pi / 10.0)
+    a *= (0.88 + 0.12 * wave)[None, :, None]
+    H = np.broadcast_to(wave[None, :] * 0.3, (n, n)).copy()
+    p = FacadePainter(a, H)
+    rng = np.random.default_rng(seed)
+    for k in range(2):
+        z0 = k * 6.0 + 4.3
+        g = p.rect(0.3, z0, 11.7, z0 + 1.0, None, -0.4, 0.7, 1.0)
+        r0, r1, c0, c1 = g
+        p.A[r0:r1, c0:c1] = _sky_glass(r1 - r0, c1 - c0, int(rng.integers(1 << 30)), (0.9, 1.0, 0.95), 0.9)
+        for b in range(9):
+            xx = 0.3 + b * 1.425
+            p.rect(xx - 0.04, z0, xx + 0.04, z0 + 1.0, (70, 74, 72), 0.1, 0.0)
+    for b in range(5):
+        p.rect(b * 3.0 - 0.08, 0, b * 3.0 + 0.08, 12, (120, 124, 122), 0.4)
+    return p
+
+
+def _fac_warehouse(seed):
+    """vecchio magazzino in mattoni con grandi finestre a quadretti (Arts District)"""
+    a, H = _bricks(seed, (140, 74, 54), bh=8, bw=26)
+    p = FacadePainter(a, H)
+    rng = np.random.default_rng(seed)
+    for k in range(2):
+        for b in range(3):
+            cx = 2.0 + b * 4.0
+            z0 = k * 6.0 + 1.6
+            p.rect(cx - 1.6, z0 + 3.2, cx + 1.6, z0 + 3.5, (150, 120, 100), 0.3)
+            p.window(cx - 1.4, z0, cx + 1.4, z0 + 3.1, (52, 58, 56), seed=int(rng.integers(1 << 30)),
+                     mull_v=4, mull_h=5, recess=-1.0, dark=0.75, blinds=0.1)
+            p.rect(cx - 1.55, z0 - 0.2, cx + 1.55, z0 - 0.05, (170, 160, 150), 0.4)
+    return p
+
+
+def _fac_parking(seed):
+    """parcheggio multipiano: solai aperti"""
+    n = FPX
+    p = FacadePainter(_wall(seed, (178, 176, 170), 12, 8, streak=0.18))
+    rng = np.random.default_rng(seed)
+    for k in range(4):
+        z0 = k * 3.0
+        g = p.rect(0, z0 + 1.05, 12, z0 + 2.75, None, -2.0, 0.0, 0.8)
+        r0, r1, c0, c1 = g
+        gy = np.linspace(0, 1, r1 - r0)[:, None, None]
+        inner = 22 + 30 * gy + rng.uniform(-4, 4)
+        p.A[r0:r1, c0:c1] = np.broadcast_to(inner, (r1 - r0, c1 - c0, 1))
+        # auto parcheggiate intraviste
+        for b in range(8):
+            if rng.random() < 0.6:
+                x = b * 1.5 + 0.2
+                col = np.array(rng.choice([(150, 30, 30), (200, 200, 205), (30, 30, 34), (40, 60, 120), (120, 120, 124)]))
+                p.rect(x, z0 + 1.05, x + 1.1, z0 + 1.6, col * 0.5, -1.5)
+        p.rect(0, z0 + 0.95, 12, z0 + 1.05, (120, 120, 116), 0.2)
+    for b in range(3):
+        p.rect(b * 4.0 + 1.8, 0, b * 4.0 + 2.2, 12, (186, 184, 178), 0.5)
+    return p
+
+
+def _fac_plain(seed, rgb):
+    p = FacadePainter(_wall(seed, rgb, 14, 10, streak=0.16))
+    for k in range(4):
+        p.rect(0, k * 3.0 - 0.04, 12, k * 3.0 + 0.04, np.array(rgb) * 0.9, -0.1)
+    return p
+
+
+def _fac_shop(seed):
+    """piano terra con negozi: 3 vetrine da 4 m nei 4.5 m in basso della tessera"""
+    rng = np.random.default_rng(seed)
+    wall_rgb = rng.choice([(200, 190, 170), (150, 146, 140), (120, 70, 56), (230, 226, 214)])
+    p = FacadePainter(_wall(seed, wall_rgb, 12, 8))
+    for u in range(3):
+        x0 = u * 4.0
+        sign = np.array(rng.choice([(190, 36, 36), (36, 80, 170), (230, 180, 40), (36, 130, 76), (140, 50, 150),
+                                    (24, 24, 26), (230, 230, 226)]), np.float32)
+        # insegna (si accende di notte)
+        p.rect(x0 + 0.15, 3.55, x0 + 3.85, 4.25, sign, 0.4, 0.0, 0.9)
+        for k in range(int(rng.integers(3, 7))):
+            lx = x0 + 0.5 + k * 0.48
+            if lx + 0.3 < x0 + 3.6:
+                p.rect(lx, 3.7, lx + 0.3, 4.1, (250, 250, 244) if sign.sum() < 600 else (30, 30, 30), 0.45, 0.0, 1.0)
+        # tenda da sole
+        if rng.random() < 0.5:
+            c1 = np.array(rng.choice([(190, 46, 46), (36, 100, 56), (36, 64, 130), (210, 150, 40)]), np.float32)
+            for k in range(10):
+                xx = x0 + 0.1 + k * 0.38
+                p.rect(xx, 3.1, xx + 0.38, 3.5, c1 if k % 2 == 0 else (236, 236, 230), 0.8)
+        # vetrina e porta
+        p.window(x0 + 0.25, 0.35, x0 + 2.65, 3.0, (40, 40, 42), seed=int(rng.integers(1 << 30)), mull_v=1,
+                 recess=-0.4, blinds=0.0, dark=1.15)
+        q = p.rect(x0 + 0.35, 0.45, x0 + 2.55, 2.0)
+        if q:          # merce in vetrina
+            a0, a1, b0, b1 = q
+            p.A[a0:a1, b0:b1] = p.A[a0:a1, b0:b1] * 0.55 + np.array(rng.choice(
+                [(220, 190, 150), (200, 200, 210), (230, 170, 170), (170, 210, 170)]), np.float32) * 0.45
+        p.window(x0 + 2.95, 0.0, x0 + 3.75, 2.5, (36, 36, 38), seed=int(rng.integers(1 << 30)), mull_v=0,
+                 recess=-0.6, blinds=0.0)
+        p.rect(x0, 0, x0 + 0.08, 4.5, (90, 88, 84), 0.3)
+    p.rect(0, 0, 12, 0.3, (110, 108, 104), 0.2)
+    p.rect(0, 4.35, 12, 4.55, (170, 166, 158), 0.6)
+    return p
+
+
+def _fac_house(seed):
+    """casa unifamiliare: assi di legno orizzontali"""
+    rng = np.random.default_rng(seed)
+    col = np.array(rng.choice([(232, 220, 196), (190, 206, 216), (220, 196, 166), (206, 214, 190), (240, 240, 232),
+                               (226, 210, 160)]), np.float32)
+    n = FPX
+    a = np.zeros((n, n, 3), np.float32)
+    a[:] = col
+    H = np.zeros((n, n), np.float32)
+    plank = 8
+    for y in range(0, n, plank):
+        a[y:y + 1] = col * 0.72
+        H[y:y + plank] = np.linspace(0, 0.3, plank)[:min(plank, n - y), None]
+    a += grain((n, n), seed, 8)[..., None]
+    p = FacadePainter(a, H)
+    for k in range(4):
+        for b in range(3):
+            cx = 2.0 + b * 4.0
+            z0 = k * 3.0 + 0.9
+            p.rect(cx - 0.95, z0 - 0.08, cx - 0.72, z0 + 1.5, col * 0.55, 0.3)
+            p.rect(cx + 0.72, z0 - 0.08, cx + 0.95, z0 + 1.5, col * 0.55, 0.3)
+            p.window(cx - 0.65, z0, cx + 0.65, z0 + 1.45, (250, 250, 248), seed=int(rng.integers(1 << 30)), mull_v=1,
+                     mull_h=1, frame=0.09, recess=-0.5, blinds=0.5)
+    return p
+
+
+# (nome, costruttore, finestre per tessera (u), piani per tessera (v), probabilita' luce, riflessione vetri, tipo luce)
+FACADE_DEFS = [
+    ("vetro_blu", lambda s: _fac_curtain(s, (0.82, 1.0, 1.12), (150, 160, 172)), 8, 4, 0.3, 0.95, 0),
+    ("vetro_scuro", lambda s: _fac_curtain(s, (0.7, 0.74, 0.8), (44, 46, 50), dark=0.75), 8, 4, 0.28, 1.0, 0),
+    ("vetro_bronzo", lambda s: _fac_curtain(s, (1.15, 0.92, 0.7), (90, 74, 56), bays=6), 6, 4, 0.28, 0.9, 0),
+    ("uffici_nastro", _fac_ribbon, 8, 4, 0.3, 0.7, 0),
+    ("uffici_griglia", _fac_precast, 4, 4, 0.3, 0.55, 0),
+    ("pietra", lambda s: _fac_classic(s, (206, 192, 162), (60, 54, 48)), 4, 4, 0.32, 0.4, 0),
+    ("terracotta", lambda s: _fac_classic(s, (226, 214, 190), (110, 100, 86)), 4, 4, 0.32, 0.4, 0),
+    ("mattoni_rossi", lambda s: _fac_brick(s, (150, 68, 50)), 4, 4, 0.35, 0.35, 0),
+    ("mattoni_bruni", lambda s: _fac_brick(s, (118, 80, 60)), 4, 4, 0.35, 0.35, 0),
+    ("intonaco_crema", lambda s: _fac_stucco(s, (226, 212, 180)), 4, 4, 0.4, 0.35, 0),
+    ("intonaco_bianco", lambda s: _fac_stucco(s, (236, 234, 226), (90, 92, 96), balcony=True), 4, 4, 0.4, 0.35, 0),
+    ("intonaco_pesca", lambda s: _fac_stucco(s, (230, 186, 158), balcony=True), 4, 4, 0.4, 0.35, 0),
+    ("appartamenti_moderni", _fac_modern_apt, 4, 4, 0.42, 0.6, 0),
+    ("capannone", _fac_industrial, 8, 2, 0.25, 0.4, 2),
+    ("magazzino_mattoni", _fac_warehouse, 3, 2, 0.3, 0.35, 0),
+    ("parcheggio", _fac_parking, 1, 4, 0.92, 0.0, 2),
+    ("cemento", lambda s: _fac_plain(s, (178, 176, 170)), 4, 4, 0.0, 0.0, 0),
+    ("stucco", lambda s: _fac_plain(s, (214, 200, 172)), 4, 4, 0.0, 0.0, 0),
+    ("negozi0", _fac_shop, 3, 1, 0.85, 0.6, 1),
+    ("negozi1", _fac_shop, 3, 1, 0.85, 0.6, 1),
+    ("negozi2", _fac_shop, 3, 1, 0.85, 0.6, 1),
+    ("casa0", _fac_house, 3, 4, 0.5, 0.35, 0),
+    ("casa1", _fac_house, 3, 4, 0.5, 0.35, 0),
+    ("casa2", _fac_house, 3, 4, 0.5, 0.35, 0),
+]
+FACADE_INDEX = {d[0]: i for i, d in enumerate(FACADE_DEFS)}
+
+
+def make_texture_array(layers, name, size):
+    """layers: lista di array (size, size, 4) uint8"""
+    tex = Texture(name)
+    tex.setup2dTextureArray(size, size, len(layers), Texture.T_unsigned_byte, Texture.F_rgba8)
+    data = b"".join(np.ascontiguousarray(l[::-1]).tobytes() for l in layers)
+    tex.setRamImageAs(data, "RGBA")
+    tex.setWrapU(SamplerState.WM_repeat)
+    tex.setWrapV(SamplerState.WM_repeat)
+    tex.setMinfilter(SamplerState.FT_linear_mipmap_linear)
+    tex.setMagfilter(SamplerState.FT_linear)
+    tex.setAnisotropicDegree(8)
+    return tex
+
+
+def _half(a):
+    a = a.astype(np.float32)
+    return to_u8((a[0::2, 0::2] + a[1::2, 0::2] + a[0::2, 1::2] + a[1::2, 1::2]) * 0.25)
+
+
+def build_facade_arrays(size=FPX, progress=None):
+    albs, nrms = [], []
+    for i, d in enumerate(FACADE_DEFS):
+        p = d[1](1000 + i * 37)
+        a, n = p.finish()
+        if size < FPX:
+            a, n = _half(a), _half(n)
+        albs.append(a)
+        nrms.append(n)
+        if progress:
+            progress((i + 1) / len(FACADE_DEFS))
+    grid = PTA_LVecBase4f.emptyArray(32)
+    info = PTA_LVecBase4f.emptyArray(32)
+    for i, d in enumerate(FACADE_DEFS):
+        grid.setElement(i, LVecBase4f(d[2], d[3], d[4], d[5]))
+        info.setElement(i, LVecBase4f(d[6], 0, 0, 0))
+    return make_texture_array(albs, "facciate", size), make_texture_array(nrms, "facciate_rilievo", size), grid, info
+
+
+# ------------------------------------------------------------------ suoli e tetti
+def tex_concrete_walk(size=512, seed=21):
+    """marciapiede di cemento di LA: lastre da 1.5 m con giunti"""
+    n = fbm(size, 8, 5, seed)
+    g = grain((size, size), seed + 1, 14)
+    base = 150 + n * 22 + g
+    yy, xx = np.mgrid[0:size, 0:size]
+    tile = size // 4
+    seam = ((xx % tile) < 2) | ((yy % tile) < 2)
+    base = np.where(seam, base - 38, base)
+    stains = fbm(size, 4, 4, seed + 11)
+    base -= np.clip(stains - 0.58, 0, 1) * 90
+    gum = np.random.default_rng(seed).random((size, size)) > 0.9985
+    base -= gum * 40
+    return to_u8(np.stack([base + 2, base, base - 5], -1))
+
+
+def tex_pavers(size=512, seed=22):
+    """piazza pedonale: mattonelle"""
+    rng = np.random.default_rng(seed)
+    a = np.zeros((size, size, 3), np.float32)
+    t = 32
+    for r in range(size // t):
+        for c in range(size // t):
+            v = rng.uniform(0.85, 1.12)
+            col = np.array(rng.choice([(196, 180, 160), (180, 168, 150), (206, 196, 180)])) * v
+            a[r * t:(r + 1) * t - 2, c * t:(c + 1) * t - 2] = col
+    a[a.sum(-1) == 0] = (120, 112, 104)
+    a += grain((size, size), seed, 10)[..., None]
+    return to_u8(a)
+
+
+def tex_lot_asphalt(size=512, seed=23):
+    a = tex_asphalt(size, seed).astype(np.float32)
+    a = a * 1.12 + 10
+    return to_u8(a)
+
+
+def tex_dirt(size=256, seed=24):
+    n = fbm(size, 8, 5, seed)
+    g = grain((size, size), seed, 30)
+    base = 120 + n * 40 + g
+    return to_u8(np.stack([base + 20, base + 4, base - 16], -1))
+
+
+def tex_membrane(size=256, seed=25):
+    """tetto piatto: guaina chiara con giunti"""
+    n = fbm(size, 8, 4, seed)
+    g = grain((size, size), seed, 10)
+    base = 186 + n * 26 + g
+    yy, xx = np.mgrid[0:size, 0:size]
+    seam = (xx % 64) < 2
+    base = np.where(seam, base - 22, base)
+    dirt = fbm(size, 3, 3, seed + 3)
+    base -= np.clip(dirt - 0.5, 0, 1) * 70
+    return to_u8(np.stack([base, base, base - 2], -1))
+
+
+def tex_rail(size=256, seed=26):
+    a = tex_gravel(size, seed).astype(np.float32) * 0.8
+    for k in range(0, size, 32):
+        a[:, k:k + 10] = (96, 72, 54)
+    return to_u8(a)
+
+
+def tex_water(size=256, seed=27):
+    n = fbm(size, 6, 5, seed)
+    return to_u8(np.stack([40 + n * 20, 70 + n * 26, 86 + n * 30], -1))
+
+
+def tex_helipad(size=256):
+    a = np.zeros((size, size, 3), np.float32)
+    a[:] = (70, 74, 70)
+    yy, xx = np.mgrid[0:size, 0:size].astype(np.float32)
+    c = size / 2
+    r = np.sqrt((xx - c) ** 2 + (yy - c) ** 2)
+    ring = (r > size * 0.40) & (r < size * 0.44)
+    a[ring] = (240, 240, 236)
+    s = size
+    hb = ((np.abs(xx - c + s * 0.12) < s * 0.03) | (np.abs(xx - c - s * 0.12) < s * 0.03)) & (np.abs(yy - c) < s * 0.18)
+    hc = (np.abs(yy - c) < s * 0.03) & (np.abs(xx - c) < s * 0.12)
+    a[hb | hc] = (240, 240, 236)
+    a += grain((size, size), 3, 10)[..., None]
+    return to_u8(a)
+
+
+def tex_palm(size=128, seed=28):
+    """fronda di palma (RGBA, foglie su fondo trasparente)"""
+    rng = np.random.default_rng(seed)
+    a = np.zeros((size, size, 4), np.float32)
+    yy, xx = np.mgrid[0:size, 0:size].astype(np.float32)
+    v = yy / size
+    u = xx / size
+    rib = np.abs(u - 0.5) < 0.02
+    leaf_w = 0.48 * np.sin(np.clip(v, 0, 1) * np.pi) ** 0.7
+    teeth = (np.sin(v * 70) > -0.2)
+    inside = (np.abs(u - 0.5) < leaf_w) & teeth
+    g = 0.75 + 0.25 * rng.random((size, size))
+    a[..., 0] = 70 * g
+    a[..., 1] = 112 * g
+    a[..., 2] = 52 * g
+    a[..., 3] = np.where(inside | rib, 255, 0)
+    a[rib, 0:3] = (120, 116, 70)
+    return to_u8(a)
+
+
+# =============================================================================
+#  CITTA' VERA: costruzione 3D dai dati di OpenStreetMap
+# =============================================================================
+ROAD_DEF = {  # classe: (corsie, larghezza corsia, marciapiede, sosta ai lati, velocita' m/s, traffico)
+    "motorway": (6, 3.6, 0.0, False, 25.0, 1.0),
+    "trunk": (4, 3.5, 3.0, False, 17.0, 1.0),
+    "primary": (4, 3.3, 3.4, True, 14.0, 1.0),
+    "secondary": (4, 3.2, 3.2, True, 13.0, 0.9),
+    "tertiary": (2, 3.3, 2.8, True, 12.0, 0.7),
+    "unclassified": (2, 3.2, 2.4, True, 10.0, 0.5),
+    "residential": (2, 3.2, 2.4, True, 9.5, 0.5),
+    "living_street": (2, 3.0, 2.0, False, 6.0, 0.2),
+    "road": (2, 3.2, 2.4, True, 9.0, 0.4),
+    "motorway_link": (1, 4.0, 0.0, False, 15.0, 0.6),
+    "trunk_link": (1, 4.0, 0.0, False, 13.0, 0.5),
+    "primary_link": (1, 4.0, 2.4, False, 11.0, 0.5),
+    "secondary_link": (1, 4.0, 2.4, False, 10.0, 0.5),
+    "tertiary_link": (1, 4.0, 2.4, False, 10.0, 0.5),
+    "service": (1, 4.5, 0.0, False, 6.0, 0.0),
+}
+ONEWAY_LANES = {"motorway": 3, "trunk": 2, "primary": 3, "secondary": 3, "tertiary": 2}
+PATH_W = {"footway": 2.6, "path": 2.0, "cycleway": 2.2, "pedestrian": 6.0, "steps": 2.6, "track": 3.0,
+          "bridleway": 2.0}
+HOUSE_KINDS = {"house", "detached", "semidetached_house", "bungalow", "terrace", "cabin", "farm"}
+CSS_COL = {"white": (240, 240, 236), "grey": (150, 150, 150), "gray": (150, 150, 150), "black": (50, 50, 52),
+           "red": (170, 70, 60), "brown": (130, 90, 64), "beige": (220, 205, 175), "yellow": (230, 210, 120),
+           "tan": (210, 180, 140), "blue": (110, 140, 180), "green": (120, 150, 110), "silver": (190, 192, 196),
+           "orange": (220, 140, 80), "pink": (230, 180, 180), "cream": (240, 230, 200), "maroon": (120, 50, 50),
+           "lightgrey": (200, 200, 200), "darkgrey": (90, 90, 92), "ivory": (245, 240, 220), "sandybrown": (230, 170, 110)}
+
+
+def parse_colour(s):
+    if not s:
+        return None
+    s = s.strip().lower().replace(" ", "")
+    if s.startswith("#"):
+        h = s[1:]
+        try:
+            if len(h) == 3:
+                return tuple(int(c * 2, 16) for c in h)
+            if len(h) == 6:
+                return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+        except ValueError:
+            return None
+    return CSS_COL.get(s)
+
+
+def _num(v, default=None):
+    if v is None:
+        return default
+    try:
+        return float(str(v).split(";")[0].replace(",", ".").split()[0].rstrip("m"))
+    except (ValueError, IndexError):
+        return default
+
+
+def offset_ring(P, d):
+    P = np.asarray(P, np.float64)
+    Pc = np.vstack([P[-1:], P, P[:1]])
+    return offset_line(Pc, d)[1:-1]
+
+
+class RealCity:
+    TILE = 320.0
+    LOD_FAR = 620.0
+    CACHE_VER = 4
+
+    def __init__(self, env, data, quality=1, progress=None, cache_key=None):
+        self.env = env
+        self.q = quality
+        self.prog = progress or (lambda f, msg="": None)
+        self.font = None
+        self.signs = []
+        self.sign_specs = []
+        if cache_key and self._load_cache(cache_key):
+            GROUND_FN[0] = self.ground
+            return
+        if callable(data):
+            data = data()
+        self.data = data
+        S = data.get("scala", 0.1)
+        self.S = S
+        self.R = R = float(data.get("raggio", 1300.0))
+        self.limit = R - 30.0
+        self.map_r = R
+        self.CL = R + 160.0
+        self.name = data.get("nome", "citta")
+        self.rng = random.Random(4242)
+        L = R + 200.0
+        self.world = RealWorld(L, self.limit)
+        self.gt = Raster(L, 1.0, np.uint8, 0)       # 1 strada, 2 marciapiede, 3 verde, 4 acqua, 5 parcheggio, 6 piazza
+        self.rid = Raster(L, 1.0, np.int32, -1)     # id della catena stradale
+        self.cnt = Raster(L, 1.0, np.uint8, 0)      # quante strade coprono la cella
+        self.tiles = {}
+        self.lamps = []
+        self.spots = {}
+        self.parking = []
+        self.ped_rings = []
+        self.rooftops = []
+        self.net = RoadNet()
+        self.prog(0.02, "Texture delle facciate")
+        self._textures()
+        self.prog(0.12, "Edifici")
+        self._load_buildings()
+        for b in self.blds:
+            self._building(b)
+        self.prog(0.30, "Strade")
+        self._roads()
+        self.prog(0.50, "Marciapiedi e segnaletica")
+        self._road_details()
+        self.prog(0.62, "Parchi e piazze")
+        self._areas()
+        self._paths()
+        self.prog(0.70, "Luoghi di Rick and Morty")
+        self._template_meshes()
+        self._places()
+        self.prog(0.76, "Alberi, lampioni, semafori")
+        self._props()
+        self._link_ped()
+        self.prog(0.84, "Periferia e colline")
+        self._outskirts()
+        self.root = env.root.attachNewNode("citta")
+        self.prog(0.90, "Preparo la grafica")
+        self._finalize()
+        self.map_img = self._make_map()
+        self.net.finish()
+        self._lamp_grid()
+        GROUND_FN[0] = self.ground
+        self.data = None
+        if cache_key:
+            self.prog(0.97, "Salvo la citta' per i prossimi avvii")
+            self._save_cache(cache_key)
+
+    # ------------------------------------------------------------------ utilita'
+    def ground(self, x, y):
+        return CURB if self.gt.get(x, y) == 2 else 0.0
+
+    def M(self, key, x, y):
+        ck = (int(math.floor(x / self.TILE)), int(math.floor(y / self.TILE)))
+        d = self.tiles.setdefault(ck, {})
+        m = d.get(key)
+        if m is None:
+            m = d[key] = Mesh()
+        return m
+
+    def free(self, x, y, roads_ok=False):
+        if self.world.hb.get(x, y, -1) >= 0:
+            return False
+        g = self.gt.get(x, y, 0)
+        if g == 4:
+            return False
+        if g == 1 and not roads_ok:
+            return False
+        return max(abs(x), abs(y)) < self.limit - 5
+
+    def free_point_near(self, x, y, roads_ok=False, rmax=120.0):
+        if self.free(x, y, roads_ok):
+            return (x, y)
+        for r in np.arange(2.0, rmax, 2.0):
+            for k in range(int(6 + r)):
+                a = k / (6 + r) * TAU
+                px, py = x + math.cos(a) * r, y + math.sin(a) * r
+                if self.free(px, py, roads_ok) and self.free(px + 1.2, py, roads_ok) and self.free(px, py + 1.2, roads_ok) \
+                        and self.free(px - 1.2, py, roads_ok) and self.free(px, py - 1.2, roads_ok):
+                    return (px, py)
+        return (x, y)
+
+    # ------------------------------------------------------------------ texture
+    def _textures(self):
+        hq = self.q >= 1
+        self.fac_alb, self.fac_nrm, self.fac_grid, self.fac_info = build_facade_arrays(FPX if hq else FPX // 2)
+        T = {}
+        E = {}
+        T["asphalt"] = make_texture(tex_asphalt(512 if hq else 256), "asfalto")
+        T["walk"] = make_texture(tex_concrete_walk(512 if hq else 256), "marciapiede")
+        T["pavers"] = make_texture(tex_pavers(), "piazza")
+        T["lot"] = make_texture(tex_lot_asphalt(256), "parcheggio")
+        T["grass"] = make_texture(tex_grass(), "erba")
+        T["dirt"] = make_texture(tex_dirt(), "terra")
+        T["gravel"] = make_texture(tex_gravel(), "ghiaia")
+        T["water"] = make_texture(tex_water(), "acqua")
+        T["rail"] = make_texture(tex_rail(), "binari")
+        T["roof"] = make_texture(tex_membrane(), "tetto")
+        T["roof2"] = make_texture(tex_roof(), "tetto2")
+        T["shingles"] = make_texture(tex_shingles(), "tegole")
+        T["helipad"] = make_texture(tex_helipad(), "eliporto", repeat=False)
+        T["garage"] = make_texture(tex_garage(), "garage")
+        T["field"] = make_texture(tex_field(), "campo")
+        g = (tex_concrete_walk(256, 31).astype(np.float32) * 0.55 + tex_dirt(256, 32).astype(np.float32) * 0.45)
+        T["ground"] = make_texture(to_u8(g * 0.92), "suolo")
+        for i in range(4):
+            a, e = tex_house(400 + i)
+            T["house%d" % i] = make_texture(a, "casa")
+            E["house%d" % i] = make_texture(e, "casa_luci")
+        lamp_e = np.zeros((4, 4, 3), np.uint8)
+        lamp_e[:] = (255, 230, 180)
+        E["lamp"] = make_texture(lamp_e, "lampada", mipmap=False)
+        self.T, self.E = T, E
+        self.MAT = {
+            "asphalt": (0.30, 40, 0.06, 0), "walk": (0.12, 20, 0.0, 0), "pavers": (0.15, 24, 0.02, 0),
+            "lot": (0.25, 36, 0.04, 0), "grass": (0.04, 8, 0.0, 0), "dirt": (0.05, 8, 0.0, 0),
+            "gravel": (0.05, 10, 0.0, 0), "water": (1.2, 160, 0.85, 0), "rail": (0.2, 30, 0.0, 0),
+            "roof": (0.10, 12, 0.0, 0), "roof2": (0.08, 10, 0.0, 0), "shingles": (0.15, 20, 0.02, 0),
+            "helipad": (0.2, 20, 0.0, 0), "garage": (0.25, 30, 0.04, 0), "field": (0.04, 8, 0, 0),
+            "props": (0.3, 30, 0.05, 0), "marks": (0.3, 30, 0.05, 0), "metal": (0.9, 70, 0.35, 0),
+            "leaves": (0.05, 6, 0.0, 0), "fronds": (0.08, 8, 0.0, 0), "lamp": (0.5, 40, 0.0, 1.0),
+            "ground": (0.08, 12, 0.0, 0), "glassmat": (1.0, 120, 0.7, 0), "fac": (0.18, 24, 0.0, 1.0),
+            "house0": (0.15, 20, 0.04, 1.0), "house1": (0.15, 20, 0.04, 1.0), "house2": (0.15, 20, 0.04, 1.0),
+            "house3": (0.15, 20, 0.04, 1.0),
+        }
+        self.DEPTH = {"ground": 0, "grass": 1, "dirt": 1, "water": 1, "rail": 1, "gravel": 1, "lot": 1, "field": 1,
+                      "pavers": 1, "asphalt": 2, "walkflat": 2, "marks": 3}
+
+    # ------------------------------------------------------------------ edifici
+    def _rings(self, rec):
+        S = self.S
+        rings = []
+        for flat in rec["r"]:
+            if len(flat) < 6:
+                continue
+            P = clean_ring([(flat[i] * S, flat[i + 1] * S) for i in range(0, len(flat), 2)])
+            if len(P) >= 3 and abs(ring_area(P)) > 0.5:
+                rings.append(P)
+        if not rings:
+            return []
+        rings.sort(key=lambda r: -abs(ring_area(r)))
+        shapes = []
+        for r in rings:
+            parent = None
+            for sh in shapes:
+                if point_in_ring(r[0][0], r[0][1], sh[0]):
+                    parent = sh
+                    break
+            if parent is not None:
+                parent[1].append(r)
+            else:
+                shapes.append((r, []))
+        out = []
+        for outer, holes in shapes:
+            if ring_area(outer) < 0:
+                outer = outer[::-1]
+            holes = [h if ring_area(h) < 0 else h[::-1] for h in holes]
+            out.append((outer, holes))
+        return out
+
+    def _load_buildings(self):
+        d = self.data
+        CL = self.CL
+        blds, parts = [], []
+        for src, dst in ((d.get("edifici", []), blds), (d.get("parti", []), parts)):
+            for rec in src:
+                for outer, holes in self._rings(rec):
+                    A = np.asarray(outer)
+                    cx, cy = A[:, 0].mean(), A[:, 1].mean()
+                    if max(abs(cx), abs(cy)) > CL:
+                        continue
+                    k = rec.get("k", "yes")
+                    h = float(rec.get("h", 9.0))
+                    m = float(rec.get("m", 0.0))
+                    if k == "bridge":
+                        m = max(m, h - 3.0)
+                    if h <= m + 0.3:
+                        h = m + 1.0
+                    dst.append(dict(outer=outer, holes=holes, h=h, m=m, k=k, rec=rec, cx=cx, cy=cy,
+                                    area=abs(ring_area(outer))))
+        # le parti sostituiscono il contorno dell'edificio a cui appartengono
+        tmp = Raster(self.world.hb.L, 2.0, np.int32, -1)
+        for i, b in enumerate(blds):
+            tmp.fill_rings([b["outer"]] + b["holes"], i)
+        has_parts = set()
+        for p in parts:
+            A = np.asarray(p["outer"])
+            pts = [(p["cx"], p["cy"])] + [(p["cx"] + (x - p["cx"]) * 0.6, p["cy"] + (y - p["cy"]) * 0.6) for x, y in A[:6]]
+            for (x, y) in pts:
+                v = int(tmp.get(x, y, -1))
+                if v >= 0:
+                    has_parts.add(v)
+                    break
+        solids = [b for i, b in enumerate(blds) if i not in has_parts] + parts
+        solids.sort(key=lambda b: b["h"])
+        self.blds = solids
+        for b in solids:
+            b["sid"] = self.world.add_solid(b["outer"], b["holes"], b["m"], b["h"], raster=(b["m"] < 2.5))
+        self.n_buildings = len(solids)
+
+    def _style(self, b, rng):
+        k, h, area = b["k"], b["h"], b["area"]
+        rec = b["rec"]
+        mat = rec.get("mat", "")
+        tint = parse_colour(rec.get("c"))
+        shop = False
+        roof = "flat"
+        if k in HOUSE_KINDS and h < 13:
+            st = "casa%d" % rng.randrange(3)
+            roof = "gable"
+        elif k in ("garage", "garages", "shed", "carport", "service", "kiosk", "hut", "construction", "roof",
+                   "transformer_tower", "bridge", "toilets"):
+            st = rng.choice(("cemento", "stucco"))
+        elif k in ("parking",):
+            st = "parcheggio"
+        elif k in ("industrial", "warehouse", "factory", "manufacture"):
+            st = "magazzino_mattoni" if (mat == "brick" or rng.random() < 0.45) else "capannone"
+        elif mat in ("glass", "metal") or h >= 95:
+            st = rng.choices(("vetro_blu", "vetro_scuro", "vetro_bronzo", "uffici_griglia"), (3, 3, 2, 1))[0]
+        elif h >= 45:
+            if k in ("apartments", "residential", "hotel", "dormitory"):
+                st = rng.choice(("appartamenti_moderni", "intonaco_bianco", "vetro_blu", "uffici_griglia"))
+            else:
+                st = rng.choice(("vetro_blu", "vetro_scuro", "uffici_nastro", "uffici_griglia", "pietra"))
+        elif k in ("apartments", "residential", "dormitory", "hotel"):
+            st = rng.choice(("intonaco_crema", "intonaco_bianco", "intonaco_pesca", "appartamenti_moderni",
+                             "mattoni_rossi" if h < 30 else "intonaco_crema"))
+            shop = h >= 9 and area >= 150 and rng.random() < 0.35
+        else:
+            if mat == "brick":
+                st = rng.choice(("mattoni_rossi", "mattoni_bruni"))
+            else:
+                st = rng.choices(("pietra", "terracotta", "mattoni_rossi", "mattoni_bruni", "intonaco_crema",
+                                  "uffici_griglia", "uffici_nastro"), (3, 3, 2, 2, 2, 1, 1))[0]
+            if k in ("retail", "commercial", "yes", "mixed_use", "office", "hotel"):
+                shop = h >= 4.5 and area >= 50 and rng.random() < (0.9 if k in ("retail", "commercial") else 0.55)
+        if b["m"] > 2.0:
+            shop = False
+        return st, shop, roof, tint
+
+    def _fac_ring(self, m, P, z0, z1, layer, tint, v_base, rng, bay_fit=True):
+        P = np.asarray(P, np.float64)
+        A = P
+        B = np.roll(P, -1, axis=0)
+        D = B - A
+        l = np.hypot(D[:, 0], D[:, 1])
+        ok = l > 0.05
+        A, B, D, l = A[ok], B[ok], D[ok], l[ok]
+        k = len(A)
+        if k == 0 or z1 <= z0:
+            return
+        bay = 12.0 / FACADE_DEFS[layer][2]
+        if bay_fit:
+            nb = np.maximum(1, np.round(l / bay))
+            span = np.where(l > bay * 0.5, nb * bay / 12.0, l / 12.0)
+        else:
+            span = l / 12.0
+        u0 = np.array([rng.randrange(0, 40) for _ in range(k)], np.float64)
+        nx, ny = D[:, 1] / l, -D[:, 0] / l
+        V = np.zeros((4 * k, 12), np.float32)
+        V[0::4, 0:2] = A
+        V[1::4, 0:2] = B
+        V[2::4, 0:2] = B
+        V[3::4, 0:2] = A
+        V[0::4, 2] = z0
+        V[1::4, 2] = z0
+        V[2::4, 2] = z1
+        V[3::4, 2] = z1
+        for j in range(4):
+            V[j::4, 3] = nx
+            V[j::4, 4] = ny
+        c = tint or (255, 255, 255)
+        V[:, 6] = c[0] / 255.0
+        V[:, 7] = c[1] / 255.0
+        V[:, 8] = c[2] / 255.0
+        V[:, 9] = layer / 255.0
+        va, vb = (z0 - v_base) / 12.0, (z1 - v_base) / 12.0
+        V[0::4, 10] = u0
+        V[3::4, 10] = u0
+        V[1::4, 10] = u0 + span
+        V[2::4, 10] = u0 + span
+        V[0::4, 11] = va
+        V[1::4, 11] = va
+        V[2::4, 11] = vb
+        V[3::4, 11] = vb
+        i = np.arange(k, dtype=np.uint32) * 4
+        I = np.stack([i, i + 1, i + 2, i, i + 2, i + 3], 1).reshape(-1)
+        m.chunks.append((V, I))
+
+    def _building(self, b):
+        rng = random.Random(int(b["cx"] * 7.3 + b["cy"] * 13.1))
+        st, shop, roof, tint = self._style(b, rng)
+        b["style"] = st
+        outer, holes = b["outer"], b["holes"]
+        h, z0 = b["h"], b["m"]
+        if z0 < 0.5:
+            z0 = -0.4
+        cx, cy = b["cx"], b["cy"]
+        fac = self.M("fac", cx, cy)
+        layer = FACADE_INDEX[st]
+        rings = [outer] + holes
+        small = b["area"] < 45 or h < 4.0
+        roof_col = parse_colour(b["rec"].get("rc"))
+        if roof == "gable" and len(outer) == 4 and not holes:
+            self._gable_house(b, layer, tint, roof_col, rng)
+            return
+        para = 0.0 if (small or b["k"] == "roof" or b["m"] > 2.0) else (1.0 if h > 20 else 0.7)
+        top = h + para
+        vb = -3.0 * rng.randrange(0, 4)
+        for P in rings:
+            if shop and h > 4.6:
+                self._fac_ring(fac, P, z0, 4.5, FACADE_INDEX["negozi%d" % rng.randrange(3)], None, 0.0, rng)
+                self._fac_ring(fac, P, 4.5, top, layer, tint, 4.5 + vb, rng)
+                band = offset_ring(P, 0.18)
+                wall_strip(self.M("props", cx, cy), np.vstack([band, band[:1]]), 4.45, 4.75, (120, 116, 110))
+            else:
+                self._fac_ring(fac, P, z0, top, layer, tint, vb, rng)
+        # tetto
+        rk = "roof" if rng.random() < 0.7 else "roof2"
+        rc = roof_col or rng.choice(((236, 236, 232), (210, 210, 206), (178, 176, 172), (150, 150, 152)))
+        flat_poly(self.M(rk, cx, cy), outer, holes, h, rc, 6.0)
+        if b["m"] > 2.0:
+            flat_poly(self.M("props", cx, cy), outer, holes, b["m"], (150, 148, 144), 6.0, up=False)
+        if para > 0:
+            pc = (172, 168, 160)
+            p = self.M("props", cx, cy)
+            for P in rings:
+                Pa = np.asarray(P, np.float64)
+                ins = offset_ring(Pa, -0.35)
+                wall_strip(p, np.vstack([ins, ins[:1]]), h, top, pc, outward_right=False)
+                n = len(Pa)
+                V = np.zeros((4 * n, 12), np.float32)
+                Pb = np.roll(Pa, -1, axis=0)
+                Ib = np.roll(ins, -1, axis=0)
+                V[0::4, 0:2] = Pa
+                V[1::4, 0:2] = Pb
+                V[2::4, 0:2] = Ib
+                V[3::4, 0:2] = ins
+                V[:, 2] = top
+                V[:, 5] = 1.0
+                V[:, 6:10] = _col(pc)
+                ii = np.arange(n, dtype=np.uint32) * 4
+                I = np.stack([ii, ii + 2, ii + 1, ii, ii + 3, ii + 2], 1).reshape(-1)
+                p.chunks.append((V, I))
+        # impianti sul tetto ed eliporto (i grattacieli di LA hanno l'eliporto sul tetto!)
+        if not small and b["m"] < 2.0:
+            self._roof_stuff(b, h, rng)
+        if 6 <= h <= 70 and b["area"] > 120 and b["m"] < 2.0:
+            if self.world.hb.get(cx, cy, -1) == b["sid"] and abs(self.world.hh.get(cx, cy) - h) < 0.5:
+                self.rooftops.append((cx, cy, h))
+
+    def _roof_stuff(self, b, h, rng):
+        cx, cy = b["cx"], b["cy"]
+        sid = b["sid"]
+        hb = self.world.hb
+
+        def inside(x, y, mrg):
+            for ox, oy in ((0, 0), (mrg, 0), (-mrg, 0), (0, mrg), (0, -mrg)):
+                if hb.get(x + ox, y + oy, -1) != sid:
+                    return False
+            return True
+        p = self.M("props", cx, cy)
+        if h > 80 and b["area"] > 700 and inside(cx, cy, 12.0):
+            m = self.M("helipad", cx, cy)
+            z = h + 0.15
+            m.quad((cx - 10, cy - 10, z), (cx + 10, cy - 10, z), (cx + 10, cy + 10, z), (cx - 10, cy + 10, z),
+                   (255, 255, 255), ((0, 0), (1, 0), (1, 1), (0, 1)), (0, 0, 1))
+            p.box(cx - 10.4, cy - 10.4, h, cx + 10.4, cy + 10.4, h + 0.12, (90, 92, 90), faces="xXyY")
+            self.rooftops.append((cx, cy, h + 0.15))
+            return
+        A = np.asarray(b["outer"])
+        x0, y0 = A.min(0)
+        x1, y1 = A.max(0)
+        n = int(clamp(b["area"] / 250, 0, 7))
+        for _ in range(n):
+            for _t in range(6):
+                x, y = rng.uniform(x0, x1), rng.uniform(y0, y1)
+                w, d = rng.uniform(1.6, 4.0), rng.uniform(1.4, 3.2)
+                if inside(x, y, max(w, d) + 0.8):
+                    hh = rng.uniform(1.0, 2.4)
+                    p.box(x - w / 2, y - d / 2, h, x + w / 2, y + d / 2, h + hh, rng.choice(
+                        ((176, 178, 182), (196, 198, 200), (150, 152, 156))), faces="xXyYz")
+                    self.world.add_box(x - w / 2, y - d / 2, x + w / 2, y + d / 2, h, h + hh, "impianto")
+                    break
+
+    def _gable_house(self, b, layer, tint, roof_col, rng):
+        a, bb, c, d = [np.array(p, np.float64) for p in b["outer"]]
+        h = b["h"]
+        if np.hypot(*(bb - a)) < np.hypot(*(c - bb)):
+            a, bb, c, d = bb, c, d, a
+        short = np.hypot(*(c - bb))
+        rh = clamp(short * 0.35, 1.2, 3.2)
+        zw = max(2.8, h - rh) if b["rec"].get("e") == 0 else 5.6
+        zt = zw + rh
+        cx, cy = b["cx"], b["cy"]
+        self._fac_ring(self.M("fac", cx, cy), b["outer"], -0.3, zw, layer, tint, 0.0, rng)
+        mbc = (bb + c) / 2
+        mda = (d + a) / 2
+        P3 = lambda p, z: (float(p[0]), float(p[1]), z)
+        sh = self.M("shingles", cx, cy)
+        rc = roof_col or rng.choice(((255, 255, 255), (200, 170, 160), (150, 150, 160), (210, 190, 170)))
+        ov = 0.0
+        sh.quad(P3(a, zw - ov), P3(bb, zw - ov), P3(mbc, zt), P3(mda, zt), rc,
+                ((0, 0), (np.hypot(*(bb - a)) / 4, 0), (np.hypot(*(bb - a)) / 4, 1.2), (0, 1.2)))
+        sh.quad(P3(c, zw - ov), P3(d, zw - ov), P3(mda, zt), P3(mbc, zt), rc,
+                ((0, 0), (np.hypot(*(d - c)) / 4, 0), (np.hypot(*(d - c)) / 4, 1.2), (0, 1.2)))
+        wall = tint or (230, 222, 206)
+        p = self.M("props", cx, cy)
+        p.quad(P3(bb, zw), P3(c, zw), P3(mbc, zt), P3(mbc, zt), wall)
+        p.quad(P3(d, zw), P3(a, zw), P3(mda, zt), P3(mda, zt), wall)
+        b["style"] = "casa"
+
+    # ------------------------------------------------------------------ strade
+    def _parse_roads(self):
+        S = self.S
+        CL = self.CL
+        drive, paths, crossings = [], [], []
+        for rec in self.data.get("strade", []):
+            k = rec.get("k")
+            if rec.get("t") or k in ("proposed", "construction", "platform", "raceway", "bus_guideway", "elevator",
+                                     "corridor", "escape", "busway", "rest_area", "services", "abandoned"):
+                continue
+            flat = rec.get("p", [])
+            keys = [(flat[i], flat[i + 1]) for i in range(0, len(flat) - 1, 2)]
+            if len(keys) < 2:
+                continue
+            P = np.asarray(keys, np.float64) * S
+            ins = np.max(np.abs(P), axis=1) <= CL
+            runs = []
+            i = 0
+            n = len(P)
+            while i < n:
+                if not ins[i]:
+                    i += 1
+                    continue
+                j = i
+                while j < n and ins[j]:
+                    j += 1
+                a, bnd = max(0, i - 1), min(n, j + 1)
+                if bnd - a >= 2:
+                    runs.append((a, bnd))
+                i = j
+            for (a, bnd) in runs:
+                if k in ROAD_DEF:
+                    drive.append(dict(rec=rec, k=k, P=P[a:bnd], keys=keys[a:bnd]))
+                elif k in PATH_W:
+                    f = rec.get("f", "")
+                    if f == "crossing":
+                        crossings.append(P[a:bnd])
+                    elif f in ("sidewalk", "traffic_island", "access_aisle"):
+                        continue
+                    else:
+                        paths.append(dict(k=k, P=P[a:bnd], w=PATH_W[k]))
+        self.paths = paths
+        self.crossings = crossings
+        return drive
+
+    def _road_profile(self, rec, k):
+        nl, lw, sw, park, speed, traffic = ROAD_DEF[k]
+        o = str(rec.get("o", "")).lower()
+        ow = 0
+        if o in ("yes", "true", "1"):
+            ow = 1
+        elif o in ("-1", "reverse"):
+            ow = -1
+        elif o != "no" and (k in ("motorway", "motorway_link", "trunk_link") or rec.get("j") in ("roundabout", "circular")):
+            ow = 1
+        lanes = _num(rec.get("l"))
+        if lanes is None:
+            lanes = ONEWAY_LANES.get(k, 1) if ow else nl
+        lanes = int(clamp(round(lanes), 1, 8))
+        if k == "service":
+            sv = rec.get("s", "")
+            w0 = {"driveway": 3.5, "parking_aisle": 6.0, "alley": 5.0, "drive-through": 3.5}.get(sv, 4.5)
+        else:
+            w0 = lanes * lw + (4.8 if park else 0.0) + (0.0 if ow else 0.6)
+        wt = _num(rec.get("w"))
+        if wt is not None and 3 <= wt <= 40:
+            w0 = wt
+        return dict(ow=ow, lanes=lanes, w0=clamp(w0, 3.0, 32.0), sw=sw, park=park, speed=speed, traffic=traffic,
+                    lw=lw)
+
+    def _roads(self):
+        drive = self._parse_roads()
+        for w in drive:
+            w.update(self._road_profile(w["rec"], w["k"]))
+            if w["ow"] < 0:
+                w["P"] = w["P"][::-1].copy()
+                w["keys"] = w["keys"][::-1]
+                w["ow"] = 1
+        # nodi del grafo: estremi e punti condivisi
+        cnt = {}
+        for w in drive:
+            ks = w["keys"]
+            for i, key in enumerate(ks):
+                cnt[key] = cnt.get(key, 0) + (2 if i == 0 or i == len(ks) - 1 else 1)
+        edges = []
+        for w in drive:
+            ks = w["keys"]
+            start = 0
+            for i in range(1, len(ks)):
+                if cnt.get(ks[i], 0) >= 2 or i == len(ks) - 1:
+                    if i > start:
+                        edges.append(dict(w=w, P=w["P"][start:i + 1], keys=ks[start:i + 1]))
+                    start = i
+        adj = {}
+        for ei, e in enumerate(edges):
+            adj.setdefault(e["keys"][0], []).append((ei, 0))
+            adj.setdefault(e["keys"][-1], []).append((ei, 1))
+
+        def prof(e):
+            w = e["w"]
+            return (w["k"], w["ow"], w["lanes"], round(w["w0"]))
+        used = [False] * len(edges)
+        chains = []
+        for ei in range(len(edges)):
+            if used[ei]:
+                continue
+            used[ei] = True
+            pf = prof(edges[ei])
+            ow = edges[ei]["w"]["ow"]
+            seq = [(ei, False)]
+            for direction in (1, -1):
+                key = edges[ei]["keys"][-1] if direction > 0 else edges[ei]["keys"][0]
+                while True:
+                    lst = adj.get(key, [])
+                    if len(lst) != 2:
+                        break
+                    cur = seq[-1][0] if direction > 0 else seq[0][0]
+                    other = [t for t in lst if t[0] != cur]
+                    if len(other) != 1:
+                        break
+                    e2, end2 = other[0]
+                    if used[e2] or prof(edges[e2]) != pf:
+                        break
+                    if direction > 0:
+                        rev = end2 == 1
+                    else:
+                        rev = end2 == 0
+                    if ow and rev:
+                        break
+                    used[e2] = True
+                    ks2 = edges[e2]["keys"]
+                    if direction > 0:
+                        seq.append((e2, rev))
+                        key = ks2[0] if rev else ks2[-1]
+                    else:
+                        seq.insert(0, (e2, rev))
+                        key = ks2[-1] if rev else ks2[0]
+            pts, keys = [], []
+            for (e, rev) in seq:
+                P = edges[e]["P"][::-1] if rev else edges[e]["P"]
+                ks = edges[e]["keys"][::-1] if rev else edges[e]["keys"]
+                if pts:
+                    P = P[1:]
+                    ks = ks[1:]
+                pts.append(P)
+                keys.extend(ks)
+            P = np.vstack(pts)
+            if len(P) < 2:
+                continue
+            chains.append(dict(w=edges[ei]["w"], P=P, keys=keys))
+        # oggetti Chain e grafo
+        net = self.net
+        S = self.S
+        for c in chains:
+            w = c["w"]
+            P = c["P"]
+            d = np.hypot(*np.diff(P, axis=0).T)
+            if d.sum() < 1.0:
+                continue
+            keep = np.concatenate([[True], d > 0.05])
+            P = P[keep]
+            if len(P) < 2:
+                continue
+            ch = Chain()
+            ch.id = len(net.chains)
+            ch.k = w["k"]
+            ch.pl = Polyline(P)
+            k0, k1 = c["keys"][0], c["keys"][-1]
+            ch.n0 = net.node(k0, k0[0] * S, k0[1] * S)
+            ch.n1 = net.node(k1, k1[0] * S, k1[1] * S)
+            ch.ow = w["ow"]
+            if ch.ow:
+                ch.lf, ch.lb = w["lanes"], 0
+            else:
+                ch.lf = max(1, w["lanes"] // 2 + w["lanes"] % 2)
+                ch.lb = max(1, w["lanes"] // 2)
+            ch.hw = w["w0"] / 2
+            ch.park = w["park"]
+            ch.speed = w["speed"]
+            ch.traffic = w["traffic"] > 0
+            ch.sw = w["sw"]
+            ch.name = w["rec"].get("n", "")
+            ch.trim = [0.0, 0.0]
+            ch.signal = [False, False]
+            ch.group = [0, 0]
+            ch.cut = None
+            ch.lane_w = w["lw"]
+            net.chains.append(ch)
+            net.out[ch.n0].append((ch.id, 1))
+            net.out[ch.n1].append((ch.id, -1))
+        self._fit_widths()
+        # nastri d'asfalto e raster delle strade
+        for ch in net.chains:
+            self._road_ribbon(ch)
+
+    def _fit_widths(self):
+        """restringe le strade dove gli edifici sono vicini e misura i marciapiedi fino alla facciata"""
+        hb = self.world.hb
+        for ch in self.net.chains:
+            pl = ch.pl
+            n = max(2, int(pl.L / 5.0))
+            ss = np.linspace(0, pl.L, n)
+            X, Y, TX, TY = pl.at_many(ss)
+            NX, NY = TY, -TX
+            dist = np.arange(1.0, ch.hw + 13.0, 0.5)
+            res = []
+            for side in (1, -1):
+                xs = X[:, None] + NX[:, None] * dist[None, :] * side
+                ys = Y[:, None] + NY[:, None] * dist[None, :] * side
+                k = 1.0 / hb.res
+                ix = ((xs + hb.L) * k).astype(np.int64)
+                iy = ((ys + hb.L) * k).astype(np.int64)
+                ok = (ix >= 0) & (iy >= 0) & (ix < hb.n) & (iy < hb.n)
+                v = np.where(ok, hb.a[np.clip(iy, 0, hb.n - 1), np.clip(ix, 0, hb.n - 1)], -1)
+                bld = v >= 0
+                anyb = bld.any(1)
+                first = np.where(anyb, dist[np.argmax(bld, 1)], np.inf)
+                if anyb.mean() >= 0.3:
+                    res.append(float(np.percentile(first[anyb], 20)))
+                else:
+                    res.append(None)
+            dR, dL = res
+            hw0 = ch.hw
+            need = 1.8 if ch.sw > 0 else 0.4
+            lim = min([d for d in (dR, dL) if d is not None], default=None)
+            if lim is not None:
+                ch.hw = clamp(min(hw0, lim - need), max(2.2, hw0 * 0.55), hw0)
+            so = []
+            for d in (dR, dL):
+                if ch.sw <= 0:
+                    so.append(None)
+                elif d is not None:
+                    so.append(clamp(d, ch.hw + 1.6, ch.hw + 7.0))
+                else:
+                    so.append(ch.hw + ch.sw)
+            ch.cut = so          # distanza del bordo esterno del marciapiede (destra, sinistra)
+            # corsie: larghezza effettiva
+            park = 2.4 if ch.park else 0.3
+            if ch.ow:
+                avail = max(2.6, 2 * ch.hw - 2 * park)
+                ch.lane_w = clamp(avail / ch.lf, 2.6, 3.8)
+                while ch.lf > 1 and avail / ch.lf < 2.6:
+                    ch.lf -= 1
+            else:
+                avail = max(2.6, ch.hw - park - 0.3)
+                for attr in ("lf", "lb"):
+                    while getattr(ch, attr) > 1 and avail / getattr(ch, attr) < 2.6:
+                        setattr(ch, attr, getattr(ch, attr) - 1)
+                ch.lane_w = clamp(avail / max(ch.lf, ch.lb), 2.6, 3.8)
+
+    def _road_ribbon(self, ch):
+        P = ch.pl.P
+        hw = ch.hw
+        Lft = offset_line(P, -hw)
+        Rgt = offset_line(P, hw)
+        poly = np.vstack([Lft, Rgt[::-1]])
+        if ch.k != "service":
+            self.rid.fill_rings([poly], ch.id)
+            self.cnt.fill_rings([poly], 1, "add")
+        self.gt.fill_rings([poly], 1)
+        # a pezzi di ~120 m per il culling
+        S = ch.pl.S
+        n = len(P)
+        i = 0
+        while i < n - 1:
+            j = i + 1
+            while j < n - 1 and S[j] - S[i] < 120:
+                j += 1
+            mx, my = (P[i] + P[j]) / 2
+            m = self.M("asphalt", mx, my)
+            self._ribbon_lr(m, Lft[i:j + 1], Rgt[i:j + 1], 0.0, (255, 255, 255), 9.0)
+            i = j
+        # tappi rotondi alle estremita' (raccordi negli incroci)
+        for (x, y) in (P[0], P[-1]):
+            self._disc(self.M("asphalt", x, y), x, y, hw, 0.0, 9.0)
+            self.gt.stamp_disc(x, y, hw, 1)
+
+    @staticmethod
+    def _ribbon_lr(m, Lft, Rgt, z, color, uvs, nrm=(0, 0, 1)):
+        n = len(Lft)
+        if n < 2:
+            return
+        V = np.zeros((2 * n, 12), np.float32)
+        V[0::2, 0:2] = Lft
+        V[1::2, 0:2] = Rgt
+        V[:, 2] = z
+        V[:, 3:6] = nrm
+        V[:, 6:10] = _col(color)
+        V[:, 10] = V[:, 0] / uvs
+        V[:, 11] = V[:, 1] / uvs
+        i = np.arange(n - 1, dtype=np.uint32) * 2
+        I = np.stack([i, i + 1, i + 3, i, i + 3, i + 2], 1).reshape(-1)
+        m.chunks.append((V, I))
+
+    @staticmethod
+    def _disc(m, x, y, r, z, uvs, seg=14, color=(255, 255, 255)):
+        a = np.linspace(0, TAU, seg + 1)[:-1]
+        V = np.zeros((seg + 1, 12), np.float32)
+        V[0, 0:3] = (x, y, z)
+        V[1:, 0] = x + np.cos(a) * r
+        V[1:, 1] = y + np.sin(a) * r
+        V[:, 2] = z
+        V[:, 5] = 1
+        V[:, 6:10] = _col(color)
+        V[:, 10] = V[:, 0] / uvs
+        V[:, 11] = V[:, 1] / uvs
+        i = np.arange(seg, dtype=np.uint32)
+        I = np.stack([np.zeros(seg, np.uint32), 1 + i, 1 + (i + 1) % seg], 1).reshape(-1)
+        m.chunks.append((V, I))
+
+    # ------------------------------------------------------------------ marciapiedi, segnaletica, attraversamenti
+    def _runs(self, good, step):
+        """intervalli [s0, s1] dove good e' vero (campioni ogni step metri)"""
+        out = []
+        n = len(good)
+        i = 0
+        while i < n:
+            if not good[i]:
+                i += 1
+                continue
+            j = i
+            while j < n and good[j]:
+                j += 1
+            out.append((i * step, (j - 1) * step))
+            i = j
+        return out
+
+    def _sample_raster(self, R, xs, ys, default):
+        k = 1.0 / R.res
+        ix = ((xs + R.L) * k).astype(np.int64)
+        iy = ((ys + R.L) * k).astype(np.int64)
+        ok = (ix >= 0) & (iy >= 0) & (ix < R.n) & (iy < R.n)
+        return np.where(ok, R.a[np.clip(iy, 0, R.n - 1), np.clip(ix, 0, R.n - 1)], default)
+
+    def _line_samples(self, ch, off, step=0.5):
+        pl = ch.pl
+        n = max(2, int(pl.L / step) + 1)
+        ss = np.arange(n) * step
+        ss[-1] = min(ss[-1], pl.L)
+        X, Y, TX, TY = pl.at_many(ss)
+        return ss, X + TY * off, Y - TX * off
+
+    def _other_road(self, ch, X, Y):
+        """un'altra strada copre il punto (anche se e' stata disegnata prima di questa)"""
+        v = self._sample_raster(self.rid, X, Y, -1)
+        c = self._sample_raster(self.cnt, X, Y, 0)
+        return (c >= 2) | ((c == 1) & (v != ch.id))
+
+    def _road_details(self):
+        net = self.net
+        deg = [len(o) for o in net.out]
+        hb = self.world.hb
+        self.walk_runs = []
+        signals = [tuple(p) for p in self.data.get("punti", {}).get("signals", [])]
+        sig_nodes = set()
+        if signals and len(net.nodes):
+            N = np.asarray(net.nodes)
+            for (sx, sy) in signals:
+                d = (N[:, 0] - sx) ** 2 + (N[:, 1] - sy) ** 2
+                i = int(np.argmin(d))
+                if d[i] < 30 ** 2 and deg[i] >= 3:
+                    sig_nodes.add(i)
+        net.signal = sig_nodes
+        for ch in net.chains:
+            pl = ch.pl
+            # dove la mezzeria entra in un'altra strada: rifilature per traffico e segnaletica
+            ss, X, Y = self._line_samples(ch, 0.0, 0.5)
+            oth = self._other_road(ch, X, Y)
+            for end in (0, 1):
+                node = ch.n0 if end == 0 else ch.n1
+                if deg[node] < 3:
+                    continue
+                seq = oth if end == 0 else oth[::-1]
+                k = 0
+                while k < len(seq) and seq[k] and k * 0.5 < 35:
+                    k += 1
+                ch.trim[end] = min(k * 0.5 + 1.0, pl.L * 0.45)
+                ch.signal[end] = node in sig_nodes
+            # marciapiedi (rialzati) ai due lati
+            if ch.cut is not None and ch.sw > 0:
+                for si, side in enumerate((1, -1)):
+                    so = ch.cut[si]
+                    if so is None:
+                        continue
+                    self._sidewalk(ch, side, so)
+            if ch.k != "service":
+                self._markings(ch)
+        # attraversamenti pedonali veri (strisce "continental" stile USA)
+        for P in self.crossings:
+            self._crossing(P)
+        # gruppi semaforici: strade quasi parallele nello stesso gruppo
+        for node in sig_nodes:
+            outs = net.out[node]
+            if not outs:
+                continue
+            base = None
+            for (c, d) in outs:
+                ch = net.chains[c]
+                s = 0.5 if d > 0 else ch.pl.L - 0.5
+                _x, _y, tx, ty = ch.pl.at(s)
+                if d < 0:
+                    tx, ty = -tx, -ty
+                ang = math.degrees(math.atan2(ty, tx)) % 180.0
+                if base is None:
+                    base = ang
+                diff = abs((ang - base + 90) % 180 - 90)
+                ch.group[0 if d > 0 else 1] = 0 if diff < 45 else 1
+
+    def _sidewalk(self, ch, side, so):
+        hw = ch.hw
+        mid = (hw + so) / 2
+        step = 0.5
+        ss, Xm, Ym = self._line_samples(ch, mid * side, step)
+        _s, Xi, Yi = self._line_samples(ch, (hw + 0.35) * side, step)
+        _s, Xo, Yo = self._line_samples(ch, (so - 0.3) * side, step)
+        bad = self._other_road(ch, Xm, Ym) | self._other_road(ch, Xi, Yi) | self._other_road(ch, Xo, Yo)
+        bad |= self._sample_raster(self.gt, Xm, Ym, 0) == 4
+        good = ~bad
+        for (s0, s1) in self._runs(good, step):
+            if s1 - s0 < 1.0:
+                continue
+            P = ch.pl.piece(s0, s1)
+            if len(P) < 2:
+                continue
+            if side > 0:
+                Li = offset_line(P, hw)
+                Lo = offset_line(P, so)
+            else:
+                Li = offset_line(P[::-1], hw)
+                Lo = offset_line(P[::-1], so)
+            mx, my = Li[len(Li) // 2]
+            m = self.M("walk", mx, my)
+            z = CURB
+            self._ribbon_lr(m, Li, Lo, z, (255, 255, 255), 6.0)
+            wall_strip(m, Li[::-1], 0.0, z, (215, 212, 205), True, uv=(6.0, 6.0))
+            wall_strip(m, Lo, -0.05, z, (200, 198, 192), True, uv=(6.0, 6.0))
+            for (a, b2) in ((Li[0], Lo[0]), (Lo[-1], Li[-1])):
+                wall_strip(m, np.array([a, b2]), 0.0, z, (205, 202, 196), True)
+            self.gt.fill_rings([np.vstack([Li, Lo[::-1]])], 2)
+            self.walk_runs.append(dict(ch=ch, side=side, s0=s0, s1=s1, hw=hw, so=so))
+
+    def _markings(self, ch):
+        net = self.net
+        pl = ch.pl
+        lanes_marked = ch.k in ("motorway", "trunk", "primary", "secondary", "tertiary", "motorway_link",
+                                "trunk_link", "primary_link", "secondary_link") or ch.lf + ch.lb > 2
+        if not lanes_marked:
+            return
+        W = (240, 240, 236)
+        Y = (236, 184, 40)
+        lines = []          # (offset, colore, tratteggio)
+        if ch.ow:
+            n = ch.lf
+            for k in range(1, n):
+                lines.append((-n * ch.lane_w / 2 + ch.lane_w * k, W, True))
+            if ch.k in ("motorway", "trunk", "motorway_link"):
+                lines.append((-n * ch.lane_w / 2 - 0.2, Y, False))
+                lines.append((n * ch.lane_w / 2 + 0.2, W, False))
+        else:
+            lines.append((0.12, Y, False))
+            lines.append((-0.12, Y, False))
+            for k in range(1, ch.lf):
+                lines.append((0.3 + ch.lane_w * k, W, True))
+            for k in range(1, ch.lb):
+                lines.append((-(0.3 + ch.lane_w * k), W, True))
+        for (off, col, dash) in lines:
+            if abs(off) > ch.hw - 0.3:
+                continue
+            ss, X, Y_ = self._line_samples(ch, off, 0.5)
+            good = ~self._other_road(ch, X, Y_)
+            for (s0, s1) in self._runs(good, 0.5):
+                s0 += 0.5
+                s1 -= 0.5
+                if s1 - s0 < 1.0:
+                    continue
+                if dash:
+                    s = s0
+                    while s < s1:
+                        e = min(s + 3.0, s1)
+                        self._mark_piece(pl, s, e, off, 0.12, col)
+                        s += 9.0
+                else:
+                    self._mark_piece(pl, s0, s1, off, 0.11, col)
+        # linee d'arresto agli incroci con semaforo
+        for end in (0, 1):
+            node = ch.n0 if end == 0 else ch.n1
+            if node not in net.signal or ch.trim[end] <= 1.0:
+                continue
+            d_in = -1 if end == 0 else 1          # verso del traffico che arriva al nodo
+            if ch.ow and d_in < 0:
+                continue
+            s_stop = ch.trim[end] + 1.2
+            s = s_stop if end == 0 else pl.L - s_stop
+            if ch.ow:
+                o0, o1 = -ch.hw + 0.4, ch.hw - 0.4
+            elif d_in > 0:
+                o0, o1 = 0.3, ch.hw - 0.4
+            else:
+                o0, o1 = -ch.hw + 0.4, -0.3
+            x, y, tx, ty = pl.at(s)
+            m = self.M("marks", x, y)
+            nx, ny = ty, -tx
+            ax, ay = x + nx * o0, y + ny * o0
+            bx, by = x + nx * o1, y + ny * o1
+            z = 0.012
+            w = 0.25
+            m.quad((ax - tx * w, ay - ty * w, z), (bx - tx * w, by - ty * w, z), (bx + tx * w, by + ty * w, z),
+                   (ax + tx * w, ay + ty * w, z), W, n=(0, 0, 1))
+
+    def _mark_piece(self, pl, s0, s1, off, w, col):
+        P = pl.piece(s0, s1)
+        if len(P) < 2:
+            return
+        C = offset_line(P, off)
+        Lft = offset_line(C, -w / 2)
+        Rgt = offset_line(C, w / 2)
+        mx, my = C[len(C) // 2]
+        self._ribbon_lr(self.M("marks", mx, my), Lft, Rgt, 0.012, col, 4.0)
+
+    def _crossing(self, P):
+        P = np.asarray(P, np.float64)
+        pl = Polyline(P)
+        if pl.L < 2:
+            return
+        n = int(pl.L / 0.25) + 1
+        ss = np.linspace(0, pl.L, n)
+        X, Y, _tx, _ty = pl.at_many(ss)
+        v = self._sample_raster(self.rid, X, Y, -1)
+        good = v >= 0
+        step = pl.L / max(n - 1, 1)
+        for (s0, s1) in self._runs(good, step):
+            if s1 - s0 < 2.0:
+                continue
+            ax, ay, tx, ty = pl.at(s0)
+            nx, ny = -ty, tx
+            m = self.M("marks", ax, ay)
+            s = s0 + 0.3
+            z = 0.013
+            while s < s1 - 0.3:
+                x, y, _tx, _ty = pl.at(s)
+                a, b = 0.25, 1.5
+                m.quad((x - tx * a - nx * b, y - ty * a - ny * b, z), (x + tx * a - nx * b, y + ty * a - ny * b, z),
+                       (x + tx * a + nx * b, y + ty * a + ny * b, z), (x - tx * a + nx * b, y - ty * a + ny * b, z),
+                       (240, 240, 236), n=(0, 0, 1))
+                s += 1.1
+
+    # ------------------------------------------------------------------ aree: parchi, parcheggi, piazze, acqua
+    def _areas(self):
+        S = self.S
+        order = {"wood": 0, "grass": 1, "park": 1, "pitch": 2, "railway": 0, "construction": 0, "parking": 3,
+                 "road_area": 4, "plaza": 4, "water": 5}
+        areas = []
+        for rec in self.data.get("aree", []):
+            flat = rec.get("r", [])
+            P = clean_ring([(flat[i] * S, flat[i + 1] * S) for i in range(0, len(flat) - 1, 2)])
+            if len(P) < 3:
+                continue
+            A = np.asarray(P)
+            cx, cy = A[:, 0].mean(), A[:, 1].mean()
+            if max(abs(cx), abs(cy)) > self.CL:
+                continue
+            if ring_area(P) < 0:
+                P = P[::-1]
+            areas.append(dict(k=rec["k"], P=P, cx=cx, cy=cy, area=abs(ring_area(P)), n=rec.get("n", "")))
+        areas.sort(key=lambda a: order.get(a["k"], 0))
+        self.areas = areas
+        self.parks = []
+        for a in areas:
+            k = a["k"]
+            P = a["P"]
+            cx, cy = a["cx"], a["cy"]
+            if k in ("park", "grass", "wood"):
+                flat_poly(self.M("grass", cx, cy), P, [], -0.03, (255, 255, 255), 6.0)
+                self.gt.fill_rings([P], 3, "where0")
+                if k == "park" and a["area"] > 900:
+                    self.parks.append(a)
+            elif k == "pitch":
+                flat_poly(self.M("field", cx, cy), P, [], -0.025, (255, 255, 255), 30.0)
+                self.gt.fill_rings([P], 3, "where0")
+            elif k == "water":
+                flat_poly(self.M("water", cx, cy), P, [], -0.02, (255, 255, 255), 10.0)
+                self.gt.fill_rings([P], 4, "where0")
+            elif k == "parking":
+                flat_poly(self.M("lot", cx, cy), P, [], -0.02, (255, 255, 255), 9.0)
+                self._lot_cars(a)
+            elif k in ("plaza", "road_area"):
+                flat_poly(self.M("pavers", cx, cy), P, [], -0.015, (255, 255, 255), 5.0)
+                self._fill_free(P, 6)
+            elif k == "railway":
+                flat_poly(self.M("gravel", cx, cy), P, [], -0.03, (255, 255, 255), 5.0)
+            elif k == "construction":
+                flat_poly(self.M("dirt", cx, cy), P, [], -0.03, (255, 255, 255), 6.0)
+
+    def _fill_free(self, P, val):
+        self.gt.fill_rings([P], val, "where0")
+
+    def _lot_cars(self, a):
+        """posti auto nei parcheggi a raso: righe allineate al lato piu' lungo"""
+        P = np.asarray(a["P"])
+        if a["area"] < 150:
+            return
+        self._fill_free(a["P"], 5)
+        D = np.roll(P, -1, axis=0) - P
+        L = np.hypot(D[:, 0], D[:, 1])
+        i = int(np.argmax(L))
+        ux, uy = D[i] / L[i]
+        vx, vy = -uy, ux
+        cx, cy = a["cx"], a["cy"]
+        pu = (P[:, 0] - cx) * ux + (P[:, 1] - cy) * uy
+        pv = (P[:, 0] - cx) * vx + (P[:, 1] - cy) * vy
+        rng = random.Random(int(cx * 3 + cy * 5))
+        m = self.M("marks", cx, cy)
+        hdg = vec_heading(vx, vy)
+        row = pv.min() + 3.0
+        flip = False
+        while row < pv.max() - 2.5:
+            u = pu.min() + 1.6
+            while u < pu.max() - 1.4:
+                x = cx + ux * u + vx * row
+                y = cy + uy * u + vy * row
+                ok = True
+                for (ou, ov) in ((-1.2, -2.5), (1.2, -2.5), (-1.2, 2.5), (1.2, 2.5)):
+                    qx, qy = x + ux * ou + vx * ov, y + uy * ou + vy * ov
+                    if not point_in_ring(qx, qy, a["P"]) or self.world.hb.get(qx, qy, -1) >= 0 or \
+                            self.gt.get(qx, qy) in (1, 2):
+                        ok = False
+                        break
+                if ok:
+                    z = 0.01
+                    for s in (-1.35, 1.35):
+                        lx, ly = x + ux * s, y + uy * s
+                        m.quad((lx - ux * 0.06 - vx * 2.6, ly - uy * 0.06 - vy * 2.6, z),
+                               (lx + ux * 0.06 - vx * 2.6, ly + uy * 0.06 - vy * 2.6, z),
+                               (lx + ux * 0.06 + vx * 2.6, ly + uy * 0.06 + vy * 2.6, z),
+                               (lx - ux * 0.06 + vx * 2.6, ly - uy * 0.06 + vy * 2.6, z), (226, 226, 220), n=(0, 0, 1))
+                    if rng.random() < 0.3:
+                        self.parking.append((x, y, hdg + (180 if flip else 0)))
+                u += 2.7
+            row += 6.0 if not flip else 8.0
+            flip = not flip
+
+    def _paths(self):
+        """vialetti, zone pedonali, scale: lastricati piatti (anche percorsi per i pedoni)"""
+        self.path_rings = []
+        for p in self.paths:
+            P = p["P"]
+            pl = Polyline(P)
+            if pl.L < 2:
+                continue
+            n = int(pl.L / 0.5) + 1
+            ss = np.linspace(0, pl.L, n)
+            X, Y, _tx, _ty = pl.at_many(ss)
+            on_road = self._sample_raster(self.rid, X, Y, -1) >= 0
+            in_bld = self._sample_raster(self.world.hb, X, Y, -1) >= 0
+            good = ~(on_road | in_bld)
+            step = pl.L / max(n - 1, 1)
+            w = p["w"]
+            key = "pavers" if p["k"] == "pedestrian" else "walk"
+            for (s0, s1) in self._runs(good, step):
+                if s1 - s0 < 1.5:
+                    continue
+                Q = pl.piece(s0, s1)
+                if len(Q) < 2:
+                    continue
+                Lft = offset_line(Q, -w / 2)
+                Rgt = offset_line(Q, w / 2)
+                mx, my = Q[len(Q) // 2]
+                self._ribbon_lr(self.M(key + "flat" if key == "walk" else key, mx, my), Lft, Rgt, 0.0,
+                                (232, 230, 226), 6.0)
+                if s1 - s0 > 6 and p["k"] != "cycleway":
+                    self.path_rings.append(PathRing(Q))
+
+    # ------------------------------------------------------------------ luoghi della storia
+    def _facade_to_road(self, b, min_len=6.0):
+        """lato dell'edificio rivolto verso la strada piu' vicina: (mx, my, nx, ny, lunghezza, distanza)"""
+        P = np.asarray(b["outer"])
+        best = None
+        for i in range(len(P)):
+            a, c = P[i], P[(i + 1) % len(P)]
+            d = c - a
+            l = float(np.hypot(*d))
+            if l < min_len:
+                continue
+            nx, ny = d[1] / l, -d[0] / l
+            mx, my = (a + c) / 2
+            for dist in np.arange(1.0, 30.0, 1.0):
+                g = self.gt.get(mx + nx * dist, my + ny * dist)
+                if self.world.hb.get(mx + nx * dist, my + ny * dist, -1) >= 0 and dist > 1.5:
+                    break
+                if g in (1, 2):
+                    score = dist - l * 0.15
+                    if best is None or score < best[0]:
+                        best = (score, mx, my, nx, ny, l, dist)
+                    break
+        return best[1:] if best else None
+
+    def _sign(self, text_s, x, y, z, h, scale, color, neon=False, back=None):
+        self.sign_specs.append((text_s, float(x), float(y), float(z), float(h), float(scale), tuple(color), neon,
+                                tuple(back) if back else None))
+        if self.font is None:
+            self.font = TextNode.getDefaultFont()
+        tn = TextNode("insegna")
+        tn.setText(text_s)
+        tn.setAlign(TextNode.ACenter)
+        tn.setTextColor(*color)
+        if back:
+            tn.setCardColor(*back)
+            tn.setCardAsMargin(0.4, 0.4, 0.2, 0.2)
+            tn.setCardDecal(True)
+        np_ = self.env.root.attachNewNode(tn.generate())
+        np_.setPos(x, y, z)
+        np_.setH(h)
+        np_.setScale(scale)
+        np_.setTransparency(TransparencyAttrib.M_alpha)
+        np_.setShader(self.env.sign_shader)
+        np_.setShaderInput("u_glow", 1.0 if neon else 0.0)
+        np_.setDepthOffset(2)
+        np_.hide(MASK_SHADOW)
+        self.signs.append(np_)
+        return np_
+
+    def _sign_on(self, b, lines, z, neon=True, back=None, backing=None):
+        f = self._facade_to_road(b)
+        if f is None:
+            return None
+        mx, my, nx, ny, l, dist = f
+        hdg = math.degrees(math.atan2(nx, -ny))
+        sx, sy = mx + nx * 0.45, my + ny * 0.45
+        if backing is not None:
+            p = self.M("props", mx, my)
+            w = min(l * 0.42, 9.0)
+            tx, ty = -ny, nx
+            m = Mesh()
+            m.box(-w, -0.4, z - 1.6, w, 0.0, z + 1.4, backing, faces="xXyYz")
+            p.add_mesh(m, mx + nx * 0.02, my + ny * 0.02, 0, hdg)
+            del tx, ty
+            sx, sy = mx + nx * 0.47, my + ny * 0.47
+        for (text_s, dz, scale, col) in lines:
+            self._sign(text_s, sx, sy, z + dz, hdg, scale, col, neon, back)
+        return (mx + nx * (dist + 0.5), my + ny * (dist + 0.5), nx, ny)
+
+    def _places(self):
+        rng = random.Random(77)
+        R = self.R
+        self._smith_house()
+        sx, sy = self.spots["smith"]
+        servizi = self.data.get("servizi", [])
+        blds = [b for b in self.blds if b["m"] < 2.0 and b["area"] > 60]
+
+        def building_at(x, y):
+            sid = int(self.world.hb.get(x, y, -1))
+            for b in blds:
+                if b["sid"] == sid:
+                    return b
+            best = min(blds, key=lambda b: (b["cx"] - x) ** 2 + (b["cy"] - y) ** 2)
+            return best
+        # Federazione Galattica (la vera centrale di polizia)
+        pol = [b for b in blds if b["rec"].get("a") == "police"]
+        if pol:
+            pb = min(pol, key=lambda b: math.hypot(b["cx"], b["cy"]) - b["area"] * 0.02)
+        else:
+            pts = [s for s in servizi if s["k"] == "police"]
+            if pts:
+                p = min(pts, key=lambda s: abs(s["p"][0]) + abs(s["p"][1]))
+                pb = building_at(*p["p"])
+            else:
+                pb = min(blds, key=lambda b: abs(math.hypot(b["cx"], b["cy"]) - 500) - b["area"] * 0.01)
+        r = self._sign_on(pb, [("FEDERAZIONE GALATTICA", 0.0, 1.5, (1.0, 0.85, 0.2, 1)),
+                               ("DISTRETTO TERRA", -1.6, 0.9, (0.8, 0.9, 1.0, 1))], min(pb["h"] - 2, 14.0))
+        self.spots["polizia"] = self.free_point_near(*(r[:2] if r else (pb["cx"], pb["cy"])), roads_ok=False)
+        # liceo Harry Herpson: la scuola vera piu' vicina a casa Smith
+        sch = [b for b in blds if b["k"] == "school" or b["rec"].get("a") == "school"]
+        pts = [s for s in servizi if s["k"] == "school"]
+        cand = sch + [building_at(*s["p"]) for s in pts]
+        if cand:
+            sb = min(cand, key=lambda b: (b["cx"] - sx) ** 2 + (b["cy"] - sy) ** 2)
+        else:
+            sb = min(blds, key=lambda b: abs(math.hypot(b["cx"] - sx, b["cy"] - sy) - 300))
+        r = self._sign_on(sb, [("LICEO HARRY HERPSON", 0.0, 1.1, (0.1, 0.12, 0.3, 1))], min(sb["h"] - 1.5, 8.0),
+                          neon=False, back=(0.95, 0.93, 0.85, 1))
+        self.spots["scuola"] = self.free_point_near(*(r[:2] if r else (sb["cx"], sb["cy"])))
+        # Blips and Chitz: un negozio su una strada principale a qualche isolato da casa
+        main = set(c.id for c in self.net.chains if c.k in ("primary", "secondary", "tertiary"))
+        best = None
+        for b in blds:
+            if b["k"] not in ("retail", "commercial", "yes") or not (150 < b["area"] < 3000) or not (4 < b["h"] < 30):
+                continue
+            d = math.hypot(b["cx"] - sx, b["cy"] - sy)
+            if not (250 < d < 1100):
+                continue
+            tall = max((o["h"] for o in blds if abs(o["cx"] - b["cx"]) < 70 and abs(o["cy"] - b["cy"]) < 70), default=0)
+            if tall > 45:
+                continue
+            f = self._facade_to_road(b, 10.0)
+            if f is None:
+                continue
+            mx, my, nx, ny, l, dist = f
+            rid = int(self.rid.get(mx + nx * (dist + 3), my + ny * (dist + 3), -1))
+            if rid not in main:
+                continue
+            score = abs(d - 550) + abs(b["h"] - 10) * 4
+            if best is None or score < best[0]:
+                best = (score, b)
+        ab = best[1] if best else min(blds, key=lambda b: abs(math.hypot(b["cx"] - sx, b["cy"] - sy) - 500))
+        r = self._sign_on(ab, [("BLIPS AND CHITZ", 0.4, 1.3, (0.3, 1.0, 1.0, 1)),
+                               ("SALA GIOCHI", -0.75, 0.7, (1.0, 0.35, 0.9, 1))], 5.6, backing=(24, 20, 40))
+        self.spots["arcade"] = self.free_point_near(*(r[:2] if r else (ab["cx"], ab["cy"])))
+        # parchi veri (il Cromulon appare nel parco piu' centrale: Pershing Square a LA)
+        parks = sorted(self.parks, key=lambda a: -a["area"])
+        pts = []
+        for a in parks[:12]:
+            pts.append(self.free_point_near(a["cx"], a["cy"], roads_ok=False, rmax=40))
+        if not pts:
+            pts = [self.free_point_near(0, 0)]
+        self.spots["parchi"] = pts
+        self.center_park = min(pts, key=lambda p: math.hypot(*p) * 1.0)
+        # portale Cronenberg: un grande spazio libero lontano da casa (parcheggio o piazza)
+        self.spots["cronenberg"] = self._open_space(far_from=(sx, sy))
+        del rng, R
+
+    def _open_space(self, far_from):
+        """cerca un quadrato di ~50 m senza edifici (raster a 4 m)"""
+        hb = self.world.hb
+        f = 4
+        n = hb.n // f
+        occ = (hb.a[:n * f, :n * f] >= 0).reshape(n, f, n, f).any(axis=(1, 3))
+        occ |= (self.gt.a[:n * f, :n * f] == 4).reshape(n, f, n, f).any(axis=(1, 3))
+        I = np.zeros((n + 1, n + 1), np.int32)
+        I[1:, 1:] = np.cumsum(np.cumsum(occ.astype(np.int32), 0), 1)
+        k = 7
+        best = None
+        for iy in range(k, n - k, 2):
+            for ix in range(k, n - k, 2):
+                s = I[iy + k + 1, ix + k + 1] - I[iy - k, ix + k + 1] - I[iy + k + 1, ix - k] + I[iy - k, ix - k]
+                if s:
+                    continue
+                x = (ix + 0.5) * f - hb.L
+                y = (iy + 0.5) * f - hb.L
+                if max(abs(x), abs(y)) > self.limit - 60:
+                    continue
+                d = math.hypot(x - far_from[0], y - far_from[1])
+                if d < 400:
+                    continue
+                score = -d * 0.2 + math.hypot(x, y) * 0.05
+                if best is None or score < best[0]:
+                    best = (score, x, y)
+        if best is None:
+            return self.free_point_near(self.limit * 0.6, 0.0, roads_ok=True)
+        return (best[1] - 10.0, best[2])
+
+    def _smith_house(self):
+        """casa Smith in un lotto libero lungo una strada residenziale"""
+        best = None
+        hb = self.world.hb
+        for ch in self.net.chains:
+            if ch.k not in ("residential", "tertiary", "unclassified", "living_street", "secondary") or ch.cut is None:
+                continue
+            pl = ch.pl
+            for s in np.arange(18.0, pl.L - 18.0, 8.0):
+                x, y, tx, ty = pl.at(s)
+                nx, ny = ty, -tx
+                for si, side in enumerate((1, -1)):
+                    so = ch.cut[si] if ch.cut[si] is not None else ch.hw + 2.5
+                    dfront = so + 1.0 + 10.5
+                    cx, cy = x + nx * side * dfront, y + ny * side * dfront
+                    if max(abs(cx), abs(cy)) > self.limit - 80:
+                        continue
+                    fx, fy = -nx * side, -ny * side      # verso la strada
+                    rx, ry = -fy, fx
+                    ok = True
+                    lot_pen = 0
+                    for lx in np.arange(-11.0, 15.5, 1.5):
+                        for ly in np.arange(-10.0, 10.5, 1.5):
+                            px = cx + rx * lx - fx * ly
+                            py = cy + ry * lx - fy * ly
+                            if hb.get(px, py, -1) >= 0:
+                                ok = False
+                                break
+                            g = self.gt.get(px, py)
+                            if g in (1, 2, 4):
+                                ok = False
+                                break
+                            if g == 5:
+                                lot_pen += 1
+                        if not ok:
+                            break
+                    if not ok:
+                        continue
+                    d = math.hypot(cx, cy)
+                    score = abs(d - 700) + lot_pen * 2 + (150 if ch.k == "secondary" else 0)
+                    if best is None or score < best[0]:
+                        best = (score, cx, cy, fx, fy, dfront - so)
+        if best is None:
+            cx, cy = self.free_point_near(self.limit * 0.5, -self.limit * 0.5)
+            fx, fy, front = 0.0, -1.0, 11.5
+        else:
+            _s, cx, cy, fx, fy, front = best
+        self._build_smith(cx, cy, fx, fy, front)
+
+    def _build_smith(self, cx, cy, fx, fy, front):
+        """casa a due piani con garage (come in City._house) ruotata verso la strada"""
+        hdeg = math.degrees(math.atan2(fx, -fy))
+        rad = math.radians(hdeg)
+        c, s = math.cos(rad), math.sin(rad)
+
+        def W(lx, ly):
+            return cx + lx * c - ly * s, cy + lx * s + ly * c
+        parts = {}
+
+        def P(k):
+            m = parts.get(k)
+            if m is None:
+                m = parts[k] = Mesh()
+            return m
+        hk = "house1"
+        W2, D2, Hh = 5.2, 4.2, 5.8
+        z0 = 0.0
+        P(hk).box(-W2, -D2, z0 - 0.3, W2, D2, Hh, (255, 255, 255), uv=(12, 6), faces="yXYx", v_base=z0)
+        rz = Hh + 3.0
+        ov = 0.6
+        P("shingles").quad((-W2 - ov, -D2 - ov, Hh - 0.3), (W2 + ov, -D2 - ov, Hh - 0.3), (W2 + ov, 0, rz),
+                           (-W2 - ov, 0, rz), (255, 255, 255), ((0, 0), (3, 0), (3, 1.4), (0, 1.4)))
+        P("shingles").quad((W2 + ov, D2 + ov, Hh - 0.3), (-W2 - ov, D2 + ov, Hh - 0.3), (-W2 - ov, 0, rz),
+                           (W2 + ov, 0, rz), (255, 255, 255), ((0, 0), (3, 0), (3, 1.4), (0, 1.4)))
+        wall = (210, 222, 232)
+        P("props").quad((W2, -D2, Hh), (W2, D2, Hh), (W2, 0, rz - 0.2), (W2, 0, rz - 0.2), wall)
+        P("props").quad((-W2, D2, Hh), (-W2, -D2, Hh), (-W2, 0, rz - 0.2), (-W2, 0, rz - 0.2), wall)
+        P("props").box(-0.8, -D2 - 0.12, z0, 0.8, -D2 + 0.05, 2.4, (110, 70, 44), faces="yz")
+        P("props").box(-1.6, -D2 - 1.6, 2.6, 1.6, -D2, 2.8, (240, 240, 236), faces="xXyYzZ")
+        P("props").box(-1.6, -D2 - 1.8, z0, 1.6, -D2, z0 + 0.25, (196, 192, 186), faces="xXyz")
+        for sx in (-1.4, 1.4):
+            P("props").cylinder(sx, -D2 - 1.4, z0, 2.6, 0.09, (240, 240, 236), seg=6, cap=False)
+        P(hk).box(W2, -D2, z0 - 0.3, W2 + 6.5, D2 - 0.5, 3.6, (255, 255, 255), uv=(12, 6), faces="XYx", v_base=z0)
+        P("garage").box(W2 + 0.5, -D2 - 0.02, z0, W2 + 6.0, -D2 + 0.1, 3.0, (255, 255, 255), faces="y")
+        P("props").box(W2, -D2, z0 + 3.0, W2 + 6.5, -D2 + 0.4, 3.6, wall, faces="y")
+        P("roof2").box(W2 - 0.2, -D2 - 0.3, 3.6, W2 + 6.8, D2 - 0.2, 3.8, (255, 255, 255), faces="xXyYz")
+        # buca delle lettere, prato, vialetto, recinzione
+        P("props").box(-1.0, -D2 - 4.5, z0, -0.7, -D2 - 4.2, 1.2, (80, 80, 90), faces="xXyYz")
+        P("props").box(-1.2, -D2 - 4.7, 1.2, -0.5, -D2 - 4.0, 1.6, (40, 70, 140), faces="xXyYz")
+        yf = -front - 0.5
+        P("grass").quad((-11, yf, 0.01), (15, yf, 0.01), (15, 10, 0.01), (-11, 10, 0.01), (255, 255, 255),
+                        ((0, 0), (4, 0), (4, 3), (0, 3)), (0, 0, 1))
+        P("walkflat").quad((W2 + 1.5, yf, 0.03), (W2 + 5.0, yf, 0.03), (W2 + 5.0, -D2, 0.03), (W2 + 1.5, -D2, 0.03),
+                           (236, 234, 230), ((0, 0), (0.6, 0), (0.6, 2), (0, 2)), (0, 0, 1))
+        P("walkflat").quad((-0.8, yf, 0.025), (0.8, yf, 0.025), (0.8, -D2 - 1.8, 0.025), (-0.8, -D2 - 1.8, 0.025),
+                           (236, 234, 230), ((0, 0), (0.3, 0), (0.3, 2), (0, 2)), (0, 0, 1))
+        P("props").box(-11, 9.4, 0, 15, 9.5, 1.1, (240, 240, 236), faces="xXyYz")
+        for k, m in parts.items():
+            self.M(k, cx, cy).add_mesh(m, cx, cy, 0, hdeg)
+        house = [W(-W2, -D2), W(W2 + 6.5, -D2), W(W2 + 6.5, D2), W(-W2, D2)]
+        if ring_area(house) < 0:
+            house = house[::-1]
+        self.world.add_solid(house, [], -1.0, Hh)
+        self.world.hh.fill_rings([house], rz - 1.0, "max")
+        lot = [W(-11, yf), W(15, yf), W(15, 10), W(-11, 10)]
+        self.gt.fill_rings([lot], 3)
+        self.smith_lot = lot
+        self.parking = [p for p in self.parking if not point_in_ring(p[0], p[1], lot)]
+        hh = (hdeg + 180) % 360
+        self.spots["casa"] = (*W(1.0, -D2 - 6.3), hh)
+        self.spots["garage_auto"] = (*W(8.4, -D2 - 6.2), hh)
+        self.spots["smith"] = (cx, cy)
+        self.rooftops.append((cx, cy, rz - 0.6))
+        self._tree_at(*W(-7.5, yf + 2.5), kind="broad", small=True)
+
+    # ------------------------------------------------------------------ arredo: alberi, lampioni, semafori
+    def _template_meshes(self):
+        rng = random.Random(5)
+        T = {}
+        broad = []
+        for v in range(4):
+            m = Mesh()
+            th = rng.uniform(2.6, 3.4)
+            m.cylinder(0, 0, 0, th, 0.2, (92, 70, 52), seg=6, r_top=0.14, cap=False)
+            base = rng.choice(((70, 110, 52), (86, 120, 56), (60, 100, 50), (100, 116, 54)))
+            R = rng.uniform(2.2, 2.9)
+            for k in range(3):
+                ox, oy = rng.uniform(-1, 1) * R * 0.45, rng.uniform(-1, 1) * R * 0.45
+                oz = th + R * rng.uniform(0.4, 0.9)
+                r = R * rng.uniform(0.7, 0.95)
+                m.ellipsoid(ox, oy, oz, r, r, r * 0.85, base, seg=7, rings=4, jitter=0.14, seed=rng.randrange(9999),
+                            color_var=0.12)
+            broad.append((m, th + R * 2))
+        T["broad"] = broad
+        palms = []
+        for v in range(3):
+            m = Mesh()
+            f = Mesh()
+            H = rng.uniform(11, 18)
+            lean = rng.uniform(-0.6, 0.6)
+            segs = 4
+            for k in range(segs):
+                z0, z1 = H * k / segs, H * (k + 1) / segs
+                x0, x1 = lean * (k / segs) ** 2, lean * ((k + 1) / segs) ** 2
+                r0 = 0.32 - 0.12 * k / segs
+                r1 = 0.32 - 0.12 * (k + 1) / segs
+                c = Mesh()
+                c.cylinder(0, 0, z0, z1, r0, (120, 104, 84), seg=6, r_top=r1, cap=False)
+                m.add_mesh(c, x1 - (x1 - x0) / 2, 0, 0)
+            tx = lean
+            m.ellipsoid(tx, 0, H, 0.55, 0.55, 0.7, (110, 96, 60), seg=6, rings=4)
+            nf = 11
+            for k in range(nf):
+                a = k / nf * TAU + rng.uniform(-0.15, 0.15)
+                ca, sa = math.cos(a), math.sin(a)
+                droop = rng.uniform(0.6, 1.2)
+                Lf = rng.uniform(3.2, 4.2)
+                pts = []
+                for j in range(5):
+                    t = j / 4
+                    r = Lf * t
+                    z = H + 0.3 + 1.2 * t - droop * 3.0 * t * t
+                    w = 0.55 * math.sin(math.pi * min(1.0, t * 1.1 + 0.05))
+                    pts.append((tx + ca * r, sa * r, z, w))
+                col = (64, 104, 48) if k % 2 else (78, 116, 52)
+                for j in range(4):
+                    x0, y0, z0, w0 = pts[j]
+                    x1, y1, z1, w1 = pts[j + 1]
+                    px, py = -sa, ca
+                    f.quad((x0 - px * w0, y0 - py * w0, z0 - 0.15 * w0), (x1 - px * w1, y1 - py * w1, z1 - 0.15 * w1),
+                           (x1 + px * w1, y1 + py * w1, z1 - 0.15 * w1), (x0 + px * w0, y0 + py * w0, z0 - 0.15 * w0),
+                           col, n=(0, 0, 1))
+            palms.append((m, f, H + 1))
+        T["palm"] = palms
+        # lampione "cobra" delle strade principali
+        cob = Mesh()
+        cob.cylinder(0, 0, 0, 9.0, 0.13, (110, 112, 116), seg=6, r_top=0.09, cap=False)
+        cob.box(-0.06, 0, 8.75, 0.06, 2.6, 8.88, (110, 112, 116), faces="xXyYzZ")
+        cob.box(-0.3, 2.3, 8.55, 0.3, 3.1, 8.85, (120, 122, 126), faces="xXyYzZ")
+        head_c = Mesh()
+        head_c.box(-0.24, 2.36, 8.52, 0.24, 3.04, 8.55, (255, 250, 230), faces="Z")
+        T["cobra"] = (cob, head_c, (0.0, 2.7, 8.3))
+        # lampione ornamentale del centro di LA (due globi)
+        orn = Mesh()
+        orn.cylinder(0, 0, 0, 0.5, 0.22, (40, 46, 42), seg=6, cap=False)
+        orn.cylinder(0, 0, 0.5, 5.2, 0.1, (40, 46, 42), seg=6, cap=False)
+        orn.box(-0.9, -0.04, 4.9, 0.9, 0.04, 5.0, (40, 46, 42), faces="xXyYzZ")
+        glob = Mesh()
+        for sx in (-0.85, 0.85):
+            glob.ellipsoid(sx, 0, 5.35, 0.28, 0.28, 0.34, (250, 246, 230), seg=6, rings=3)
+        glob.ellipsoid(0, 0, 5.55, 0.32, 0.32, 0.4, (250, 246, 230), seg=6, rings=3)
+        T["orn"] = (orn, glob, (0.0, 0.0, 5.4))
+        # semaforo a sbraccio (stile California)
+        T["sig_pole"] = Mesh()
+        T["sig_pole"].cylinder(0, 0, 0, 6.6, 0.15, (150, 146, 120), seg=8, r_top=0.12, cap=True)
+        self.templ = T
+
+    def _tree_at(self, x, y, kind="broad", small=False, rng=None):
+        rng = rng or self.rng
+        if kind == "palm":
+            m, f, top = rng.choice(self.templ["palm"])
+            s = rng.uniform(0.8, 1.15)
+            h = rng.uniform(0, 360)
+            self.M("leaves", x, y).add_mesh(m, x, y, 0, h, s)
+            self.M("fronds", x, y).add_mesh(f, x, y, 0, h, s)
+            self.world.add_circle(x, y, 0.35, top * s, "albero")
+        else:
+            m, top = rng.choice(self.templ["broad"])
+            s = rng.uniform(0.75, 1.1) * (0.7 if small else 1.0)
+            self.M("leaves", x, y).add_mesh(m, x, y, 0, rng.uniform(0, 360), s)
+            self.world.add_circle(x, y, 0.3, top * s, "albero")
+
+    def _lamp_at(self, x, y, tx, ty, nx, ny, kind):
+        """lampione al bordo del marciapiede; (nx, ny) = verso la strada"""
+        body, head, lp = self.templ[kind]
+        hdg = math.degrees(math.atan2(-nx, ny))
+        self.M("metal", x, y).add_mesh(body, x, y, 0, hdg)
+        self.M("lamp", x, y).add_mesh(head, x, y, 0, hdg)
+        r = math.radians(hdg)
+        c, s = math.cos(r), math.sin(r)
+        lx, ly = x + lp[0] * c - lp[1] * s, y + lp[0] * s + lp[1] * c
+        self.lamps.append((lx, ly, lp[2]))
+        self.world.add_circle(x, y, 0.18, 9.0, "lampione")
+
+    def _props(self):
+        rng = self.rng
+        hb = self.world.hb
+        main = ("primary", "secondary", "trunk", "tertiary")
+        palm_chain = {}
+        lamp_pts = []
+        for wr in self.walk_runs:
+            ch = wr["ch"]
+            side = wr["side"]
+            s0, s1 = wr["s0"], wr["s1"]
+            hw, so = wr["hw"], wr["so"]
+            if s1 - s0 < 8:
+                continue
+            kind = "cobra" if ch.k in ("primary", "secondary", "trunk") else "orn"
+            phase = 6.0 if side > 0 else 25.0
+            s = s0 + phase
+            while s < s1 - 3:
+                x, y, tx, ty = ch.pl.at(s)
+                nx, ny = ty * side, -tx * side
+                px, py = x + nx * (hw + 0.55), y + ny * (hw + 0.55)
+                if hb.get(px, py, -1) < 0:
+                    self._lamp_at(px, py, tx, ty, -nx, -ny, kind)
+                    lamp_pts.append((px, py))
+                s += 38.0
+            # alberi lungo la strada (palme su alcune vie, come a LA)
+            if so - hw >= 2.6 and ch.k in main + ("residential", "unclassified"):
+                if ch.id not in palm_chain:
+                    palm_chain[ch.id] = rng.random() < 0.3
+                palms = palm_chain[ch.id]
+                spacing = 11.0 if palms else 13.0
+                prob = 0.75 if ch.k in ("residential", "tertiary") else 0.5
+                s = s0 + 4.0 + rng.uniform(0, 4)
+                while s < s1 - 4:
+                    x, y, tx, ty = ch.pl.at(s)
+                    nx, ny = ty * side, -tx * side
+                    px, py = x + nx * (hw + 1.1), y + ny * (hw + 1.1)
+                    if rng.random() < prob and hb.get(px, py, -1) < 0 and hb.get(px + nx * 2, py + ny * 2, -1) < 0:
+                        if all((px - lx) ** 2 + (py - ly) ** 2 > 9 for lx, ly in lamp_pts[-6:]):
+                            self._tree_at(px, py, "palm" if palms else "broad", small=not palms)
+                    s += spacing
+            # idranti
+            if rng.random() < 0.35:
+                s = rng.uniform(s0 + 3, max(s0 + 3.5, s1 - 3))
+                x, y, tx, ty = ch.pl.at(s)
+                nx, ny = ty * side, -tx * side
+                hx, hy = x + nx * (hw + 0.5), y + ny * (hw + 0.5)
+                p = self.M("props", hx, hy)
+                p.cylinder(hx, hy, CURB, CURB + 0.7, 0.16, (220, 190, 40), seg=8)
+                p.ellipsoid(hx, hy, CURB + 0.72, 0.17, 0.17, 0.12, (220, 190, 40), seg=8, rings=4)
+                self.world.add_circle(hx, hy, 0.2, 0.9, "idrante")
+            # posti auto lungo il marciapiede
+            if ch.park and ch.k != "service":
+                s = s0 + 6.0
+                while s < s1 - 6.0:
+                    x, y, tx, ty = ch.pl.at(s)
+                    if rng.random() < 0.14:
+                        nx, ny = ty * side, -tx * side
+                        cx, cy = x + nx * (hw - 1.25), y + ny * (hw - 1.25)
+                        h = vec_heading(tx, ty) if (side > 0 or ch.ow) else vec_heading(-tx, -ty)
+                        self.parking.append((cx, cy, h))
+                    s += 6.6
+        # alberi veri di OpenStreetMap
+        for (x, y) in self.data.get("punti", {}).get("trees", []):
+            if max(abs(x), abs(y)) < self.CL and hb.get(x, y, -1) < 0 and self.gt.get(x, y) not in (1, 4):
+                self._tree_at(x, y, "palm" if rng.random() < 0.3 else "broad")
+        # parchi: alberi e palme
+        for a in self.parks:
+            n = int(min(a["area"] / 260, 60))
+            P = np.asarray(a["P"])
+            x0, y0 = P.min(0)
+            x1, y1 = P.max(0)
+            for _ in range(n):
+                for _t in range(8):
+                    x, y = rng.uniform(x0, x1), rng.uniform(y0, y1)
+                    if point_in_ring(x, y, a["P"]) and self.gt.get(x, y) == 3 and hb.get(x, y, -1) < 0:
+                        self._tree_at(x, y, "palm" if rng.random() < 0.35 else "broad")
+                        break
+        # semafori
+        self._signals()
+        # fermate dell'autobus: palo con cartello e panchina
+        for (x, y) in self.data.get("punti", {}).get("bus", []):
+            if max(abs(x), abs(y)) > self.CL or self.gt.get(x, y) == 1 or hb.get(x, y, -1) >= 0:
+                continue
+            p = self.M("props", x, y)
+            p.cylinder(x, y, 0, 3.0, 0.05, (120, 122, 126), seg=6, cap=False)
+            p.box(x - 0.3, y - 0.03, 2.4, x + 0.3, y + 0.03, 3.0, (230, 120, 30))
+            self.world.add_circle(x, y, 0.1, 3.0, "palo")
+
+    def _signals(self):
+        net = self.net
+        groups = {}
+        for node in net.signal:
+            nx_, ny_ = net.nodes[node]
+            for (c, d) in net.out[node]:
+                ch = net.chains[c]
+                if ch.k == "service":
+                    continue
+                end = 0 if d > 0 else 1
+                if ch.ow and end == 0:
+                    continue          # a senso unico: il traffico se ne va da questo nodo
+                s_stop = ch.trim[end] + 0.5
+                if s_stop >= ch.pl.L:
+                    continue
+                s = s_stop if end == 0 else ch.pl.L - s_stop
+                x, y, tx, ty = ch.pl.at(s)
+                if end == 0:
+                    tx, ty = -tx, -ty          # verso di marcia del traffico in arrivo
+                rx, ry = ty, -tx               # destra di chi arriva
+                px, py = x + rx * (ch.hw + 0.9), y + ry * (ch.hw + 0.9)
+                if self.world.hb.get(px, py, -1) >= 0:
+                    continue
+                arm = ch.hw + 0.6 if not ch.ow else 2 * ch.hw - 0.5
+                arm = min(arm, 14.0)
+                hdg = vec_heading(-rx, -ry)     # il braccio va verso il centro della strada
+                pole = self.templ["sig_pole"]
+                self.M("metal", px, py).add_mesh(pole, px, py, 0, 0)
+                am = Mesh()
+                am.box(-0.07, 0, 6.2, 0.07, arm, 6.36, (150, 146, 120), faces="xXyYzZ")
+                heads = Mesh()
+                g = ch.group[end]
+                for k in range(3 if arm > 6 else 2):
+                    ay = arm - 0.6 - k * min(3.4, (arm - 1) / 2)
+                    heads.box(-0.18, ay - 0.17, 5.0, 0.18, ay + 0.17, 6.2, (40, 40, 36), faces="xXyYzZ")
+                    heads.box(-0.25, ay - 0.2, 6.15, 0.18, ay + 0.2, 6.2, (40, 40, 36), faces="z")
+                    for j, col in enumerate(("r", "y", "g")):
+                        zc = 5.95 - j * 0.38
+                        b = Mesh()
+                        b.box(-0.2, ay - 0.12, zc - 0.12, -0.18, ay + 0.12, zc + 0.12, (255, 255, 255), faces="x")
+                        groups.setdefault((g, col), Mesh()).add_mesh(b, px, py, 0, hdg)
+                self.M("metal", px, py).add_mesh(am, px, py, 0, hdg)
+                self.M("props", px, py).add_mesh(heads, px, py, 0, hdg)
+                self.world.add_circle(px, py, 0.2, 6.6, "semaforo")
+        self.signal_meshes = groups
+
+    # ------------------------------------------------------------------ pedoni
+    def _link_ped(self):
+        rings = []
+        for wr in self.walk_runs:
+            ch, side = wr["ch"], wr["side"]
+            mid = (wr["hw"] + wr["so"]) / 2
+            if wr["s1"] - wr["s0"] < 4:
+                continue
+            Q = ch.pl.piece(wr["s0"] + 0.3, wr["s1"] - 0.3)
+            if len(Q) < 2:
+                continue
+            C = offset_line(Q, mid * side)
+            rings.append(PathRing(C))
+        rings += self.path_rings
+        self.ped_rings = rings
+        grid = {}
+        for ri, r in enumerate(rings):
+            for e in (0, 1):
+                x, y = r.ends[e]
+                grid.setdefault((int(x // 16), int(y // 16)), []).append((ri, e))
+        hb = self.world.hb
+        for ri, r in enumerate(rings):
+            for e in (0, 1):
+                x, y = r.ends[e]
+                cands = []
+                for ix in range(int(x // 16) - 1, int(x // 16) + 2):
+                    for iy in range(int(y // 16) - 1, int(y // 16) + 2):
+                        for (rj, e2) in grid.get((ix, iy), ()):
+                            if rj == ri:
+                                continue
+                            qx, qy = rings[rj].ends[e2]
+                            d = math.hypot(qx - x, qy - y)
+                            if d > 16:
+                                continue
+                            blocked = False
+                            for t in np.linspace(0.1, 0.9, 6):
+                                if hb.get(x + (qx - x) * t, y + (qy - y) * t, -1) >= 0:
+                                    blocked = True
+                                    break
+                            if not blocked:
+                                cands.append((d, rj, e2))
+                cands.sort()
+                r.links[e].extend((rj, e2) for (_d, rj, e2) in cands[:4])
+
+    def ped_link(self, ring, end):
+        """dove andare alla fine di un marciapiede: (anello, posizione, verso) oppure None"""
+        try:
+            ri = self.ped_rings.index(ring)
+        except ValueError:
+            return None
+        lst = self.ped_rings[ri].links[end]
+        if not lst:
+            return None
+        rj, e2 = random.choice(lst[:3])
+        r2 = self.ped_rings[rj]
+        return r2, (0.0 if e2 == 0 else r2.length), (1 if e2 == 0 else -1)
+
+    # ------------------------------------------------------------------ periferia
+    def _outskirts(self):
+        rng = random.Random(9)
+        R = self.R
+        CL = self.CL
+        # orientamento prevalente delle strade (la griglia di LA e' ruotata)
+        hist = np.zeros(90)
+        for ch in self.net.chains:
+            P = ch.pl.P
+            D = np.diff(P, axis=0)
+            l = np.hypot(D[:, 0], D[:, 1])
+            ang = (np.degrees(np.arctan2(D[:, 1], D[:, 0])) % 90).astype(int) % 90
+            np.add.at(hist, ang, l)
+        th = math.radians(float(np.argmax(np.convolve(np.r_[hist[-3:], hist, hist[:3]], np.ones(7), "valid"))))
+        ux, uy = math.cos(th), math.sin(th)
+        vx, vy = -uy, ux
+        # isolati finti fino all'orizzonte
+        cell = 82.0
+        outer = CL + 900
+        n = int(outer * 1.5 / cell)
+        for i in range(-n, n + 1):
+            for j in range(-n, n + 1):
+                bx = (i * cell) * ux + (j * cell) * vx
+                by = (i * cell) * uy + (j * cell) * vy
+                d = max(abs(bx), abs(by))
+                if d < CL + 45 or d > outer:
+                    continue
+                far = d > CL + 400
+                k = 1 if far else rng.randint(1, 3)
+                for _q in range(k):
+                    w = rng.uniform(16, 36)
+                    dd = rng.uniform(14, 30)
+                    ox = rng.uniform(-22, 22)
+                    oy = rng.uniform(-22, 22)
+                    cx = bx + ux * ox + vx * oy
+                    cy = by + uy * ox + vy * oy
+                    if max(abs(cx), abs(cy)) < CL + 30:
+                        continue
+                    h = rng.choice((5, 7, 9, 12, 15, 22, 30)) * (1.0 if d < CL + 300 else 0.8)
+                    pts = [(cx - ux * w / 2 - vx * dd / 2, cy - uy * w / 2 - vy * dd / 2),
+                           (cx + ux * w / 2 - vx * dd / 2, cy + uy * w / 2 - vy * dd / 2),
+                           (cx + ux * w / 2 + vx * dd / 2, cy + uy * w / 2 + vy * dd / 2),
+                           (cx - ux * w / 2 + vx * dd / 2, cy - uy * w / 2 + vy * dd / 2)]
+                    st = rng.choice(("intonaco_crema", "intonaco_bianco", "intonaco_pesca", "mattoni_rossi", "pietra",
+                                     "capannone", "uffici_griglia", "casa0", "casa1"))
+                    self._fac_ring(self.M("fac", cx, cy), pts, 0.0, h, FACADE_INDEX[st], None, 0.0, rng, False)
+                    flat_poly(self.M("roof", cx, cy), pts, [], h, (190, 190, 186), 6.0)
+        # suolo della citta' e colline lontane (a nord le montagne di San Gabriel)
+        E = CL + 960
+        g = Mesh()
+        g.quad((-E, -E, -0.06), (E, -E, -0.06), (E, E, -0.06), (-E, E, -0.06), (255, 255, 255),
+               ((-E / 8, -E / 8), (E / 8, -E / 8), (E / 8, E / 8), (-E / 8, E / 8)), (0, 0, 1))
+        self.ground_mesh = g
+        t = Mesh()
+        Nn = 56
+        RR = 7000.0
+        hn = np.zeros((Nn + 1, Nn + 1))
+        for i in range(Nn + 1):
+            for j in range(Nn + 1):
+                x = -RR + 2 * RR * i / Nn
+                y = -RR + 2 * RR * j / Nn
+                dd = max(abs(x), abs(y))
+                kk = smoothstep(E + 200, E + 2200, dd)
+                north = smoothstep(-500, 5000, y)
+                hgt = 30 + 120 * (0.5 + 0.5 * math.sin(x * 0.0021 + 1.7) * math.cos(y * 0.0017 - 0.4))
+                hgt += 45 * math.sin(x * 0.0071 + y * 0.0049) + 25 * math.sin(x * 0.013 - y * 0.011)
+                hgt += north * 700 * (0.6 + 0.4 * math.sin(x * 0.0013 + 0.3)) * smoothstep(3500, 6500, dd)
+                hn[i, j] = kk * (hgt + rng.uniform(-15, 15)) - 0.08
+        for i in range(Nn):
+            for j in range(Nn):
+                x0 = -RR + 2 * RR * i / Nn
+                y0 = -RR + 2 * RR * j / Nn
+                x1 = x0 + 2 * RR / Nn
+                y1 = y0 + 2 * RR / Nn
+                if max(abs(x0), abs(x1)) < E and max(abs(y0), abs(y1)) < E:
+                    continue
+                hh = (hn[i, j], hn[i + 1, j], hn[i + 1, j + 1], hn[i, j + 1])
+
+                def col(z):
+                    rock = smoothstep(250, 750, z)
+                    v = 0.85 + 0.15 * math.sin(z * 0.05)
+                    return (int(lerp(150, 176, rock) * v), int(lerp(150, 168, rock) * v), int(lerp(104, 150, rock) * v))
+                t.quad4((x0, y0, hh[0]), (x1, y0, hh[1]), (x1, y1, hh[2]), (x0, y1, hh[3]),
+                        [col(hh[0]), col(hh[1]), col(hh[2]), col(hh[3])],
+                        ((x0 / 30, y0 / 30), (x1 / 30, y0 / 30), (x1 / 30, y1 / 30), (x0 / 30, y1 / 30)))
+        self.hills_mesh = t
+        self.spots.setdefault("cronenberg", (R * 0.6, 0.0))
+
+    # ------------------------------------------------------------------ nodi grafici
+    def _finalize(self):
+        root = self.root
+        self.ground_mesh.attach(root, "suolo")
+        self.hills_mesh.attach(root, "colline")
+        facs = root.attachNewNode("facciate_root")
+        self.n_geoms = 0
+        small = ("metal", "lamp", "leaves", "fronds", "props", "marks", "helipad")
+        for ck, d in sorted(self.tiles.items()):
+            cnode = root.attachNewNode("zona")
+            lod = LODNode("dettagli")
+            lnp = cnode.attachNewNode(lod)
+            lod.addSwitch(self.LOD_FAR, 0.0)
+            lod.setCenter(Point3((ck[0] + 0.5) * self.TILE, (ck[1] + 0.5) * self.TILE, 0))
+            near = lnp.attachNewNode("vicino")
+            for key, m in d.items():
+                if len(m) == 0:
+                    continue
+                self.n_geoms += 1
+                if key == "fac":
+                    m.attach(facs, "facciate")
+                else:
+                    m.attach(near if key in small else cnode, key)
+        self.tiles = {}
+        for (grp, col), m in self.signal_meshes.items():
+            m.attach(root, "semaforo_%d_%s" % (grp, col))
+        self.signal_meshes = {}
+        self._apply_states()
+        for s_ in self.signs:
+            s_.reparentTo(root)
+
+    def _apply_states(self):
+        """texture, materiali e shader (non salvati nella cache della geometria)"""
+        env = self.env
+        root = self.root
+        self.sig_nodes = {}
+        for np_ in root.findAllMatches("**/+GeomNode"):
+            name = np_.getName()
+            if name == "suolo":
+                np_.setTexture(self.T["ground"])
+                np_.setShaderInput("u_mat", Vec4(*self.MAT["ground"]))
+            elif name == "colline":
+                np_.setTexture(self.T["grass"])
+                np_.setShaderInput("u_mat", Vec4(0.05, 8, 0.0, 0))
+                np_.hide(MASK_SHADOW)
+            elif name == "facciate":
+                continue
+            elif name.startswith("semaforo_"):
+                _n, grp, col = name.split("_")
+                np_.setShader(env.fx_shader)
+                np_.hide(MASK_SHADOW | MASK_MAP)
+                self.sig_nodes[(int(grp), col)] = np_
+            elif name in self.MAT or name.endswith("flat"):
+                key = name
+                tkey = key[:-4] if key.endswith("flat") else key
+                tex = self.T.get(tkey)
+                if tex is not None:
+                    np_.setTexture(tex)
+                emit = self.E.get(key)
+                if emit is not None:
+                    np_.setShaderInput("emit_tex", emit)
+                np_.setShaderInput("u_mat", Vec4(*self.MAT.get(tkey, (0.25, 24, 0.0, 0))))
+                dep = self.DEPTH.get(key)
+                if dep:
+                    np_.setDepthOffset(dep)
+                if key == "fronds":
+                    np_.setTwoSided(True)
+                if key == "marks":
+                    np_.hide(MASK_SHADOW)
+        facs = root.find("**/facciate_root")
+        if not facs.isEmpty():
+            facs.setShader(env.facade_shader)
+            facs.setShaderInput("u_fac_alb", self.fac_alb)
+            facs.setShaderInput("u_fac_nrm", self.fac_nrm)
+            facs.setShaderInput("u_fac_grid", self.fac_grid)
+            facs.setShaderInput("u_fac_info", self.fac_info)
+            facs.setShaderInput("u_mat", Vec4(*self.MAT["fac"]))
+        self.set_signals(0.0)
+
+    # ------------------------------------------------------------------ cache su disco
+    @staticmethod
+    def cache_dir():
+        return os.path.join(os.path.expanduser("~"), ".rick_morty_3d_cache")
+
+    def _save_cache(self, key):
+        import gzip
+        import pickle
+        try:
+            d = self.cache_dir()
+            os.makedirs(d, exist_ok=True)
+            for f in os.listdir(d):          # vecchie versioni
+                if f.startswith(self.name + "_") and not f.startswith(key):
+                    try:
+                        os.remove(os.path.join(d, f))
+                    except OSError:
+                        pass
+            base = os.path.join(d, key)
+            cp = self.root.copyTo(NodePath("cache"))
+            for n in cp.findAllMatches("**"):
+                n.node().setState(RenderState.makeEmpty())
+            for n in cp.findAllMatches("**/insegna"):
+                n.removeNode()
+            w = self.world
+            net = self.net
+            chains = [{k: getattr(c, k) for k in Chain.__slots__ if k != "pl"} for c in net.chains]
+            for c, cd in zip(net.chains, chains):
+                cd["P"] = c.pl.P
+            meta = dict(
+                ver=self.CACHE_VER, S=self.S, R=self.R, limit=self.limit, map_r=self.map_r, CL=self.CL, name=self.name,
+                n_buildings=self.n_buildings, n_geoms=self.n_geoms, L=w.hb.L,
+                world=dict(boxes=w.boxes, circles=w.circles, gb=w.gb, gc=w.gc, solids=w.solids, eg=w.eg,
+                           hb=w.hb.a, hh=w.hh.a),
+                gt=self.gt.a, net=dict(nodes=net.nodes, out=net.out, signal=sorted(net.signal), chains=chains),
+                rings=[(r.pl.P, r.links) for r in self.ped_rings], lamps=self.lamps, spots=self.spots,
+                parking=self.parking, rooftops=self.rooftops, center_park=self.center_park, signs=self.sign_specs,
+                map=self.map_img)
+            cp.writeBamFile(Filename.fromOsSpecific(base + ".tmp.bam.pz"))
+            with gzip.open(base + ".tmp.pkl.gz", "wb", compresslevel=3) as f:
+                pickle.dump(meta, f, protocol=4)
+            os.replace(base + ".tmp.bam.pz", base + ".bam.pz")
+            os.replace(base + ".tmp.pkl.gz", base + ".pkl.gz")
+            cp.removeNode()
+        except Exception:  # noqa: BLE001
+            import traceback
+            traceback.print_exc()
+
+    def _load_cache(self, key):
+        import gzip
+        import pickle
+        base = os.path.join(self.cache_dir(), key)
+        if not (os.path.exists(base + ".bam.pz") and os.path.exists(base + ".pkl.gz")):
+            return False
+        root = None
+        try:
+            self.prog(0.05, "Carico Los Angeles dalla cache")
+            with gzip.open(base + ".pkl.gz", "rb") as f:
+                meta = pickle.load(f)
+            if meta.get("ver") != self.CACHE_VER:
+                return False
+            for k in ("S", "R", "limit", "map_r", "CL", "name", "n_buildings", "n_geoms"):
+                setattr(self, k, meta[k])
+            self.prog(0.25, "Texture delle facciate")
+            self._textures()
+            w = RealWorld.__new__(RealWorld)
+            StaticWorld.__init__(w)
+            wd = meta["world"]
+            for k in ("boxes", "circles", "gb", "gc", "solids", "eg"):
+                setattr(w, k, wd[k])
+            w.limit = self.limit
+            w.hb = Raster.__new__(Raster)
+            w.hh = Raster.__new__(Raster)
+            self.gt = Raster.__new__(Raster)
+            for r, a in ((w.hb, wd["hb"]), (w.hh, wd["hh"]), (self.gt, meta["gt"])):
+                r.L, r.res, r.n, r.a = meta["L"], 1.0, a.shape[0], a
+            self.world = w
+            net = RoadNet()
+            nd = meta["net"]
+            net.nodes, net.out, net.signal = nd["nodes"], nd["out"], set(nd["signal"])
+            for cd in nd["chains"]:
+                c = Chain()
+                for k, v in cd.items():
+                    if k != "P":
+                        setattr(c, k, v)
+                c.pl = Polyline(cd["P"])
+                net.chains.append(c)
+            net.finish()
+            self.net = net
+            rings = []
+            for (P, links) in meta["rings"]:
+                r = PathRing(P)
+                r.links = links
+                rings.append(r)
+            self.ped_rings = rings
+            self.lamps = meta["lamps"]
+            self.spots = meta["spots"]
+            self.parking = meta["parking"]
+            self.rooftops = meta["rooftops"]
+            self.center_park = meta["center_park"]
+            self.map_img = meta["map"]
+            self.prog(0.6, "Geometria della citta'")
+            root = self.env.base.loader.loadModel(Filename.fromOsSpecific(base + ".bam.pz"), noCache=True)
+            root.reparentTo(self.env.root)
+            root.setName("citta")
+            self.root = root
+            self._apply_states()
+            for spec in meta["signs"]:
+                self._sign(*spec).reparentTo(root)
+            self._lamp_grid()
+            self.prog(1.0, "Pronto")
+            return True
+        except Exception:  # noqa: BLE001
+            import traceback
+            traceback.print_exc()
+            if root is not None:
+                root.removeNode()
+            return False
+
+    SIG_COL = {"r": (1.0, 0.12, 0.08), "y": (1.0, 0.7, 0.1), "g": (0.15, 1.0, 0.45)}
+
+    def signal_state(self, group, t):
+        """stato del semaforo per il gruppo: 'g', 'y' o 'r' (ciclo di 30 s)"""
+        c = (t + (0.0 if group == 0 else 15.0)) % 30.0
+        if c < 11.5:
+            return "g"
+        if c < 14.0:
+            return "y"
+        return "r"
+
+    def set_signals(self, t):
+        for (grp, col), np_ in self.sig_nodes.items():
+            on = self.signal_state(grp, t) == col
+            r, g, b = self.SIG_COL[col]
+            k = 1.0 if on else 0.12
+            np_.setColorScale(r * k + (0.02 if not on else 0), g * k, b * k, 1)
+
+    def update(self, dt, t):
+        self.set_signals(t)
+
+    # ------------------------------------------------------------------ lampioni vicini
+    def _lamp_grid(self):
+        g = {}
+        for (x, y, z) in self.lamps:
+            g.setdefault((int(x // 50), int(y // 50)), []).append((x, y, z))
+        self.lgrid = g
+
+    def nearest_lamps(self, x, y, n=8, maxd=90.0):
+        best = []
+        k = int(maxd // 50) + 1
+        ix, iy = int(x // 50), int(y // 50)
+        for a in range(ix - k, ix + k + 1):
+            for b in range(iy - k, iy + k + 1):
+                for (lx, ly, lz) in self.lgrid.get((a, b), ()):
+                    d = abs(lx - x) + abs(ly - y)
+                    if d < maxd:
+                        best.append((d, lx, ly, lz))
+        best.sort()
+        return best[:n]
+
+    # ------------------------------------------------------------------ missioni
+    def mission_starts(self):
+        sx, sy, _h = self.spots["casa"]
+        cpx, cpy = self.center_park
+        m4 = self.free_point_near(cpx, cpy - 13)
+        hx, hy = self.spots["smith"]
+        fx, fy = sx - hx, sy - hy
+        l = math.hypot(fx, fy) or 1
+        m1 = self.free_point_near(sx + fx / l * 2.5 - fy / l * 3.0, sy + fy / l * 2.5 + fx / l * 3.0)
+        return [None, m1, self.spots["polizia"], self.spots["cronenberg"], m4]
+
+    def seed_spots(self):
+        out = []
+        cpx, cpy = self.center_park
+        x, y = self.free_point_near(cpx + 12, cpy - 10)
+        out.append((x, y, 0.0))
+        roofs = sorted(self.rooftops, key=lambda r: abs(r[2] - 22) + math.hypot(r[0], r[1]) * 0.03)
+        out.append(roofs[0] if roofs else (0.0, 0.0, 0.0))
+        sx, sy = self.spots["scuola"]
+        x, y = self.free_point_near(sx + 25, sy + 25)
+        out.append((x, y, 0.0))
+        for (qx, qy) in ((-0.55, 0.35), (0.45, -0.5)):
+            x, y = self.free_point_near(qx * self.limit, qy * self.limit)
+            out.append((x, y, 0.0))
+        return out
+
+    # ------------------------------------------------------------------ mappa
+    def _make_map(self, size=2048):
+        R = self.map_r
+        L = self.gt.L
+        xs = (np.arange(size) + 0.5) / size * 2 * R - R
+        ix = ((xs + L) / self.gt.res).astype(np.int64)
+        iy = ix[::-1]
+        G = self.gt.a[np.ix_(iy, ix)]
+        H = self.world.hh.a[np.ix_(iy, ix)]
+        B = self.world.hb.a[np.ix_(iy, ix)]
+        img = np.zeros((size, size, 3), np.float32)
+        img[:] = (58, 60, 58)
+        img[G == 3] = (62, 104, 62)
+        img[G == 4] = (60, 96, 140)
+        img[G == 5] = (76, 78, 84)
+        img[G == 6] = (110, 106, 100)
+        img[G == 2] = (128, 126, 122)
+        img[G == 1] = (150, 152, 158)
+        bl = B >= 0
+        v = np.clip(78 + H * 0.55, 78, 170)
+        img[bl] = np.stack([v[bl], v[bl], v[bl] + 10], -1)
+        return to_u8(img)
+
+
+# =============================================================================
 #  PERSONAGGI 3D (articolati, animati via codice)
 # =============================================================================
 SKIN_TONES = [(244, 214, 186), (232, 190, 160), (208, 160, 120), (170, 120, 86), (122, 84, 60), (92, 62, 46)]
@@ -2572,6 +6809,65 @@ SEAT = {  # posizione del guidatore: (x, y, z)
 }
 
 
+def loft_body(m, L, hw, z0, belt, kind):
+    """carrozzeria arrotondata costruita per sezioni (cofano inclinato, spigoli smussati, normali morbide)"""
+    T = np.array([-1.0, -0.975, -0.93, -0.84, -0.55, -0.1, 0.3, 0.55, 0.75, 0.88, 0.95, 0.985, 1.0])
+    van = kind == "furgone"
+    sport = kind == "sportiva"
+    h0 = belt - z0
+    prof = [(0.93, 0.0), (1.0, 0.13), (1.0, 0.6), (0.97, 0.86), (0.84, 0.97), (0.45, 1.0), (0.0, 1.005)]
+    prof = prof + [(-x, z) for (x, z) in reversed(prof[:-1])]
+    K = len(prof)
+    P = np.zeros((len(T), K, 3))
+    for i, t in enumerate(T):
+        a = abs(t)
+        sx = 1.0 - (0.04 if van else 0.13) * max(0.0, a - 0.82) / 0.18
+        sx -= (0.0 if van else 0.06) * max(0.0, a - 0.96) / 0.04
+        h = h0
+        if t > 0.25:
+            h -= (0.04 if van else (0.16 if sport else 0.09)) * (t - 0.25) / 0.75
+        if t > 0.9:
+            h -= (0.05 if van else 0.13) * (t - 0.9) / 0.1
+        if t < -0.82:
+            h -= (0.03 if van else 0.07) * (a - 0.82) / 0.18
+        zb = z0 + (0.0 if van else 0.08) * max(0.0, a - 0.8) / 0.2
+        y = t * L / 2
+        for k, (px, pz) in enumerate(prof):
+            P[i, k] = (px * hw * sx, y, zb + pz * (z0 + h - zb))
+    I_, K_ = P.shape[0], P.shape[1]
+    # normali morbide: media delle facce adiacenti
+    N = np.zeros_like(P)
+    for i in range(I_ - 1):
+        for k in range(K_ - 1):
+            n = np.cross(P[i + 1, k] - P[i, k], P[i, k + 1] - P[i, k])
+            for (a_, b_) in ((i, k), (i + 1, k), (i, k + 1), (i + 1, k + 1)):
+                N[a_, b_] += n
+    N /= np.maximum(np.linalg.norm(N, axis=2, keepdims=True), 1e-9)
+    V = np.zeros((I_ * K_, 12), np.float32)
+    V[:, 0:3] = P.reshape(-1, 3)
+    V[:, 3:6] = N.reshape(-1, 3)
+    V[:, 6:10] = 1.0
+    V[:, 10] = (P[:, :, 1].reshape(-1) / L + 0.5)
+    V[:, 11] = P[:, :, 2].reshape(-1)
+    idx = []
+    for i in range(I_ - 1):
+        for k in range(K_ - 1):
+            a_ = i * K_ + k
+            b_ = (i + 1) * K_ + k
+            idx += [a_, b_, b_ + 1, a_, b_ + 1, a_ + 1]
+    m.chunks.append((V, np.asarray(idx, np.uint32)))
+    # tappi davanti e dietro
+    for i, front in ((0, False), (I_ - 1, True)):
+        ring = P[i]
+        c = ring.mean(axis=0)
+        for k in range(K_):
+            a_, b_ = tuple(ring[k]), tuple(ring[(k + 1) % K_])
+            if front:
+                m.quad(tuple(c), b_, a_, a_, (255, 255, 255), n=(0, 1, 0))
+            else:
+                m.quad(tuple(c), a_, b_, b_, (255, 255, 255), n=(0, -1, 0))
+
+
 class CarFactory:
     """Crea i modelli delle auto una volta sola e li copia per ogni veicolo."""
 
@@ -2618,7 +6914,7 @@ class CarFactory:
             z0 = wr * 0.9
             belt = z0 + (H - z0) * 0.52
             nose, tailo = (0.7, 0.55) if kind != "furgone" else (0.25, 0.1)
-            paint.frustum(-hw, -L / 2, hw, L / 2, z0, belt, -hw + 0.04, -L / 2 + 0.1, hw - 0.04, L / 2 - 0.12, WH)
+            loft_body(paint, L, hw, z0, belt, kind)
             dark.box(-hw - 0.01, L / 2 - 0.05, z0 - 0.04, hw + 0.01, L / 2 + 0.08, z0 + 0.22, (40, 40, 44))
             dark.box(-hw - 0.01, -L / 2 - 0.08, z0 - 0.04, hw + 0.01, -L / 2 + 0.05, z0 + 0.22, (40, 40, 44))
             if kind == "furgone":
@@ -2651,11 +6947,18 @@ class CarFactory:
                 # specchietti
                 paint.box(sx * hw - (0.18 if sx > 0 else -0.02), cab_y1 - 0.15, belt + 0.02, sx * hw + (0.02 if sx > 0 else 0.18) - (0.0),
                           cab_y1 - 0.02, belt + 0.14, WH)
-                # passaruota
+                # passaruota (semicerchi scuri sulla fiancata)
                 for wy in (L / 2 - 0.85 * (L / 4.6), -L / 2 + 0.95 * (L / 4.6)):
-                    dark.box(sx * hw - (0.02 if sx > 0 else -0.0) - (0.0 if sx > 0 else 0.02), wy - wr - 0.05, z0 - 0.02,
-                             sx * hw + (0.02 if sx > 0 else 0.0) + (0.0 if sx > 0 else -0.0), wy + wr + 0.05, z0 + wr * 0.6,
-                             (25, 25, 28))
+                    xs = sx * (hw + 0.012)
+                    rr = wr + 0.07
+                    pts = [(xs, wy + math.cos(a_) * rr, wr + math.sin(a_) * rr) for a_ in np.linspace(0, math.pi, 10)]
+                    for j in range(len(pts) - 1):
+                        a0, a1 = pts[j], pts[j + 1]
+                        b0, b1 = (xs, a0[1], z0 - 0.04), (xs, a1[1], z0 - 0.04)
+                        if sx > 0:
+                            dark.quad(b0, b1, a1, a0, (22, 22, 25), n=(1, 0, 0))
+                        else:
+                            dark.quad(b1, b0, a0, a1, (22, 22, 25), n=(-1, 0, 0))
                 # linee porte e maniglie
                 dark.box(sx * (hw + 0.004) - 0.004, -0.1, z0 + 0.12, sx * (hw + 0.004) + 0.004, -0.08, belt - 0.03, (30, 30, 34))
                 chrome.box(sx * (hw + 0.01) - 0.01, 0.25, belt - 0.12, sx * (hw + 0.01) + 0.01, 0.42, belt - 0.08, (200, 200, 205))
@@ -3590,67 +7893,85 @@ NEIGH = ((1, 0), (-1, 0), (0, 1), (0, -1))
 
 
 class TrafficAI:
-    def __init__(self, car, a, b, s=None):
+    """auto che seguono le corsie del grafo stradale, svoltano agli incroci e rispettano i semafori"""
+
+    def __init__(self, car, net, c, d, lane, s):
         self.car = car
-        self.a, self.b = a, b
+        self.net = net
+        self.c, self.d, self.lane, self.s = c, d, lane, s
         self.mode = "lane"
-        self.s = ROAD_W / 2 + 1.5 if s is None else s
         self.speed = 0.0
-        self.cruise = random.uniform(11.0, 14.5)
+        self.cruise_k = random.uniform(0.85, 1.12)
         self.bez = None
         self.bt = 0.0
         self.blen = 1.0
         self.next = None
+        self.nlane = 0
         self.blocked_t = 0.0
+        self.stuck = 0.0
 
-    @staticmethod
-    def lane_point(a, b, s):
-        ax, ay = rc(a[0]), rc(a[1])
-        dx, dy = b[0] - a[0], b[1] - a[1]
-        rx, ry = dy, -dx
-        return ax + dx * s + rx * LANE, ay + dy * s + ry * LANE, vec_heading(dx, dy)
+    def ends(self, c, d):
+        ch = self.net.chains[c]
+        t0 = ch.trim[0] if d > 0 else ch.trim[1]
+        t1 = ch.trim[1] if d > 0 else ch.trim[0]
+        a = t0 + 0.5 if t0 > 0 else 0.0
+        b = ch.pl.L - (t1 + 0.5 if t1 > 0 else 0.0)
+        return a, max(a, b)
 
     def choose_next(self):
-        b = self.b
-        opts = []
-        for dx, dy in NEIGH:
-            n = (b[0] + dx, b[1] + dy)
-            if 0 <= n[0] <= NB and 0 <= n[1] <= NB and n != self.a:
-                opts.append(n)
+        net = self.net
+        ch = net.chains[self.c]
+        node = ch.n1 if self.d > 0 else ch.n0
+        opts = net.options(node, came=(self.c, self.d))
         if not opts:
-            opts = [self.a]
-        return random.choice(opts)
+            if not ch.ow:
+                return (self.c, -self.d)
+            return None
+        _x, _y, tx, ty = ch.point(self.d, 0, ch.pl.L - 0.5)
+        w = []
+        for (c, d) in opts:
+            o = net.chains[c]
+            _x2, _y2, ux, uy = o.point(d, 0, 0.5)
+            straight = tx * ux + ty * uy
+            k = {"motorway": 3.0, "trunk": 2.5, "primary": 2.0, "secondary": 1.8, "tertiary": 1.3}.get(o.k, 1.0)
+            w.append(k * (1.6 if straight > 0.8 else 1.0))
+        return random.choices(opts, w)[0]
 
     def start_turn(self):
-        a, b, c = self.a, self.b, self.next
-        p0x, p0y, _ = self.lane_point(a, b, CELL - ROAD_W / 2 - 1.5)
-        p2x, p2y, _ = self.lane_point(b, c, ROAD_W / 2 + 1.5)
-        d1 = (b[0] - a[0], b[1] - a[1])
-        d2 = (c[0] - b[0], c[1] - b[1])
-        if d1 == d2:
-            cx, cy = (p0x + p2x) / 2, (p0y + p2y) / 2
-        elif d1 == (-d2[0], -d2[1]):
-            bx, by = rc(b[0]), rc(b[1])
-            cx, cy = bx + d1[0] * 6, by + d1[1] * 6
-        else:
-            bx, by = rc(b[0]), rc(b[1])
-            r1 = (d1[1], -d1[0])
-            r2 = (d2[1], -d2[0])
-            cx, cy = bx + (r1[0] + r2[0]) * LANE, by + (r1[1] + r2[1]) * LANE
-        self.bez = ((p0x, p0y), (cx, cy), (p2x, p2y))
-        self.blen = dist2(p0x, p0y, cx, cy) + dist2(cx, cy, p2x, p2y)
+        net = self.net
+        ch = net.chains[self.c]
+        nc, nd = self.next
+        nch = net.chains[nc]
+        self.nlane = min(self.lane, max(0, nch.lanes(nd) - 1))
+        _a, s_end = self.ends(self.c, self.d)
+        x0, y0, tx0, ty0 = ch.point(self.d, self.lane, s_end)
+        s2, _b = self.ends(nc, nd)
+        x2, y2, tx2, ty2 = nch.point(nd, self.nlane, s2)
+        dd = math.hypot(x2 - x0, y2 - y0)
+        den = tx0 * ty2 - ty0 * tx2
+        cx, cy = (x0 + x2) / 2, (y0 + y2) / 2
+        if tx0 * tx2 + ty0 * ty2 < -0.6:
+            cx, cy = cx + tx0 * max(5.0, dd * 0.6), cy + ty0 * max(5.0, dd * 0.6)
+        elif abs(den) > 0.2:
+            t = ((x2 - x0) * ty2 - (y2 - y0) * tx2) / den
+            if 0 < t < dd * 1.5 + 4:
+                cx, cy = x0 + tx0 * t, y0 + ty0 * t
+        self.bez = ((x0, y0), (cx, cy), (x2, y2))
+        self.blen = max(0.1, dist2(x0, y0, cx, cy) + dist2(cx, cy, x2, y2))
+        self.s_next = s2
         self.bt = 0.0
         self.mode = "turn"
 
     def update(self, dt, game):
         car = self.car
-        # ostacoli davanti
+        net = self.net
+        ch = net.chains[self.c]
         fx, fy = car.fwd
-        want = self.cruise if self.mode == "lane" else 6.5
+        want = (ch.speed * self.cruise_k) if self.mode == "lane" else 6.5
         ahead = 99.0
         px, py = game.player.pos2()
         cands = [(px, py, 1.2)]
-        for v in game.traffic.near(car.x, car.y, 22):
+        for v in game.traffic.near(car.x, car.y, 24):
             if v is not car:
                 cands.append((v.x, v.y, 1.9))
         for p in game.peds.near(car.x, car.y, 18):
@@ -3659,11 +7980,11 @@ class TrafficAI:
         for (ox, oy, w) in cands:
             dx, dy = ox - car.x, oy - car.y
             f = dx * fx + dy * fy
-            if 0 < f < 22:
+            if 0 < f < 24:
                 l = abs(dx * fy - dy * fx)
                 if l < w + 0.6:
                     ahead = min(ahead, f - car.L / 2)
-        if ahead < 18:
+        if ahead < 20:
             want = min(want, max(0.0, (ahead - 4.0) * 1.1))
         if ahead < 6 and dist2(px, py, car.x, car.y) < 10:
             self.blocked_t += dt
@@ -3672,22 +7993,45 @@ class TrafficAI:
                 game.sounds.play("horn", 0.7, pos=(car.x, car.y, car.z))
         else:
             self.blocked_t = max(0.0, self.blocked_t - dt)
+        # semaforo all'incrocio di arrivo
+        if self.mode == "lane":
+            _a, s_end = self.ends(self.c, self.d)
+            ei = 1 if self.d > 0 else 0
+            togo = s_end - self.s
+            if ch.signal[ei] and togo < 45 and hasattr(game.city, "signal_state"):
+                st = game.city.signal_state(ch.group[ei], game.clock_t)
+                stop = togo - 1.5
+                if st == "r" or (st == "y" and stop > 6):
+                    want = min(want, max(0.0, stop * 0.8))
         self.speed = approach(self.speed, want, (9.0 if want < self.speed else 3.5) * dt)
+        x, y, h = car.x, car.y, car.h
         if self.mode == "lane":
             self.s += self.speed * dt
-            end = CELL - ROAD_W / 2 - 1.5
-            if self.s >= end:
+            _a, s_end = self.ends(self.c, self.d)
+            if self.s >= s_end:
                 self.next = self.choose_next()
-                self.start_turn()
+                if self.next is None:
+                    self.s = s_end
+                    self.speed = 0.0
+                    self.stuck += dt
+                    x, y, tx, ty = ch.point(self.d, self.lane, self.s)
+                    h = vec_heading(tx, ty)
+                else:
+                    self.start_turn()
             else:
-                x, y, h = self.lane_point(self.a, self.b, self.s)
+                x, y, tx, ty = ch.point(self.d, self.lane, self.s)
+                h = vec_heading(tx, ty)
         if self.mode == "turn":
-            self.bt += self.speed * dt / max(self.blen, 0.1)
+            self.bt += self.speed * dt / self.blen
             if self.bt >= 1.0:
-                self.a, self.b = self.b, self.next
-                self.s = ROAD_W / 2 + 1.5 + (self.bt - 1.0) * self.blen
+                over = (self.bt - 1.0) * self.blen
+                self.c, self.d = self.next
+                self.lane = self.nlane
+                self.s = self.s_next + over
                 self.mode = "lane"
-                x, y, h = self.lane_point(self.a, self.b, self.s)
+                ch = net.chains[self.c]
+                x, y, tx, ty = ch.point(self.d, self.lane, self.s)
+                h = vec_heading(tx, ty)
             else:
                 (x0, y0), (x1, y1), (x2, y2) = self.bez
                 t = self.bt
@@ -3696,7 +8040,8 @@ class TrafficAI:
                 y = u * u * y0 + 2 * u * t * y1 + t * t * y2
                 tx = 2 * u * (x1 - x0) + 2 * t * (x2 - x1)
                 ty = 2 * u * (y1 - y0) + 2 * t * (y2 - y1)
-                h = vec_heading(tx, ty)
+                if abs(tx) + abs(ty) > 1e-6:
+                    h = vec_heading(tx, ty)
         car.steer = math.radians(clamp(wrap_angle(h - car.h) * 4, -30, 30))
         nfx, nfy = heading_vec(h)
         car.vx, car.vy = nfx * self.speed, nfy * self.speed
@@ -3743,38 +8088,73 @@ class TrafficManager:
         return v
 
     def spawn_moving(self, px, py, dmin=70, dmax=200):
-        for _ in range(12):
-            i, j = random.randint(0, NB), random.randint(0, NB)
-            dx, dy = random.choice(NEIGH)
-            b = (i + dx, j + dy)
-            if not (0 <= b[0] <= NB and 0 <= b[1] <= NB):
+        net = self.game.city.net
+        S = net.samples
+        if len(S) == 0:
+            return None
+        d2 = (S[:, 0] - px) ** 2 + (S[:, 1] - py) ** 2
+        idx = np.nonzero((d2 > dmin * dmin) & (d2 < dmax * dmax))[0]
+        if len(idx) == 0:
+            return None
+        for _ in range(8):
+            x0, y0, c, s0 = S[int(random.choice(idx))]
+            c = int(c)
+            ch = net.chains[c]
+            d = 1 if ch.ow else random.choice((1, -1))
+            nl = ch.lanes(d)
+            if nl <= 0:
                 continue
-            s = random.uniform(ROAD_W / 2 + 2, CELL - ROAD_W / 2 - 6)
-            x, y, h = TrafficAI.lane_point((i, j), b, s)
-            d = dist2(x, y, px, py)
-            if not (dmin < d < dmax):
+            lane = random.randrange(nl)
+            s = s0 if d > 0 else ch.pl.L - s0
+            ai = TrafficAI(None, net, c, d, lane, s)
+            a0, a1 = ai.ends(c, d)
+            if not (a0 + 1 < s < a1 - 3):
                 continue
+            x, y, tx, ty = ch.point(d, lane, s)
             if any(dist2(v.x, v.y, x, y) < 12 for v in self.cars):
                 continue
             kind = random.choices(["berlina", "utilitaria", "furgone", "sportiva"], (5, 4, 2, 1))[0]
-            v = Vehicle(self.game, kind, x, y, h)
+            v = Vehicle(self.game, kind, x, y, vec_heading(tx, ty))
             v.driver = "ai"
-            v.ai = TrafficAI(v, (i, j), b, s)
-            v.ai.speed = v.ai.cruise * 0.8
+            ai.car = v
+            v.ai = ai
+            ai.speed = ch.speed * 0.6
             v.rig = self.game.peds.make_driver(v)
             return self.add(v)
         return None
 
-    def spawn_parked(self, px, py):
+    def _parking_grid(self):
+        g = {}
         for k, (x, y, h) in enumerate(self.game.city.parking):
-            if k in self.parked_done:
-                continue
-            if dist2(x, y, px, py) < 140:
-                self.parked_done.add(k)
-                kind = random.choices(["berlina", "utilitaria", "furgone", "sportiva"], (5, 4, 2, 1))[0]
-                v = Vehicle(self.game, kind, x, y, h)
-                v.parked_id = k
-                self.add(v)
+            g.setdefault((int(x // 60), int(y // 60)), []).append(k)
+        self.pgrid = g
+
+    def spawn_parked(self, px, py, cap=34):
+        if getattr(self, "pgrid", None) is None:
+            self._parking_grid()
+        parked = sum(1 for v in self.cars if hasattr(v, "parked_id"))
+        if parked >= cap:
+            return
+        P = self.game.city.parking
+        ix, iy = int(px // 60), int(py // 60)
+        cands = []
+        for a in range(ix - 3, ix + 4):
+            for b in range(iy - 3, iy + 4):
+                for k in self.pgrid.get((a, b), ()):
+                    if k in self.parked_done:
+                        continue
+                    x, y, h = P[k]
+                    d = dist2(x, y, px, py)
+                    if d < 140:
+                        cands.append((d, k))
+        cands.sort()
+        for d, k in cands[:max(0, cap - parked)]:
+            x, y, h = P[k]
+            self.parked_done.add(k)
+            kind = random.choices(["berlina", "utilitaria", "furgone", "sportiva"], (5, 4, 2, 1))[0]
+            v = Vehicle(self.game, kind, x, y, h)
+            v.parked_id = k
+            self.add(v)
 
     def update(self, dt):
         g = self.game
@@ -3803,7 +8183,8 @@ class TrafficManager:
             for v in self.cars:
                 d = dist2(v.x, v.y, px, py)
                 far = 240 if v.driver != "cop" else 400
-                if (d > far and not v.persistent and v.driver != "player") or (v.dead and d > 120):
+                stuck = v.ai is not None and v.ai.stuck > 4.0 and d > 40
+                if (d > far and not v.persistent and v.driver != "player") or (v.dead and d > 120) or stuck:
                     if hasattr(v, "parked_id"):
                         self.parked_done.discard(v.parked_id)
                     if getattr(v, "rig", None) is not None:
@@ -3937,30 +8318,11 @@ class Ped:
 
     # --- marciapiede ad anello ----------------------------------------------------
     def ring_point(self, p):
-        x0, y0, x1, y1 = self.ring
-        w, hh = x1 - x0, y1 - y0
-        P = 2 * (w + hh)
-        p %= P
-        o = self.offset
-        if p < w:
-            return x0 + p, y0 + o, 0 if self.dir < 0 else 1
-        p -= w
-        if p < hh:
-            return x1 - o, y0 + p, 1
-        p -= hh
-        if p < w:
-            return x1 - p, y1 - o, 2
-        p -= w
-        return x0 + o, y1 - p, 3
+        x, y = self.ring.point(p, self.offset)
+        return x, y, 0
 
     def ring_project(self):
-        x0, y0, x1, y1 = self.ring
-        w, hh = x1 - x0, y1 - y0
-        cands = [(abs(self.y - y0), clamp(self.x - x0, 0, w)),
-                 (abs(self.x - x1), w + clamp(self.y - y0, 0, hh)),
-                 (abs(self.y - y1), w + hh + clamp(x1 - self.x, 0, w)),
-                 (abs(self.x - x0), 2 * w + hh + clamp(y1 - self.y, 0, hh))]
-        return min(cands)[1]
+        return self.ring.project(self.x, self.y)
 
     def hurt(self, dmg, src=None, by_player=True, force=None):
         if self.dead:
@@ -4057,6 +8419,18 @@ class Ped:
                     blocked = dist2(px, py, self.x, self.y) < 1.2
                     if not blocked:
                         self.ring_p += self.dir * self.walk_speed * dt
+                        ring = self.ring
+                        if not ring.closed and (self.ring_p < 0 or self.ring_p > ring.length):
+                            end = 1 if self.ring_p > ring.length else 0
+                            nxt = g.city.ped_link(ring, end)
+                            if nxt is None:
+                                self.dir = -self.dir
+                                self.ring_p = clamp(self.ring_p, 0.0, ring.length)
+                            else:
+                                self.ring, self.ring_p, self.dir = nxt
+                                self.state = "return"
+                                rig.animate(dt, self.walk_speed, "move")
+                                return
                         x, y, _ = self.ring_point(self.ring_p)
                         dx, dy = x - self.x, y - self.y
                         if abs(dx) + abs(dy) > 1e-4:
@@ -4250,8 +8624,7 @@ class PedManager:
         x, y = car.seat_pos(-1)
         p = self.acquire("cop" if cop else "ped")
         p.place(x, y, car.h)
-        rects = self.game.city.ped_rects
-        p.ring = min(rects, key=lambda r: abs((r[0] + r[2]) / 2 - x) + abs((r[1] + r[3]) / 2 - y))
+        p.ring = self.nearest_ring(x, y)
         self.peds.append(p)
         if flee and not cop:
             p.panic((car.x, car.y))
@@ -4271,18 +8644,38 @@ class PedManager:
         self.peds.append(p)
         return p
 
+    def _ring_grid(self):
+        g = {}
+        for r in self.game.city.ped_rings:
+            g.setdefault((int(r.center[0] // 50), int(r.center[1] // 50)), []).append(r)
+        self.rgrid = g
+
+    def rings_near(self, x, y, rmax):
+        if getattr(self, "rgrid", None) is None:
+            self._ring_grid()
+        k = int(rmax // 50) + 1
+        ix, iy = int(x // 50), int(y // 50)
+        out = []
+        for a in range(ix - k, ix + k + 1):
+            for b in range(iy - k, iy + k + 1):
+                out.extend(self.rgrid.get((a, b), ()))
+        return out
+
+    def nearest_ring(self, x, y):
+        cands = self.rings_near(x, y, 60) or self.game.city.ped_rings
+        return min(cands, key=lambda r: abs(r.center[0] - x) + abs(r.center[1] - y))
+
     def spawn_walker(self, px, py):
-        rects = [r for r in self.game.city.ped_rects
-                 if 40 < dist2((r[0] + r[2]) / 2, (r[1] + r[3]) / 2, px, py) < 150]
-        if not rects:
+        rings = [r for r in self.rings_near(px, py, 160) if 40 < dist2(r.center[0], r.center[1], px, py) < 150]
+        if not rings:
             return
-        r = self.rng.choice(rects)
+        r = self.rng.choice(rings)
         p = self.acquire("ped")
         p.ring = r
         p.dir = self.rng.choice((-1, 1))
-        p.ring_p = self.rng.uniform(0, 2 * ((r[2] - r[0]) + (r[3] - r[1])))
+        p.ring_p = self.rng.uniform(0, r.length)
         x, y, _ = p.ring_point(p.ring_p)
-        if dist2(x, y, px, py) < 35:
+        if dist2(x, y, px, py) < 35 or self.game.city.world.hb_blocked(x, y):
             p.remove()
             return
         p.place(x, y)
@@ -4424,17 +8817,17 @@ class Police:
     def spawn_car(self):
         g = self.game
         px, py = g.player.pos2()
-        best = None
-        for _ in range(30):
-            i, j = random.randint(0, NB), random.randint(0, NB)
-            x, y = rc(i), rc(j)
-            d = dist2(x, y, px, py)
-            if 90 < d < 190:
-                best = (x, y)
-                break
-        if best is None:
+        net = g.city.net
+        idx = net.traffic_nodes
+        if len(idx) == 0:
             return
-        x, y = best
+        P = net.N[idx]
+        d2 = (P[:, 0] - px) ** 2 + (P[:, 1] - py) ** 2
+        ok = np.nonzero((d2 > 90 ** 2) & (d2 < 190 ** 2))[0]
+        if len(ok) == 0:
+            return
+        x, y = P[int(random.choice(ok))]
+        x, y = float(x), float(y)
         v = Vehicle(g, "polizia", x, y, vec_heading(px - x, py - y))
         v.driver = "cop"
         v.siren_on = True
@@ -4447,30 +8840,26 @@ class Police:
         self.cars.append(v)
 
     def _path(self, car):
-        """percorso sul grafo stradale verso il giocatore (BFS)"""
+        """percorso sul grafo stradale verso il giocatore (A*)"""
         g = self.game
         px, py = g.player.pos2()
-        start = (int(round((car.x + HALF) / CELL)), int(round((car.y + HALF) / CELL)))
-        goal = (int(round((px + HALF) / CELL)), int(round((py + HALF) / CELL)))
-        start = (clamp(start[0], 0, NB), clamp(start[1], 0, NB))
-        goal = (clamp(goal[0], 0, NB), clamp(goal[1], 0, NB))
-        prev = {start: None}
-        q = [start]
-        while q:
-            n = q.pop(0)
-            if n == goal:
-                break
-            for dx, dy in NEIGH:
-                m = (n[0] + dx, n[1] + dy)
-                if 0 <= m[0] <= NB and 0 <= m[1] <= NB and m not in prev:
-                    prev[m] = n
-                    q.append(m)
+        net = g.city.net
+        a = net.nearest_node(car.x, car.y)
+        b = net.nearest_node(px, py)
+        steps = net.astar(a, b)
+        if not steps:
+            return []
         path = []
-        n = goal
-        while n is not None:
-            path.append((rc(n[0]), rc(n[1])))
-            n = prev.get(n)
-        path.reverse()
+        for (c, d) in steps:
+            ch = net.chains[c]
+            n = max(1, int(ch.pl.L / 10.0))
+            ss = np.linspace(0, ch.pl.L, n + 1)[1:]
+            if d < 0:
+                ss = ch.pl.L - ss
+            X, Y, _tx, _ty = ch.pl.at_many(ss)
+            path.extend(zip(X.tolist(), Y.tolist()))
+            if len(path) > 120:
+                break
         return path
 
     def drive_car(self, car, dt):
@@ -4623,12 +9012,13 @@ class Pickups:
         self.models["armatura"] = NodePath(m.node("armatura"))
         self.base_spots = []
         rng = random.Random(9)
-        for (x, y) in game.city.spots.get("parchi", []):
-            self.base_spots.append(("fiaschetta", x + 8, y + 3, CURB))
+        for (x, y) in game.city.spots.get("parchi", [])[:6]:
+            fx, fy = game.city.free_point_near(x + 8, y + 3) if hasattr(game.city, "free_point_near") else (x + 8, y + 3)
+            self.base_spots.append(("fiaschetta", fx, fy, StaticWorld.terrain(fx, fy)))
         for (x, y, h) in rng.sample(game.city.rooftops, 8):
             self.base_spots.append(("fiaschetta" if rng.random() < 0.6 else "armatura", x, y, h))
         cx, cy = game.city.spots["polizia"]
-        self.base_spots.append(("armatura", cx, cy + 4, CURB))
+        self.base_spots.append(("armatura", cx, cy, StaticWorld.terrain(cx, cy)))
         for (k, x, y, z) in self.base_spots:
             self.add(k, x, y, z, respawn=60.0)
 
@@ -5005,7 +9395,7 @@ class Player:
         tz = g.city.world.support(tx, ty, p[2] + 0.5)
         tx, ty, _h, _n = g.city.world.push_circle(tx, ty, tz, 0.35, 1.8)
         tz = g.city.world.support(tx, ty, tz + 0.5)
-        if abs(tx) > WORLD_LIMIT or abs(ty) > WORLD_LIMIT:
+        if abs(tx) > g.city.world.limit or abs(ty) > g.city.world.limit:
             return
         g.fx.portal((self.x, self.y, self.z + 1.2), g.camctl.yaw, 0.9, 1.1)
         g.fx.portal((tx, ty, tz + 1.2), g.camctl.yaw, 0.9, 1.1)
@@ -5465,11 +9855,7 @@ class Missions:
         self.seed_spots = []
 
     def _start_points(self):
-        c = self.game.city
-        parks = c.spots.get("parchi", [(0, 0)])
-        center_park = min(parks, key=lambda p: abs(p[0]) + abs(p[1]))
-        sx, sy, _h = c.spots["casa"]
-        return [None, (sx + 3, sy - 6), c.spots["polizia"], c.spots["cronenberg"], (center_park[0], center_park[1] - 13)]
+        return self.game.city.mission_starts()
 
     # --------------------------------------------------------------- marker
     def _make_marker(self, x, y, color=(1.0, 0.85, 0.2)):
@@ -5599,16 +9985,7 @@ class Missions:
     def _s1(self):
         g = self.game
         c = g.city
-        parks = c.spots.get("parchi", [])
-        spots = []
-        if parks:
-            spots.append((parks[0][0] + 12, parks[0][1] - 10, CURB))
-        roofs = sorted(c.rooftops, key=lambda r: abs(r[2] - 22) + abs(r[0]) * 0.02 + abs(r[1]) * 0.02)
-        spots.append(roofs[0])
-        sx, sy = c.spots["scuola"]
-        spots.append((sx, sy + 40, CURB))
-        spots.append((-HALF - 60, HALF * 0.3, 0.0))
-        spots.append((HALF * 0.5, -HALF - 40, 0.0))
+        spots = c.seed_spots()
         for (x, y, z) in spots:
             g.pickups.add("seme", x, y, z, tag="seme")
         self.need = len(spots)
@@ -5987,7 +10364,7 @@ class HUD:
         cam_h = g.camctl.yaw
         px, py = pl.pos2()
         # minimappa ruotata come la telecamera
-        R = MAP_R
+        R = g.city.map_r
         vr = self.view_r * (1.6 if pl.vehicle is not None and abs(pl.vehicle.speed) > 15 else 1.0)
         a = math.radians(cam_h)
         c, s = math.cos(a), math.sin(a)
@@ -6140,7 +10517,7 @@ class HUD:
         cm2.setFrame(-0.9, 0.9, -0.9, 0.9)
         card = root.attachNewNode(cm2.generate())
         card.setTexture(self.map_tex)
-        R = MAP_R
+        R = g.city.map_r
 
         def mp(x, y):
             return (x / R * 0.9, (y / R) * 0.9)
@@ -6157,7 +10534,7 @@ class HUD:
         sx, sy, _h = g.city.spots["casa"]
         for name, (lx, ly) in (("Casa Smith", (sx, sy)), ("Blips and Chitz", g.city.spots["arcade"]),
                                ("Liceo", g.city.spots["scuola"]), ("Federazione", g.city.spots["polizia"]),
-                               ("Campagna", g.city.spots["cronenberg"])):
+                               ("Portale", g.city.spots["cronenberg"])):
             x, y = mp(lx, ly)
             self._text(name, 0.035, (1, 1, 0.8, 1), parent=root, pos=(x, y + 0.03))
         self._text("MAPPA  -  M o Esc per chiudere", 0.05, (1, 1, 1, 1), parent=root, pos=(0, 0.93))
@@ -6205,7 +10582,9 @@ class Menu:
                     ("Salva e torna al menu", "to_main"), ("Esci dal gioco", "quit")]
         if self.mode == "options":
             q = Environment.QUALITY[s.get("quality", 1)]["name"]
-            return [("Qualita' ombre: %s (al riavvio)" % q, "quality"),
+            cty = city_title(s.get("city", "losangeles")) if s.get("city", "losangeles") else "inventata"
+            return [("Qualita' grafica: %s (al riavvio)" % q, "quality"),
+                    ("Citta': %s (al riavvio)" % cty, "city"),
                     ("Sensibilita' mouse: %.1f" % s.get("sens", 1.0), "sens"),
                     ("Audio: %s" % ("ON" if s.get("audio", True) else "OFF"), "audio"),
                     ("Indietro", "back")]
@@ -6317,8 +10696,39 @@ class Game(ShowBase):
             self.graphicsEngine.renderFrame()
         q = clamp(self.save.get("quality", 1), 0, 2)
         self.env = Environment(self, q)
+        self.env.update(0.0, Vec3(0, 0, 50), (0, 0), 0.0)
         self.dyn_root = self.env.root.attachNewNode("dinamici")
-        self.city = City(self.env)
+        self.city = None
+        cname = self.save.get("city", "losangeles")
+        path = find_city_data(cname) if cname else None
+        if cname and path is None:
+            avail = list_cities()
+            if avail:
+                cname = avail[0]
+                path = find_city_data(cname)
+        if path:
+            def prog(f, msg=""):
+                load.setText("RICK AND MORTY\nCitta' Interdimensionale\n\nCostruzione di %s (dati OpenStreetMap)\n"
+                             "%s  %d%%" % (city_title(cname), msg, int(f * 100)))
+                self.graphicsEngine.renderFrame()
+            try:
+                import hashlib
+                with open(path, "rb") as f:
+                    key = "%s_v%d_q%d_%s" % (cname, RealCity.CACHE_VER, q,
+                                             hashlib.md5(f.read()).hexdigest()[:12])
+                self.city = RealCity(self.env, lambda: load_city_data(path), q, prog, key)
+            except Exception:  # noqa: BLE001
+                import traceback
+                traceback.print_exc()
+                GROUND_FN[0] = None
+                for name in ("citta", "insegna"):
+                    for n in self.env.root.findAllMatches(name):
+                        n.removeNode()
+                self.city = None
+        if self.city is None:
+            self.city = City(self.env)
+        else:
+            self.env.set_fog(0.00045, 0.0022, 120.0, 0.93)
         self.factory = CarFactory(self.env)
         self.weapon_np = {k: NodePath(build_weapon_mesh(k).node("arma")) for k in (1, 2, 3)}
         self.fx = FX(self)
@@ -6548,6 +10958,12 @@ class Game(ShowBase):
             self.set_state("menu")
         elif a == "quality":
             s["quality"] = (s.get("quality", 1) + 1) % 3
+            write_save(s)
+            self.menu.show("options")
+        elif a == "city":
+            opts = list_cities() + [""]
+            cur = s.get("city", "losangeles")
+            s["city"] = opts[(opts.index(cur) + 1) % len(opts)] if cur in opts else opts[0]
             write_save(s)
             self.menu.show("options")
         elif a == "sens":
@@ -6915,8 +11331,12 @@ class Game(ShowBase):
         st = self.state
         if st == "menu":
             a = self.clock_t * 0.05
-            self.camera.setPos(math.cos(a) * 230, math.sin(a) * 230, 95)
-            self.camera.lookAt(0, 0, 25)
+            if isinstance(self.city, RealCity):
+                self.camera.setPos(math.cos(a) * 820, 120 + math.sin(a) * 820, 230)
+                self.camera.lookAt(0, 120, 95)
+            else:
+                self.camera.setPos(math.cos(a) * 230, math.sin(a) * 230, 95)
+                self.camera.lookAt(0, 0, 25)
             self.camLens.setFov(60)
             self.traffic.update(dt)
             self.peds.update(dt)
@@ -6939,13 +11359,14 @@ class Game(ShowBase):
         elif st == "bigmap":
             pass
         self.fx.update(dt, self.camera)
+        self.city.update(dt, self.clock_t)
         pl = self.player
         spot = None
         if pl.vehicle is not None and self.env.night > 0.2 and not pl.vehicle.fly:
             v = pl.vehicle
             fx, fy = v.fwd
             spot = ((v.x + fx * (v.L / 2 + 0.2), v.y + fy * (v.L / 2 + 0.2), v.z + 0.8), (fx * 0.97, fy * 0.97, -0.22))
-        focus = pl.pos2() if st != "menu" else (0, 0)
+        focus = pl.pos2() if st != "menu" else (0, 120 if isinstance(self.city, RealCity) else 0)
         self.env.update(dt, self.camera.getPos(self.render), focus, self.clock_t, self.gather_lights(), spot)
         return task.cont
 

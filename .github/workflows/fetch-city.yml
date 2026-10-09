@@ -1,10 +1,6 @@
 name: Scarica una citta' vera (OpenStreetMap)
 
 on:
-  push:
-    paths:
-      - "tools/fetch_osm.py"
-      - ".github/workflows/fetch-city.yml"
   workflow_dispatch:
     inputs:
       nome:

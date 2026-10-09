@@ -6,6 +6,7 @@ on:
       - "rick_morty_3d.py"
       - "rick_and_morty.py"
       - "tools/**"
+      - "citta/**"
       - ".github/workflows/build-exe.yml"
   workflow_dispatch:
 
@@ -28,6 +29,7 @@ jobs:
         run: |
           python -c "import ast; ast.parse(open('rick_morty_3d.py', encoding='utf-8').read()); ast.parse(open('rick_and_morty.py', encoding='utf-8').read()); print('sintassi ok')"
           python -c "import panda3d.core, numpy; print('panda3d', panda3d.__version__)"
+          python -c "import gzip, json; d = json.load(gzip.open('citta/losangeles.json.gz', 'rt', encoding='utf-8')); print('Los Angeles:', len(d['edifici']), 'edifici,', len(d['strade']), 'strade')"
 
       - name: Prova veloce del gioco 2D (senza finestra)
         env:
@@ -41,7 +43,7 @@ jobs:
 
       - name: Crea RickAndMorty3D.exe (open world 3D)
         run: |
-          python -m PyInstaller --noconfirm --onefile --windowed --name RickAndMorty3D --icon icon.ico --collect-binaries panda3d --hidden-import panda3d.core rick_morty_3d.py
+          python -m PyInstaller --noconfirm --onefile --windowed --name RickAndMorty3D --icon icon.ico --collect-binaries panda3d --hidden-import panda3d.core --hidden-import direct.filter.FilterManager --add-data "citta;citta" rick_morty_3d.py
 
       - name: Crea RickAndMorty2D.exe (platform 2D)
         run: |
