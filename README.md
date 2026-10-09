@@ -5,6 +5,8 @@
 Videogioco **open world 3D in stile GTA**, in **terza e prima persona**, ambientato nel mondo di
 **Rick and Morty**, in una **città vera**: il centro di **Los Angeles** (la Los Santos di GTA V)
 ricostruito in 3D con **strade ed edifici reali** presi da OpenStreetMap.
+Con la **pistola portale** apri portali veri e viaggi in **altri 4 universi 3D**: la dimensione
+Cronenberg, il pianeta Gazorpazorp, la Cittadella dei Rick e Froopyland.
 Scritto **da zero** in Python + Panda3D: personaggi, auto, cielo, texture, suoni e musica sono
 **generati via codice**.
 
@@ -17,6 +19,14 @@ Scritto **da zero** in Python + Panda3D: personaggi, auto, cielo, texture, suoni
 | ![Downtown LA di giorno](docs/screen_strada.jpg) | ![Alla guida al tramonto](docs/screen_guida.jpg) |
 | ![Inseguimento della Federazione](docs/screen_polizia.jpg) | ![In volo con la navicella](docs/screen_volo.jpg) |
 | ![Downtown di notte](docs/screen_notte.jpg) | ![Il Cromulon sopra Pershing Square](docs/screen_cromulon.jpg) |
+
+### Il multiverso
+
+| | |
+|---|---|
+| ![Un portale aperto in città](docs/screen_portale.jpg) | ![La navicella di Rick](docs/screen_navicella.jpg) |
+| ![La dimensione Cronenberg](docs/screen_cronenberg.jpg) | ![Il pianeta Gazorpazorp](docs/screen_gazorpazorp.jpg) |
+| ![La Cittadella dei Rick](docs/screen_cittadella.jpg) | ![Froopyland](docs/screen_froopyland.jpg) |
 
 ## Cosa c'è nel gioco
 
@@ -36,18 +46,40 @@ Scritto **da zero** in Python + Panda3D: personaggi, auto, cielo, texture, suoni
 - **Traffico vero**: le auto seguono le corsie, svoltano agli incroci e **si fermano col rosso**.
 - **Pedoni** che camminano sui marciapiedi e attraversano agli angoli, scappano e chiamano la polizia.
 - **Ruba e guida qualsiasi auto** con fisica arcade, danni, fumo ed esplosioni.
-- **La navicella di Rick**: vola sopra i grattacieli e atterra sui tetti.
+- **La navicella di Rick** rifatta da zero: scafo sagomato, abitacolo aperto con due sedili, cruscotto con
+  schermi, parabrezza, due motori con fiamme blu, alette e carrello d'atterraggio. In volo si inclina nelle
+  curve; dopo la missione di Gazorpazorp ha il **turbo** (Shift). Vola sopra i grattacieli, atterra sui tetti
+  e attraversa i portali.
+- **Pistola portale vera**: con **Q** scegli l'universo, con **E** apri un portale 3D (vortice verde,
+  scintille, luce sull'ambiente) e lo **attraversi** a piedi, in auto o con la navicella. Ogni portale costa
+  fluido portale. Se scegli *qui* ti teletrasporti dove miri, anche sui tetti.
+- **5 universi in 3D**, ognuno con il suo cielo, la sua luce, la sua musica e la sua mappa:
+  - **Terra C-137** – Los Angeles vera.
+  - **Dimensione Cronenberg** – la stessa città dopo il disastro del filtro d'amore: carne che cresce su
+    strade e palazzi, occhi giganti sulle facciate, auto bruciate, incendi, cielo rosso e mostri ovunque.
+  - **Pianeta Gazorpazorp** – deserto rosso di 2 km con dune, mesa a strati, un lago d'acido (fa male!),
+    funghi giganti luminosi, cristalli, rocce sospese, un pianeta con gli anelli in cielo e il villaggio
+    dei Gazorpiani arrabbiati.
+  - **Cittadella dei Rick** – la stazione spaziale sospesa nel vuoto: piattaforma centrale con le torri,
+    6 piattaforme collegate da ponti (Consiglio dei Rick, quartiere residenziale, centro commerciale,
+    caserma, hangar, accademia), Rick e guardie Rick ovunque. Se cadi nel vuoto Rick ti ripesca.
+  - **Froopyland** – il mondo morbido creato da Rick per Beth: colline a cuscino, lago di limonata,
+    lecca-lecca giganti, caramelle enormi, arcobaleni, nuvole di zucchero filato, funghi trampolino che ti
+    lanciano in alto e le creature di Froopyland. Qui non ti fai male cadendo.
 - **Livello di ricercato a 5 stelle**: la Federazione Galattica ti insegue per le strade vere
   (percorsi calcolati sul grafo stradale), con auto, agenti e droni.
 - **Armi**: pugni, pistola laser, fucile al plasma e **pistola portale** (teletrasporto, anche sui tetti).
 - **Morty** ti segue, sale in auto con te e commenta.
-- **5 missioni con dialoghi in italiano** (casa Smith, Blips and Chitz, il liceo, la Federazione e il
+- **8 missioni con dialoghi in italiano** (casa Smith, Blips and Chitz, il liceo, la Federazione e il
   Cromulon sono in luoghi veri di Los Angeles):
   1. *Il garage di Rick* – porta Morty da Blips and Chitz con la navicella
   2. *Mega Semi* – trova i 5 semi sparsi per la città (uno è su un tetto)
   3. *Guai con la Federazione* – distruggi le auto della polizia e seminale
-  4. *Dimensione Cronenberg* – si apre un portale e la città si riempie di mostri
-  5. *Mostrami cosa sai fare* – combatti contro il **Cromulon** sopra Pershing Square
+  4. *Dimensione Cronenberg* – apri un portale, vai nella dimensione Cronenberg ed elimina i mostri
+  5. *I cristalli di Gazorpazorp* – recupera 3 cristalli giganti sul pianeta (premio: turbo della navicella)
+  6. *Furto alla Cittadella* – ruba 3 taniche di fluido portale sotto il naso delle guardie Rick
+  7. *Le gemme di Froopyland* – raccogli 5 gemme, alcune in cima alle caramelle giganti
+  8. *Mostrami cosa sai fare* – combatti contro il **Cromulon** sopra Pershing Square
 - HUD stile GTA: **minimappa** che ruota, **mappa grande** (M) di Los Angeles, vita, armatura, soldi, stelle.
 - Salvataggio automatico dei progressi.
 
@@ -75,6 +107,7 @@ Su Windows basta fare doppio clic su **`gioca.bat`**. La cartella `citta` deve s
 
 Il **primo avvio** costruisce Los Angeles (circa 20-30 secondi) e la salva in una cache nella tua
 cartella utente (`.rick_morty_3d_cache`, circa 40 MB): **dal secondo avvio bastano pochi secondi**.
+Gli altri universi vengono creati la prima volta che ci entri (1-3 secondi).
 
 Serve una scheda video che supporti OpenGL 3 (praticamente tutti i PC degli ultimi 10 anni).
 Se il gioco va a scatti, in **Opzioni** metti *Qualità grafica: Bassa* e riavvialo
@@ -92,7 +125,8 @@ Se il gioco va a scatti, in **Opzioni** metti *Qualità grafica: Bassa* e riavvi
 | **Click sinistro** | Spara |
 | **Click destro** | Mira (visuale sopra la spalla) |
 | **1 2 3** / rotellina | Cambia arma |
-| **E** | Pistola portale: teletrasporto dove miri |
+| **Q** | Pistola portale: scegli l'universo di destinazione |
+| **E** | Pistola portale: apri il portale (o teletrasporto, se scegli *qui*) |
 | **F** | Sali / scendi / ruba un veicolo |
 | **H** | Bevi dalla fiaschetta di Rick (+vita) *burp* |
 | **V** | Prima / terza persona |
@@ -105,7 +139,8 @@ Se il gioco va a scatti, in **Opzioni** metti *Qualità grafica: Bassa* e riavvi
 | **Click sinistro** | Spara dal finestrino |
 | **H** | Clacson |
 | **R** | Radio (Schwifty FM, Radio Multiverso) |
-| **Navicella** | Spazio sali, Ctrl scendi |
+| **E** / **Q** | Apri un portale davanti al veicolo / scegli l'universo |
+| **Navicella** | Spazio sali, Ctrl scendi, **Shift** turbo (dopo la missione 5) |
 
 **M** mappa grande · **Esc** pausa · **F11** schermo intero
 

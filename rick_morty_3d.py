@@ -833,6 +833,7 @@ uniform vec4 u_spot_pos;
 uniform vec4 u_spot_dir;
 uniform vec3 u_tint;
 uniform float u_texel;
+uniform float u_winlit;
 #ifdef FACADE
 uniform sampler2DArray u_fac_alb;
 uniform sampler2DArray u_fac_nrm;
@@ -964,10 +965,10 @@ void main() {
   float ltype = u_fac_info[int(layer)].x;
   if (ltype > 1.5) lcol = vec3(0.80, 0.92, 1.0);
   else if (ltype > 0.5) lcol = base.rgb * 2.4 + 0.1;
-  vec3 em = emask * lit * lcol * (0.25 + 0.55 * fract(hsh * 13.0)) * u_night * 0.95;
+  vec3 em = emask * lit * lcol * (0.25 + 0.55 * fract(hsh * 13.0)) * u_night * 0.95 * u_winlit;
   col = mix(col, col * 0.35, emask * u_night * (1.0 - lit));
 #else
-  vec3 em = pow(texture(emit_tex, v_uv).rgb, vec3(2.2)) * u_mat.w * (u_night * 0.85);
+  vec3 em = pow(texture(emit_tex, v_uv).rgb * v_col.rgb, vec3(2.2)) * u_mat.w * (u_night * 0.85);
 #endif
   col += em;
   float kz = u_fog.y * (v_pos.z - u_cam.z);
@@ -1010,6 +1011,10 @@ uniform float u_time;
 uniform float u_cloud;
 uniform vec3 u_tint;
 uniform sampler2D u_clouds;
+uniform vec4 u_planet;
+uniform vec4 u_planet_col;
+uniform vec4 u_planet_col2;
+uniform float u_space;
 in vec3 v_dir;
 out vec4 o_color;
 vec3 aces(vec3 x) {
@@ -1026,16 +1031,58 @@ void main() {
   else col = mix(u_fog_col, u_fog_col * 0.6, clamp(-h * 3.0, 0.0, 1.0));
   float sd = max(dot(d, u_sun_dir), 0.0);
   float above = smoothstep(-0.05, 0.02, u_sun_dir.z);
-  col += u_sun_col * (pow(sd, 900.0) * 40.0 * above + pow(sd, 10.0) * 0.25 + pow(sd, 3.0) * 0.08);
-  if (h > 0.0 && u_night > 0.02) {
+  col += u_sun_col * (pow(sd, 900.0) * 40.0 * above + pow(sd, 10.0) * 0.25 + pow(sd, 3.0) * 0.08) * (1.0 - u_space);
+  if (u_space > 0.5) {
+    // spazio aperto: niente atmosfera, nebulose colorate
+    col = vec3(0.003, 0.004, 0.01);
+    vec2 nuv = vec2(atan(d.y, d.x) / 6.2831853, d.z * 0.5 + 0.5);
+    float n1 = texture(u_clouds, nuv * vec2(2.0, 1.0)).r;
+    float n2 = texture(u_clouds, nuv * vec2(3.0, 1.6) + vec2(0.31, 0.17)).r;
+    col += vec3(0.16, 0.04, 0.22) * smoothstep(0.5, 0.95, n1) + vec3(0.02, 0.10, 0.18) * smoothstep(0.55, 1.0, n2);
+    col += u_sun_col * (pow(sd, 2000.0) * 80.0 + pow(sd, 60.0) * 0.08);
+  }
+  float starv = max(u_night, u_space);
+  if ((h > 0.0 || u_space > 0.5) && starv > 0.02) {
     vec3 cell = floor(d * 900.0);
     float st = hash(cell);
-    if (st > 0.9993) col += vec3(0.8, 0.85, 1.0) * u_night * (st - 0.9993) * 2200.0 * smoothstep(0.0, 0.3, h);
-    vec3 moon = normalize(vec3(-u_sun_dir.x, -u_sun_dir.y, abs(u_sun_dir.z) + 0.3));
-    float md = max(dot(d, moon), 0.0);
-    col += vec3(0.9, 0.95, 1.0) * (pow(md, 1500.0) * 6.0 + pow(md, 40.0) * 0.08) * u_night;
+    if (st > 0.9993) col += vec3(0.8, 0.85, 1.0) * starv * (st - 0.9993) * 2200.0 * (u_space > 0.5 ? 1.0 : smoothstep(0.0, 0.3, h));
+    if (u_space < 0.5) {
+      vec3 moon = normalize(vec3(-u_sun_dir.x, -u_sun_dir.y, abs(u_sun_dir.z) + 0.3));
+      float md = max(dot(d, moon), 0.0);
+      col += vec3(0.9, 0.95, 1.0) * (pow(md, 1500.0) * 6.0 + pow(md, 40.0) * 0.08) * u_night;
+    }
   }
-  if (h > 0.0) {
+  if (u_planet.w > 0.0) {
+    // un pianeta gigante nel cielo (con anelli)
+    vec3 pd = normalize(u_planet.xyz);
+    float cang = dot(d, pd);
+    if (cang > 0.0) {
+      float sr = sin(u_planet.w);
+      vec3 q = (d - pd * cang) / sr;
+      float rr = length(q);
+      vec3 ax = normalize(cross(pd, vec3(0.0, 0.3, 1.0)));
+      vec3 ay = cross(ax, pd);
+      vec2 uv = vec2(dot(q, ax), dot(q, ay));
+      float rq = length(vec2(uv.x, uv.y * 3.4));
+      float ring = 0.0;
+      if (u_planet_col.a > 0.5) ring = smoothstep(1.32, 1.42, rq) * (1.0 - smoothstep(2.15, 2.3, rq)) * (0.55 + 0.45 * sin(rq * 38.0));
+      vec3 ringc = mix(u_planet_col.rgb, vec3(0.95, 0.9, 0.8), 0.6) * (0.35 + 0.65 * max(dot(u_sun_dir, pd) * -0.5 + 0.6, 0.2));
+      if (uv.y > 0.0) col = mix(col, ringc, ring * 0.85);
+      if (rr < 1.0) {
+        float zz = sqrt(1.0 - rr * rr);
+        vec3 n = q - pd * zz;
+        float lit = max(dot(n, normalize(u_sun_dir + vec3(0.0, 0.0, 0.2))), 0.0);
+        float band = 0.5 + 0.5 * sin(dot(n, ay) * 16.0 + sin(dot(n, ax) * 6.0) * 1.8);
+        vec3 pc = mix(u_planet_col.rgb, u_planet_col2.rgb, band);
+        vec3 pcol = pc * (0.03 + 1.2 * lit);
+        pcol += u_planet_col.rgb * pow(1.0 - zz, 3.0) * 0.5 * (0.25 + lit);
+        float edge = smoothstep(1.0, 0.985, rr);
+        col = mix(col, pcol, edge * (1.0 - 0.35 * (1.0 - u_space) * smoothstep(0.25, -0.05, h)));
+      }
+      if (uv.y <= 0.0) col = mix(col, ringc, ring * 0.9);
+    }
+  }
+  if (h > 0.0 && u_space < 0.5) {
     vec2 uv = d.xy / (h + 0.18) * 0.14 + vec2(u_time * 0.0035, u_time * 0.0012);
     float c = texture(u_clouds, uv).r;
     float c2 = texture(u_clouds, uv * 2.3 + 0.37).r;
@@ -1163,6 +1210,8 @@ class Environment:
         render.setShaderInput("u_cam", Vec3(0, 0, 0))
         render.setShaderInput("u_fog", Vec4(0.0008, 0.003, 60.0, 0.9))
         render.setShaderInput("u_glow", 0.0)
+        render.setShaderInput("u_winlit", 1.0)
+        self.palette = None          # funzione che cambia i colori del cielo (altre dimensioni)
         self.tint = Vec3(1, 1, 1)
         # sole con ombre
         self.sun = DirectionalLight("sole")
@@ -1203,6 +1252,10 @@ class Environment:
         self.sky.hide(MASK_SHADOW | MASK_MAP)
         self.sky.setShaderInput("u_clouds", make_texture(tex_clouds(), "nuvole"))
         self.sky.setShaderInput("u_cloud", 0.55)
+        self.sky.setShaderInput("u_planet", Vec4(0, 0, 1, 0))
+        self.sky.setShaderInput("u_planet_col", Vec4(0.5, 0.6, 0.8, 0))
+        self.sky.setShaderInput("u_planet_col2", Vec4(0.8, 0.8, 0.9, 0))
+        self.sky.setShaderInput("u_space", 0.0)
         base.camLens.setNearFar(0.2, 9000)
         self.hour = 10.0
         self.night = 0.0
@@ -1253,6 +1306,8 @@ class Environment:
     def update(self, dt, cam_pos, focus, game_time, lights=None, spot=None):
         r = self.base.render
         c = self.sky_colors(self.hour)
+        if self.palette is not None:
+            c = self.palette(c, self.hour)
         self.night = c["night"]
         sun = c["sun"]
         self.sun_dir = sun
@@ -1269,7 +1324,7 @@ class Environment:
             lc = lerp3((0.13, 0.17, 0.30), lc, smoothstep(0.0, 0.3, k))
         self.light_dir = L
         tint = self.tint
-        fog = lerp3(c["hor"], c["zen"], 0.25)
+        fog = c.get("fog") or lerp3(c["hor"], c["zen"], 0.25)
         fog = (fog[0] * tint[0], fog[1] * tint[1], fog[2] * tint[2])
         self.fog_col = Vec3(*fog)
         r.setShaderInput("u_sun_dir", L)
@@ -1288,6 +1343,15 @@ class Environment:
         sk.setShaderInput("u_fog_col", self.fog_col)
         sk.setShaderInput("u_night", self.night)
         sk.setShaderInput("u_time", game_time)
+        pl = c.get("planet")
+        if pl:
+            sk.setShaderInput("u_planet", Vec4(*pl[0], pl[1]))
+            sk.setShaderInput("u_planet_col", Vec4(*pl[2], 1.0 if pl[4] else 0.0))
+            sk.setShaderInput("u_planet_col2", Vec4(*pl[3], 0.0))
+        else:
+            sk.setShaderInput("u_planet", Vec4(0, 0, 1, 0))
+        sk.setShaderInput("u_space", 1.0 if c.get("space") else 0.0)
+        sk.setShaderInput("u_cloud", c.get("cloud", 0.55))
         # la camera delle ombre segue il giocatore (a passi di texel per evitare tremolii)
         step = self.q["film"] / self.q["shadow"] * 4
         fx = round(focus[0] / step) * step
@@ -1523,6 +1587,72 @@ class PostFX:
         self.q_comp.setShaderInput("u_bloom", bloom)
         self.q_comp.setShaderInput("u_aopx", (1.0 / w, 1.0 / h))
         self.final.setShaderInput("u_rcp", (1.0 / w, 1.0 / h))
+
+
+# =============================================================================
+#  DIMENSIONI: interfaccia comune (Terra C-137 e gli altri universi)
+# =============================================================================
+class DimBase:
+    key = "c137"
+    title = "Terra C-137"
+    subtitle = "La nostra dimensione: Los Angeles"
+    parallel = True          # stessa geografia della Terra C-137 (si arriva nello stesso punto)
+    hostile = 0              # mostri da tenere attorno al giocatore
+    monster_look = "cronen"
+    ped_look = None          # aspetto degli abitanti (None = umani)
+    cop_look = "grom"
+    void_z = None            # sotto questa quota si precipita nel vuoto
+    bounce = ()              # trampolini: (x, y, raggio, quota, spinta)
+    acid_z = None            # sotto questa quota il liquido fa male
+    fog = (0.0008, 0.003, 60.0, 0.9)
+    tint = (1.0, 1.0, 1.0)
+    winlit = 1.0
+    music = "city"
+
+    def ground_fn(self):
+        return getattr(self, "ground", None)
+
+    def activate(self):
+        self.root.show()
+        GROUND_FN[0] = self.ground_fn()
+
+    def deactivate(self):
+        self.root.hide()
+
+    def apply_env(self, env):
+        env.palette = None if type(self).palette is DimBase.palette else self.palette
+        env.set_fog(*self.fog)
+        env.set_tint(self.tint)
+        env.base.render.setShaderInput("u_winlit", self.winlit)
+
+    def palette(self, c, hour):
+        return c
+
+    def arrival(self, from_pos):
+        """dove si arriva attraversando un portale (x, y)"""
+        if self.parallel and from_pos is not None:
+            return self.free_point_near(from_pos[0], from_pos[1], roads_ok=True)
+        x, y = self.spots.get("arrivo", (0.0, 0.0))
+        return self.free_point_near(x + random.uniform(-6, 6), y + random.uniform(-6, 6), roads_ok=True)
+
+    def map_labels(self):
+        sp = self.spots
+        out = []
+        for name, key in (("Casa Smith", "casa"), ("Blips and Chitz", "arcade"), ("Liceo", "scuola"),
+                          ("Federazione", "polizia")):
+            if key in sp:
+                out.append((name, tuple(sp[key][:2])))
+        return out
+
+    def update(self, dt, t, game=None):
+        pass
+
+    def ped_link(self, ring, end):
+        return None
+
+    def nearest_lamps(self, x, y, n=8, maxd=90.0):
+        return []
+
 
 
 # =============================================================================
@@ -2491,7 +2621,7 @@ def tex_field(size=256):
     return to_u8(g)
 
 
-class City:
+class City(DimBase):
     def __init__(self, env, seed=137):
         self.env = env
         self.rng = random.Random(seed)
@@ -2564,7 +2694,7 @@ class City:
         net.finish()
         self.net = net
 
-    def update(self, dt, t):
+    def update(self, dt, t, game=None):
         pass
 
     def ped_link(self, ring, end):
@@ -4350,7 +4480,7 @@ def offset_ring(P, d):
     return offset_line(Pc, d)[1:-1]
 
 
-class RealCity:
+class RealCity(DimBase):
     TILE = 320.0
     LOD_FAR = 620.0
     CACHE_VER = 4
@@ -4458,7 +4588,7 @@ class RealCity:
     # ------------------------------------------------------------------ texture
     def _textures(self):
         hq = self.q >= 1
-        self.fac_alb, self.fac_nrm, self.fac_grid, self.fac_info = build_facade_arrays(FPX if hq else FPX // 2)
+        self.fac_alb, self.fac_nrm, self.fac_grid, self.fac_info = shared_facades(self.q)
         T = {}
         E = {}
         T["asphalt"] = make_texture(tex_asphalt(512 if hq else 256), "asfalto")
@@ -6353,7 +6483,7 @@ class RealCity:
             k = 1.0 if on else 0.12
             np_.setColorScale(r * k + (0.02 if not on else 0), g * k, b * k, 1)
 
-    def update(self, dt, t):
+    def update(self, dt, t, game=None):
         self.set_signals(t)
 
     # ------------------------------------------------------------------ lampioni vicini
@@ -6427,6 +6557,1366 @@ class RealCity:
 
 
 # =============================================================================
+#  MULTIVERSO: gli altri universi raggiungibili con la pistola portale
+# =============================================================================
+DIMENSIONS = [
+    ("c137", "Terra C-137", "La nostra dimensione: Los Angeles"),
+    ("cronen", "Dimensione Cronenberg", "La Terra dopo il disastro del filtro d'amore"),
+    ("gazorp", "Pianeta Gazorpazorp", "Deserti rossi, cristalli e Gazorpiani arrabbiati"),
+    ("citadel", "Cittadella dei Rick", "La stazione spaziale dei Rick di tutti gli universi"),
+    ("froopy", "Froopyland", "Il mondo morbido inventato da Rick per Beth"),
+]
+DIM_TITLE = {k: t for (k, t, _s) in DIMENSIONS}
+FACADE_CACHE = {}
+
+
+def shared_facades(q):
+    if q not in FACADE_CACHE:
+        FACADE_CACHE[q] = build_facade_arrays(FPX if q >= 1 else FPX // 2)
+    return FACADE_CACHE[q]
+
+
+def xform(V, pitch=0.0, heading=0.0, scale=1.0, t=(0.0, 0.0, 0.0)):
+    """ruota (beccheggio poi direzione), scala e sposta i vertici di un array di Mesh"""
+    V = V.copy()
+    if pitch:
+        a = math.radians(pitch)
+        c, s = math.cos(a), math.sin(a)
+        for o in (0, 3):
+            y, z = V[:, o + 1].copy(), V[:, o + 2].copy()
+            V[:, o + 1] = y * c - z * s
+            V[:, o + 2] = y * s + z * c
+    if heading:
+        a = math.radians(heading)
+        c, s = math.cos(a), math.sin(a)
+        for o in (0, 3):
+            x, y = V[:, o].copy(), V[:, o + 1].copy()
+            V[:, o] = x * c - y * s
+            V[:, o + 1] = x * s + y * c
+    V[:, 0:3] *= scale
+    V[:, 0] += t[0]
+    V[:, 1] += t[1]
+    V[:, 2] += t[2]
+    return V
+
+
+def circle_pts(cx, cy, r, n=40):
+    return [(cx + math.cos(TAU * i / n) * r, cy + math.sin(TAU * i / n) * r) for i in range(n)]
+
+
+def link_rings(rings, blocked=None, maxd=16.0):
+    grid = {}
+    for ri, r in enumerate(rings):
+        for e in (0, 1):
+            x, y = r.ends[e]
+            grid.setdefault((int(x // 16), int(y // 16)), []).append((ri, e))
+    for ri, r in enumerate(rings):
+        for e in (0, 1):
+            x, y = r.ends[e]
+            cands = []
+            for ix in range(int(x // 16) - 1, int(x // 16) + 2):
+                for iy in range(int(y // 16) - 1, int(y // 16) + 2):
+                    for (rj, e2) in grid.get((ix, iy), ()):
+                        if rj == ri:
+                            continue
+                        qx, qy = rings[rj].ends[e2]
+                        d = math.hypot(qx - x, qy - y)
+                        if d > maxd:
+                            continue
+                        if blocked is not None and any(blocked(x + (qx - x) * t, y + (qy - y) * t)
+                                                       for t in (0.25, 0.5, 0.75)):
+                            continue
+                        cands.append((d, rj, e2))
+            cands.sort()
+            r.links[e].extend((rj, e2) for (_d, rj, e2) in cands[:4])
+
+
+class TileSet:
+    """mesh raggruppate per zone (culling) e per materiale"""
+
+    def __init__(self, tile=300.0):
+        self.tile = tile
+        self.tiles = {}
+
+    def M(self, key, x, y):
+        ck = (int(math.floor(x / self.tile)), int(math.floor(y / self.tile)))
+        d = self.tiles.setdefault(ck, {})
+        m = d.get(key)
+        if m is None:
+            m = d[key] = Mesh()
+        return m
+
+    def finalize(self, parent, T, E, MAT, small=(), two=(), lod_far=650.0, env=None, facades=None, depth=None):
+        fac_root = None
+        for ck, d in sorted(self.tiles.items()):
+            cnode = parent.attachNewNode("zona")
+            near = None
+            for key, m in d.items():
+                if len(m) == 0:
+                    continue
+                if key == "fac" and facades is not None:
+                    if fac_root is None:
+                        fac_root = parent.attachNewNode("facciate_root")
+                        alb, nrm, grid, info = facades
+                        fac_root.setShader(env.facade_shader)
+                        fac_root.setShaderInput("u_fac_alb", alb)
+                        fac_root.setShaderInput("u_fac_nrm", nrm)
+                        fac_root.setShaderInput("u_fac_grid", grid)
+                        fac_root.setShaderInput("u_fac_info", info)
+                        fac_root.setShaderInput("u_mat", Vec4(0.18, 24, 0.0, 1.0))
+                    m.attach(fac_root, "facciate")
+                    continue
+                par = cnode
+                if key in small:
+                    if near is None:
+                        lod = LODNode("dettagli")
+                        lnp = cnode.attachNewNode(lod)
+                        lod.addSwitch(lod_far, 0.0)
+                        lod.setCenter(Point3((ck[0] + 0.5) * self.tile, (ck[1] + 0.5) * self.tile, 0))
+                        near = lnp.attachNewNode("vicino")
+                    par = near
+                np_ = m.attach(par, key, T.get(key), E.get(key), MAT.get(key, (0.25, 24, 0.0, 0)))
+                if key in two:
+                    np_.setTwoSided(True)
+                if depth and key in depth:
+                    np_.setDepthOffset(depth[key])
+        self.tiles = {}
+
+
+# ------------------------------------------------------------------ terreno con le altezze
+class TerrainWorld(StaticWorld):
+    def __init__(self, H, half, limit):
+        StaticWorld.__init__(self)
+        self.H = np.ascontiguousarray(H, np.float32)
+        self.half = float(half)
+        self.n = H.shape[0]
+        self.cell = 2 * half / (self.n - 1)
+        self.limit = limit
+        self.Hl = self.H.tolist()
+
+    def height(self, x, y):
+        n = self.n
+        fx = (x + self.half) / self.cell
+        fy = (y + self.half) / self.cell
+        if fx < 0:
+            fx = 0.0
+        elif fx > n - 1.001:
+            fx = n - 1.001
+        if fy < 0:
+            fy = 0.0
+        elif fy > n - 1.001:
+            fy = n - 1.001
+        ix, iy = int(fx), int(fy)
+        tx, ty = fx - ix, fy - iy
+        r0, r1 = self.Hl[iy], self.Hl[iy + 1]
+        return (r0[ix] * (1 - tx) + r0[ix + 1] * tx) * (1 - ty) + (r1[ix] * (1 - tx) + r1[ix + 1] * tx) * ty
+
+    def heights(self, xs, ys):
+        n = self.n
+        fx = np.clip((xs + self.half) / self.cell, 0, n - 1.001)
+        fy = np.clip((ys + self.half) / self.cell, 0, n - 1.001)
+        ix, iy = fx.astype(np.int64), fy.astype(np.int64)
+        tx, ty = fx - ix, fy - iy
+        H = self.H
+        a = H[iy, ix] * (1 - tx) + H[iy, ix + 1] * tx
+        b = H[iy + 1, ix] * (1 - tx) + H[iy + 1, ix + 1] * tx
+        return a * (1 - ty) + b * ty
+
+    def normal(self, x, y):
+        e = self.cell
+        hx = (self.height(x + e, y) - self.height(x - e, y)) / (2 * e)
+        hy = (self.height(x, y + e) - self.height(x, y - e)) / (2 * e)
+        l = math.sqrt(hx * hx + hy * hy + 1)
+        return (-hx / l, -hy / l, 1 / l)
+
+    def raycast(self, ox, oy, oz, dx, dy, dz, maxd, ground=True):
+        best = StaticWorld.raycast(self, ox, oy, oz, dx, dy, dz, maxd, ground=False)
+        bt = best[0] if best else maxd
+        if ground:
+            n = int(bt / 1.0) + 2
+            t = np.minimum(np.arange(n, dtype=np.float64), bt)
+            zs = oz + dz * t
+            hs = self.heights(ox + dx * t, oy + dy * t)
+            below = zs < hs
+            if below.any():
+                i = int(np.argmax(below))
+                if i > 0:
+                    lo, hi = t[i - 1], t[i]
+                    for _ in range(10):
+                        mid = (lo + hi) / 2
+                        if oz + dz * mid < self.height(ox + dx * mid, oy + dy * mid):
+                            hi = mid
+                        else:
+                            lo = mid
+                    if hi < bt:
+                        return hi, self.normal(ox + dx * hi, oy + dy * hi)
+        return best
+
+
+def terrain_meshes(ts, key, H, half, C, uvs=8.0, chunks=8, z_off=0.0):
+    n = H.shape[0]
+    xs = np.linspace(-half, half, n)
+    cell = xs[1] - xs[0]
+    gy, gx = np.gradient(H.astype(np.float64), cell)
+    N = np.dstack([-gx, -gy, np.ones_like(gx)])
+    N /= np.linalg.norm(N, axis=2, keepdims=True)
+    step = int(math.ceil((n - 1) / chunks))
+    for cj in range(chunks):
+        for ci in range(chunks):
+            i0, i1 = ci * step, min(n - 1, (ci + 1) * step)
+            j0, j1 = cj * step, min(n - 1, (cj + 1) * step)
+            if i1 <= i0 or j1 <= j0:
+                continue
+            w, h = i1 - i0 + 1, j1 - j0 + 1
+            X, Y = np.meshgrid(xs[i0:i1 + 1], xs[j0:j1 + 1])
+            V = np.zeros((w * h, 12), np.float32)
+            V[:, 0] = X.ravel()
+            V[:, 1] = Y.ravel()
+            V[:, 2] = H[j0:j1 + 1, i0:i1 + 1].ravel() + z_off
+            V[:, 3:6] = N[j0:j1 + 1, i0:i1 + 1].reshape(-1, 3)
+            V[:, 6:9] = C[j0:j1 + 1, i0:i1 + 1].reshape(-1, 3) / 255.0
+            V[:, 9] = 1.0
+            V[:, 10] = V[:, 0] / uvs
+            V[:, 11] = V[:, 1] / uvs
+            jj, ii = np.mgrid[0:h - 1, 0:w - 1]
+            a = (jj * w + ii).ravel().astype(np.uint32)
+            I = np.stack([a, a + 1, a + w + 1, a, a + w + 1, a + w], 1).reshape(-1)
+            ts.M(key, (xs[i0] + xs[i1]) / 2, (xs[j0] + xs[j1]) / 2).chunks.append((V, I))
+
+
+def tex_detail(size=256, seed=41, base=205, amp=50, grain_amt=26):
+    n = fbm(size, 8, 6, seed)
+    g = grain((size, size), seed + 1, grain_amt)
+    v = base + (n - 0.5) * amp * 2 + g
+    return to_u8(np.stack([v, v, v], -1))
+
+
+def tex_liquid(rgb, size=256, seed=29):
+    """liquido colorato (acido, limonata): leggere increspature"""
+    n = fbm(size, 6, 5, seed)
+    k = (0.82 + 0.3 * n)[..., None]
+    return to_u8(np.array(rgb, np.float32)[None, None, :] * k)
+
+
+def tex_panels(size=256, seed=43):
+    n = fbm(size, 8, 4, seed)
+    v = 200 + n * 30 + grain((size, size), seed, 8)
+    yy, xx = np.mgrid[0:size, 0:size]
+    seam = ((xx % 64) < 2) | ((yy % 64) < 2)
+    v = np.where(seam, v - 70, v)
+    bolt = (((xx % 64) - 6) ** 2 + ((yy % 64) - 6) ** 2) < 5
+    v = np.where(bolt, v - 40, v)
+    return to_u8(np.stack([v, v + 2, v + 6], -1))
+
+
+def tex_flesh(size=256, seed=44):
+    n = fbm(size, 6, 6, seed)
+    vein = np.abs(np.sin(fbm(size, 3, 4, seed + 7) * 40))
+    r = 212 + n * 40 - (vein < 0.12) * 55
+    g = 168 + n * 34 - (vein < 0.12) * 75
+    b = 166 + n * 34 - (vein < 0.12) * 30
+    return to_u8(np.stack([r, g, b], -1))
+
+
+def hillshade_map(H, C, half, size=1024, water=None, extra=None):
+    """mappa vista dall'alto: colori del terreno con ombreggiatura delle colline"""
+    n = H.shape[0]
+    idx = np.clip((np.arange(size) + 0.5) / size * (n - 1), 0, n - 1).astype(np.int64)
+    Hs = H[np.ix_(idx[::-1], idx)]
+    Cs = C[np.ix_(idx[::-1], idx)].astype(np.float32)
+    gy, gx = np.gradient(Hs)
+    shade = np.clip(0.8 + (gx - gy) * 0.08, 0.45, 1.25)
+    img = Cs * shade[..., None]
+    if water is not None:
+        lvl, col = water
+        img[Hs < lvl] = col
+    if extra is not None:
+        extra(img, size)
+    return to_u8(img)
+
+
+class TerrainDim(DimBase):
+    """base per gli universi con un terreno naturale"""
+    parallel = False
+    half = 1000.0
+    N = 321
+
+    def _setup_terrain(self, env, H, C, key="terrain", uvs=7.0):
+        self.env = env
+        self.world = TerrainWorld(H, self.half, self.half - 40)
+        self.limit = self.half - 40
+        self.map_r = self.half
+        self.net = RoadNet()
+        self.net.finish()
+        self.ped_rings = []
+        self.parking = []
+        self.lamps = []
+        self.rooftops = []
+        self.signs = []
+        self.ts = TileSet(300.0)
+        terrain_meshes(self.ts, key, H, self.half, C, uvs)
+        self.H, self.C = H, C
+
+    def ground(self, x, y):
+        return self.world.height(x, y)
+
+    def free_point_near(self, x, y, roads_ok=False, rmax=80.0):
+        w = self.world
+        for r in [0.0] + list(np.arange(2.0, rmax, 2.0)):
+            for k in range(max(1, int(6 + r))):
+                a = k / (6 + r) * TAU
+                px, py = x + math.cos(a) * r, y + math.sin(a) * r
+                if max(abs(px), abs(py)) > self.limit - 5:
+                    continue
+                z = w.height(px, py)
+                if self.acid_z is not None and z < self.acid_z + 0.3:
+                    continue
+                if not w.near(px - 1, py - 1, px + 1, py + 1)[1] and not self._blocked(px, py, z):
+                    return (px, py)
+        return (x, y)
+
+    def _blocked(self, x, y, z):
+        bs, _cs = self.world.near(x - 1, y - 1, x + 1, y + 1)
+        for i in bs:
+            x0, y0, x1, y1, z0, z1, _t = self.world.boxes[i]
+            if x0 - 0.5 <= x <= x1 + 0.5 and y0 - 0.5 <= y <= y1 + 0.5 and z1 > z + 0.5:
+                return True
+        return False
+
+    def map_labels(self):
+        return [(n, p) for (n, p) in getattr(self, "labels", [])]
+
+
+# ------------------------------------------------------------------ dimensione Cronenberg
+class CronenbergDim(DimBase):
+    key = "cronen"
+    title = "Dimensione Cronenberg"
+    subtitle = "La Terra dopo il disastro del filtro d'amore"
+    parallel = True
+    hostile = 8
+    monster_look = "cronen"
+    fog = (0.0011, 0.0025, 25.0, 0.95)
+    tint = (1.22, 0.86, 0.8)
+    winlit = 0.08
+    music = "dark"
+
+    def __init__(self, game, base, progress=None):
+        self.game = game
+        self.env = game.env
+        self.base = base
+        self.world = base.world
+        self.limit = base.limit
+        self.map_r = base.map_r
+        self.net = RoadNet()
+        self.net.finish()
+        self.ped_rings = []
+        self.parking = []
+        self.spots = dict(base.spots)
+        self.rooftops = base.rooftops
+        self.signs = []
+        self.map_img = to_u8(base.map_img.astype(np.float32) * np.array([1.15, 0.72, 0.68]))
+        self.root = game.env.root.attachNewNode("cronenberg")
+        self.fires = []
+        self._build(progress)
+        self.root.hide()
+
+    def palette(self, c, hour):
+        c = dict(c)
+        night = c["night"]
+        c["zen"] = lerp3((0.22, 0.07, 0.06), (0.03, 0.01, 0.015), night)
+        c["hor"] = lerp3((0.75, 0.32, 0.18), (0.12, 0.03, 0.03), night)
+        c["sun_col"] = lerp3((1.9, 1.0, 0.6), (0.4, 0.15, 0.1), night)
+        c["sky_amb"] = lerp3((0.32, 0.18, 0.15), (0.05, 0.02, 0.02), night)
+        c["gnd_amb"] = (0.14, 0.07, 0.05)
+        c["fog"] = lerp3((0.5, 0.22, 0.14), (0.08, 0.03, 0.03), night)
+        c["cloud"] = 0.95
+        return c
+
+    def ground(self, x, y):
+        f = getattr(self.base, "ground", None)
+        return f(x, y) if f else StaticWorld.terrain(x, y)
+
+    def ground_fn(self):
+        return getattr(self.base, "ground", None)
+
+    def activate(self):
+        self.base.root.show()
+        self.root.show()
+        GROUND_FN[0] = self.ground_fn()
+
+    def deactivate(self):
+        self.root.hide()
+        self.base.root.hide()
+
+    def free_point_near(self, x, y, roads_ok=False, rmax=120.0):
+        return self.base.free_point_near(x, y, roads_ok, rmax)
+
+    def map_labels(self):
+        return [("Casa Smith (Cronenberg)", tuple(self.spots["casa"][:2]))] if "casa" in self.spots else []
+
+    def nearest_lamps(self, x, y, n=8, maxd=90.0):
+        best = []
+        for (fx, fy, fz) in self.fires:
+            d = abs(fx - x) + abs(fy - y)
+            if d < maxd:
+                best.append((d, fx, fy, fz))
+        best.sort()
+        return best[:n]
+
+    def update(self, dt, t, game=None):
+        g = self.game
+        px, py = g.player.pos2()
+        for (fx, fy, fz) in self.fires:
+            if abs(fx - px) + abs(fy - py) < 160 and random.random() < 0.6:
+                g.fx.glow.emit((fx + random.uniform(-0.6, 0.6), fy + random.uniform(-0.6, 0.6), fz), (0, 0, 2.2), 0.7,
+                               0.5, 0.15, (1.0, 0.6, 0.15, 1.0), (1.0, 0.15, 0.0, 0.0), spread=0.6)
+                if random.random() < 0.3:
+                    g.fx.smoke.emit((fx, fy, fz + 1.5), (0, 0, 2.0), 3.0, 1.0, 3.5, (0.15, 0.12, 0.1, 0.5),
+                                    (0.1, 0.1, 0.1, 0.0))
+
+    def _build(self, progress):
+        rng = random.Random(1313)
+        base = self.base
+        ts = TileSet(320.0)
+        # escrescenze di carne su strade, marciapiedi e muri
+        rings = base.ped_rings if base.ped_rings else []
+        pts = []
+        for r in rng.sample(rings, min(len(rings), 2200)) if rings else []:
+            p = rng.uniform(0, r.length)
+            x, y = r.point(p, rng.uniform(-1.5, 1.5))
+            pts.append((x, y))
+        if not pts:
+            for _ in range(900):
+                pts.append((rng.uniform(-self.limit, self.limit), rng.uniform(-self.limit, self.limit)))
+        # piu' carne intorno a casa Smith
+        hx, hy = self.spots.get("casa", (0.0, 0.0))[:2]
+        for _ in range(160):
+            a = rng.uniform(0, TAU)
+            d = rng.uniform(8, 70)
+            x, y = hx + math.cos(a) * d, hy + math.sin(a) * d
+            if not self.world.hb_blocked(x, y):
+                pts.append((x, y))
+        flesh_cols = ((214, 168, 160), (190, 138, 150), (168, 120, 146), (226, 192, 172), (186, 150, 120))
+        for (x, y) in pts:
+            z = self.ground(x, y)
+            m = ts.M("flesh", x, y)
+            k = rng.randint(1, 4)
+            R = rng.uniform(0.6, 2.6)
+            for _ in range(k):
+                ox, oy = rng.uniform(-R, R), rng.uniform(-R, R)
+                r = R * rng.uniform(0.5, 1.0)
+                m.ellipsoid(x + ox, y + oy, z + r * 0.35, r, r * rng.uniform(0.7, 1.3), r * rng.uniform(0.5, 0.9),
+                            rng.choice(flesh_cols), seg=8, rings=5, jitter=0.25, seed=rng.randrange(9999), color_var=0.15)
+            if rng.random() < 0.4:
+                # tentacolo
+                a = rng.uniform(0, TAU)
+                cx, cy, cz = x, y, z
+                for j in range(5):
+                    nx_, ny_ = cx + math.cos(a) * 0.5, cy + math.sin(a) * 0.5
+                    m.cylinder(nx_, ny_, cz, cz + 0.9, 0.3 - j * 0.05, (200, 120, 140), seg=6, r_top=0.25 - j * 0.05)
+                    cx, cy, cz = nx_, ny_, cz + 0.85
+                    a += rng.uniform(-0.6, 0.6)
+            if rng.random() < 0.15:
+                # occhio che spunta dalla carne
+                er = rng.uniform(0.25, 0.5)
+                m.ellipsoid(x, y, z + R * 0.6 + er, er, er, er, (245, 245, 236), seg=8, rings=6)
+                a = rng.uniform(0, TAU)
+                m.ellipsoid(x + math.cos(a) * er * 0.8, y + math.sin(a) * er * 0.8, z + R * 0.6 + er, er * 0.4,
+                            er * 0.4, er * 0.4, (30, 10, 10), seg=6, rings=4)
+            if R > 1.2:
+                self.world.add_circle(x, y, R * 0.8, z + R * 0.9, "carne")
+        # grandi masse di carne in mezzo alle strade
+        road_rings = [r for r in rings if getattr(r, "pl", None) is not None]
+        for r in rng.sample(road_rings, min(len(road_rings), 140)) if road_rings else []:
+            x, y = r.point(rng.uniform(0, r.length), -rng.uniform(4.0, 7.0))
+            if self.world.hb_blocked(x, y):
+                continue
+            z = self.ground(x, y)
+            m = ts.M("flesh", x, y)
+            R = rng.uniform(2.5, 5.5)
+            for _ in range(rng.randint(3, 6)):
+                ox, oy = rng.uniform(-R * 0.6, R * 0.6), rng.uniform(-R * 0.6, R * 0.6)
+                r = R * rng.uniform(0.5, 0.9)
+                m.ellipsoid(x + ox, y + oy, z + r * 0.3, r, r * rng.uniform(0.8, 1.2), r * rng.uniform(0.6, 1.0),
+                            rng.choice(flesh_cols), seg=12, rings=7, jitter=0.2, seed=rng.randrange(9999), color_var=0.12)
+            for _ in range(rng.randint(2, 4)):
+                # occhi e denti
+                a = rng.uniform(0, TAU)
+                er = rng.uniform(0.4, 0.9)
+                ex, ey, ez = x + math.cos(a) * R * 0.75, y + math.sin(a) * R * 0.75, z + R * rng.uniform(0.4, 0.8)
+                m.ellipsoid(ex, ey, ez, er, er, er, (245, 245, 236), seg=10, rings=6)
+                m.ellipsoid(ex + math.cos(a) * er * 0.8, ey + math.sin(a) * er * 0.8, ez, er * 0.42, er * 0.42, er * 0.42,
+                            (30, 10, 10), seg=6, rings=4)
+            self.world.add_circle(x, y, R * 0.85, z + R * 0.9, "carne")
+        # occhi giganti e carne che cola dai palazzi
+        solids = [sd for sd in getattr(self.world, "solids", []) if sd[2] < 2.5 and sd[3] > 7.0]
+        for sid_k, sd in enumerate(rng.sample(solids, min(len(solids), 260)) if solids else []):
+            P = np.asarray(sd[0], np.float32)
+            if len(P) < 3:
+                continue
+            i = rng.randrange(len(P))
+            a, c = P[i], P[(i + 1) % len(P)]
+            d = c - a
+            l = float(np.hypot(*d))
+            if l < 6:
+                continue
+            nx_, ny_ = d[1] / l, -d[0] / l
+            mx, my = (a + c) / 2
+            if point_in_ring(float(mx + nx_ * 0.5), float(my + ny_ * 0.5), sd[0]):
+                nx_, ny_ = -nx_, -ny_
+            top = float(sd[3])
+            m = ts.M("flesh", mx, my)
+            if rng.random() < 0.55:
+                zz = rng.uniform(4, max(5, min(top - 2, 30)))
+                r = rng.uniform(1.4, 3.6)
+                m.ellipsoid(mx + nx_ * 0.3, my + ny_ * 0.3, zz, r * 1.3, r * 1.3, r, (225, 150, 150), seg=12, rings=7,
+                            jitter=0.12, seed=rng.randrange(999))
+                m.ellipsoid(mx + nx_ * (0.3 + r * 0.9), my + ny_ * (0.3 + r * 0.9), zz, r * 0.55, r * 0.55, r * 0.55,
+                            (245, 245, 236), seg=10, rings=6)
+                m.ellipsoid(mx + nx_ * (0.3 + r * 1.35), my + ny_ * (0.3 + r * 1.35), zz, r * 0.22, r * 0.22, r * 0.22,
+                            (40, 10, 10), seg=6, rings=4)
+            else:
+                # colata di carne lungo la facciata, dal tetto a terra
+                t0 = rng.uniform(0.2, 0.8)
+                bx, by = a[0] + d[0] * t0 + nx_ * 0.4, a[1] + d[1] * t0 + ny_ * 0.4
+                zt = min(top, 60.0)
+                n = max(3, int(zt / 2.5))
+                for j in range(n):
+                    zz = zt * (1 - j / n)
+                    r = rng.uniform(0.8, 1.6) * (1 + j / n)
+                    m.ellipsoid(bx + nx_ * r * 0.3, by + ny_ * r * 0.3, zz, r * 1.1, r * 1.1, r * 1.2,
+                                rng.choice(flesh_cols), seg=8, rings=5, jitter=0.2, seed=rng.randrange(9999))
+        if progress:
+            progress(0.5, "Escrescenze di carne")
+        # auto distrutte e incendi
+        fac = self.game.factory
+        wrecks = self.root.attachNewNode("relitti")
+        rp = [r for r in rings if getattr(r, "pl", None) is not None]
+        for _ in range(70):
+            if not rp:
+                break
+            r = rng.choice(rp)
+            p = rng.uniform(0, r.length)
+            x, y = r.point(p, -3.5)
+            if self.world.hb_blocked(x, y):
+                continue
+            kind = rng.choice(("berlina", "utilitaria", "furgone", "sportiva"))
+            car = fac.make(kind, wrecks, (40, 34, 30))
+            car["root"].setPos(x, y, self.ground(x, y) - 0.1)
+            car["root"].setHpr(rng.uniform(0, 360), rng.uniform(-6, 6), rng.uniform(-8, 8))
+            car["root"].setColorScale(0.35, 0.3, 0.28, 1)
+            self.world.add_circle(x, y, 1.6, 1.4, "relitto")
+            if rng.random() < 0.5:
+                self.fires.append((x, y, self.ground(x, y) + 1.0))
+        wrecks.flattenStrong()
+        T = {"flesh": make_texture(tex_flesh(), "carne")}
+        MAT = {"flesh": (0.45, 40, 0.12, 0)}
+        ts.finalize(self.root, T, {}, MAT, small=("flesh",), lod_far=700.0)
+
+
+# ------------------------------------------------------------------ pianeta Gazorpazorp
+class GazorpDim(TerrainDim):
+    key = "gazorp"
+    title = "Pianeta Gazorpazorp"
+    subtitle = "Deserti rossi, cristalli e Gazorpiani arrabbiati"
+    hostile = 6
+    monster_look = "gazorp"
+    fog = (0.0005, 0.0018, 120.0, 0.85)
+    tint = (1.0, 1.0, 1.0)
+    music = "alien"
+
+    def __init__(self, game, progress=None):
+        env = game.env
+        self.game = game
+        N, half = self.N, self.half
+        rng = random.Random(77)
+        base = fbm(N, 4, 6, 101)
+        dunes = fbm(N, 14, 3, 303)
+        mesa_mask = fbm(N, 3, 3, 202)
+        mesa = np.clip((mesa_mask - 0.56) * 22, 0, 1) * (34 + 18 * fbm(N, 6, 2, 404))
+        H = 28 * base + 7 * dunes + mesa
+        xs = np.linspace(-half, half, N)
+        X, Y = np.meshgrid(xs, xs)
+        R = np.hypot(X, Y)
+        # radura d'arrivo pianeggiante e montagne al bordo del mondo
+        flat = np.clip((R - 60) / 120, 0, 1)
+        h0 = float(H[N // 2, N // 2])
+        H = h0 + (H - h0) * flat
+        edge = np.clip((np.maximum(np.abs(X), np.abs(Y)) - (half - 220)) / 220, 0, 1)
+        H += edge ** 2 * 160 * (0.6 + 0.4 * fbm(N, 5, 3, 505))
+        H -= H.min()
+        self.acid_z = float(np.percentile(H, 9)) + 0.8
+        # colori: sabbia rosa, rocce rosse a strati, croste scure, sponde verdi dell'acido
+        gy, gx = np.gradient(H, xs[1] - xs[0])
+        slope = np.clip(np.hypot(gx, gy), 0, 3)
+        strata = 0.5 + 0.5 * np.sin(H * 0.9 + fbm(N, 6, 2, 606) * 4)
+        sand = np.stack([206 + 0 * H, 128 + 0 * H, 92 + 0 * H], -1)
+        rock = np.stack([150 + 30 * strata, 74 + 20 * strata, 60 + 12 * strata], -1)
+        crust = np.stack([170 + 0 * H, 92 + 0 * H, 72 + 0 * H], -1)
+        k_rock = np.clip((slope - 0.35) * 1.6, 0, 1)[..., None]
+        k_top = np.clip((mesa - 20) / 10, 0, 1)[..., None]
+        C = sand * (1 - k_rock) + rock * k_rock
+        C = C * (1 - k_top * 0.6) + crust * k_top * 0.6
+        shore = np.clip(1 - (H - self.acid_z) / 2.5, 0, 1)[..., None]
+        C = C * (1 - shore * 0.7) + np.array([96, 140, 70]) * shore * 0.7
+        C *= (0.88 + 0.24 * fbm(N, 16, 3, 707))[..., None]
+        self._setup_terrain(env, H, C)
+        self.root = env.root.attachNewNode("gazorpazorp")
+        self.spots = {"arrivo": (0.0, -20.0)}
+        if progress:
+            progress(0.35, "Rocce e cristalli")
+        self._props(rng)
+        if progress:
+            progress(0.8, "Villaggio gazorpiano")
+        T = {"terrain": make_texture(tex_detail(256, 41, 205, 45, 30), "sabbia"),
+             "rock": make_texture(tex_detail(256, 42, 190, 60, 40), "roccia"),
+             "water": make_texture(tex_liquid((150, 255, 110)), "acido")}
+        E = {"glow": make_texture(np.full((4, 4, 3), 255, np.uint8), "bagliore", mipmap=False)}
+        MAT = {"terrain": (0.06, 10, 0.0, 0), "rock": (0.1, 14, 0.0, 0), "props": (0.3, 30, 0.05, 0),
+               "flora": (0.25, 30, 0.05, 0), "glow": (1.5, 120, 0.6, 2.6), "water": (1.2, 150, 0.4, 0)}
+        self.ts.finalize(self.root, T, E, MAT, small=("flora", "props"), lod_far=900.0)
+        self.map_img = hillshade_map(H, C, half, 1024, water=(self.acid_z, (70, 150, 70)), extra=self._map_extra)
+        self.root.hide()
+
+    def palette(self, c, hour):
+        c = dict(c)
+        sun = Vec3(-0.55, 0.62, 0.42)
+        sun.normalize()
+        c["sun"] = sun
+        c["day"] = 1.0
+        c["warm"] = 0.4
+        c["night"] = 0.35
+        c["zen"] = (0.20, 0.10, 0.34)
+        c["hor"] = (1.05, 0.56, 0.36)
+        c["sun_col"] = (2.3, 1.55, 1.05)
+        c["sky_amb"] = (0.36, 0.25, 0.40)
+        c["gnd_amb"] = (0.22, 0.12, 0.10)
+        c["fog"] = (0.72, 0.42, 0.40)
+        c["cloud"] = 0.25
+        c["planet"] = ((0.45, -0.75, 0.42), 0.21, (0.45, 0.62, 0.85), (0.85, 0.88, 0.95), True)
+        return c
+
+    def _map_extra(self, img, size):
+        k = size / (2 * self.half)
+        for (x, y, r, col) in self.map_marks:
+            cx, cy = int((x + self.half) * k), int(size - (y + self.half) * k)
+            rr = max(2, int(r * k))
+            img[max(0, cy - rr):cy + rr, max(0, cx - rr):cx + rr] = col
+
+    def _props(self, rng):
+        w = self.world
+        ts = self.ts
+        self.map_marks = []
+        acid = self.acid_z
+        # lago d'acido
+        m = ts.M("water", 0, 0)
+        E = self.half
+        for (x0, y0) in ((-E, -E), (0, -E), (-E, 0), (0, 0)):
+            ts.M("water", x0 + E / 2, y0 + E / 2).quad((x0, y0, acid), (x0 + E, y0, acid), (x0 + E, y0 + E, acid),
+                                                        (x0, y0 + E, acid), (110, 210, 90), ((0, 0), (40, 0), (40, 40), (0, 40)),
+                                                        (0, 0, 1))
+        del m
+
+        def spot(minr=40, maxr=None, tries=40):
+            maxr = maxr or self.limit - 60
+            for _ in range(tries):
+                a = rng.uniform(0, TAU)
+                r = rng.uniform(minr, maxr)
+                x, y = math.cos(a) * r, math.sin(a) * r
+                z = w.height(x, y)
+                if z > acid + 0.5:
+                    return x, y, z
+            return None
+        # funghi giganti alieni
+        for _ in range(170):
+            s = spot(50)
+            if s is None:
+                continue
+            x, y, z = s
+            h = rng.uniform(6, 17)
+            r0 = rng.uniform(0.35, 0.8) * h / 10
+            col = rng.choice(((60, 170, 160), (170, 70, 160), (90, 120, 200), (200, 140, 60)))
+            mm = Mesh()
+            lean = rng.uniform(-0.15, 0.15)
+            for j in range(3):
+                za, zb = h * j / 3, h * (j + 1) / 3
+                mm.cylinder(lean * za, 0, za, zb, r0 * (1 - j * 0.12), (200, 196, 176), seg=7, r_top=r0 * (1 - (j + 1) * 0.12))
+            R = h * rng.uniform(0.35, 0.55)
+            mm.ellipsoid(lean * h, 0, h, R, R, R * 0.32, col, seg=12, rings=6, jitter=0.08, seed=rng.randrange(999),
+                         color_var=0.08)
+            mm.ellipsoid(lean * h, 0, h - R * 0.12, R * 0.92, R * 0.92, R * 0.18, (90, 60, 70), seg=12, rings=4)
+            V, I = mm.arrays()
+            ts.M("flora", x, y).chunks.append((xform(V, 0, rng.uniform(0, 360), 1.0, (x, y, z - 0.3)), I))
+            g = Mesh()
+            for _k in range(rng.randint(4, 9)):
+                a = rng.uniform(0, TAU)
+                rr = rng.uniform(0.2, 0.8) * R
+                g.ellipsoid(lean * h + math.cos(a) * rr, math.sin(a) * rr, h + R * 0.3 * (1 - (rr / R) ** 2) ** 0.5,
+                            R * 0.07, R * 0.07, R * 0.04, (140, 255, 220), seg=6, rings=3)
+            V, I = g.arrays()
+            ts.M("glow", x, y).chunks.append((xform(V, 0, 0, 1.0, (x, y, z - 0.3)), I))
+            w.add_circle(x, y, r0 + 0.3, z + h, "fungo")
+        # cristalli luminosi
+        self.crystals = []
+        for k in range(55):
+            s = spot(60)
+            if s is None:
+                continue
+            x, y, z = s
+            self._crystal(x, y, z, rng, big=k < 6)
+        # pinnacoli di roccia
+        for _ in range(45):
+            s = spot(80)
+            if s is None:
+                continue
+            x, y, z = s
+            mm = Mesh()
+            hh = rng.uniform(10, 30)
+            zz = 0.0
+            r = rng.uniform(3, 6)
+            while zz < hh:
+                seg_h = rng.uniform(3, 6)
+                mm.ellipsoid(rng.uniform(-0.6, 0.6), rng.uniform(-0.6, 0.6), zz + seg_h / 2, r, r * 0.9, seg_h * 0.7,
+                             (170, 92, 74), seg=9, rings=5, jitter=0.18, seed=rng.randrange(999), color_var=0.1)
+                zz += seg_h * 0.8
+                r *= rng.uniform(0.75, 0.95)
+            V, I = mm.arrays()
+            ts.M("rock", x, y).chunks.append((xform(V, 0, 0, 1.0, (x, y, z - 1)), I))
+            w.add_circle(x, y, 3.5, z + hh, "roccia")
+        # rocce sospese nel cielo
+        for _ in range(26):
+            a = rng.uniform(0, TAU)
+            r = rng.uniform(150, 800)
+            x, y = math.cos(a) * r, math.sin(a) * r
+            z = w.height(x, y) + rng.uniform(45, 110)
+            mm = Mesh()
+            R = rng.uniform(8, 22)
+            mm.ellipsoid(0, 0, 0, R, R * 0.8, R * 0.45, (160, 90, 72), seg=12, rings=7, jitter=0.2, seed=rng.randrange(999))
+            mm.cylinder(0, 0, -R * 1.2, -R * 0.2, R * 0.12, (140, 80, 66), seg=8, r_top=R * 0.75)
+            mm.ellipsoid(0, 0, R * 0.36, R * 0.8, R * 0.65, R * 0.12, (110, 140, 80), seg=10, rings=4, jitter=0.1,
+                         seed=rng.randrange(999))
+            V, I = mm.arrays()
+            ts.M("rock", x, y).chunks.append((xform(V, 0, rng.uniform(0, 360), 1.0, (x, y, z)), I))
+            w.add_box(x - R * 0.6, y - R * 0.5, x + R * 0.6, y + R * 0.5, z - R * 0.4, z + R * 0.4, "roccia sospesa")
+        # villaggio gazorpiano
+        vx, vy = 330.0, 260.0
+        self.labels = [("Villaggio gazorpiano", (vx, vy)), ("Portale di arrivo", (0.0, 0.0))]
+        for k in range(14):
+            a = k / 14 * TAU + rng.uniform(-0.15, 0.15)
+            r = rng.uniform(22, 55)
+            x, y = vx + math.cos(a) * r, vy + math.sin(a) * r
+            z = w.height(x, y)
+            if z < acid + 0.5:
+                continue
+            mm = Mesh()
+            R = rng.uniform(3.2, 5.0)
+            mm.cylinder(0, 0, -1.0, 3.0, R, (150, 110, 90), seg=14)
+            mm.ellipsoid(0, 0, 3.0, R * 1.08, R * 1.08, R * 0.75, (120, 80, 64), seg=14, rings=6, jitter=0.05,
+                         seed=rng.randrange(99))
+            mm.box(-0.8, -R - 0.15, 0, 0.8, -R + 0.3, 2.2, (40, 26, 20))
+            mm.cylinder(0, 0, 3.0 + R * 0.7, 3.0 + R * 0.7 + 2.0, 0.08, (60, 50, 40), seg=5)
+            V, I = mm.arrays()
+            h_ = math.degrees(math.atan2(vx - x, -(vy - y)))
+            ts.M("props", x, y).chunks.append((xform(V, 0, h_, 1.0, (x, y, z)), I))
+            w.add_circle(x, y, R + 0.2, z + 3 + R * 0.7, "capanna")
+        self.map_marks.append((vx, vy, 30, (150, 100, 80)))
+
+    def _crystal(self, x, y, z, rng, big=False):
+        ts = self.ts
+        mm = Mesh()
+        col = rng.choice(((90, 230, 255), (230, 90, 255), (120, 255, 160)))
+        n = rng.randint(5, 9) if not big else 11
+        sc = 2.2 if big else 1.0
+        for _ in range(n):
+            L = rng.uniform(2, 6) * sc
+            r = rng.uniform(0.3, 0.8) * sc
+            p = Mesh()
+            p.cylinder(0, 0, 0, L * 0.8, r, col, seg=6, r_top=r * 0.85)
+            p.cylinder(0, 0, L * 0.8, L, r * 0.85, col, seg=6, r_top=0.02)
+            V, I = p.arrays()
+            V = xform(V, rng.uniform(-35, 35), rng.uniform(0, 360), 1.0,
+                      (rng.uniform(-1, 1) * sc, rng.uniform(-1, 1) * sc, 0))
+            mm.chunks.append((V, I))
+        V, I = mm.arrays()
+        ts.M("glow", x, y).chunks.append((xform(V, 0, 0, 1.0, (x, y, z - 0.3)), I))
+        self.world.add_circle(x, y, 1.6 * sc, z + 4 * sc, "cristallo")
+        self.crystals.append((x, y, z, big))
+        self.map_marks.append((x, y, 6 if big else 3, (120, 220, 255)))
+
+
+# ------------------------------------------------------------------ Cittadella dei Rick
+class CitadelDim(DimBase):
+    key = "citadel"
+    title = "Cittadella dei Rick"
+    subtitle = "La stazione spaziale dei Rick di tutti gli universi"
+    parallel = False
+    ped_look = "rickvar"
+    cop_look = "rickcop"
+    void_z = -70.0
+    fog = (0.00012, 0.0, 300.0, 0.5)
+    tint = (1.0, 1.0, 1.0)
+    winlit = 1.0
+    music = "space"
+
+    HUB_R = 110.0
+    SAT_D = 330.0
+    SAT_R = 62.0
+
+    def __init__(self, game, progress=None):
+        env = game.env
+        self.game = game
+        self.env = env
+        L = 600.0
+        self.limit = 520.0
+        self.map_r = 480.0
+        self.world = RealWorld(L, self.limit)
+        self.world.hh.a[:] = -1e4
+        self.plat = Raster(L, 1.0, np.uint8, 0)
+        self.net = RoadNet()
+        self.net.finish()
+        self.parking = []
+        self.lamps = []
+        self.rooftops = []
+        self.signs = []
+        self.font = None
+        self.ts = TileSet(300.0)
+        self.facades = shared_facades(game.save.get("quality", 1) if hasattr(game, "save") else 1)
+        self.root = env.root.attachNewNode("cittadella")
+        rings = []
+        rng = random.Random(137)
+        self.labels = []
+        # piattaforma centrale e satelliti
+        self._platform(0, 0, self.HUB_R, 70, rng)
+        names = ["Consiglio dei Rick", "Quartiere residenziale", "Centro commerciale", "Caserma delle guardie",
+                 "Hangar delle navicelle", "Accademia dei Morty"]
+        self.sats = []
+        for k in range(6):
+            a = math.radians(90 + k * 60)
+            sx, sy = math.cos(a) * self.SAT_D, math.sin(a) * self.SAT_D
+            self.sats.append((sx, sy, names[k]))
+            self._platform(sx, sy, self.SAT_R, 40, rng)
+            self._bridge(a, rng)
+            self.labels.append((names[k], (sx, sy)))
+            rings.append(PathRing(circle_pts(sx, sy, self.SAT_R - 6, 36) + [circle_pts(sx, sy, self.SAT_R - 6, 36)[0]]))
+            ux, uy = math.cos(a), math.sin(a)
+            vx, vy = -uy, ux
+            for off in (-2.8, 2.8):
+                p0 = (ux * (self.HUB_R - 4) + vx * off, uy * (self.HUB_R - 4) + vy * off)
+                p1 = (sx - ux * (self.SAT_R - 4) + vx * off, sy - uy * (self.SAT_R - 4) + vy * off)
+                rings.append(PathRing([p0, p1]))
+        rings.append(PathRing(circle_pts(0, 0, self.HUB_R - 7, 60) + [circle_pts(0, 0, self.HUB_R - 7, 60)[0]]))
+        rings.append(PathRing(circle_pts(0, 0, 52, 40) + [circle_pts(0, 0, 52, 40)[0]]))
+        if progress:
+            progress(0.3, "Torri della Cittadella")
+        self._hub_buildings(rng)
+        for k, (sx, sy, name) in enumerate(self.sats):
+            self._sat_buildings(k, sx, sy, name, rng)
+        if progress:
+            progress(0.75, "Luci e dettagli")
+        link_rings(rings, None, 12.0)
+        self.ped_rings = rings
+        self.spots = {"arrivo": (0.0, -80.0), "consiglio": (self.sats[0][0], self.sats[0][1] - 26.0)}
+        T = {"plate": make_texture(tex_panels(), "pannelli"), "metal": make_texture(tex_detail(128, 45, 200, 30, 20), "metallo")}
+        E = {"glow": make_texture(np.full((4, 4, 3), 255, np.uint8), "luci_c", mipmap=False)}
+        MAT = {"plate": (0.6, 60, 0.25, 0), "metal": (0.9, 80, 0.45, 0), "props": (0.5, 50, 0.15, 0),
+               "glow": (1.0, 80, 0.3, 3.0), "glass": (1.2, 140, 0.8, 0)}
+        self.ts.finalize(self.root, T, E, MAT, small=("props",), lod_far=1200.0, env=env, facades=self.facades)
+        self.map_img = self._make_map()
+        for s_ in self.signs:
+            s_.reparentTo(self.root)
+        self.root.hide()
+
+    def ground(self, x, y):
+        return 0.0 if self.plat.get(x, y) else -1000.0
+
+    def palette(self, c, hour):
+        c = dict(c)
+        sun = Vec3(0.55, 0.35, 0.62)
+        sun.normalize()
+        c["sun"] = sun
+        c["day"] = 1.0
+        c["warm"] = 0.0
+        c["night"] = 0.85
+        c["zen"] = (0.0, 0.0, 0.0)
+        c["hor"] = (0.0, 0.0, 0.0)
+        c["sun_col"] = (2.1, 2.05, 1.95)
+        c["sky_amb"] = (0.13, 0.15, 0.24)
+        c["gnd_amb"] = (0.05, 0.05, 0.07)
+        c["fog"] = (0.02, 0.025, 0.05)
+        c["cloud"] = 0.0
+        c["space"] = True
+        c["planet"] = ((0.25, -0.55, -0.8), 0.62, (0.25, 0.55, 0.85), (0.45, 0.75, 0.55), False)
+        return c
+
+    def free_point_near(self, x, y, roads_ok=False, rmax=60.0):
+        for r in [0.0] + list(np.arange(2.0, rmax, 2.0)):
+            for k in range(max(1, int(6 + r))):
+                a = k / (6 + r) * TAU
+                px, py = x + math.cos(a) * r, y + math.sin(a) * r
+                ok = all(self.plat.get(px + ox, py + oy) for ox, oy in ((0, 0), (1.5, 0), (-1.5, 0), (0, 1.5), (0, -1.5)))
+                if ok and not self.world.hb_blocked(px, py):
+                    return (px, py)
+        return (0.0, -80.0)
+
+    def ped_link(self, ring, end):
+        try:
+            ri = self.ped_rings.index(ring)
+        except ValueError:
+            return None
+        lst = self.ped_rings[ri].links[end]
+        if not lst:
+            return None
+        rj, e2 = random.choice(lst[:3])
+        r2 = self.ped_rings[rj]
+        return r2, (0.0 if e2 == 0 else r2.length), (1 if e2 == 0 else -1)
+
+    def map_labels(self):
+        return list(self.labels)
+
+    def nearest_lamps(self, x, y, n=8, maxd=90.0):
+        best = []
+        for (lx, ly, lz) in self.lamps:
+            d = abs(lx - x) + abs(ly - y)
+            if d < maxd:
+                best.append((d, lx, ly, lz))
+        best.sort()
+        return best[:n]
+
+    # -------------------------------------------------- costruzione
+    def _platform(self, cx, cy, R, n, rng):
+        ts = self.ts
+        P = circle_pts(cx, cy, R, n)
+        flat_poly(ts.M("plate", cx, cy), P, [], 0.0, (184, 190, 202), 8.0)
+        self.plat.fill_rings([P], 1)
+        self.world.hh.fill_rings([P], 0.0, "max")
+        m = ts.M("metal", cx, cy)
+        wall_strip(m, P + [P[0]], -3.2, 0.0, (170, 176, 188))
+        m.cylinder(cx, cy, -R * 0.75, -3.2, R * 0.18, (150, 156, 170), seg=n, r_top=R, cap=False)
+        m.cylinder(cx, cy, -R * 0.95, -R * 0.75, R * 0.06, (120, 126, 140), seg=16, r_top=R * 0.18, cap=False)
+        g = ts.M("glow", cx, cy)
+        for k in range(3):
+            rr = R * (0.85 - k * 0.22)
+            zz = -3.2 - (R - rr) * 0.75 / 0.82 * 0.9
+            g.cylinder(cx, cy, zz - 0.3, zz + 0.3, rr + 0.05, (90, 200, 255), seg=n, cap=False)
+        # ringhiera con le aperture per i ponti
+        p = ts.M("metal", cx, cy)
+        gaps = []
+        for k in range(6):
+            a = math.radians(90 + k * 60)
+            if (cx, cy) == (0, 0):
+                gaps.append(a)
+            else:
+                gaps.append(math.atan2(-cy, -cx))
+                break
+        segs = n
+        for i in range(segs):
+            a0 = TAU * i / segs
+            a1 = TAU * (i + 1) / segs
+            am = (a0 + a1) / 2
+            if any(abs((am - gp + math.pi) % TAU - math.pi) < 7.5 / R + 0.06 for gp in gaps):
+                continue
+            x0, y0 = cx + math.cos(a0) * (R - 0.2), cy + math.sin(a0) * (R - 0.2)
+            x1, y1 = cx + math.cos(a1) * (R - 0.2), cy + math.sin(a1) * (R - 0.2)
+            wall_strip(p, [(x0, y0), (x1, y1)], 0.0, 1.1, (200, 210, 225))
+            wall_strip(p, [(x1, y1), (x0, y0)], 0.0, 1.1, (200, 210, 225))
+            nx_, ny_ = math.cos(a0), math.sin(a0)
+            nx2, ny2 = math.cos(a1), math.sin(a1)
+            poly = [(x0 + nx_ * 0.15, y0 + ny_ * 0.15), (x1 + nx2 * 0.15, y1 + ny2 * 0.15),
+                    (x1 - nx2 * 0.15, y1 - ny2 * 0.15), (x0 - nx_ * 0.15, y0 - ny_ * 0.15)]
+            if ring_area(poly) < 0:
+                poly = poly[::-1]
+            self.world.add_solid(poly, [], -0.5, 1.1, raster=False)
+        for k in range(0, n, max(1, n // 12)):
+            a = TAU * k / n
+            self.lamps.append((cx + math.cos(a) * (R - 3), cy + math.sin(a) * (R - 3), 4.5))
+            lx, ly = cx + math.cos(a) * (R - 3), cy + math.sin(a) * (R - 3)
+            ts.M("metal", lx, ly).cylinder(lx, ly, 0, 4.6, 0.1, (160, 166, 180), seg=6)
+            ts.M("glow", lx, ly).ellipsoid(lx, ly, 4.7, 0.3, 0.3, 0.3, (180, 230, 255), seg=8, rings=5)
+            self.world.add_circle(lx, ly, 0.15, 4.6, "lampione")
+
+    def _bridge(self, a, rng):
+        ts = self.ts
+        ux, uy = math.cos(a), math.sin(a)
+        vx, vy = -uy, ux
+        r0, r1 = self.HUB_R - 2, self.SAT_D - self.SAT_R + 2
+        w = 5.0
+        P = [(ux * r0 + vx * w, uy * r0 + vy * w), (ux * r0 - vx * w, uy * r0 - vy * w),
+             (ux * r1 - vx * w, uy * r1 - vy * w), (ux * r1 + vx * w, uy * r1 + vy * w)]
+        if ring_area(P) < 0:
+            P = P[::-1]
+        mx, my = ux * (r0 + r1) / 2, uy * (r0 + r1) / 2
+        flat_poly(ts.M("plate", mx, my), P, [], 0.0, (172, 178, 192), 6.0)
+        flat_poly(ts.M("metal", mx, my), P, [], -1.4, (140, 146, 160), 6.0, up=False)
+        self.plat.fill_rings([P], 1)
+        self.world.hh.fill_rings([P], 0.0, "max")
+        m = ts.M("metal", mx, my)
+        for s in (1, -1):
+            A = (ux * r0 + vx * w * s, uy * r0 + vy * w * s)
+            B = (ux * r1 + vx * w * s, uy * r1 + vy * w * s)
+            wall_strip(m, [A, B] if s < 0 else [B, A], -1.4, 0.0, (150, 156, 170))
+            # parapetto di vetro
+            g = ts.M("glass", mx, my)
+            wall_strip(g, [A, B], 0.0, 1.2, (150, 210, 255))
+            wall_strip(g, [B, A], 0.0, 1.2, (150, 210, 255))
+            poly = [(A[0] - vx * 0.15 * s, A[1] - vy * 0.15 * s), (B[0] - vx * 0.15 * s, B[1] - vy * 0.15 * s),
+                    (B[0] + vx * 0.15 * s, B[1] + vy * 0.15 * s), (A[0] + vx * 0.15 * s, A[1] + vy * 0.15 * s)]
+            if ring_area(poly) < 0:
+                poly = poly[::-1]
+            self.world.add_solid(poly, [], -0.5, 1.2, raster=False)
+        gl = ts.M("glow", mx, my)
+        for t in np.linspace(0.05, 0.95, 9):
+            x, y = ux * (r0 + (r1 - r0) * t), uy * (r0 + (r1 - r0) * t)
+            gl.box(x - 0.3, y - 0.3, -1.45, x + 0.3, y + 0.3, -1.4, (120, 220, 255), faces="Z")
+
+    def _tower(self, cx, cy, r, z0, h, style, rng, n=24, top=None):
+        P = circle_pts(cx, cy, r, n)
+        RealCity._fac_ring(None, self.ts.M("fac", cx, cy), P, z0, z0 + h, FACADE_INDEX[style], top, 0.0, rng)
+        flat_poly(self.ts.M("metal", cx, cy), P, [], z0 + h, (200, 206, 216), 6.0)
+        if z0 < 1.0:
+            self.world.add_solid(P, [], -1.0, z0 + h)
+        return P
+
+    def _dome(self, cx, cy, R, H, style, rng):
+        mm = Mesh()
+        mm.ellipsoid(0, 0, 0, R, R, H, (255, 255, 255), seg=28, rings=12)
+        V, I = mm.arrays()
+        keep = V[:, 2] >= -0.2
+        V = V.copy()
+        V[:, 2] = np.maximum(V[:, 2], 0.0)
+        V[:, 9] = FACADE_INDEX[style] / 255.0
+        V[:, 10] *= 10.0
+        V[:, 11] *= H / 3.0
+        V[:, 0] += cx
+        V[:, 1] += cy
+        del keep
+        self.ts.M("fac", cx, cy).chunks.append((V, I))
+        self.world.add_solid(circle_pts(cx, cy, R * 0.97, 24), [], -1.0, H * 0.9)
+
+    def _hub_buildings(self, rng):
+        # la grande torre centrale a gradoni
+        z = 0.0
+        for (r, h, st) in ((30, 70, "vetro_blu"), (22, 90, "vetro_blu"), (15, 80, "vetro_scuro"), (8, 50, "vetro_blu")):
+            self._tower(0, 0, r, z, h, st, rng, 32)
+            g = self.ts.M("glow", 0, 0)
+            g.cylinder(0, 0, z + h - 0.6, z + h, r + 0.25, (120, 220, 255), seg=32, cap=False)
+            z += h
+        self.ts.M("metal", 0, 0).cylinder(0, 0, z, z + 40, 1.2, (220, 224, 230), seg=10, r_top=0.2)
+        self.ts.M("glow", 0, 0).ellipsoid(0, 0, z + 41, 1.4, 1.4, 1.4, (255, 80, 60), seg=8, rings=5)
+        # anello di torri medie
+        for k in range(8):
+            a = TAU * k / 8 + 0.2
+            x, y = math.cos(a) * 72, math.sin(a) * 72
+            if abs(((math.degrees(a) - 270) + 180) % 360 - 180) < 25:
+                continue
+            h = rng.uniform(28, 60)
+            st = rng.choice(("vetro_blu", "appartamenti_moderni", "uffici_griglia", "vetro_scuro"))
+            self._tower(x, y, rng.uniform(7, 11), 0, h, st, rng, 18)
+        self.labels.append(("Torre centrale", (0.0, 0.0)))
+
+    def _sat_buildings(self, k, sx, sy, name, rng):
+        a = math.atan2(-sy, -sx)
+        fx, fy = math.cos(a), math.sin(a)
+        if k == 0:
+            # Consiglio dei Rick: grande cupola
+            self._dome(sx, sy, 24, 20, "vetro_bronzo", rng)
+            self._sign("CONSIGLIO DEI RICK", sx + fx * 25.5, sy + fy * 25.5, 9.0, math.degrees(math.atan2(fx, -fy)), 1.6,
+                       (0.6, 1.0, 1.0, 1), neon=True)
+        elif k == 1:
+            for j in range(7):
+                b = TAU * j / 7
+                x, y = sx + math.cos(b) * 34, sy + math.sin(b) * 34
+                if (x - sx) * fx + (y - sy) * fy > 20:
+                    continue
+                self._tower(x, y, rng.uniform(6, 9), 0, rng.uniform(22, 48), rng.choice(("intonaco_bianco", "appartamenti_moderni")), rng, 16)
+        elif k == 2:
+            self._tower(sx - fx * 12, sy - fy * 12, 26, 0, 16, "negozi1", rng, 30)
+            self._sign("MORTY'S MART", sx + fx * 14.6, sy + fy * 14.6, 8.0, math.degrees(math.atan2(fx, -fy)), 1.3,
+                       (1.0, 0.85, 0.2, 1), neon=True)
+        elif k == 3:
+            for j in (-1, 1):
+                x, y = sx - fy * j * 20, sy + fx * j * 20
+                self._tower(x, y, 11, 0, 30, "cemento", rng, 6)
+            self._sign("GUARDIE DELLA CITTADELLA", sx + fx * 6, sy + fy * 6, 6.0, math.degrees(math.atan2(fx, -fy)), 0.9,
+                       (1.0, 0.3, 0.25, 1), neon=True)
+        elif k == 4:
+            self._dome(sx - fx * 14, sy - fy * 14, 22, 12, "cemento", rng)
+            self.parking.append((sx + fx * 18, sy + fy * 18, math.degrees(math.atan2(-fx, fy))))
+        else:
+            self._tower(sx - fx * 10, sy - fy * 10, 18, 0, 26, "mattoni_rossi", rng, 24)
+            self._sign("ACCADEMIA DEI MORTY", sx + fx * 8.4, sy + fy * 8.4, 9.0, math.degrees(math.atan2(fx, -fy)), 1.0,
+                       (1.0, 1.0, 0.6, 1), neon=True)
+
+    def _sign(self, text_s, x, y, z, h, scale, color, neon=False):
+        if self.font is None:
+            self.font = TextNode.getDefaultFont()
+        tn = TextNode("insegna")
+        tn.setText(text_s)
+        tn.setAlign(TextNode.ACenter)
+        tn.setTextColor(*color)
+        np_ = self.env.root.attachNewNode(tn.generate())
+        np_.setPos(x, y, z)
+        np_.setH(h)
+        np_.setScale(scale)
+        np_.setTransparency(TransparencyAttrib.M_alpha)
+        np_.setShader(self.env.sign_shader)
+        np_.setShaderInput("u_glow", 1.0 if neon else 0.0)
+        np_.setDepthOffset(2)
+        np_.hide(MASK_SHADOW)
+        self.signs.append(np_)
+
+    def _make_map(self, size=1024):
+        R = self.map_r
+        L = self.plat.L
+        xs = (np.arange(size) + 0.5) / size * 2 * R - R
+        ix = ((xs + L) / self.plat.res).astype(np.int64)
+        iy = ix[::-1]
+        G = self.plat.a[np.ix_(iy, ix)]
+        B = self.world.hb.a[np.ix_(iy, ix)]
+        img = np.zeros((size, size, 3), np.float32)
+        img[:] = (8, 10, 22)
+        img[G > 0] = (150, 156, 170)
+        img[B >= 0] = (90, 140, 190)
+        return to_u8(img)
+
+
+# ------------------------------------------------------------------ Froopyland
+class FroopyDim(TerrainDim):
+    key = "froopy"
+    title = "Froopyland"
+    subtitle = "Il mondo morbido inventato da Rick per Beth"
+    hostile = 0
+    ped_look = "froopy"
+    fog = (0.00022, 0.002, 220.0, 0.55)
+    music = "happy"
+    soft = True
+    half = 900.0
+    N = 289
+
+    def __init__(self, game, progress=None):
+        env = game.env
+        self.game = game
+        N, half = self.N, self.half
+        rng = random.Random(33)
+        xs = np.linspace(-half, half, N)
+        X, Y = np.meshgrid(xs, xs)
+        H = 22 * fbm(N, 3, 4, 909) + 5 * fbm(N, 8, 2, 910)
+        # colline a cuscino
+        for _ in range(26):
+            cx, cy = rng.uniform(-half * 0.8, half * 0.8), rng.uniform(-half * 0.8, half * 0.8)
+            r = rng.uniform(40, 120)
+            H += rng.uniform(10, 32) * np.exp(-((X - cx) ** 2 + (Y - cy) ** 2) / (2 * r * r))
+        R = np.hypot(X, Y)
+        flat = np.clip((R - 50) / 100, 0, 1)
+        h0 = float(H[N // 2, N // 2])
+        H = h0 + (H - h0) * flat
+        edge = np.clip((np.maximum(np.abs(X), np.abs(Y)) - (half - 200)) / 200, 0, 1)
+        H += edge ** 2 * 120
+        H -= H.min()
+        self.lemon_z = float(np.percentile(H, 7)) + 0.6
+        hue = fbm(N, 3, 3, 911)
+        pal = np.array([(255, 128, 186), (112, 214, 128), (168, 136, 248), (255, 214, 96), (96, 184, 255)], np.float32)
+        t = np.clip(hue * 4.0, 0, 3.999)
+        i0 = t.astype(int)
+        f = (t - i0)[..., None]
+        C = pal[i0] * (1 - f) + pal[np.minimum(i0 + 1, 4)] * f
+        C *= (0.66 + 0.12 * fbm(N, 20, 3, 912))[..., None]
+        shore = np.clip(1 - (H - self.lemon_z) / 2.0, 0, 1)[..., None]
+        C = C * (1 - shore * 0.5) + np.array([255, 245, 200]) * shore * 0.5
+        self._setup_terrain(env, H, C, uvs=9.0)
+        self.root = env.root.attachNewNode("froopyland")
+        self.spots = {"arrivo": (0.0, -15.0)}
+        self.labels = [("Portale di arrivo", (0.0, 0.0))]
+        self.map_marks = []
+        bounce = []
+        self.gem_spots = []
+        self._props(rng, bounce)
+        self.bounce = tuple(bounce)
+        if progress:
+            progress(0.8, "Arcobaleni")
+        T = {"terrain": make_texture(tex_detail(256, 51, 200, 22, 12), "feltro"),
+             "water": make_texture(tex_liquid((255, 240, 160)), "limonata")}
+        E = {"glow": make_texture(np.full((4, 4, 3), 255, np.uint8), "luci_f", mipmap=False)}
+        MAT = {"terrain": (0.08, 10, 0.0, 0), "candy": (0.9, 90, 0.25, 0), "props": (0.5, 50, 0.1, 0),
+               "water": (1.1, 150, 0.4, 0), "glow": (0.6, 40, 0.1, 1.5), "cloudy": (0.05, 6, 0.0, 0)}
+        self.ts.finalize(self.root, T, E, MAT, small=("props",), two=("candy",), lod_far=1000.0)
+        self.map_img = hillshade_map(H, C, half, 1024, water=(self.lemon_z, (250, 236, 150)), extra=self._map_extra)
+        rings = []
+        for _ in range(40):
+            cx, cy = rng.uniform(-half * 0.7, half * 0.7), rng.uniform(-half * 0.7, half * 0.7)
+            r = rng.uniform(15, 40)
+            pts = circle_pts(cx, cy, r, 24)
+            if all(self.world.height(x, y) > self.lemon_z + 0.5 for x, y in pts):
+                rings.append(PathRing(pts + [pts[0]]))
+        self.ped_rings = rings
+        self.root.hide()
+
+    acid_z = None
+
+    def palette(self, c, hour):
+        c = dict(c)
+        sun = Vec3(0.3, -0.45, 0.84)
+        sun.normalize()
+        c["sun"] = sun
+        c["day"] = 1.0
+        c["warm"] = 0.0
+        c["night"] = 0.0
+        c["zen"] = (0.14, 0.40, 0.95)
+        c["hor"] = (0.72, 0.80, 1.0)
+        c["sun_col"] = (1.75, 1.62, 1.5)
+        c["sky_amb"] = (0.30, 0.30, 0.42)
+        c["gnd_amb"] = (0.2, 0.15, 0.2)
+        c["fog"] = (0.66, 0.72, 0.98)
+        c["cloud"] = 0.45
+        c["planet"] = ((-0.5, 0.7, 0.5), 0.07, (1.0, 0.8, 0.9), (1.0, 0.95, 0.8), False)
+        return c
+
+    def _map_extra(self, img, size):
+        k = size / (2 * self.half)
+        for (x, y, r, col) in self.map_marks:
+            cx, cy = int((x + self.half) * k), int(size - (y + self.half) * k)
+            rr = max(2, int(r * k))
+            img[max(0, cy - rr):cy + rr, max(0, cx - rr):cx + rr] = col
+
+    def _props(self, rng, bounce):
+        w = self.world
+        ts = self.ts
+        lz = self.lemon_z
+        E = self.half
+        for (x0, y0) in ((-E, -E), (0, -E), (-E, 0), (0, 0)):
+            ts.M("water", x0 + E / 2, y0 + E / 2).quad((x0, y0, lz), (x0 + E, y0, lz), (x0 + E, y0 + E, lz),
+                                                        (x0, y0 + E, lz), (255, 236, 130),
+                                                        ((0, 0), (40, 0), (40, 40), (0, 40)), (0, 0, 1))
+
+        def spot(minr=30, maxr=None):
+            maxr = maxr or self.limit - 60
+            for _ in range(40):
+                a = rng.uniform(0, TAU)
+                r = rng.uniform(minr, maxr)
+                x, y = math.cos(a) * r, math.sin(a) * r
+                z = w.height(x, y)
+                if z > lz + 0.5:
+                    return x, y, z
+            return None
+        pastel = ((255, 140, 190), (140, 220, 255), (190, 150, 255), (255, 220, 120), (140, 240, 180), (255, 170, 120))
+        # alberi lecca-lecca
+        for _ in range(140):
+            s = spot()
+            if s is None:
+                continue
+            x, y, z = s
+            h = rng.uniform(5, 11)
+            R = rng.uniform(1.8, 3.4)
+            mm = Mesh()
+            mm.cylinder(0, 0, 0, h, 0.2, (250, 250, 245), seg=8)
+            c1, c2 = rng.sample(pastel, 2)
+            mm.ellipsoid(0, 0, h + R * 0.8, R, R * 0.45, R, c1, seg=16, rings=10)
+            V, I = mm.arrays()
+            ang = np.arctan2(V[:, 2] - (h + R * 0.8), V[:, 0]) + np.hypot(V[:, 0], V[:, 2] - (h + R * 0.8)) * 1.2
+            band = (np.sin(ang * 3) > 0) & (V[:, 2] > h)
+            V[band, 6:9] = np.array(c2) / 255.0
+            ts.M("candy", x, y).chunks.append((xform(V, 0, rng.uniform(0, 360), 1.0, (x, y, z - 0.2)), I))
+            w.add_circle(x, y, 0.3, z + h + R * 1.8, "lecca-lecca")
+        # caramelle gommose giganti (alcune con una gemma in cima)
+        for k in range(30):
+            s = spot(60)
+            if s is None:
+                continue
+            x, y, z = s
+            R = rng.uniform(6, 14)
+            Hh = R * rng.uniform(0.9, 1.6)
+            col = rng.choice(pastel)
+            mm = Mesh()
+            mm.ellipsoid(x, y, z, R, R, Hh, col, seg=20, rings=10)
+            ts.M("candy", x, y).chunks.append(mm.arrays())
+            top = z + Hh
+            w.add_box(x - R * 0.55, y - R * 0.55, x + R * 0.55, y + R * 0.55, z - 2, top - Hh * 0.08, "caramella")
+            w.add_circle(x, y, R * 0.85, top - Hh * 0.35, "caramella")
+            self.map_marks.append((x, y, R * 0.7, col))
+            if k < 6:
+                self.gem_spots.append((x, y, top - Hh * 0.08 + 0.2))
+                # fungo trampolino accanto
+                a = rng.uniform(0, TAU)
+                bx, by = x + math.cos(a) * (R + 6), y + math.sin(a) * (R + 6)
+                self._mushroom(bx, by, w.height(bx, by), rng, bounce, power=24 + Hh * 0.9)
+        # funghi trampolino sparsi
+        for _ in range(26):
+            s = spot(40)
+            if s is not None:
+                self._mushroom(s[0], s[1], s[2], rng, bounce)
+        # arcobaleni
+        for _ in range(9):
+            s = spot(80)
+            if s is None:
+                continue
+            x, y, z = s
+            R = rng.uniform(30, 60)
+            self._rainbow(x, y, z, R, rng.uniform(0, 180))
+        # nuvole di zucchero filato
+        for _ in range(30):
+            a = rng.uniform(0, TAU)
+            r = rng.uniform(80, 700)
+            x, y = math.cos(a) * r, math.sin(a) * r
+            z = w.height(x, y) + rng.uniform(35, 80)
+            mm = Mesh()
+            for _k in range(rng.randint(4, 8)):
+                rr = rng.uniform(5, 11)
+                mm.ellipsoid(rng.uniform(-12, 12), rng.uniform(-8, 8), rng.uniform(-2, 3), rr, rr, rr * 0.7,
+                             rng.choice(((255, 220, 240), (255, 245, 250), (230, 210, 255))), seg=10, rings=6,
+                             jitter=0.1, seed=rng.randrange(999))
+            V, I = mm.arrays()
+            ts.M("cloudy", x, y).chunks.append((xform(V, 0, 0, 1.0, (x, y, z)), I))
+        # gemme sulle colline piu' alte (le restanti)
+        hills = sorted(((float(w.height(x, y)), x, y) for x, y in
+                        ((rng.uniform(-600, 600), rng.uniform(-600, 600)) for _ in range(300))), reverse=True)
+        for (z, x, y) in hills[:4]:
+            self.gem_spots.append((x, y, z + 0.2))
+
+    def _mushroom(self, x, y, z, rng, bounce, power=22.0):
+        mm = Mesh()
+        h = rng.uniform(1.6, 2.6)
+        R = rng.uniform(2.2, 3.4)
+        mm.cylinder(0, 0, 0, h, 0.45, (250, 245, 230), seg=10, r_top=0.6)
+        col = rng.choice(((240, 70, 90), (255, 140, 60), (150, 90, 255), (60, 200, 200)))
+        mm.ellipsoid(0, 0, h, R, R, R * 0.42, col, seg=16, rings=8)
+        for _k in range(8):
+            a = rng.uniform(0, TAU)
+            rr = rng.uniform(0.2, 0.75) * R
+            mm.ellipsoid(math.cos(a) * rr, math.sin(a) * rr, h + R * 0.42 * math.sqrt(max(0.0, 1 - (rr / R) ** 2)),
+                         0.32, 0.32, 0.1, (255, 255, 255), seg=6, rings=3)
+        V, I = mm.arrays()
+        self.ts.M("candy", x, y).chunks.append((xform(V, 0, 0, 1.0, (x, y, z - 0.1)), I))
+        top = z + h + R * 0.38
+        bounce.append((x, y, R * 0.85, top, power))
+        self.world.add_box(x - R * 0.6, y - R * 0.6, x + R * 0.6, y + R * 0.6, z, top - 0.2, "fungo")
+        self.map_marks.append((x, y, R, col))
+
+    def _rainbow(self, x, y, z, R, hdg):
+        cols = ((230, 60, 60), (240, 140, 50), (240, 220, 70), (90, 200, 90), (70, 140, 230), (90, 80, 200),
+                (160, 90, 210))
+        mm = Mesh()
+        bw = 1.6
+        n = 40
+        for k, col in enumerate(cols):
+            r0 = R - k * bw
+            r1 = r0 - bw
+            for i in range(n):
+                t0 = math.pi * i / n
+                t1 = math.pi * (i + 1) / n
+                for (y0, sgn) in ((-0.8, -1), (0.8, 1)):
+                    a0 = (math.cos(t0) * r0, y0, math.sin(t0) * r0)
+                    a1 = (math.cos(t1) * r0, y0, math.sin(t1) * r0)
+                    b0 = (math.cos(t0) * r1, y0, math.sin(t0) * r1)
+                    b1 = (math.cos(t1) * r1, y0, math.sin(t1) * r1)
+                    if sgn < 0:
+                        mm.quad(b0, b1, a1, a0, col, n=(0, -1, 0))
+                    else:
+                        mm.quad(a0, a1, b1, b0, col, n=(0, 1, 0))
+        V, I = mm.arrays()
+        self.ts.M("candy", x, y).chunks.append((xform(V, 0, hdg, 1.0, (x, y, z - 3)), I))
+        self.map_marks.append((x, y, 4, (255, 255, 255)))
+
+
+# =============================================================================
 #  PERSONAGGI 3D (articolati, animati via codice)
 # =============================================================================
 SKIN_TONES = [(244, 214, 186), (232, 190, 160), (208, 160, 120), (170, 120, 86), (122, 84, 60), (92, 62, 46)]
@@ -6450,6 +7940,29 @@ def random_look(rng, kind="ped"):
         d = dict(PALETTE_MORTY)
         d.update(kind="morty", scale=0.84, hair_style="morty", coat=False, head=1.38, width=1.0)
         return d
+    if kind == "rickvar":
+        d = dict(PALETTE_RICK)
+        d.update(kind="rick", scale=rng.uniform(0.96, 1.04), hair_style="rick", coat=True, head=1.0, width=0.95,
+                 hair=rng.choice(((172, 224, 242), (230, 230, 236), (120, 130, 140), (40, 40, 46), (190, 150, 230),
+                                  (240, 200, 120))),
+                 coat_col=rng.choice(((238, 242, 244), (238, 242, 244), (60, 60, 66), (150, 110, 70), (90, 120, 170))),
+                 shirt=rng.choice(((150, 206, 228), (40, 40, 44), (190, 60, 60), (230, 230, 230), (110, 160, 90))),
+                 pants=rng.choice(((134, 98, 62), (50, 50, 56), (70, 80, 110))))
+        return d
+    if kind == "rickcop":
+        d = dict(PALETTE_RICK)
+        d.update(kind="rick", scale=1.02, hair_style="rick", coat=True, head=1.0, width=1.0, coat_col=(36, 44, 70),
+                 shirt=(30, 34, 52), pants=(30, 34, 52), shoes=(20, 20, 24), hair=rng.choice(((172, 224, 242), (60, 60, 70))))
+        return d
+    if kind == "gazorp":
+        return dict(kind="gazorp", skin=rng.choice(((128, 110, 120), (120, 100, 92), (136, 118, 104))), shirt=(90, 70, 60),
+                    pants=(70, 54, 46), shoes=(50, 40, 34), hair=(0, 0, 0), scale=rng.uniform(1.3, 1.5),
+                    hair_style="gazorp", coat=False, head=1.1, width=1.45)
+    if kind == "froopy":
+        col = rng.choice(((255, 160, 200), (150, 220, 255), (190, 160, 255), (255, 220, 120), (150, 240, 190)))
+        return dict(kind="froopy", skin=col, shirt=col, pants=tuple(int(c * 0.85) for c in col), shoes=(250, 250, 250),
+                    hair=(255, 255, 255), scale=rng.uniform(0.65, 0.8), hair_style="froopy", coat=False, head=1.7,
+                    width=1.35)
     if kind == "grom":
         return dict(kind="grom", skin=(150, 178, 104), shirt=(46, 58, 100), pants=(36, 44, 74), shoes=(24, 24, 28),
                     hair=(0, 0, 0), scale=rng.uniform(0.95, 1.05), hair_style="grom", coat=False, head=1.2, width=1.0)
@@ -6545,7 +8058,7 @@ class Rig:
             tm.cylinder(0, 0, 0.0, 0.06, 0.172, (234, 200, 70), seg=12)
             tm.ellipsoid(0.08, 0.11, 0.38, 0.03, 0.01, 0.03, (234, 200, 70), seg=6, rings=4)
         if look.get("coat"):
-            c = (238, 242, 244)
+            c = look.get("coat_col", (238, 242, 244))
             cb = -0.46
             # camice aperto davanti, leggermente svasato in basso
             tm.hexa([(-0.25, -0.15, cb), (0.25, -0.15, cb), (0.25, -0.11, cb), (-0.25, -0.11, cb),
@@ -6581,7 +8094,7 @@ class Rig:
         self._head(look, rng)
         # braccia
         self.shoulders, self.elbows, self.hands = [], [], []
-        sleeve = (238, 242, 244) if look.get("coat") else shirt
+        sleeve = look.get("coat_col", (238, 242, 244)) if look.get("coat") else shirt
         for side in (-1, 1):
             sh = self.torso.attachNewNode("spalla")
             sh.setPos(side * 0.235 * W, 0, tl - 0.06)
@@ -6619,6 +8132,30 @@ class Rig:
                 m.ellipsoid(sx * 0.05, 0.0, 0.43, 0.02, 0.02, 0.02, skin, seg=5, rings=3)
             m.box(-0.12, -0.11, 0.24, 0.12, 0.13, 0.29, (40, 50, 90))
             m.box(-0.1, 0.1, 0.24, 0.1, 0.2, 0.255, (30, 36, 70))
+            m.attach(self.head, "testa")
+            return
+        if k == "gazorp":
+            # testa piccola e squadrata, mascella enorme con zanne
+            m.ellipsoid(0, 0.0, 0.2, 0.13, 0.13, 0.12, skin, seg=10, rings=6, jitter=0.06, seed=rng.randrange(99))
+            m.ellipsoid(0, 0.05, 0.06, 0.17, 0.16, 0.11, skin, seg=12, rings=6)
+            m.box(-0.13, 0.15, 0.02, 0.13, 0.2, 0.08, (60, 20, 26))
+            for sx in (-0.09, -0.03, 0.03, 0.09):
+                m.cylinder(sx, 0.19, 0.06, 0.13, 0.012, (240, 236, 220), seg=4, r_top=0.002)
+            for sx in (-1, 1):
+                m.ellipsoid(sx * 0.055, 0.11, 0.24, 0.025, 0.012, 0.018, (250, 220, 60), seg=6, rings=4)
+                m.ellipsoid(sx * 0.055, 0.12, 0.24, 0.01, 0.006, 0.01, (20, 10, 10), seg=5, rings=3)
+                m.box(sx * 0.055 - 0.04, 0.08, 0.27, sx * 0.055 + 0.04, 0.13, 0.29, tuple(int(c * 0.7) for c in skin))
+            m.attach(self.head, "testa")
+            return
+        if k == "froopy":
+            m.ellipsoid(0, 0.0, 0.16, 0.17, 0.16, 0.16, skin, seg=14, rings=10)
+            for sx in (-1, 1):
+                m.ellipsoid(sx * 0.07, 0.12, 0.19, 0.055, 0.03, 0.06, (255, 255, 255), seg=10, rings=6)
+                m.ellipsoid(sx * 0.07, 0.148, 0.18, 0.028, 0.012, 0.034, (30, 30, 40), seg=8, rings=5)
+                m.ellipsoid(sx * 0.07 + 0.01, 0.156, 0.2, 0.008, 0.004, 0.008, (255, 255, 255), seg=5, rings=3)
+                m.cylinder(sx * 0.06, 0.0, 0.3, 0.42, 0.012, skin, seg=5)
+                m.ellipsoid(sx * 0.06, 0.0, 0.44, 0.035, 0.035, 0.035, (255, 255, 255), seg=8, rings=5)
+            m.ellipsoid(0, 0.15, 0.08, 0.04, 0.012, 0.02, (200, 60, 90), seg=8, rings=4)
             m.attach(self.head, "testa")
             return
         if k == "cronen":
@@ -6798,15 +8335,121 @@ CAR_TYPES = {
     "sportiva": dict(L=4.4, W=1.9, H=1.18, wheel=0.35, mass=0.95, top=62.0, acc=12.5, grip=11.0, colors=[
         (220, 30, 30), (255, 200, 0), (30, 30, 34), (20, 120, 220), (240, 240, 240)]),
     "polizia": dict(L=4.7, W=1.86, H=1.5, wheel=0.35, mass=1.1, top=55.0, acc=11.0, grip=10.5, colors=[(28, 36, 86)]),
-    "navicella": dict(L=4.4, W=2.3, H=1.3, wheel=0.0, mass=0.9, top=58.0, acc=12.0, grip=8.0, colors=[(176, 184, 190)],
+    "navicella": dict(L=5.0, W=2.7, H=1.5, wheel=0.0, mass=0.9, top=58.0, acc=12.0, grip=8.0, colors=[(176, 184, 190)],
                       fly=True),
 }
 
 
 SEAT = {  # posizione del guidatore: (x, y, z)
     "berlina": (-0.38, -0.05, -0.1), "utilitaria": (-0.36, -0.15, -0.06), "furgone": (-0.42, 1.25, 0.3),
-    "sportiva": (-0.38, -0.15, -0.3), "polizia": (-0.38, -0.05, -0.08), "navicella": (0.0, 0.25, 0.35),
+    "sportiva": (-0.38, -0.15, -0.3), "polizia": (-0.38, -0.05, -0.08), "navicella": (-0.46, 0.15, 0.42),
 }
+
+
+def build_cruiser(paint, glass, dark, chrome, head, tail, L, hw):
+    """la navicella di Rick: scafo sagomato, abitacolo aperto, parabrezza, due motori posteriori"""
+    WH = (255, 255, 255)
+    T = np.array([-1.0, -0.96, -0.85, -0.6, -0.3, 0.0, 0.3, 0.55, 0.72, 0.85, 0.94, 0.985, 1.0])
+    prof = [(0.55, 0.0), (0.86, 0.06), (1.0, 0.3), (1.0, 0.62), (0.9, 0.88), (0.6, 1.0), (0.0, 1.03)]
+    prof = prof + [(-x, z) for (x, z) in reversed(prof[:-1])]
+    K = len(prof)
+    P = np.zeros((len(T), K, 3))
+    C = np.ones((len(T), K, 3))
+    for i, t in enumerate(T):
+        a = abs(t)
+        if t >= 0:
+            sx = 1.0 - 0.55 * max(0.0, t - 0.45) ** 1.6 / 0.55 ** 1.6
+            top = 1.0 - 0.42 * max(0.0, t - 0.5) / 0.5
+        else:
+            sx = 0.92 - 0.12 * max(0.0, a - 0.8) / 0.2
+            top = 1.08 - 0.1 * max(0.0, a - 0.85) / 0.15
+        zb = 0.28 + 0.12 * max(0.0, a - 0.85) / 0.15
+        zt = 0.28 + top * 0.82
+        y = t * L / 2
+        for k, (px, pz) in enumerate(prof):
+            P[i, k] = (px * hw * sx, y, zb + pz * (zt - zb))
+            if pz < 0.35:
+                C[i, k] = (0.78, 0.8, 0.84)
+    N = np.zeros_like(P)
+    for i in range(len(T) - 1):
+        for k in range(K - 1):
+            n = np.cross(P[i + 1, k] - P[i, k], P[i, k + 1] - P[i, k])
+            for (a_, b_) in ((i, k), (i + 1, k), (i, k + 1), (i + 1, k + 1)):
+                N[a_, b_] += n
+    N /= np.maximum(np.linalg.norm(N, axis=2, keepdims=True), 1e-9)
+    V = np.zeros((len(T) * K, 12), np.float32)
+    V[:, 0:3] = P.reshape(-1, 3)
+    V[:, 3:6] = N.reshape(-1, 3)
+    V[:, 6:9] = C.reshape(-1, 3)
+    V[:, 9] = 1.0
+    idx = []
+    for i in range(len(T) - 1):
+        for k in range(K - 1):
+            a_ = i * K + k
+            b_ = (i + 1) * K + k
+            idx += [a_, b_, b_ + 1, a_, b_ + 1, a_ + 1]
+    paint.chunks.append((V, np.asarray(idx, np.uint32)))
+    for i, front in ((0, False), (len(T) - 1, True)):
+        ring = P[i]
+        c = ring.mean(axis=0)
+        for k in range(K):
+            a_, b_ = tuple(ring[k]), tuple(ring[(k + 1) % K])
+            if front:
+                paint.quad(tuple(c), b_, a_, a_, WH, n=(0, 1, 0))
+            else:
+                paint.quad(tuple(c), a_, b_, b_, WH, n=(0, -1, 0))
+    # abitacolo aperto: vasca scura, sedili, cruscotto con schermi
+    zt = 0.28 + 0.82 * 1.0
+    dark.box(-hw * 0.78, -0.7, zt - 0.04, hw * 0.78, 1.0, zt + 0.015, (34, 32, 36), faces="z")
+    paint.box(-hw * 0.84, -0.78, zt - 0.02, hw * 0.84, -0.66, zt + 0.1, WH, faces="xXyYz")
+    paint.box(-hw * 0.84, 0.96, zt - 0.02, hw * 0.84, 1.08, zt + 0.08, WH, faces="xXyYz")
+    for sx in (-1, 1):
+        paint.box(sx * hw * 0.84 - 0.06, -0.78, zt - 0.02, sx * hw * 0.84 + 0.06, 1.08, zt + 0.09, WH, faces="xXyYz")
+        x = sx * 0.46
+        dark.box(x - 0.3, -0.55, zt, x + 0.3, -0.05, zt + 0.12, (110, 70, 46))
+        dark.box(x - 0.3, -0.62, zt, x + 0.3, -0.5, zt + 0.62, (110, 70, 46))
+    dark.box(-hw * 0.7, 0.72, zt, hw * 0.7, 0.98, zt + 0.32, (44, 44, 50))
+    head.box(-0.55, 0.715, zt + 0.12, -0.12, 0.72, zt + 0.28, (120, 255, 160), faces="y")
+    head.box(0.12, 0.715, zt + 0.12, 0.55, 0.72, zt + 0.28, (255, 190, 90), faces="y")
+    dark.cylinder(-0.46, 0.62, zt + 0.2, zt + 0.24, 0.17, (20, 20, 22), seg=10, axis="y")
+    # parabrezza curvo
+    n = 8
+    pts = []
+    for j in range(n + 1):
+        u = j / n * 2 - 1
+        x = u * hw * 0.8
+        bend = 0.12 * (1 - u * u)
+        pts.append(((x, 1.02 + bend, zt + 0.08), (x * 0.92, 0.82 + bend * 0.6, zt + 0.62)))
+    for j in range(n):
+        (a0, a1), (b0, b1) = pts[j], pts[j + 1]
+        glass.quad(a0, b0, b1, a1, (150, 210, 235, 120))
+    chrome.cylinder(-hw * 0.8, 1.02, zt + 0.04, zt + 0.66, 0.025, (200, 200, 205), seg=6)
+    chrome.cylinder(hw * 0.8, 1.02, zt + 0.04, zt + 0.66, 0.025, (200, 200, 205), seg=6)
+    # motori posteriori
+    for sx in (-1, 1):
+        ex = sx * hw * 0.74
+        ez = 0.95
+        y0, y1 = -L / 2 - 0.35, -L / 2 + 1.5
+        paint.cylinder(ex, ez, y0 + 0.25, y1, 0.36, (205, 210, 216), seg=16, axis="y", r_top=0.3)
+        chrome.cylinder(ex, ez, y0, y0 + 0.25, 0.3, (120, 124, 132), seg=16, axis="y", r_top=0.36)
+        dark.cylinder(ex, ez, y0 - 0.02, y0 + 0.02, 0.24, (20, 20, 26), seg=16, axis="y")
+        tail.cylinder(ex, ez, y0 - 0.03, y0, 0.2, (120, 200, 255), seg=16, axis="y")
+        paint.hexa([(ex - 0.03, y0 + 0.3, ez + 0.3), (ex + 0.03, y0 + 0.3, ez + 0.3), (ex + 0.03, y0 + 1.2, ez + 0.3),
+                    (ex - 0.03, y0 + 1.2, ez + 0.3), (ex - 0.02, y0 + 0.2, ez + 0.85), (ex + 0.02, y0 + 0.2, ez + 0.85),
+                    (ex + 0.02, y0 + 0.55, ez + 0.85), (ex - 0.02, y0 + 0.55, ez + 0.85)], WH)
+        for zz in (0.3, 0.5):
+            dark.cylinder(ex, ez, y0 + 0.5 + zz, y0 + 0.53 + zz, 0.37, (60, 62, 68), seg=16, axis="y")
+    # zampe d'atterraggio, faro, antenna, linee dei pannelli
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            lx, ly = sx * hw * 0.62, sy * L * 0.3
+            dark.cylinder(lx, ly, 0.0, 0.32, 0.05, (70, 72, 78), seg=6)
+            dark.cylinder(lx, ly, -0.02, 0.04, 0.16, (60, 60, 66), seg=10)
+        dark.box(sx * (hw * 0.995) - 0.01, -1.2, 0.62, sx * (hw * 0.995) + 0.01, 1.4, 0.65, (70, 72, 80))
+    head.ellipsoid(0, L / 2 - 0.05, 0.62, 0.22, 0.08, 0.16, (255, 250, 230), seg=10, rings=6)
+    chrome.ellipsoid(0, L / 2 - 0.1, 0.62, 0.27, 0.06, 0.2, (180, 182, 190), seg=10, rings=6)
+    chrome.cylinder(hw * 0.5, -L / 2 + 0.4, zt + 0.1, zt + 1.1, 0.02, (180, 180, 186), seg=5)
+    head.ellipsoid(hw * 0.5, -L / 2 + 0.4, zt + 1.12, 0.05, 0.05, 0.05, (255, 80, 60), seg=6, rings=4)
 
 
 def loft_body(m, L, hw, z0, belt, kind):
@@ -6898,18 +8541,7 @@ class CarFactory:
         WH = (255, 255, 255)
         hw = W / 2
         if kind == "navicella":
-            paint.ellipsoid(0, 0, 0.75, hw, L / 2, 0.38, WH, seg=20, rings=10)
-            paint.ellipsoid(0, -0.4, 0.95, hw * 0.75, L * 0.32, 0.28, WH, seg=16, rings=8)
-            dark.ellipsoid(0, 0.15, 1.02, hw * 0.55, 0.75, 0.22, (40, 40, 46), seg=14, rings=6)
-            glass.ellipsoid(0, 0.95, 1.12, hw * 0.55, 0.32, 0.26, (120, 200, 230, 150), seg=14, rings=6)
-            for sx in (-1, 1):
-                chrome.cylinder(sx * 0.7, -L / 2 + 0.2, 0.55, 0.85, 0.22, (150, 150, 160), seg=12, axis="y", r_top=0.17)
-                tail.cylinder(sx * 0.7, -L / 2 + 0.12, 0.56, 0.86, 0.16, (120, 200, 255), seg=12, axis="y")
-                dark.cylinder(sx * (hw - 0.3), L / 2 - 0.9, 0.0, 0.42, 0.12, (60, 60, 66), seg=8)
-                dark.cylinder(sx * (hw - 0.3), -L / 2 + 1.0, 0.0, 0.42, 0.12, (60, 60, 66), seg=8)
-            head.box(-0.5, L / 2 - 0.15, 0.68, 0.5, L / 2 - 0.05, 0.78, WH)
-            dark.box(-0.05, 0.25, 0.85, 0.05, 0.6, 1.25, (60, 60, 66))
-            dark.cylinder(0, 0.6, 1.2, 1.24, 0.18, (40, 40, 44), seg=12, axis="y")
+            build_cruiser(paint, glass, dark, chrome, head, tail, L, hw)
         else:
             z0 = wr * 0.9
             belt = z0 + (H - z0) * 0.52
@@ -7191,6 +8823,7 @@ class FX:
         self.glow = FXLayer(game, make_texture(tex_soft(64, 1.6), "bagliore", repeat=False), True)
         self.smoke = FXLayer(game, make_texture(tex_smoke(64), "fumo", repeat=False), False, cap=1200)
         self.portal_tex = make_texture(tex_portal(256), "portale", repeat=False)
+        self.soft_tex = make_texture(tex_soft(64, 1.3), "alone", repeat=False)
         self.portals = []
         self.flashes = []  # luci temporanee (x, y, z, raggio, r, g, b, vita)
 
@@ -7382,11 +9015,20 @@ def _hz(m):
 
 
 def compose_track(kind):
-    rng = np.random.default_rng({"menu": 1, "radio1": 2, "radio2": 3}[kind])
+    rng = np.random.default_rng({"menu": 1, "radio1": 2, "radio2": 3, "dark": 4, "alien": 5, "space": 6,
+                                 "happy": 7}[kind])
     if kind == "radio1":   # funk "schwifty"
         bpm, prog, style = 112, [(43, "m7"), (43, "m7"), (48, "7"), (46, "M")], "funk"
     elif kind == "radio2":  # synth spaziale
         bpm, prog, style = 124, [(45, "m"), (41, "M"), (48, "M"), (43, "M")], "synth"
+    elif kind == "dark":    # dimensione Cronenberg: drone inquietante
+        bpm, prog, style = 58, [(38, "m"), (39, "M"), (38, "m"), (36, "M")], "ambient"
+    elif kind == "alien":   # Gazorpazorp
+        bpm, prog, style = 72, [(40, "m"), (41, "M"), (40, "m"), (43, "M")], "ambient"
+    elif kind == "space":   # Cittadella
+        bpm, prog, style = 100, [(45, "m"), (48, "M"), (43, "M"), (41, "M")], "synth"
+    elif kind == "happy":   # Froopyland
+        bpm, prog, style = 126, [(48, "M"), (53, "M"), (55, "M"), (48, "M")], "menu"
     else:
         bpm, prog, style = 92, [(45, "m"), (41, "M"), (48, "M"), (43, "M")], "menu"
     chords = {"m": (0, 3, 7), "M": (0, 4, 7), "m7": (0, 3, 7, 10), "7": (0, 4, 7, 10)}
@@ -7405,6 +9047,16 @@ def compose_track(kind):
         root, q = prog[b % 4]
         tones = chords[q]
         t0 = b * 4 * beat
+        if style == "ambient":
+            for tt in tones:
+                put(_note(_hz(root + tt), 4 * beat, "tri", 0.07, a=1.2, r=1.5), t0)
+                put(_note(_hz(root + 12 + tt), 4 * beat, "sin", 0.05, a=1.5, r=1.5), t0)
+            for k in range(4):
+                if rng.random() < 0.6:
+                    m = root + 24 + tones[rng.integers(0, len(tones))]
+                    put(_note(_hz(m), beat * 0.8, "sq", 0.025, r=0.4), t0 + k * beat + beat * rng.choice((0.0, 0.5)))
+            put(kick * 0.5, t0)
+            continue
         for k in range(4):
             put(kick, t0 + k * beat) if (style != "menu" or k % 2 == 0) else None
             if k % 2 == 1:
@@ -7518,7 +9170,7 @@ class SoundBank:
         fade[:m] = np.linspace(0, 1, m)
         fade[-m:] = np.linspace(1, 0, m)
         L("ambient", amb * fade * 0.5, 1)
-        for name in ("menu", "radio1", "radio2"):
+        for name in ("menu", "radio1", "radio2", "dark", "alien", "space", "happy"):
             try:
                 L(name, compose_track(name), 1)
             except Exception:
@@ -7699,13 +9351,17 @@ class Vehicle:
         return (self.x + rx * side * (self.W / 2 + 0.9) + fx * 0.4, self.y + ry * side * (self.W / 2 + 0.9) + fy * 0.4)
 
     # ------------------------------------------------------------------ fisica
-    def drive(self, dt, throttle, brake, steer_in, handbrake=False, lift=0.0):
+    def drive(self, dt, throttle, brake, steer_in, handbrake=False, lift=0.0, boost=False):
         sp = self.spec
         fx, fy = self.fwd
         rx, ry = fy, -fx
         vf = self.vx * fx + self.vy * fy
         vr = self.vx * rx + self.vy * ry
         top, acc = sp["top"], sp["acc"]
+        self.throttle = throttle
+        self.boost = boost and self.fly and self.alt > 2.0
+        if self.boost:
+            top, acc = top * 1.8, acc * 2.2
         if self.hp < 30:
             top *= 0.6
         old_vf = vf
@@ -7746,7 +9402,7 @@ class Vehicle:
         self.lat = lerp(self.lat, yaw * vf, 0.15)
         if self.fly:
             if lift:
-                self.vz = approach(self.vz, lift * 9.0, 14 * dt)
+                self.vz = approach(self.vz, lift * 14.0, 18 * dt)
             else:
                 self.vz = approach(self.vz, 0.0, 8 * dt)
 
@@ -7759,10 +9415,12 @@ class Vehicle:
         self.x += self.vx * dt
         self.y += self.vy * dt
         ground = StaticWorld.terrain(self.x, self.y)
+        if self.fly and g.city.void_z is not None:
+            ground = max(ground, 0.0)
         if self.fly:
             if self.driver is None and self.alt > 0.3:
                 self.vz -= 6 * dt
-            self.alt = clamp(self.alt + self.vz * dt, 0.0, 160.0)
+            self.alt = clamp(self.alt + self.vz * dt, 0.0, 600.0)
             if self.alt <= 0.0:
                 self.vz = max(0.0, self.vz)
             supp = w.support(self.x, self.y, ground + self.alt + 0.3, 1.2)
@@ -7794,15 +9452,39 @@ class Vehicle:
         self.np.setPos(self.x, self.y, self.z)
         self.np.setH(self.h)
         vf = self.speed
-        self.body.setP(clamp(-self.accel * 0.25, -3.5, 3.5))
-        self.body.setR(clamp(self.lat * 0.12, -4, 4))
-        if self.fly:
-            self.body.setZ(0.25 + 0.06 * math.sin(g.clock_t * 3.0 + self.x))
+        if self.fly and self.alt > 0.6:
+            # in volo la navicella si inclina in curva e beccheggia accelerando
+            self.body.setP(lerp(self.body.getP(), clamp(-self.accel * 0.6 + self.vz * 0.8, -12, 12), 0.1))
+            self.body.setR(lerp(self.body.getR(), clamp(self.lat * 0.5, -28, 28), 0.1))
+            self.body.setZ(0.25 + 0.08 * math.sin(g.clock_t * 2.6 + self.x))
+            if self.driver == "player":
+                self._thrusters()
+        else:
+            self.body.setP(clamp(-self.accel * 0.25, -3.5, 3.5))
+            self.body.setR(clamp(self.lat * 0.12, -4, 4))
+            if self.fly:
+                self.body.setZ(0.25 + 0.06 * math.sin(g.clock_t * 3.0 + self.x))
         self.wheel_spin -= math.degrees(vf / max(self.wr, 0.1)) * dt
         for (steer, spin, front) in self.wheels:
             spin.setP(self.wheel_spin)
             if front:
                 steer.setH(math.degrees(self.steer))
+
+    def _thrusters(self):
+        """fiamme blu dei motori della navicella"""
+        g = self.game
+        fx, fy = self.fwd
+        rx, ry = fy, -fx
+        k = 0.35 + 0.65 * getattr(self, "throttle", 0.0) + (0.8 if getattr(self, "boost", False) else 0.0)
+        for sx in (-1, 1):
+            lx = sx * self.W / 2 * 0.74
+            ly = -self.L / 2 - 0.45
+            px = self.x + rx * lx + fx * ly
+            py = self.y + ry * lx + fy * ly
+            pz = self.z + 0.25 + 0.95
+            if random.random() < 0.9:
+                g.fx.glow.emit((px, py, pz), (-fx * 6 * k + self.vx * 0.8, -fy * 6 * k + self.vy * 0.8, 0),
+                               0.25 + 0.15 * k, 0.32 * k + 0.1, 0.05, (0.5, 0.8, 1.0, 1.0), (0.2, 0.3, 1.0, 0.0), spread=0.08)
 
     def impact(self, imp, pt, other=None):
         g = self.game
@@ -8122,6 +9804,20 @@ class TrafficManager:
             v.rig = self.game.peds.make_driver(v)
             return self.add(v)
         return None
+
+    def travel_reset(self, keep=None):
+        """si cambia universo: via tutte le auto tranne quella del giocatore"""
+        g = self.game
+        for v in list(self.cars):
+            if v is keep or v is g.cruiser:
+                continue
+            if getattr(v, "rig", None) is not None:
+                g.peds.release_driver(v.rig)
+                v.rig = None
+            v.remove()
+        self.cars = [v for v in self.cars if v is keep or v is g.cruiser]
+        self.parked_done = set()
+        self.pgrid = None
 
     def _parking_grid(self):
         g = {}
@@ -8544,36 +10240,46 @@ class PedManager:
         self.rng = random.Random(77)
         self.grid = {}
         self.monsters = False
-        self.pool = {"ped": [], "cop": [], "monster": []}
+        self.pool = {}
         self.driver_pool = []
         for _ in range(count + 6):
             p = Ped(game, random_look(self.rng), "ped", self.rng.randrange(99999))
+            p.look_kind = "ped"
             p.rig.root.hide()
-            self.pool["ped"].append(p)
+            self.pool.setdefault(("ped", "ped"), []).append(p)
         for _ in range(6):
             p = Ped(game, random_look(self.rng, "grom"), "cop", self.rng.randrange(99999))
+            p.look_kind = "grom"
             p.rig.root.hide()
-            self.pool["cop"].append(p)
+            self.pool.setdefault(("cop", "grom"), []).append(p)
         for _ in range(10):
             look = random_look(self.rng)
             r = Rig(game.dyn_root, look, self.rng.randrange(99999))
             r.root.hide()
             self.driver_pool.append(r)
 
-    def acquire(self, role):
-        lst = self.pool.setdefault(role, [])
+    def acquire(self, role, look=None):
+        kind = look or {"cop": "grom", "monster": "cronen"}.get(role, "ped")
+        lst = self.pool.setdefault((role, kind), [])
         if lst:
             p = lst.pop()
         else:
-            kind = {"cop": "grom", "monster": "cronen"}.get(role, "ped")
             p = Ped(self.game, random_look(self.rng, kind), role, self.rng.randrange(99999))
+            p.look_kind = kind
         p.reset(role)
         return p
+
+    def travel_reset(self):
+        for p in list(self.peds):
+            p.remove()
+        self.peds = []
+        self.rgrid = None
+        self.monsters = False
 
     def release(self, p):
         p.rig.root.hide()
         p.rig.root.reparentTo(self.game.dyn_root)
-        lst = self.pool.setdefault(p.role, [])
+        lst = self.pool.setdefault((p.role, getattr(p, "look_kind", "ped")), [])
         if len(lst) < 45:
             lst.append(p)
         else:
@@ -8631,15 +10337,15 @@ class PedManager:
         car.driver_look = None
         return p
 
-    def spawn_cop(self, x, y, h):
-        p = self.acquire("cop")
+    def spawn_cop(self, x, y, h, look=None):
+        p = self.acquire("cop", look)
         p.place(x, y, h)
         p.state = "chase"
         self.peds.append(p)
         return p
 
-    def spawn_monster(self, x, y):
-        p = self.acquire("monster")
+    def spawn_monster(self, x, y, look=None):
+        p = self.acquire("monster", look or getattr(self.game.city, "monster_look", "cronen"))
         p.place(x, y, random.uniform(0, 360))
         self.peds.append(p)
         return p
@@ -8670,7 +10376,7 @@ class PedManager:
         if not rings:
             return
         r = self.rng.choice(rings)
-        p = self.acquire("ped")
+        p = self.acquire("ped", getattr(self.game.city, "ped_look", None))
         p.ring = r
         p.dir = self.rng.choice((-1, 1))
         p.ring_p = self.rng.uniform(0, r.length)
@@ -8712,6 +10418,15 @@ class PedManager:
             civ = sum(1 for p in self.peds if p.role == "ped" and not p.dead)
             if civ < self.count and not self.monsters:
                 self.spawn_walker(px, py)
+            c = g.city
+            if c.hostile > 0 and g.state == "play":
+                near_m = sum(1 for p in self.peds if p.role == "monster" and not p.dead and dist2(p.x, p.y, px, py) < 140)
+                if near_m < c.hostile:
+                    a = random.uniform(0, TAU)
+                    r = random.uniform(45, 75)
+                    mx, my = c.free_point_near(px + math.cos(a) * r, py + math.sin(a) * r, roads_ok=True)
+                    if dist2(mx, my, px, py) > 30:
+                        self.spawn_monster(mx, my)
 
 
 # =============================================================================
@@ -8972,7 +10687,15 @@ class Police:
             self.t = 1.0
             want_cars = {1: 1, 2: 2, 3: 3, 4: 4, 5: 5}[stars]
             alive = [c for c in self.cars if c.driver == "cop" and not c.wrecked]
-            if len(alive) < want_cars:
+            if len(g.city.net.traffic_nodes) == 0:
+                cops = [p for p in g.peds.peds if p.role == "cop" and not p.dead]
+                if len(cops) < stars * 2:
+                    a = random.uniform(0, TAU)
+                    r = random.uniform(30, 55)
+                    px, py = pl.pos2()
+                    cx, cy = g.city.free_point_near(px + math.cos(a) * r, py + math.sin(a) * r, roads_ok=True)
+                    g.peds.spawn_cop(cx, cy, vec_heading(px - cx, py - cy), getattr(g.city, "cop_look", "grom"))
+            elif len(alive) < want_cars:
                 self.spawn_car()
             want_drones = {1: 0, 2: 0, 3: 1, 4: 2, 5: 3}[stars]
             if len(self.drones) < want_drones:
@@ -9010,6 +10733,23 @@ class Pickups:
         m.box(-0.25, -0.08, 0, 0.25, 0.08, 0.3, (60, 70, 120))
         m.box(-0.22, -0.085, 0.1, 0.22, 0.085, 0.16, (90, 180, 255))
         self.models["armatura"] = NodePath(m.node("armatura"))
+        m = Mesh()
+        for k in range(5):
+            a = k / 5 * TAU
+            p = Mesh()
+            p.cylinder(0, 0, 0, 0.5, 0.07, (90, 230, 255), seg=6, r_top=0.01)
+            V, I = p.arrays()
+            m.chunks.append((xform(V, 25, math.degrees(a), 1.0, (math.cos(a) * 0.06, math.sin(a) * 0.06, 0)), I))
+        m.cylinder(0, 0, 0, 0.62, 0.09, (150, 245, 255), seg=6, r_top=0.01)
+        self.models["cristallo"] = NodePath(m.node("cristallo"))
+        m = Mesh()
+        m.cylinder(0, 0, 0, 0.45, 0.13, (200, 205, 214), seg=12)
+        m.cylinder(0, 0, 0.06, 0.4, 0.135, (110, 255, 90), seg=12, cap=False)
+        m.cylinder(0, 0, 0.45, 0.52, 0.06, (150, 150, 160), seg=8)
+        self.models["fluido"] = NodePath(m.node("fluido"))
+        m = Mesh()
+        m.ellipsoid(0, 0, 0.2, 0.2, 0.2, 0.26, (255, 120, 210), seg=6, rings=3)
+        self.models["gemma"] = NodePath(m.node("gemma"))
         self.base_spots = []
         rng = random.Random(9)
         for (x, y) in game.city.spots.get("parchi", [])[:6]:
@@ -9026,12 +10766,23 @@ class Pickups:
         np_ = self.models[kind].copyTo(self.game.dyn_root)
         np_.setPos(x, y, z + 0.6)
         np_.setShaderInput("u_mat", Vec4(1.0, 80, 0.4, 0.0))
-        it = dict(kind=kind, x=x, y=y, z=z, np=np_, amount=amount, respawn=respawn, wait=0.0, tag=tag, t=random.uniform(0, 6))
+        it = dict(kind=kind, x=x, y=y, z=z, np=np_, amount=amount, respawn=respawn, wait=0.0, tag=tag, t=random.uniform(0, 6),
+                  dim=getattr(self.game, "dim", "c137"))
+        if kind in ("cristallo", "gemma", "fluido"):
+            np_.setShaderInput("u_mat", Vec4(1.2, 100, 0.6, 0.0))
+            np_.setScale(1.6)
         self.items.append(it)
         return it
 
     def drop_money(self, x, y, amount):
         self.add("soldi", x + random.uniform(-0.5, 0.5), y + random.uniform(-0.5, 0.5), StaticWorld.terrain(x, y), amount)
+
+    def set_dim(self, dim):
+        for it in self.items:
+            if it.get("dim", "c137") == dim and it["wait"] <= 0:
+                it["np"].show()
+            else:
+                it["np"].hide()
 
     def remove_tag(self, tag):
         for it in self.items:
@@ -9044,7 +10795,11 @@ class Pickups:
         pl = g.player
         px, py, pz = pl.pos3()
         keep = []
+        dim = getattr(g, "dim", "c137")
         for it in self.items:
+            if it.get("dim", "c137") != dim:
+                keep.append(it)
+                continue
             it["t"] += dt
             if it["wait"] > 0:
                 it["wait"] -= dt
@@ -9055,7 +10810,7 @@ class Pickups:
             n = it["np"]
             n.setH(it["t"] * 90)
             n.setZ(it["z"] + 0.6 + math.sin(it["t"] * 2.5) * 0.12)
-            if it["kind"] == "seme" and random.random() < 0.3:
+            if it["kind"] in ("seme", "cristallo", "gemma", "fluido") and random.random() < 0.3:
                 g.fx.glow.emit((it["x"], it["y"], it["z"] + 0.8), (0, 0, 0.6), 0.8, 0.25, 0.05, (1.0, 0.85, 0.3, 1.0),
                                (1.0, 0.6, 0.1, 0.0), spread=0.5)
             reach = 1.4 if pl.vehicle is None else 3.0
@@ -9078,6 +10833,9 @@ class Pickups:
         if k == "soldi":
             pl.money += it["amount"]
             g.hud.toast("+%d Schmeckles" % it["amount"], (0.5, 1.0, 0.5, 1))
+        elif k in ("cristallo", "gemma", "fluido"):
+            g.missions.on_item(k)
+            g.sounds.play("pickup", 1.0) if "pickup" in g.sounds.pool else None
         elif k == "fiaschetta":
             if pl.flasks >= 5:
                 return False
@@ -9253,7 +11011,7 @@ class Player:
             self.vz -= 20.0 * dt
             self.z += self.vz * dt
             if self.z <= supp:
-                if self.vz < -15:
+                if self.vz < -15 and not getattr(g.city, "soft", False):
                     self.hurt((-self.vz - 15) * 7, None)
                     g.fx.dust((self.x, self.y, supp), 1.5)
                 self.z = supp
@@ -9292,7 +11050,8 @@ class Player:
         if v.wrecked:
             v.coast(dt)
         else:
-            v.drive(dt, max(0.0, inp["fwd"]), max(0.0, -inp["fwd"]), -inp["side"], handbrake, lift)
+            v.drive(dt, max(0.0, inp["fwd"]), max(0.0, -inp["fwd"]), -inp["side"], handbrake, lift,
+                    boost=bool(inp["sprint"]) and getattr(self, "turbo", False))
         v.integrate(dt)
         sp = abs(v.speed)
         rpm = 0.6 + min(1.8, sp / v.spec["top"] * 1.8) + (0.25 if inp["fwd"] > 0 else 0)
@@ -9560,9 +11319,9 @@ class Morty:
         self.in_car = v
         r = self.rig.root
         r.reparentTo(v.body)
-        sy = {"furgone": 1.2, "navicella": -0.6, "sportiva": -0.1}.get(v.kind, 0.0)
-        sz = {"furgone": 0.35, "navicella": 0.35, "sportiva": -0.18, "utilitaria": 0.02}.get(v.kind, 0.05)
-        r.setPos(0.38 if v.kind != "navicella" else 0.0, sy, sz)
+        sy = {"furgone": 1.2, "navicella": 0.15, "sportiva": -0.1}.get(v.kind, 0.0)
+        sz = {"furgone": 0.35, "navicella": 0.42, "sportiva": -0.18, "utilitaria": 0.02}.get(v.kind, 0.05)
+        r.setPos(0.38 if v.kind != "navicella" else 0.46, sy, sz)
         r.setHpr(0, 0, 0)
         self.rig.animate(0.016, 0, "sit")
 
@@ -9831,9 +11590,14 @@ MISSION_INFO = [
     dict(title="Il garage di Rick", desc="Porta Morty da Blips and Chitz con la navicella."),
     dict(title="Mega Semi", desc="Raccogli i 5 Mega Semi sparsi per la citta'."),
     dict(title="Guai con la Federazione", desc="Distruggi le auto della Federazione e seminale."),
-    dict(title="Dimensione Cronenberg", desc="Elimina i Cronenberg usciti dal portale."),
+    dict(title="Dimensione Cronenberg", desc="Apri un portale verso la dimensione Cronenberg ed elimina i mostri."),
+    dict(title="I cristalli di Gazorpazorp", desc="Recupera 3 cristalli giganti sul pianeta Gazorpazorp."),
+    dict(title="Furto alla Cittadella", desc="Ruba 3 taniche di fluido portale alla Cittadella dei Rick."),
+    dict(title="Le gemme di Froopyland", desc="Raccogli le gemme di Froopyland usando i funghi trampolino."),
     dict(title="Mostrami cosa sai fare", desc="Sconfiggi il Cromulon che minaccia la Terra."),
 ]
+PORTAL_MISSIONS = {3: "cronen", 4: "gazorp", 5: "citadel", 6: "froopy"}
+BOSS_MISSION = 7
 
 
 class Missions:
@@ -9855,7 +11619,9 @@ class Missions:
         self.seed_spots = []
 
     def _start_points(self):
-        return self.game.city.mission_starts()
+        s = self.game.city.mission_starts()
+        home = s[1]
+        return [s[0], s[1], s[2], home, home, home, home, s[4]]
 
     # --------------------------------------------------------------- marker
     def _make_marker(self, x, y, color=(1.0, 0.85, 0.2)):
@@ -9900,6 +11666,10 @@ class Missions:
                 self.objective = "Gioco libero: esplora la citta'!"
                 return
             sp = self.start_points[self.idx]
+            if getattr(g, "dim", "c137") != "c137":
+                self._clear_marker()
+                self.objective = "Prossima missione sulla Terra C-137: apri un portale per tornare (Q, E)"
+                return
             if sp is None:
                 self.start()
                 return
@@ -9949,9 +11719,8 @@ class Missions:
     def _cleanup(self):
         g = self.game
         self._clear_marker()
-        g.pickups.remove_tag("seme")
-        if self.cronen_mode:
-            self._end_cronenberg()
+        for tag in ("seme", "cristallo", "fluido", "gemma"):
+            g.pickups.remove_tag(tag)
         if self.boss is not None and not self.boss.dead:
             self.boss.np.removeNode()
         self.boss = None
@@ -10038,78 +11807,163 @@ class Missions:
                 self.complete(1500, [("morty", "Li abbiamo seminati! Oh cavolo, il cuore mi esplode."),
                                      ("rick", "La burocrazia e' lenta, Morty. Ricordatelo.")])
 
-    # --------------------------------------------------------------- 3: cronenberg
-    def _s3(self):
+    # --------------------------------------------------------------- 3-6: missioni nel multiverso
+    def _portal_intro(self, dest, lines):
         g = self.game
-        x, y = g.city.spots["cronenberg"]
-        self.portal_np = g.fx.portal((x + 14, y, 4.6), 90, -1, 3.0)
-        g.sounds.play("portal", 1.0, 0.7)
-        self.cronen_mode = True
-        g.env.set_tint((1.28, 0.8, 0.74))
-        g.peds.monsters = True
-        g.peds.clear_civilians()
+        g.player.portal_dest = dest
+        for who, txt in lines:
+            g.subtitle(who, txt, 4.0)
+        if g.dim == dest:
+            self.on_travel(dest)
+
+    def _s3(self):
         self.need = 12
-        self.counter = 0
-        for k in range(self.need):
-            a = k / self.need * TAU
-            g.peds.spawn_monster(x - 10 + math.cos(a) * random.uniform(18, 40), y + math.sin(a) * random.uniform(18, 40))
-        g.subtitle("rick", "Il portale per la dimensione Cronenberg si e' riaperto! Rimettiamoli dentro... a pezzi.", 4.0)
-        g.subtitle("morty", "Rick, quelli erano persone! Aw jeez, sono orribili!", 3.0)
+        self._portal_intro("cronen", [
+            ("rick", "Morty, nella dimensione Cronenberg c'e' un mio vecchio laboratorio pieno di... ehm, mostri."),
+            ("rick", "Q per scegliere la destinazione, E per aprire il portale. Poi attraversalo!")])
+
+    def _s4(self):
+        self.need = 3
+        self._portal_intro("gazorp", [
+            ("rick", "Mi servono tre cristalli giganti di Gazorpazorp per il motore della navicella."),
+            ("morty", "Gazorpazorp? Dove i maschi sono... cosi' arrabbiati? Aw jeez.")])
+
+    def _s5(self):
+        self.need = 3
+        self._portal_intro("citadel", [
+            ("rick", "Il fluido portale e' finito, Morty. Lo rubiamo alla Cittadella dei Rick."),
+            ("rick", "Tre taniche, sparse per le piattaforme. Le guardie non saranno contente.")])
+
+    def _s6(self):
+        self.need = 5
+        self._portal_intro("froopy", [
+            ("rick", "Froopyland, Morty. L'ho creata per tua madre quando era piccola. C'erano delle gemme..."),
+            ("rick", "Usa i funghi trampolino per arrivare in cima alle caramelle giganti.")])
+
+    def on_travel(self, dest):
+        g = self.game
+        if not self.active or self.idx not in PORTAL_MISSIONS:
+            return
+        target = PORTAL_MISSIONS[self.idx]
+        if dest == target and self.stage == 0:
+            self.stage = 1
+            self._setup_dim(target)
+        elif dest == "c137" and self.stage == 2:
+            self._finish_portal_mission()
+        elif dest != target and self.stage == 1:
+            self.stage = 0
+            g.hud.toast("Sei uscito da %s: torna li' per finire la missione" % DIM_TITLE[target], (1, 0.8, 0.4, 1), 3.0)
+
+    def _setup_dim(self, target):
+        g = self.game
+        c = g.city
+        px, py = g.player.pos2()
+        if target == "cronen":
+            self.counter = 0
+            for k in range(self.need):
+                a = k / self.need * TAU
+                mx, my = c.free_point_near(px + math.cos(a) * random.uniform(20, 40), py + math.sin(a) * random.uniform(20, 40),
+                                           roads_ok=True)
+                g.peds.spawn_monster(mx, my, "cronen")
+            g.subtitle("morty", "Rick! Sono ovunque! Sono... appiccicosi!", 3.0)
+        elif target == "gazorp":
+            if not any(it["kind"] == "cristallo" for it in g.pickups.items):
+                big = [cr for cr in c.crystals if cr[3]] or c.crystals
+                big = sorted(big, key=lambda cr: math.hypot(cr[0], cr[1]))[:3]
+                for (x, y, z, _b) in big:
+                    fx, fy = c.free_point_near(x + 5, y, roads_ok=True)
+                    g.pickups.add("cristallo", fx, fy, c.ground(fx, fy), tag="cristallo")
+            g.subtitle("rick", "I cristalli brillano, Morty: guarda la mappa. E attento all'acido!", 3.5)
+        elif target == "citadel":
+            if not any(it["kind"] == "fluido" for it in g.pickups.items):
+                for (sx, sy, _name) in (c.sats[3], c.sats[4], c.sats[5]):
+                    fx, fy = c.free_point_near(sx, sy, roads_ok=True)
+                    g.pickups.add("fluido", fx, fy, 0.0, tag="fluido")
+            g.police.set_heat(2.5)
+            g.subtitle("rick", "Guardie! Sono io, ma con l'uniforme. Sparagli lo stesso.", 3.5)
+        elif target == "froopy":
+            if not any(it["kind"] == "gemma" for it in g.pickups.items):
+                spots = c.gem_spots[:3] + c.gem_spots[-2:]
+                for (x, y, z) in spots[:self.need]:
+                    g.pickups.add("gemma", x, y, z, tag="gemma")
+            g.subtitle("morty", "Rick, questo posto e' bellissimo! Perche' ci sono delle ossa per terra?", 3.5)
+
+    def on_item(self, kind):
+        g = self.game
+        if not self.active:
+            return
+        names = {"cristallo": "Cristallo", "fluido": "Tanica di fluido portale", "gemma": "Gemma"}
+        self.counter += 1
+        g.hud.toast("%s %d/%d" % (names.get(kind, kind), self.counter, self.need), (0.6, 1.0, 0.9, 1))
+        if kind == "fluido":
+            g.player.fluid = 100.0
+            g.police.set_heat(min(5.0, g.police.heat + 0.8))
 
     def on_monster_killed(self, p):
-        if self.active and self.idx == 3:
+        if self.active and self.idx == 3 and self.stage == 1:
             self.counter += 1
 
-    def _end_cronenberg(self):
+    def _portal_mission(self, target, dt, what):
         g = self.game
-        self.cronen_mode = False
-        g.env.set_tint((1, 1, 1))
-        g.peds.monsters = False
-        for p in g.peds.peds:
-            if p.role == "monster":
-                p.remove()
-        g.peds.peds = [p for p in g.peds.peds if p.role != "monster"]
-        if self.portal_np is not None:
-            for p in g.fx.portals:
-                if p["np"] is self.portal_np:
-                    p["life"] = p["t"] + 0.5
-            self.portal_np = None
+        if self.stage == 0:
+            self.objective = "Apri un portale verso %s (Q sceglie, E apre) e attraversalo" % DIM_TITLE[target]
+            if g.player.portal_dest != target and g.dim != target:
+                g.player.portal_dest = target
+        elif self.stage == 1:
+            self.objective = "%s (%d/%d)" % (what, min(self.counter, self.need), self.need)
+            if self.counter >= self.need:
+                self.stage = 2
+                g.player.portal_dest = "c137"
+                g.subtitle("rick", "Fatto! Ora apri un portale e torniamo sulla Terra C-137, Morty.", 3.5)
+        else:
+            self.objective = "Torna sulla Terra C-137 con un portale (Q, E)"
+            if g.dim == "c137":
+                self._finish_portal_mission()
+
+    def _finish_portal_mission(self):
+        rewards = {
+            3: (2000, [("rick", "Portale chiuso. La dimensione Cronenberg resta... di la'."),
+                       ("morty", "Non voglio mai piu' vedere un Cronenberg, Rick.")]),
+            4: (2500, [("rick", "Cristalli gazorpiani! Ora la navicella ha il turbo: Shift in volo."),
+                       ("morty", "Possiamo andare a casa e non tornare mai piu' su quel pianeta?")]),
+            5: (3000, [("rick", "Fluido portale a volonta', Morty. Il Consiglio non se ne accorgera'. Forse."),
+                       ("morty", "Rick, mi hanno visto dieci Rick diversi!")]),
+            6: (3000, [("rick", "Le gemme di Froopyland. Valgono una fortuna nel mercato nero intergalattico."),
+                       ("morty", "Non dirlo a mamma, va bene?")]),
+        }
+        reward, lines = rewards.get(self.idx, (1000, []))
+        if self.idx == 4:
+            self.game.player.turbo = True
+        self.complete(reward, lines)
 
     def _m3(self, dt):
-        g = self.game
-        x, y = g.city.spots["cronenberg"]
-        if self.stage == 0:
-            alive = sum(1 for p in g.peds.peds if p.role == "monster" and not p.dead)
-            self.objective = "Elimina i Cronenberg (%d/%d)" % (min(self.counter, self.need), self.need)
-            if alive < 3 and self.counter < self.need:
-                px, py = g.player.pos2()
-                a = random.uniform(0, TAU)
-                g.peds.spawn_monster(px + math.cos(a) * 35, py + math.sin(a) * 35)
-            if self.counter >= self.need:
-                self.stage = 1
-                self._make_marker(x + 9, y, (0.4, 1.0, 0.3))
-                g.subtitle("rick", "Fatto. Torna al portale, Morty, lo chiudo io.", 3.0)
-        else:
-            self.objective = "Torna al portale verde per chiuderlo"
-            px, py = g.player.pos2()
-            if dist2(px, py, x + 9, y) < 6:
-                self._end_cronenberg()
-                self.complete(2000, [("rick", "Portale chiuso. La dimensione Cronenberg resta... di la'."),
-                                     ("morty", "Non voglio mai piu' vedere un Cronenberg, Rick.")])
+        self._portal_mission("cronen", dt, "Elimina i Cronenberg")
 
-    # --------------------------------------------------------------- 4: cromulon
-    def _s4(self):
+    def _m4(self, dt):
+        self._portal_mission("gazorp", dt, "Raccogli i cristalli giganti")
+
+    def _m5(self, dt):
+        self._portal_mission("citadel", dt, "Ruba le taniche di fluido portale")
+
+    def _m6(self, dt):
+        self._portal_mission("froopy", dt, "Raccogli le gemme di Froopyland")
+
+    # --------------------------------------------------------------- 7: cromulon
+    def _s7(self):
         g = self.game
-        cx, cy = self.start_points[4]
+        cx, cy = self.start_points[BOSS_MISSION]
         self.boss = Cromulon3D(g, cx, cy + 13)
         g.hud.big("MOSTRAMI COSA SAI FARE!", (1.0, 0.85, 0.3, 1), 3.5)
         g.subtitle("morty", "Rick! C'e' una testa gigante nel cielo!", 3.0)
         g.subtitle("rick", "Un Cromulon, Morty. Vogliono uno spettacolo o distruggono il pianeta. Spara agli occhi!", 4.5)
 
-    def _m4(self, dt):
+    def _m7(self, dt):
         g = self.game
         b = self.boss
         if b is None:
+            return
+        if g.dim != "c137":
+            self.objective = "Il Cromulon minaccia la Terra! Torna sulla Terra C-137"
             return
         b.update(dt)
         self.objective = "Sconfiggi il Cromulon!  (evita i raggi rossi e le sfere)"
@@ -10117,7 +11971,7 @@ class Missions:
             self.boss = None
             self.complete(5000, [("cromulon", "NON MALE! NON MALE PER NIENTE! CI PIACE!"),
                                  ("morty", "Ce l'abbiamo fatta, Rick! Abbiamo salvato la Terra!"),
-                                 ("rick", "Ovvio, Morty. Wubba Lubba Dub Dub! Ora la citta' e' tutta nostra.")])
+                                 ("rick", "Ovvio, Morty. Wubba Lubba Dub Dub! Ora il multiverso e' tutto nostro.")])
             g.hud.credits()
 
     def blips(self):
@@ -10129,10 +11983,12 @@ class Missions:
             if self.active and self.idx == 0 and self.stage == 1:
                 col = (0.3, 1.0, 1.0, 1)
             out.append((self.target[0], self.target[1], col, True))
+        cols = {"seme": (1.0, 0.75, 0.1, 1), "cristallo": (0.4, 0.9, 1.0, 1), "fluido": (0.4, 1.0, 0.3, 1),
+                "gemma": (1.0, 0.45, 0.85, 1)}
         for it in g.pickups.items:
-            if it["kind"] == "seme" and it["wait"] <= 0:
-                out.append((it["x"], it["y"], (1.0, 0.75, 0.1, 1), True))
-        if self.boss is not None:
+            if it["kind"] in cols and it["wait"] <= 0 and it.get("dim", "c137") == getattr(g, "dim", "c137"):
+                out.append((it["x"], it["y"], cols[it["kind"]], True))
+        if self.boss is not None and getattr(g, "dim", "c137") == "c137":
             out.append((self.boss.x, self.boss.y, (1.0, 0.3, 0.8, 1), True))
         if self.active and self.idx == 3:
             for p in g.peds.peds:
@@ -10260,6 +12116,18 @@ class HUD:
         self.money = self._text("", 0.075, (0.55, 1.0, 0.55, 1), parent=self.tr, pos=(-0.06, -0.12), align=TextNode.ARight)
         self.weapon = self._text("", 0.05, (1, 1, 1, 1), parent=self.tr, pos=(-0.06, -0.31), align=TextNode.ARight)
         self.flasks = self._text("", 0.042, (0.85, 0.9, 1, 1), parent=self.tr, pos=(-0.06, -0.38), align=TextNode.ARight)
+        self.ptxt = self._text("", 0.042, (0.55, 1.0, 0.45, 1), parent=self.tr, pos=(-0.06, -0.44), align=TextNode.ARight)
+        self.dimtxt = self._text("", 0.042, (0.8, 0.9, 1.0, 1), parent=g.a2dBottomLeft, pos=(0.07, 0.42 + self.mm_r + 0.05), align=TextNode.ALeft)
+        cmf = CardMaker("lampo")
+        cmf.setFrame(-1, 1, -1, 1)
+        self.flash_np = g.render2d.attachNewNode(cmf.generate())
+        self.flash_np.setTransparency(TransparencyAttrib.M_alpha)
+        self.flash_np.setBin("fixed", 60)
+        self.flash_np.setColorScale(1, 1, 1, 0)
+        self.flash_np.hide()
+        self.flash_t = 0.0
+        self.flash_d = 1.0
+        self.map_texs = {}
         self.stars = []
         for i in range(5):
             s = OnscreenImage(self.tex["star_off"], parent=self.tr, pos=(-0.42 + i * 0.075, 0, -0.205), scale=0.034)
@@ -10319,6 +12187,25 @@ class HUD:
     def toast(self, s, col=(1, 1, 1, 1), dur=2.2):
         self.toasts.append([s, col, dur])
         self.toasts = self.toasts[-3:]
+
+    def set_map(self, dim):
+        """cambia la mappa (minimappa e mappa grande) quando si cambia universo"""
+        tex = self.map_texs.get(dim.key)
+        if tex is None:
+            tex = make_texture(dim.map_img, "mappa", repeat=False)
+            tex.setWrapU(SamplerState.WM_border_color)
+            tex.setWrapV(SamplerState.WM_border_color)
+            tex.setBorderColor(Vec4(0.05, 0.05, 0.08, 1))
+            self.map_texs[dim.key] = tex
+        self.map_tex = tex
+        self.map_card.setTexture(self.ts_map, tex)
+
+    def flash(self, col, dur=0.7):
+        self.flash_np.setColorScale(col[0], col[1], col[2], 1)
+        self.flash_np.setAlphaScale(0.85)
+        self.flash_np.show()
+        self.flash_t = dur
+        self.flash_d = dur
 
     def big(self, s, col, dur=3.0, sub=""):
         self.bigt.setText(s)
@@ -10410,6 +12297,16 @@ class HUD:
         self.money.setText("S %s" % format(pl.money, ",").replace(",", "."))
         self.weapon.setText(WEAPONS[pl.weapon]["name"])
         self.flasks.setText("Fiaschette: %d  (H)" % pl.flasks)
+        dest = getattr(pl, "portal_dest", None)
+        if dest is not None and hasattr(g, "dest_title"):
+            self.ptxt.setText("Portale: %s  (Q cambia, E apre)" % g.dest_title(dest))
+        self.dimtxt.setText(getattr(g.city, "title", ""))
+        if self.flash_t > 0:
+            self.flash_t -= dt
+            a = clamp(self.flash_t / self.flash_d, 0, 1)
+            self.flash_np.setAlphaScale(a * 0.85)
+            if self.flash_t <= 0:
+                self.flash_np.hide()
         st = g.police.stars
         blink = g.police.unseen_t > 2.0 and int(g.clock_t * 3) % 2 == 0
         for i, s in enumerate(self.stars):
@@ -10531,10 +12428,7 @@ class HUD:
             b = OnscreenImage(self.tex["circle"], parent=root, pos=(x, 0, y), scale=0.022)
             b.setTransparency(TransparencyAttrib.M_alpha)
             b.setColorScale(*col)
-        sx, sy, _h = g.city.spots["casa"]
-        for name, (lx, ly) in (("Casa Smith", (sx, sy)), ("Blips and Chitz", g.city.spots["arcade"]),
-                               ("Liceo", g.city.spots["scuola"]), ("Federazione", g.city.spots["polizia"]),
-                               ("Portale", g.city.spots["cronenberg"])):
+        for name, (lx, ly) in g.city.map_labels():
             x, y = mp(lx, ly)
             self._text(name, 0.035, (1, 1, 0.8, 1), parent=root, pos=(x, y + 0.03))
         self._text("MAPPA  -  M o Esc per chiudere", 0.05, (1, 1, 1, 1), parent=root, pos=(0, 0.93))
@@ -10658,6 +12552,371 @@ class Menu:
 
 
 # =============================================================================
+#  PORTALI E VIAGGI NEL MULTIVERSO
+# =============================================================================
+class PortalGate:
+    """portale 3D: due vortici che girano in versi opposti, alone luminoso, scintille e luce verde.
+    Attraversandolo (a piedi, in auto o con la navicella) si cambia universo."""
+
+    def __init__(self, game, x, y, z, h, dest, radius=1.6, life=16.0, exit_only=False):
+        self.game = game
+        self.x, self.y, self.z = x, y, z
+        self.h = h
+        self.dest = dest
+        self.r = radius
+        self.life = life
+        self.t = 0.0
+        self.exit_only = exit_only
+        self.dead = False
+        root = game.render.attachNewNode("portale")
+        root.setPos(x, y, z)
+        root.setH(h)
+        root.hide(MASK_SHADOW | MASK_MAP)
+        self.root = root
+        fx = game.fx
+        cm = CardMaker("vortice")
+        cm.setFrame(-1, 1, -1, 1)
+        self.layers = []
+        for k, (sc, col, dy) in enumerate(((1.0, (1, 1, 1, 1), 0.0), (0.8, (0.75, 1.0, 0.6, 0.75), 0.04),
+                                           (0.55, (1.0, 1.0, 0.8, 0.55), 0.08))):
+            n = root.attachNewNode(cm.generate())
+            n.setTexture(fx.portal_tex)
+            n.setShader(game.env.fx_shader)
+            n.setTransparency(TransparencyAttrib.M_alpha)
+            n.setDepthWrite(False)
+            n.setTwoSided(True)
+            n.setBin("fixed", 15 + k)
+            n.setColorScale(*col)
+            n.setY(-dy)
+            self.layers.append((n, sc, 1 if k % 2 == 0 else -1))
+        halo = root.attachNewNode(cm.generate())
+        halo.setTexture(fx.soft_tex)
+        halo.setShader(game.env.fx_shader)
+        halo.setTransparency(TransparencyAttrib.M_alpha)
+        halo.setAttrib(ColorBlendAttrib.make(ColorBlendAttrib.M_add, ColorBlendAttrib.O_incoming_alpha,
+                                             ColorBlendAttrib.O_one))
+        halo.setDepthWrite(False)
+        halo.setTwoSided(True)
+        halo.setBin("fixed", 14)
+        halo.setColorScale(0.35, 1.0, 0.3, 0.9)
+        self.halo = halo
+        self.k = 0.0
+        self._scale(0.01)
+        game.sounds.play("portal", 1.0 if not exit_only else 0.7, pos=(x, y, z))
+
+    def _scale(self, k):
+        r = self.r
+        for (n, sc, _d) in self.layers:
+            n.setScale(max(0.001, r * sc * k), 1, max(0.001, r * 1.32 * sc * k))
+        self.halo.setScale(max(0.001, r * 2.1 * k), 1, max(0.001, r * 2.5 * k))
+
+    def update(self, dt):
+        if self.dead:
+            return
+        self.t += dt
+        t = self.t
+        k = min(1.0, t / 0.35) * min(1.0, max(0.0, (self.life - t) / 0.5))
+        k = k * k * (3 - 2 * k)
+        k *= 1.0 + 0.04 * math.sin(t * 9)
+        self.k = k
+        self._scale(k)
+        # se la telecamera passa dentro il portale (es. quello d'uscita alle spalle del giocatore) lo sfuma,
+        # altrimenti lo schermo diventerebbe tutto verde
+        cp = self.game.camera.getPos(self.game.render)
+        dc = math.sqrt((cp[0] - self.x) ** 2 + (cp[1] - self.y) ** 2 + (cp[2] - self.z) ** 2)
+        self.root.setAlphaScale(clamp((dc - self.r * 0.6) / (self.r * 1.6), 0.06, 1.0))
+        for (n, sc, d) in self.layers:
+            n.setR(d * t * (260 + 90 * sc))
+        if k > 0.3:
+            g = self.game
+            hx, hy = math.cos(math.radians(self.h)), math.sin(math.radians(self.h))
+            for _ in range(3):
+                a = random.uniform(0, TAU)
+                ca, sa = math.cos(a), math.sin(a)
+                px = self.x + hx * ca * self.r * k
+                py = self.y + hy * ca * self.r * k
+                pz = self.z + sa * self.r * 1.32 * k
+                g.fx.glow.emit((px, py, pz), (hx * ca * 1.2, hy * ca * 1.2, sa * 1.2 + 0.4), 0.55, 0.12 * self.r, 0.02,
+                               (0.5, 1.0, 0.35, 1.0), (0.1, 0.7, 0.1, 0.0), spread=0.25)
+        if t >= self.life:
+            self.remove()
+
+    def light(self):
+        return (self.x, self.y, self.z, 10.0 + self.r * 5, 0.5 * self.k, 2.6 * self.k, 0.45 * self.k)
+
+    def inside(self, px, py, pz, rad):
+        if self.k < 0.6:
+            return False
+        dx, dy, dz = px - self.x, py - self.y, pz - self.z
+        hr = math.radians(self.h)
+        lat = dx * math.cos(hr) + dy * math.sin(hr)
+        nrm = -dx * math.sin(hr) + dy * math.cos(hr)
+        if abs(nrm) > max(0.7, rad):
+            # risucchio del vortice: chi arriva vicinissimo al centro ci finisce dentro
+            return lat * lat + nrm * nrm < (self.r * 1.3) ** 2 and abs(dz) < self.r * 1.1
+        return (lat / self.r) ** 2 + (dz / (self.r * 1.32)) ** 2 < 1.0
+
+    def remove(self):
+        if not self.dead:
+            self.dead = True
+            self.root.removeNode()
+
+
+class MultiverseMixin:
+    """metodi del gioco per i portali e i viaggi tra gli universi"""
+
+    def init_multiverse(self):
+        self.dims = {"c137": self.city}
+        self.dim = "c137"
+        self.portals = []
+        self.dim_last = {}
+        self.cruiser_dim = "c137"
+        self.player.portal_dest = "cronen"
+
+    def get_dim(self, key):
+        d = self.dims.get(key)
+        if d is not None:
+            return d
+        txt = OnscreenText(text="", scale=0.07, fg=(0.6, 1.0, 0.5, 1), shadow=(0, 0, 0, 1), mayChange=True,
+                           pos=(0, 0.1))
+
+        def prog(f, msg=""):
+            txt.setText("Apertura del portale verso\n%s\n\n%s  %d%%" % (DIM_TITLE[key], msg, int(f * 100)))
+            self.graphicsEngine.renderFrame()
+        prog(0.0, "Calcolo delle coordinate")
+        try:
+            if key == "cronen":
+                d = CronenbergDim(self, self.dims["c137"], prog)
+            elif key == "gazorp":
+                d = GazorpDim(self, prog)
+            elif key == "citadel":
+                d = CitadelDim(self, prog)
+            else:
+                d = FroopyDim(self, prog)
+        finally:
+            txt.destroy()
+        self.dims[key] = d
+        return d
+
+    def portal_destinations(self):
+        return [k for (k, _t, _s) in DIMENSIONS if k != self.dim] + ["qui"]
+
+    def dest_title(self, k):
+        return "qui (teletrasporto)" if k == "qui" else DIM_TITLE[k]
+
+    def cycle_portal_dest(self):
+        opts = self.portal_destinations()
+        cur = self.player.portal_dest
+        i = (opts.index(cur) + 1) % len(opts) if cur in opts else 0
+        self.player.portal_dest = opts[i]
+        self.hud.toast("Pistola portale: %s" % self.dest_title(opts[i]), (0.5, 1.0, 0.4, 1), 2.0)
+
+    def open_portal(self):
+        pl = self.player
+        opts = self.portal_destinations()
+        if pl.portal_dest not in opts:
+            pl.portal_dest = opts[0]
+        dest = pl.portal_dest
+        if dest == "qui":
+            pl.portal_jump()
+            return
+        if pl.portal_t > 0 or pl.dead:
+            return
+        if pl.fluid < 30:
+            self.hud.toast("Fluido portale insufficiente", (0.6, 1, 0.5, 1))
+            return
+        w = self.city.world
+        v = pl.vehicle
+        if v is not None:
+            fx, fy = v.fwd
+            if v.fly and v.alt > 2.0:
+                dist, r = 36.0, 5.5
+            else:
+                dist, r = 26.0, 3.4
+            # il portale si apre prima dell'eventuale muro davanti
+            hit = w.raycast(v.x, v.y, v.z + 1.2, fx, fy, 0.0, dist + r)
+            if hit is not None:
+                dist = max(9.0, hit[0] - r - 1.0)
+            cx, cy = v.x + fx * dist, v.y + fy * dist
+            gz = w.support(cx, cy, v.z + 2.0)
+            if self.city.void_z is not None and gz < self.city.void_z:
+                gz = v.z            # sopra il vuoto (Cittadella): il portale resta all'altezza del veicolo
+            cz = (v.z + 1.0) if (v.fly and v.alt > 2.0) else gz + r * 1.3
+            h = vec_heading(-fx, -fy)
+        else:
+            o, d = self.camctl.aim_ray()
+            hit = w.raycast(o[0], o[1], o[2], d[0], d[1], d[2], 40.0)
+            hx, hy = heading_vec(self.camctl.yaw)
+            r = 1.6
+            wall = None
+            if hit is not None:
+                t, n = hit
+                px, py = o[0] + d[0] * t, o[1] + d[1] * t
+                nl = math.hypot(n[0], n[1])
+                if n[2] < 0.5 and nl > 1e-3:
+                    wall = (n[0] / nl, n[1] / nl)
+            else:
+                px, py = pl.x + hx * 7, pl.y + hy * 7
+            if wall is not None:
+                # portale aperto sul muro, come nella serie: ci si entra camminando contro il muro
+                nx, ny = wall
+                px, py = px + nx * 0.12, py + ny * 0.12
+                gz = w.support(px + nx * 1.0, py + ny * 1.0, pl.z + 2.5)
+                h = vec_heading(nx, ny)
+            else:
+                if dist2(px, py, pl.x, pl.y) < 3.5:
+                    px, py = pl.x + hx * 4.5, pl.y + hy * 4.5
+                gz = w.support(px, py, pl.z + 2.5)
+                h = vec_heading(pl.x - px, pl.y - py)
+            if self.city.void_z is not None and gz < self.city.void_z:
+                gz = pl.z           # sopra il vuoto: il portale resta all'altezza del giocatore
+            cx, cy, cz = px, py, gz + r * 1.32
+        self.portals.append(PortalGate(self, cx, cy, cz, h, dest, r, 16.0))
+        pl.fluid -= 30
+        pl.portal_t = 0.6
+        self.hud.toast("Portale aperto verso %s: attraversalo!" % DIM_TITLE[dest], (0.5, 1.0, 0.4, 1), 2.5)
+
+    def update_portals(self, dt):
+        pl = self.player
+        v = pl.vehicle
+        for gt in list(self.portals):
+            gt.update(dt)
+            if gt.dead or gt.exit_only or gt.t < 0.3 or self.state != "play" or pl.dead:
+                continue
+            if v is not None:
+                hit = gt.inside(v.x, v.y, v.z + 0.9, 1.4 if v.fly else 1.0)
+            else:
+                hit = gt.inside(pl.x, pl.y, pl.z + 1.0, 0.5)
+            if hit:
+                self.travel(gt.dest, gt)
+                break
+        self.portals = [g for g in self.portals if not g.dead]
+
+    def portal_lights(self):
+        return [g.light() for g in self.portals if not g.dead and g.k > 0.05]
+
+    def travel(self, dest, gate=None, silent=False):
+        pl = self.player
+        v = pl.vehicle
+        old = self.city
+        newd = self.get_dim(dest)
+        obj = v if v is not None else pl
+        fpos = (obj.x, obj.y)
+        hdg = v.h if v is not None else pl.h
+        self.dim_last[self.dim] = fpos
+        for gt in self.portals:
+            gt.remove()
+        self.portals = []
+        self.traffic.travel_reset(v)
+        self.peds.travel_reset()
+        self.police.clear()
+        self.pickups.set_dim(dest)
+        old.deactivate()
+        newd.activate()
+        newd.apply_env(self.env)
+        self.city = newd
+        self.dim = dest
+        self.hud.set_map(newd)
+        # la navicella resta nell'universo dove e' parcheggiata
+        cr = self.cruiser
+        if v is cr:
+            self.cruiser_dim = dest
+        if self.cruiser_dim == dest:
+            cr.np.show()
+            if cr not in self.traffic.cars:
+                self.traffic.add(cr)
+        else:
+            cr.np.hide()
+            if cr in self.traffic.cars:
+                self.traffic.cars.remove(cr)
+        # punto d'arrivo
+        if newd.parallel and old.parallel:
+            ax, ay = fpos
+        elif dest in self.dim_last:
+            ax, ay = self.dim_last[dest]
+        else:
+            ax, ay = newd.arrival(None)
+        ax, ay = newd.free_point_near(ax, ay, roads_ok=True)
+        fx, fy = heading_vec(hdg)
+        ground = StaticWorld.terrain(ax, ay)
+        ground = newd.world.support(ax, ay, ground + 1.0)
+        if v is not None:
+            v.x, v.y = ax, ay
+            if v.fly:
+                v.alt = max(v.alt, 3.0)
+                v.z = ground + v.alt
+            else:
+                v.z = ground
+            v.np.setPos(v.x, v.y, v.z)
+        else:
+            pl.place(ax, ay, hdg)
+            pl.z = ground
+            pl.vz = 0.0
+        if self.morty.in_car is None:
+            self.morty.teleport_near(ax - fx * 1.5, ay - fy * 1.5)
+        r = gate.r if gate is not None else 1.6
+        ez = (v.z + 1.0) if (v is not None and v.fly) else ground + r * 1.32
+        self.portals.append(PortalGate(self, ax - fx * (r + 1.8), ay - fy * (r + 1.8), ez, hdg, None, r, 2.6,
+                                       exit_only=True))
+        if not silent:
+            self.hud.flash((0.45, 1.0, 0.4), 0.8)
+            self.hud.big(newd.title.upper(), (0.55, 1.0, 0.45, 1), 3.5, sub=newd.subtitle)
+        self.missions.on_travel(dest)
+        if dest != "c137" and not silent:
+            lines = {
+                "cronen": ("rick", "Benvenuto nella dimensione Cronenberg, Morty. Ehm... colpa mia."),
+                "gazorp": ("morty", "Rick, perche' su questo pianeta sono tutti cosi' arrabbiati?"),
+                "citadel": ("rick", "La Cittadella dei Rick. Un milione di me. Che incubo."),
+                "froopy": ("morty", "Wow, Rick! E' tutto morbido e colorato!"),
+            }
+            who, s = lines.get(dest, ("rick", "Wubba lubba dub dub!"))
+            self.subtitle(who, s, 3.5)
+
+    def dim_hazards(self, dt):
+        """vuoto della Cittadella, acido di Gazorpazorp, funghi trampolino di Froopyland"""
+        c = self.city
+        pl = self.player
+        if pl.dead or self.state != "play":
+            return
+        v = pl.vehicle
+        if c.void_z is not None:
+            obj = v if v is not None else pl
+            if obj.z < c.void_z:
+                if v is not None:
+                    self.exit_vehicle(force=True)
+                    if not v.fly:
+                        v.remove()
+                        v.dead = True
+                pl.hurt(30)
+                if pl.dead:
+                    return
+                ax, ay = c.arrival(None)
+                pl.place(ax, ay, pl.h)
+                pl.z = c.world.support(ax, ay, 1.0)
+                pl.vz = 0.0
+                self.hud.flash((0.45, 1.0, 0.4), 0.6)
+                self.hud.toast("Sei caduto nel vuoto! Rick ti ripesca con un portale", (0.6, 1.0, 0.5, 1), 3.0)
+                self.fx.portal((ax, ay, pl.z + 1.2), pl.h, 0.9, 1.1)
+                return
+        if v is None:
+            if c.acid_z is not None and pl.z < c.acid_z + 0.25:
+                pl.hurt(16 * dt)
+                if random.random() < dt * 4:
+                    self.fx.smoke.emit((pl.x, pl.y, pl.z + 0.3), (0, 0, 1.0), 1.0, 0.4, 1.4, (0.5, 1.0, 0.4, 0.5),
+                                       (0.4, 0.8, 0.3, 0.0))
+                if random.random() < dt * 0.8:
+                    self.hud.toast("Acido! Esci dal lago!", (0.6, 1.0, 0.4, 1), 1.5)
+            for (bx, by, br, bz, power) in c.bounce:
+                if dist2(pl.x, pl.y, bx, by) < br and abs(pl.z - bz) < 0.8 and pl.vz <= 0.5:
+                    pl.vz = power
+                    pl.z = bz + 0.1
+                    pl.on_ground = False
+                    self.sounds.play("jump", 0.8, 1.4)
+                    self.fx.dust((pl.x, pl.y, bz), 1.0)
+                    break
+
+
+# =============================================================================
 #  GIOCO
 # =============================================================================
 
@@ -10681,7 +12940,7 @@ def ray_cylinder(o, d, cx, cy, r, z0, z1, maxd):
     return None
 
 
-class Game(ShowBase):
+class Game(ShowBase, MultiverseMixin):
     def __init__(self):
         ShowBase.__init__(self)
         self.disableMouse()
@@ -10740,6 +12999,7 @@ class Game(ShowBase):
         self.player = Player(self)
         self.player.money = self.save.get("money", 250)
         self.player.unlocked = sorted(set(self.save.get("weapons", [0, 1])) | {0, 1})
+        self.player.turbo = bool(self.save.get("turbo", False)) or self.save.get("mission", 0) > 4
         self.morty = Morty(self)
         gx, gy, gh = self.city.spots["garage_auto"]
         self.cruiser = self.traffic.add(Vehicle(self, "navicella", gx, gy, gh))
@@ -10749,6 +13009,7 @@ class Game(ShowBase):
         self.hud = HUD(self)
         self.missions = Missions(self)
         self.menu = Menu(self)
+        self.init_multiverse()
         load.destroy()
         self.radio = 0
         self.dead_t = 0.0
@@ -10762,7 +13023,7 @@ class Game(ShowBase):
 
     # ------------------------------------------------------------------ input
     def _bind(self):
-        for k in ("escape", "f", "e", "v", "h", "m", "r", "1", "2", "3", "wheel_up", "wheel_down", "mouse1", "enter",
+        for k in ("escape", "f", "e", "q", "v", "h", "m", "r", "1", "2", "3", "wheel_up", "wheel_down", "mouse1", "enter",
                   "arrow_up", "arrow_down", "w", "s", "f11", "space"):
             self.accept(k, self.on_key, [k])
 
@@ -10837,7 +13098,9 @@ class Game(ShowBase):
         elif k == "f":
             self.toggle_vehicle()
         elif k == "e":
-            pl.portal_jump()
+            self.open_portal()
+        elif k == "q":
+            self.cycle_portal_dest()
         elif k == "v":
             self.camctl.first_person = not self.camctl.first_person
         elif k == "h":
@@ -10984,6 +13247,16 @@ class Game(ShowBase):
         self.missions.fail("")
         self.missions.idx = 0
         self.police.clear()
+        if getattr(self, "dim", "c137") != "c137":
+            self.travel("c137", silent=True)
+            for gt in self.portals:
+                gt.remove()
+            self.portals = []
+        self.cruiser_dim = "c137"
+        self.cruiser.np.show()
+        if self.cruiser not in self.traffic.cars:
+            self.traffic.add(self.cruiser)
+        pl.turbo = False
         pl.money = 250
         pl.unlocked = [0, 1]
         pl.set_weapon(1)
@@ -11004,6 +13277,7 @@ class Game(ShowBase):
         s["mission"] = self.missions.idx
         s["money"] = int(self.player.money)
         s["weapons"] = list(self.player.unlocked)
+        s["turbo"] = bool(getattr(self.player, "turbo", False))
         write_save(s)
 
     # ------------------------------------------------------------------ veicoli
@@ -11273,6 +13547,12 @@ class Game(ShowBase):
                 p.remove()
         self.peds.peds = [p for p in self.peds.peds if p.role != "cop"]
         self.env.set_tint((1, 1, 1))
+        if self.dim != "c137":
+            self.travel("c137", silent=True)
+            for gt in self.portals:
+                gt.remove()
+            self.portals = []
+        self.city.apply_env(self.env)
         sx, sy, sh = self.city.spots["casa"]
         pl.place(sx, sy, sh)
         pl.rig.dead_t = 0
@@ -11290,6 +13570,8 @@ class Game(ShowBase):
             pl.update(dt, inp)
         else:
             pl.rig.animate(dt, 0, "dead")
+        self.update_portals(dt)
+        self.dim_hazards(dt)
         self.morty.update(dt)
         self.traffic.update(dt)
         self.peds.update(dt)
@@ -11310,10 +13592,12 @@ class Game(ShowBase):
         want = None
         if pl.vehicle is not None and self.radio:
             want = "radio1" if self.radio == 1 else "radio2"
+        elif self.dim != "c137":
+            want = getattr(self.city, "music", None)
         self.sounds.set_music(want, 0.42)
 
     def gather_lights(self):
-        lights = self.fx.lights()
+        lights = self.portal_lights() + self.fx.lights()
         cp = self.camera.getPos(self.render)
         for c in self.police.cars:
             if c.siren_on and not c.dead and dist2(c.x, c.y, cp[0], cp[1]) < 70:
@@ -11359,7 +13643,7 @@ class Game(ShowBase):
         elif st == "bigmap":
             pass
         self.fx.update(dt, self.camera)
-        self.city.update(dt, self.clock_t)
+        self.city.update(dt, self.clock_t, self)
         pl = self.player
         spot = None
         if pl.vehicle is not None and self.env.night > 0.2 and not pl.vehicle.fly:
