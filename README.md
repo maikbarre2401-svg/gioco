@@ -1,8 +1,47 @@
-# gioco — Deepfake Ultra Pro 7.6 🎭
+# gioco — Deepfake Ultra Pro 8.0 🎭
 
 Face-swap in tempo reale (webcam **o file video**) basato su **insightface** +
-`inswapper_128.onnx`, con interfaccia Tkinter. Versione ottimizzata: **più
-veloce**, **più realistica** e **più potente**, con pannello di regolazioni live.
+`inswapper_128.onnx`. Interfaccia moderna, pannello di regolazioni live,
+export in alta qualità.
+
+![UI](docs/ui.png)
+
+## Architettura (8.0)
+
+Il monolite da ~1600 righe è stato diviso in moduli:
+
+```
+deepfake_ultra_pro.py   entry point
+dfpro/
+  config.py    impostazioni, preset, costanti        (solo dati)
+  theme.py     palette, font, helper di disegno      (solo tkinter)
+  widgets.py   widget custom su Canvas               (solo tkinter)
+  tracking.py  monitor prestazioni + stabilizzatore  (numpy)
+  engine.py    FaceEngine: modelli, detect, swap, blending
+  app.py       finestra principale + pipeline
+tests/
+  test_pipeline.py  regressione senza modelli né GUI
+```
+
+`theme`/`widgets` non importano cv2 né insightface: **la UI si testa da sola**.
+La logica di inferenza è stata *spostata*, non riscritta — e `tests/` lo dimostra.
+
+```bash
+python3 tests/test_pipeline.py     # 19 controlli, nessun modello richiesto
+```
+
+## Interfaccia (8.0)
+
+Tkinter di serie sembra Windows 95, quindi i controlli sono **ridisegnati su
+Canvas**: toggle a pill, slider con knob, bottoni con hover, chip di stato,
+sparkline degli FPS e selettori a segmenti.
+
+- **Header** con provider attivo (es. `CUDA (GPU)`) e stato.
+- **Colonna sinistra**: volto sorgente, pulsante SWAP, modalità, preset,
+  cattura (webcam/video/snapshot/REC/export), performance con grafico live.
+- **Centro**: anteprima che **si adatta all'area** mantenendo le proporzioni.
+- **Colonna destra**: regolazioni a schede (**Blend / Volto / Moto**) — prima
+  erano 12 slider in colonna — più opzioni e log.
 
 > ⚠️ **Uso responsabile.** Usa solo volti per cui hai il consenso. Non creare
 > contenuti ingannevoli, diffamatori o che ledano le persone. Molti paesi
