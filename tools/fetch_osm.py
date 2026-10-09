@@ -25,7 +25,6 @@ MIRRORS = [
     "https://overpass.private.coffee/api/interpreter",
     "https://overpass-api.de/api/interpreter",
     "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
-    "https://overpass.osm.jp/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
 ]
 OSM_API = "https://api.openstreetmap.org/api/0.6/map?bbox=%.6f,%.6f,%.6f,%.6f"
@@ -114,6 +113,8 @@ class ApiStore:
             raise SystemExit("Impossibile scaricare la zona %s" % url)
         root = ET.fromstring(raw)
         for el in root:
+            if el.tag not in ("node", "way", "relation") or el.get("id") is None:
+                continue
             tags = {t.get("k"): t.get("v") for t in el.findall("tag")}
             i = int(el.get("id"))
             if el.tag == "node":
