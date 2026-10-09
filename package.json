@@ -52,7 +52,8 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:android": "expo export --platform web --output-dir android/app/src/main/assets/www --clear && node scripts/prune-android-web.js"
   },
   "private": true
 }

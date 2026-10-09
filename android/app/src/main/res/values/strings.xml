@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Maik Subs</string>
+    <string name="channel_name">Promemoria rinnovi</string>
+    <string name="channel_desc">Avvisi prima dei rinnovi e della fine delle prove gratuite</string>
+    <string name="saved">File salvato</string>
+    <string name="save_failed">Non sono riuscito a salvare il file</string>
+    <string name="share">Condividi</string>
+</resources>

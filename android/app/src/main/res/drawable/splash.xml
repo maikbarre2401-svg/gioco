@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Schermata di avvio: sfondo viola sfumato con il logo al centro -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@drawable/maik_bg" />
+    <item android:drawable="@drawable/ic_launcher_fg" android:gravity="center" android:width="216dp" android:height="216dp" />
+</layer-list>

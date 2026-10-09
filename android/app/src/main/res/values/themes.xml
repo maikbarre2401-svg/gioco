@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Light: la pagina vede prefers-color-scheme: light -->
+    <style name="Theme.Maik" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@drawable/splash</item>
+        <item name="android:statusBarColor">@color/maik_violet</item>
+        <item name="android:navigationBarColor">@color/maik_violet</item>
+        <item name="android:colorAccent">@color/maik_violet</item>
+    </style>
+</resources>

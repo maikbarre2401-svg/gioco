@@ -19,13 +19,17 @@ import {
 } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 
+import { androidBridge } from '@/lib/android-bridge';
 import { Radius, Space } from '@/lib/theme';
 import { useApp } from '@/state/app';
 
 export type IconName = ComponentProps<typeof Ionicons>['name'];
 
 export function haptic(kind: 'light' | 'medium' | 'success' | 'warning' | 'select' = 'light') {
-  if (Platform.OS === 'web') return;
+  if (Platform.OS === 'web') {
+    androidBridge?.vibrate(kind === 'success' || kind === 'warning' ? 30 : kind === 'medium' ? 18 : 10);
+    return;
+  }
   switch (kind) {
     case 'success':
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});

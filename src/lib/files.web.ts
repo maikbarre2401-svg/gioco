@@ -1,4 +1,10 @@
+import { androidBridge } from './android-bridge';
+
 export async function shareTextFile(name: string, content: string, mimeType: string): Promise<void> {
+  if (androidBridge) {
+    androidBridge.saveFile(name, content, mimeType);
+    return;
+  }
   const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

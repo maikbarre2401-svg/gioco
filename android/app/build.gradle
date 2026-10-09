@@ -1,0 +1,45 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.maik.subs'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.maik.subs'
+        minSdk 26
+        targetSdk 34
+        // su GitHub il numero cresce a ogni compilazione: l'aggiornamento si installa sopra
+        versionCode((System.getenv('GITHUB_RUN_NUMBER') ?: '1').toInteger())
+        versionName '1.0'
+    }
+
+    // Firma fissa facoltativa (segreti MAIK_KEYSTORE_FILE / MAIK_KEYSTORE_PASSWORD): ogni versione
+    // si installa sopra la precedente senza perdere i dati.
+    def ks = System.getenv('MAIK_KEYSTORE_FILE')
+    if (ks && file(ks).exists()) {
+        signingConfigs {
+            maik {
+                storeFile file(ks)
+                storePassword System.getenv('MAIK_KEYSTORE_PASSWORD')
+                keyAlias 'maik'
+                keyPassword System.getenv('MAIK_KEYSTORE_PASSWORD')
+            }
+        }
+        buildTypes {
+            debug { signingConfig signingConfigs.maik }
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    // L'app web sta in assets/www/_expo/...: senza questa riga Android scarterebbe
+    // le cartelle che iniziano con "_" e l'app resterebbe bianca.
+    androidResources {
+        ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:!CVS:!thumbs.db:!picasa.ini:!*~'
+    }
+}

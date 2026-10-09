@@ -9,6 +9,7 @@ import { ServiceLogo } from '@/components/ServiceLogo';
 import { Pill, useRenewalText } from '@/components/SubscriptionRow';
 import { useToast } from '@/components/Toast';
 import { AppText, Button, Card, IconButton, Row } from '@/components/ui';
+import { androidBridge } from '@/lib/android-bridge';
 import { categoryInfo } from '@/lib/catalog';
 import { confirm } from '@/lib/confirm';
 import { chargesBetween, daysUntil, isInTrial, parseISODate, toISODate, today, upcomingRenewals } from '@/lib/dates';
@@ -180,7 +181,7 @@ export default function SubscriptionDetail() {
 
         <View style={{ gap: 10 }}>
           {sub.url ? (
-            <Button title={t('openWebsite')} icon="open-outline" variant="secondary" onPress={() => Linking.openURL(sub.url!).catch(() => {})} />
+            <Button title={t('openWebsite')} icon="open-outline" variant="secondary" onPress={() => (androidBridge ? androidBridge.openUrl(sub.url!) : Linking.openURL(sub.url!).catch(() => {}))} />
           ) : null}
           {sub.status === 'active' ? (
             <>

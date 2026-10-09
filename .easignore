@@ -2,8 +2,6 @@
 
 # dependencies
 node_modules/
-# i font e le immagini dell'app esportata per android/ stanno in una cartella chiamata node_modules
-!/android/app/src/main/assets/www/assets/node_modules/
 
 # Expo
 .expo/
@@ -46,3 +44,8 @@ example
 
 .env
 /MaikSubs.apk
+
+# EAS Build: la cartella android/ e la versione Python non fanno parte della build Expo
+/android
+/python-apk
+/docs/screenshots

@@ -11,6 +11,7 @@ import { useToast } from '@/components/Toast';
 import { AppText, Card, Chip, Input, PremiumBadge, Row, Segmented, Tap, Toggle } from '@/components/ui';
 import { buildBackup, buildCsv, parseBackup } from '@/lib/backup';
 import { confirm, notify } from '@/lib/confirm';
+import { androidBridge } from '@/lib/android-bridge';
 import { pickTextFile, shareTextFile } from '@/lib/files';
 import { cycleLabel, reminderLabel } from '@/lib/i18n';
 import { CURRENCIES, monthlyCost, parsePrice } from '@/lib/money';
@@ -87,7 +88,8 @@ export default function SettingsScreen() {
       '',
       `— ${t('appName')}`,
     ].join('\n');
-    Share.share({ message }).catch(() => {});
+    if (androidBridge) androidBridge.shareText(message);
+    else Share.share({ message }).catch(() => {});
   };
 
   const reset = async () => {

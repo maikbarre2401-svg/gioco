@@ -99,6 +99,10 @@ docs/                   pubblicazione, privacy, testi per gli store
 
 Il logo è una **M** arrotondata bianca su sfondo viola sfumato, con un puntino lime: il promemoria che arriva prima di ogni rinnovo. I sorgenti sono in `assets/brand/` (SVG), il componente React è `src/components/MaikLogo.tsx`.
 
+## APK Android con un doppio clic
+
+In [`android/`](android/) c'è il progetto Android normale con l'app già dentro. Su Windows: doppio clic su `android/crea_apk.bat` e ottieni `MaikSubs.apk`, con notifiche vere anche ad app chiusa. Istruzioni in [android/README.md](android/README.md).
+
 ## Versione Python (APK con 3D)
 
 In [`python-apk/`](python-apk/) c'è la stessa app scritta in Python con Kivy, con logo e grafici in 3D OpenGL, che si trasforma in APK con Buildozer o direttamente su GitHub Actions.

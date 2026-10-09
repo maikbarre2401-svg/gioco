@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useColorScheme } from 'react-native';
 
+import { androidBridge } from '@/lib/android-bridge';
 import { sampleSubscriptions } from '@/lib/backup';
 import { toISODate, today } from '@/lib/dates';
 import { localeFor, makeTranslator, resolveLanguage, type Lang, type Translate } from '@/lib/i18n';
@@ -118,6 +119,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     (value: number, compact = false) => formatMoney(value, settings.currency, locale, compact),
     [settings.currency, locale],
   );
+
+  // Inside the Android wrapper, color the status and navigation bars like the app.
+  useEffect(() => {
+    if (hydrated) androidBridge?.setBars(palette.background, isDark);
+  }, [hydrated, palette.background, isDark]);
 
   // Keep scheduled reminders in sync with the data.
   const rescheduleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);

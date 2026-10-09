@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Icona piccola delle notifiche: bianca su trasparente, come vuole Android -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="100" android:viewportHeight="100">
+    <group android:pivotX="54" android:pivotY="45" android:scaleX="1.15" android:scaleY="1.15" android:translateX="-4" android:translateY="5">
+        <path android:pathData="M27,71 V36 Q27,30 32,34 L50,54 L68,34 Q73,30 73,36 V71"
+            android:strokeColor="#FFFFFF" android:strokeWidth="10"
+            android:strokeLineCap="round" android:strokeLineJoin="round" android:fillColor="#00000000" />
+        <path android:pathData="M77,14 A9,9 0 1,1 76.99,14 Z" android:fillColor="#FFFFFF" />
+    </group>
+</vector>

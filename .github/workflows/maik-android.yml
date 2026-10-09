@@ -1,0 +1,74 @@
+# Crea MaikSubs.apk (cartella android/) a ogni modifica e lo pubblica nella pagina Releases:
+# da lì lo scarichi direttamente sul telefono.
+name: Maik Subs per Android
+
+on:
+  push:
+    paths:
+      - "android/**"
+      - "src/**"
+      - "assets/**"
+      - "package.json"
+      - "package-lock.json"
+      - "app.json"
+      - ".github/workflows/maik-android.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # Ricompila l'app dai sorgenti, così l'APK è sempre aggiornato con src/
+      - name: Compila l'app web
+        run: |
+          npm ci
+          npx tsc --noEmit
+          npm run build:android
+
+      - name: Chiave di firma fissa (se configurata)
+        env:
+          KS: ${{ secrets.MAIK_KEYSTORE }}
+        run: |
+          if [ -n "$KS" ]; then
+            echo "$KS" | base64 -d > "$RUNNER_TEMP/maik.keystore"
+            echo "MAIK_KEYSTORE_FILE=$RUNNER_TEMP/maik.keystore" >> "$GITHUB_ENV"
+            echo "Firma fissa attiva"
+          else
+            echo "Nessuna firma fissa: si usa la chiave di debug"
+          fi
+
+      - name: Crea l'APK
+        env:
+          MAIK_KEYSTORE_PASSWORD: ${{ secrets.MAIK_KEYSTORE_PASSWORD }}
+        run: python3 android/crea_apk.py --ci
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MaikSubs-apk
+          path: MaikSubs.apk
+
+      - name: Pubblica l'APK nella pagina Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete maik-subs --yes --cleanup-tag || true
+          gh release create maik-subs MaikSubs.apk \
+            --target "$GITHUB_SHA" \
+            --title "Maik Subs per Android · build ${GITHUB_RUN_NUMBER}" \
+            --prerelease \
+            --notes "Scarica **MaikSubs.apk** qui sotto dal telefono e aprilo per installarlo (Android ti chiederà di permettere l'installazione da questa fonte). Creato da \`${GITHUB_SHA::7}\` sul branch \`${GITHUB_REF_NAME}\`."
