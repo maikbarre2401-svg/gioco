@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Android 12+: lo splash di sistema ha lo stesso sfondo e la faccia di Zeph, poi parte l'animazione -->
+    <style name="Zeph.Splash" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/zeph_bg</item>
+        <item name="android:statusBarColor">@color/zeph_bg</item>
+        <item name="android:navigationBarColor">@color/zeph_bg</item>
+        <item name="android:windowSplashScreenBackground">@color/zeph_bg</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_launcher_fg</item>
+    </style>
+</resources>

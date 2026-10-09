@@ -1,5 +1,7 @@
 # gioco — Zeph, il tuo compagno 3D 🕺
 
+*creator **MaikGost***
+
 Zeph è un personaggio 3D a corpo intero che **cammina, salta, balla e ti parla a voce in italiano**, gesticolando mentre lo fa. Può anche **trasformarsi nel TUO avatar** (file `.glb`, per esempio da ReadyPlayerMe). Esiste in due versioni:
 
 1. **🖥️ Sul desktop (stile Desktop Goose)** — cammina sul bordo dello schermo, sopra le tue finestre
@@ -26,6 +28,13 @@ Di base Zeph usa un cervello **offline e gratuito**. Se vuoi che chiacchieri dav
 - **nel browser o sul desktop**: incollala nella chat (`sk-ant-…`). «togli la chiave» per tornare offline.
 
 Con la chiave risponde **Claude (`claude-opus-5-5`)** usando quello che Zeph sa di te; i comandi (torcia, sveglie, app, meteo…) restano al cervello veloce offline. Se il modello rifiuta una domanda, l'API la passa da sola a un modello di riserva (`fallbacks: "default"`); senza internet torna il cervello offline. La chiave resta sul dispositivo (sul telefono è esclusa anche dai backup) e viene usata solo per parlare con l'API di Anthropic.
+
+## ✨ Zeph 6: avvio, teletrasporto e aggiornamenti
+
+- **Schermata d'avvio**: aprendo l'app (e la pagina nel browser) compare il logo animato di Zeph, con anelli di luce, il nome e sotto **«creator MaikGost»**; dopo un paio di secondi (o con un tocco) si apre l'app.
+- **Teletrasporto**: quando Zeph compare sullo schermo si materializza come un ologramma, con un anello di luce che sale dai piedi alla testa, e poi diventa solido.
+- **Aggiornamenti**: l'app controlla da sola se su GitHub c'è una versione più nuova e te lo dice con un pulsante (prima fai «Salva backup»).
+- **Codice più solido**: test automatici del cervello (`tests/cervello.test.js`, `npm test`): memoria, orari, poteri, correttore e cervello AI con risposte finte. GitHub li esegue prima di creare ogni APK, così una versione rotta non arriva sul telefono.
 
 ## ⚡ Zeph 5: i poteri (sul telefono funzionano davvero)
 

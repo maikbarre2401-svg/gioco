@@ -1,5 +1,10 @@
 # Zeph per Android 📱
 
+*creator **MaikGost***
+
+All'apertura c'è la schermata d'avvio animata (logo, «ZEPH» e «creator MaikGost»), poi l'app; in alto
+compare un pulsante viola quando su GitHub c'è una versione nuova.
+
 Zeph — o **il tuo avatar** — vive sullo schermo del telefono, sopra tutte le app, come su desktop.
 
 - **Cammina** lungo il fondo dello schermo, si guarda intorno, ti saluta, balla e salta.

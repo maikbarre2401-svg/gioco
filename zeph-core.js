@@ -2655,12 +2655,27 @@ function createHologram(THREE) {
   const cone = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.33, 1.95, 40, 1, true),
     new THREE.MeshBasicMaterial(Object.assign({ map: glowTexture(), opacity: 0.55 }, add)));
   cone.position.y = 0.975;
-  base.add(disc, ring, ring2, cone);
+  // l'anello del teletrasporto: sale dai piedi alla testa mentre il personaggio si materializza
+  const scanRing = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.012, 8, 64), new THREE.MeshBasicMaterial(Object.assign({ color: 0x7ff3ff, opacity: 0.95 }, add)));
+  scanRing.rotation.x = Math.PI / 2;
+  scanRing.visible = false;
+  base.add(disc, ring, ring2, cone, scanRing);
   base.position.y = 0.012;
   base.visible = false;
+  let beam = null;
   return {
     on: false,
+    want: false, // la modalità ologramma chiesta da te (resta anche dopo il teletrasporto)
     base,
+    get beaming() { return !!beam; },
+    // si materializza: ologramma per un attimo, poi torna solido (roots: () => [radici da sistemare])
+    teleport(roots, opts) {
+      opts = opts || {};
+      const keep = this.on;
+      roots().forEach(r => this.apply(r));
+      beam = { t0: null, dur: opts.dur || 1.5, keep, roots, done: opts.done };
+      scanRing.visible = true;
+    },
     apply(root) {
       this.on = true;
       base.visible = true;
@@ -2684,6 +2699,21 @@ function createHologram(THREE) {
     },
     update(t) {
       time.value = t;
+      if (beam) {
+        if (beam.t0 === null) beam.t0 = t;
+        const u = Math.min(1, (t - beam.t0) / beam.dur);
+        scanRing.position.y = 0.05 + u * 1.85;
+        scanRing.scale.setScalar(1 - 0.35 * Math.sin(u * Math.PI) * 0.5);
+        cone.material.opacity = 0.45 * (1 - u) + 0.1;
+        if (u >= 1) {
+          const b = beam;
+          beam = null;
+          scanRing.visible = false;
+          if (!b.keep && !this.want) b.roots().forEach(r => this.remove(r));
+          if (b.done) b.done();
+        }
+        return;
+      }
       if (!base.visible) return;
       ring.rotation.z = t * 0.8;
       ring2.rotation.z = -t * 1.6;

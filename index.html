@@ -71,6 +71,30 @@
     border:3px dashed #5eead4; pointer-events:none; }
   #droptip.show { display:flex; }
 
+  /* schermata d'avvio: logo, nome e «creator MaikGost» */
+  #splash { position:fixed; inset:0; z-index:100; background:radial-gradient(circle at 50% 40%, #16233a, #0f1726 70%);
+    display:flex; flex-direction:column; align-items:center; justify-content:center; color:#eaf2ff;
+    transition:opacity .6s ease, visibility .6s; cursor:pointer; }
+  #splash.hide { opacity:0; visibility:hidden; }
+  #splash svg { width:min(46vw, 210px); height:auto; animation:spIn .8s cubic-bezier(.2,1.6,.4,1) both;
+    filter:drop-shadow(0 0 22px rgba(20,184,166,.45)); }
+  #splash .spin { transform-origin:54px 54px; animation:spRot 6s linear infinite; }
+  #splash .spin2 { transform-origin:54px 54px; animation:spRot 9s linear infinite reverse; }
+  #splash .arc { stroke-dasharray:252; stroke-dashoffset:252; animation:spArc 1.4s .2s ease-out forwards; }
+  #splash h2 { margin-top:18px; font-size:40px; font-weight:700; letter-spacing:.42em; padding-left:.42em; animation:spUp .7s .4s both; }
+  #splash .motto { color:rgba(94,234,212,.65); letter-spacing:.18em; font-size:14px; animation:spUp .7s .55s both; }
+  #splash .sign { position:absolute; bottom:56px; text-align:center; animation:spUp .8s .9s both; }
+  #splash .sign span { display:block; font-size:12px; letter-spacing:.35em; text-transform:uppercase; color:rgba(234,242,255,.55); }
+  #splash .sign b { font-size:28px; background:linear-gradient(90deg, #5eead4, #38bdf8, #a78bfa); -webkit-background-clip:text;
+    background-clip:text; color:transparent; text-shadow:0 0 18px rgba(56,189,248,.35); }
+  #splash .bar { position:absolute; bottom:30px; width:120px; height:3px; border-radius:2px; background:rgba(255,255,255,.12); overflow:hidden; }
+  #splash .bar i { display:block; height:100%; width:0; background:linear-gradient(90deg, #5eead4, #a78bfa); animation:spBar 2s ease-in-out forwards; }
+  @keyframes spIn { from { transform:scale(.55); opacity:0; } to { transform:scale(1); opacity:1; } }
+  @keyframes spRot { to { transform:rotate(360deg); } }
+  @keyframes spArc { to { stroke-dashoffset:0; } }
+  @keyframes spUp { from { transform:translateY(16px); opacity:0; } to { transform:none; opacity:1; } }
+  @keyframes spBar { to { width:100%; } }
+
   @media (max-width:600px) {
     #brand { max-width:220px; padding:10px 12px; }
     #brand h1 { font-size:16px; }
@@ -79,6 +103,24 @@
 </style>
 </head>
 <body>
+<div id="splash" title="Tocca per entrare">
+  <svg viewBox="0 0 108 108" aria-hidden="true">
+    <circle class="spin2" cx="54" cy="54" r="49" fill="none" stroke="#38bdf8" stroke-opacity=".7" stroke-width="1.4" stroke-dasharray="7 5"/>
+    <g class="spin"><circle class="arc" cx="54" cy="54" r="40" fill="none" stroke="#5eead4" stroke-width="2.4" stroke-linecap="round"/>
+      <circle cx="54" cy="5" r="2.2" fill="#5eead4"/></g>
+    <path fill="#3C5A64" d="M30,86 C30,72 41,66 54,66 C67,66 78,72 78,86 Z"/>
+    <path fill="#E0A887" d="M54,30 C64,30 70,38 70,49 C70,60 63,68 54,68 C45,68 38,60 38,49 C38,38 44,30 54,30 Z"/>
+    <path fill="#3A2D21" d="M37,47 C36,34 44,27 54,27 C65,27 72,34 71,47 C67,40 61,37 54,37 C47,37 41,40 37,47 Z"/>
+    <circle cx="45" cy="50" r="3.5" fill="#fff"/><circle cx="63" cy="50" r="3.5" fill="#fff"/>
+    <circle cx="45" cy="50.5" r="1.7" fill="#1C1713"/><circle cx="63" cy="50.5" r="1.7" fill="#1C1713"/>
+    <path fill="#9C5F52" d="M48,58 C50,62 58,62 60,58 C58,59.5 50,59.5 48,58 Z"/>
+  </svg>
+  <h2>ZEPH</h2>
+  <div class="motto">il tuo amico 3D</div>
+  <div class="sign"><span>creator</span><b>MaikGost</b></div>
+  <div class="bar"><i></i></div>
+</div>
+<script>window.__splashT0 = performance.now();</script>
 <div id="scene3d"></div>
 
 <div class="panel" id="brand">
@@ -868,6 +910,8 @@ const zeph = ZephCore.build(THREE);
 const anim = new ZephCore.Animator(zeph);
 scene.add(zeph.root);
 try { if (localStorage.getItem('zephHolo')) setTimeout(() => setHolo(true), 0); } catch (e) {}
+// all'avvio si materializza come in un teletrasporto
+setTimeout(() => holo.teleport(() => [zeph.root, actor.obj], { dur: 1.7, done: () => sparkles.burst(state.pos.x, 1.0, state.pos.z, 20) }), 400);
 // il look fatto con la foto (foto.html): colori veri e la tua faccia
 try { ZephCore.applyLook(THREE, zeph, JSON.parse(localStorage.getItem('zephLook') || 'null')); } catch (e) { /* nessun look */ }
 let avatarDriver = null;
@@ -876,6 +920,7 @@ const sparkles = ZephCore.createSparkles(THREE, scene);
 const holo = ZephCore.createHologram(THREE);
 scene.add(holo.base);
 function setHolo(on) {
+  holo.want = on;
   if (on) holo.apply(actor.obj); else holo.remove(actor.obj);
   try { localStorage.setItem('zephHolo', on ? '1' : ''); } catch (e) {}
 }
@@ -1820,6 +1865,16 @@ setTimeout(() => {
     : salve + '! Sono ' + ZephCore.memory.petName() + ' 👋 Scrivimi qui sotto: raccontami di te, oppure prova «vola» o «metti la musica»!');
   hideBubble(g ? 9000 : 6000);
 }, 700);
+
+// la schermata d'avvio sparisce dopo due secondi (o con un clic)
+(function () {
+  const sp = document.getElementById('splash');
+  if (!sp) return;
+  const hide = () => { sp.classList.add('hide'); setTimeout(() => sp.remove(), 700); };
+  sp.addEventListener('click', hide);
+  // resta almeno 2,4 secondi da quando compare (copre anche il caricamento del mondo 3D)
+  setTimeout(hide, Math.max(600, 2400 - (performance.now() - (window.__splashT0 || 0))));
+})();
 
 // piccolo gancio per debug/test
 window.zeph = { state, anim, startAction: n => anim.startAction(n), speak, botRespond, cam, loadAvatarUrl, backToZeph, env };

@@ -1,0 +1,8 @@
+{
+  "name": "zeph",
+  "private": true,
+  "description": "Zeph, il tuo amico 3D (browser, desktop e Android)",
+  "scripts": {
+    "test": "node --test tests/cervello.test.js"
+  }
+}

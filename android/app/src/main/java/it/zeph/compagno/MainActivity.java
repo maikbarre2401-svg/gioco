@@ -45,6 +45,9 @@ public class MainActivity extends Activity {
     private TextView status;
     private Button overlayBtn, notifBtn, startBtn, batteryBtn, chatBtn, contactsBtn, calendarBtn, messagesBtn;
     private EditText nameEdit, keyEdit;
+    private Button updateBtn;
+    private static final String RELEASE_API = "https://api.github.com/repos/maikbarre2401-svg/gioco/releases/tags/android";
+    private static final String APK_URL = "https://github.com/maikbarre2401-svg/gioco/releases/download/android/Zeph.apk";
 
     private int dp(float v) {
         return Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, getResources().getDisplayMetrics()));
@@ -66,6 +69,18 @@ public class MainActivity extends Activity {
         title.setLetterSpacing(0.15f);
         box.addView(title);
         box.addView(text("Il tuo avatar che vive sullo schermo del telefono", 14, 0xBBFFFFFF));
+        TextView creator = text("creator MaikGost", 12, 0xFFA78BFA);
+        creator.setLetterSpacing(0.12f);
+        creator.setPadding(0, dp(2), 0, 0);
+        box.addView(creator);
+
+        // c'è una versione nuova su GitHub? (controllo ogni qualche ora)
+        updateBtn = button("", 0xFF7C3AED);
+        updateBtn.setVisibility(View.GONE);
+        updateBtn.setOnClickListener(v -> openWeb(APK_URL));
+        LinearLayout.LayoutParams up = full();
+        up.topMargin = dp(14);
+        box.addView(updateBtn, up);
 
         status = text("", 14, Color.WHITE);
         status.setPadding(dp(14), dp(12), dp(14), dp(12));
@@ -303,6 +318,11 @@ public class MainActivity extends Activity {
             "«tira un dado», «quanti giorni mancano a Natale», «balla», «barzelletta».",
             14, 0xDDFFFFFF));
 
+        TextView version = text("Zeph " + versionName() + " · build " + versionCode() + " · creator MaikGost", 12, 0x66FFFFFF);
+        version.setGravity(Gravity.CENTER);
+        version.setPadding(0, dp(28), 0, 0);
+        box.addView(version, full());
+
         setContentView(scroll);
     }
 
@@ -310,6 +330,8 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         refresh();
+        showUpdate();
+        checkUpdate();
     }
 
     private void refresh() {
@@ -347,6 +369,70 @@ public class MainActivity extends Activity {
             startActivity(new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + getPackageName())));
         } catch (Exception e) {
             startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+        }
+    }
+
+    private long versionCode() {
+        try {
+            android.content.pm.PackageInfo pi = getPackageManager().getPackageInfo(getPackageName(), 0);
+            return Build.VERSION.SDK_INT >= 28 ? pi.getLongVersionCode() : legacyCode(pi);
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    private static long legacyCode(android.content.pm.PackageInfo pi) { return pi.versionCode; }
+
+    private String versionName() {
+        try {
+            return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /** Il numero dell'ultima versione pubblicata su GitHub (dal titolo «… · build N»). */
+    private void checkUpdate() {
+        if (System.currentTimeMillis() - Prefs.lastUpdateCheck(this) < 3 * 3600_000L) return;
+        Prefs.setLastUpdateCheck(this, System.currentTimeMillis());
+        new Thread(() -> {
+            java.net.HttpURLConnection c = null;
+            try {
+                c = (java.net.HttpURLConnection) new java.net.URL(RELEASE_API).openConnection();
+                c.setRequestProperty("Accept", "application/vnd.github+json");
+                c.setRequestProperty("User-Agent", "Zeph-Android");
+                c.setConnectTimeout(8000);
+                c.setReadTimeout(8000);
+                if (c.getResponseCode() != 200) return;
+                java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
+                try (InputStream in = c.getInputStream()) {
+                    byte[] b = new byte[16 * 1024];
+                    int n;
+                    while ((n = in.read(b)) > 0 && buf.size() < 512 * 1024) buf.write(b, 0, n);
+                }
+                org.json.JSONObject o = new org.json.JSONObject(buf.toString("UTF-8"));
+                java.util.regex.Matcher m = java.util.regex.Pattern.compile("build (\\d+)").matcher(o.optString("name"));
+                if (m.find()) {
+                    Prefs.setLatestBuild(this, Integer.parseInt(m.group(1)));
+                    runOnUiThread(this::showUpdate);
+                }
+            } catch (Exception ignored) {
+                // niente internet o GitHub irraggiungibile: riproverà più tardi
+            } finally {
+                if (c != null) c.disconnect();
+            }
+        }).start();
+    }
+
+    private void showUpdate() {
+        int latest = Prefs.latestBuild(this);
+        long mine = versionCode();
+        if (latest > mine && mine > 0) {
+            updateBtn.setText("⬆️ C'è una versione nuova (build " + latest + ")! Prima premi «Salva backup» qui sotto, poi tocca qui per scaricarla");
+            updateBtn.setVisibility(View.VISIBLE);
+        } else {
+            updateBtn.setVisibility(View.GONE);
         }
     }
 

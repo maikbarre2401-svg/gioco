@@ -102,6 +102,7 @@ let avatarDriver = null;
 const holo = ZephCore.createHologram(THREE);
 scene.add(holo.base);
 function setHolo(on) {
+  holo.want = on;
   if (on) holo.apply(actor.obj); else holo.remove(actor.obj);
   try { localStorage.setItem('zephHolo', on ? '1' : ''); } catch (e) {}
 }

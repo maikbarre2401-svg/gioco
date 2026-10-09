@@ -69,6 +69,12 @@ final class Prefs {
     static boolean briefing(Context c) { return p(c).getBoolean("briefing", true); }
     static void setBriefing(Context c, boolean v) { p(c).edit().putBoolean("briefing", v).apply(); }
 
+    /** Controllo degli aggiornamenti su GitHub: quando e qual è l'ultima versione vista. */
+    static long lastUpdateCheck(Context c) { return p(c).getLong("updCheck", 0); }
+    static void setLastUpdateCheck(Context c, long v) { p(c).edit().putLong("updCheck", v).apply(); }
+    static int latestBuild(Context c) { return p(c).getInt("latestBuild", 0); }
+    static void setLatestBuild(Context c, int v) { p(c).edit().putInt("latestBuild", v).apply(); }
+
     /** Usa il look fatto con la foto (al posto del file .glb). */
     static boolean photoLook(Context c) { return p(c).getBoolean("photoLook", false); }
     static void setPhotoLook(Context c, boolean v) { p(c).edit().putBoolean("photoLook", v).apply(); }

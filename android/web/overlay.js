@@ -109,11 +109,17 @@ const sparkles = ZephCore.createSparkles(THREE, scene);
 const holo = ZephCore.createHologram(THREE);
 scene.add(holo.base);
 function setHolo(on) {
+  holo.want = on;
   if (on) holo.apply(actor.obj); else holo.remove(actor.obj);
   blob.visible = !on;
   try { localStorage.setItem('zephHolo', on ? '1' : ''); } catch (e) {}
 }
 function refreshHolo() { if (holo.on) holo.apply(actor.obj); }
+// quando compare sullo schermo si materializza come in un teletrasporto
+function teleportIn() {
+  holo.teleport(() => [zeph.root, actor.obj], { dur: 2.2, done: () => { blob.visible = !holo.on; sparkles.burst(0, 1.0, 0, 18); } });
+  blob.visible = false;
+}
 
 function setAvatarScene(avScene, animations) {
   try {
@@ -804,6 +810,7 @@ function tick() {
 
 loadAvatar();
 try { if (localStorage.getItem('zephHolo')) setHolo(true); } catch (e) {}
+teleportIn();
 touched();
 tick();
 setTimeout(() => {

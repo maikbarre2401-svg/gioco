@@ -14,6 +14,7 @@ on:
       - 'foto.js'
       - 'occhi.html'
       - 'occhi.js'
+      - 'tests/**'
       - '.github/workflows/android.yml'
   workflow_dispatch:
 
@@ -30,6 +31,10 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+
+      # prima di creare l'APK: i test del cervello (se qualcosa si rompe, niente APK difettoso)
+      - name: Prova il cervello di Zeph
+        run: node --test tests/cervello.test.js
 
       # facoltativo: con i segreti ZEPH_KEYSTORE (keystore in base64) e ZEPH_KEYSTORE_PASSWORD
       # ogni APK ha la stessa firma, quindi si aggiorna sopra il vecchio senza disinstallare
@@ -62,6 +67,6 @@ jobs:
           gh release delete android --yes --cleanup-tag || true
           gh release create android Zeph.apk \
             --target "$GITHUB_SHA" \
-            --title "Zeph per Android" \
+            --title "Zeph per Android · build ${GITHUB_RUN_NUMBER}" \
             --prerelease \
             --notes "Scarica **Zeph.apk** qui sotto direttamente dal telefono e aprilo per installarlo (Android ti chiederà di permettere l'installazione da questa fonte). Creato da \`${GITHUB_SHA::7}\` sul branch \`${GITHUB_REF_NAME}\`."

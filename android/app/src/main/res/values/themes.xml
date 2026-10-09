@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- la schermata d'avvio: sfondo blu notte già dal primo istante -->
+    <style name="Zeph.Splash" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/zeph_bg</item>
+        <item name="android:statusBarColor">@color/zeph_bg</item>
+        <item name="android:navigationBarColor">@color/zeph_bg</item>
+    </style>
+</resources>
