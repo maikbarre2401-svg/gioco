@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ghostlink</title>
+<meta name="description" content="Kit di strumenti per il telefono in stile hacker: scanner, cifratore di messaggi, password, sensori, fonometro e torcia.">
+<meta name="theme-color" content="#05070d">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Ghostlink">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="scanlines" aria-hidden="true"></div>
+
+<div id="boot" class="boot" aria-hidden="true">
+  <pre id="boot-lines"></pre>
+</div>
+
+<header class="topbar">
+  <a class="brand" href="#home" aria-label="Ghostlink, home">
+    <span class="glitch" data-text="GHOSTLINK">GHOSTLINK</span>
+  </a>
+  <div class="status">
+    <span id="st-net" class="chip">NET</span>
+    <span id="st-bat" class="chip">BAT --</span>
+    <time id="st-clock" class="clock">--:--</time>
+  </div>
+</header>
+
+<main id="app">
+
+  <!-- HOME -->
+  <section class="screen" data-screen="home">
+    <div class="card profiler">
+      <canvas id="radar" class="radar" width="220" height="220" aria-hidden="true"></canvas>
+      <div class="profiler-body">
+        <div class="eyebrow">Profiler // questo dispositivo</div>
+        <h1 id="node-id" class="node-id">NODO ----</h1>
+        <div class="kv"><span>Sistema</span><b id="p-os">—</b></div>
+        <div class="kv"><span>Browser</span><b id="p-browser">—</b></div>
+        <div class="kv"><span>Schermo</span><b id="p-screen">—</b></div>
+        <div class="kv"><span>Esposizione</span><b id="p-risk">—</b></div>
+      </div>
+    </div>
+
+    <nav class="tiles" aria-label="Strumenti">
+      <a class="tile" href="#scan"><span class="tile-code">SCN</span><span class="tile-name">Scanner</span><span class="tile-desc">Cosa sa un sito di te: impronta, rete, IP</span></a>
+      <a class="tile" href="#cifra"><span class="tile-code">CRY</span><span class="tile-name">Cifratore</span><span class="tile-desc">Messaggi cifrati AES-256 da mandare in chat</span></a>
+      <a class="tile" href="#password"><span class="tile-code">PWD</span><span class="tile-name">Password</span><span class="tile-desc">Genera chiavi e misura quanto resistono</span></a>
+      <a class="tile" href="#sensori"><span class="tile-code">SNS</span><span class="tile-name">Sensori</span><span class="tile-desc">GPS, bussola e livella in diretta</span></a>
+      <a class="tile" href="#audio"><span class="tile-code">AUD</span><span class="tile-name">Fonometro</span><span class="tile-desc">Livello del suono e spettro delle frequenze</span></a>
+      <a class="tile" href="#torcia"><span class="tile-code">TRC</span><span class="tile-name">Torcia</span><span class="tile-desc">Luce fissa, strobo e messaggi in Morse</span></a>
+    </nav>
+
+    <div class="card">
+      <div class="card-head"><span class="eyebrow">Registro di sistema</span><span class="dot live" aria-hidden="true"></span></div>
+      <ol id="log" class="log" aria-live="off"></ol>
+    </div>
+
+    <button id="install-btn" class="btn ghost wide" type="button" hidden>Installa l'app sul telefono</button>
+  </section>
+
+  <!-- SCANNER -->
+  <section class="screen" data-screen="scan">
+    <div class="screen-head"><a class="back" href="#home">◂ Home</a><span class="tile-code">SCN</span></div>
+    <h2>Scanner</h2>
+    <p class="lead">Raccoglie le stesse informazioni che qualsiasi sito può leggere dal tuo telefono senza chiederti niente, e le trasforma in un'impronta digitale.</p>
+    <button id="scan-run" class="btn wide" type="button">Avvia scansione</button>
+    <div class="meter scan-progress" aria-hidden="true"><i id="scan-bar"></i></div>
+    <div id="scan-out" class="stack"></div>
+  </section>
+
+  <!-- CIFRATORE -->
+  <section class="screen" data-screen="cifra">
+    <div class="screen-head"><a class="back" href="#home">◂ Home</a><span class="tile-code">CRY</span></div>
+    <h2>Cifratore</h2>
+    <p class="lead">Scrivi un messaggio, scegli una parola chiave e mandalo in chat: solo chi ha Ghostlink e la stessa chiave può leggerlo.</p>
+    <div class="seg" role="group" aria-label="Modalità">
+      <button id="cry-mode-enc" type="button" aria-pressed="true">Cifra</button>
+      <button id="cry-mode-dec" type="button" aria-pressed="false">Decifra</button>
+    </div>
+    <label class="field"><span id="cry-in-label">Messaggio</span>
+      <textarea id="cry-in" rows="4" placeholder="Ci vediamo alle 22 al solito posto"></textarea>
+    </label>
+    <label class="field"><span>Chiave segreta</span>
+      <div class="row">
+        <input id="cry-key" type="password" autocomplete="off" placeholder="Almeno 8 caratteri">
+        <button id="cry-key-show" class="btn ghost small" type="button" aria-pressed="false">Mostra</button>
+      </div>
+    </label>
+    <button id="cry-run" class="btn wide" type="button">Cifra messaggio</button>
+    <label class="field"><span>Risultato</span>
+      <textarea id="cry-out" rows="4" readonly placeholder="Il risultato apparirà qui"></textarea>
+    </label>
+    <div class="row">
+      <button id="cry-copy" class="btn ghost" type="button">Copia</button>
+      <button id="cry-share" class="btn ghost" type="button">Condividi</button>
+      <button id="cry-paste" class="btn ghost" type="button">Incolla</button>
+    </div>
+    <p class="note">AES-GCM a 256 bit, chiave derivata con PBKDF2 (250.000 iterazioni). Tutto avviene sul telefono: niente viene inviato a server.</p>
+  </section>
+
+  <!-- PASSWORD -->
+  <section class="screen" data-screen="password">
+    <div class="screen-head"><a class="back" href="#home">◂ Home</a><span class="tile-code">PWD</span></div>
+    <h2>Password</h2>
+    <div class="card">
+      <div class="seg" role="group" aria-label="Tipo">
+        <button id="pwd-mode-rand" type="button" aria-pressed="true">Casuale</button>
+        <button id="pwd-mode-words" type="button" aria-pressed="false">Frase</button>
+      </div>
+      <output id="pwd-out" class="pwd-out">—</output>
+      <div class="meter"><i id="pwd-gen-bar"></i></div>
+      <div class="kv"><span>Forza</span><b id="pwd-gen-info">—</b></div>
+      <div class="row">
+        <button id="pwd-new" class="btn" type="button">Genera</button>
+        <button id="pwd-copy" class="btn ghost" type="button">Copia</button>
+      </div>
+      <label class="field"><span>Lunghezza: <b id="pwd-len-val">20</b></span>
+        <input id="pwd-len" type="range" min="6" max="64" value="20">
+      </label>
+      <div id="pwd-sets" class="checks">
+        <label><input id="pwd-up" type="checkbox" checked> A–Z</label>
+        <label><input id="pwd-low" type="checkbox" checked> a–z</label>
+        <label><input id="pwd-num" type="checkbox" checked> 0–9</label>
+        <label><input id="pwd-sym" type="checkbox" checked> !#$%</label>
+      </div>
+    </div>
+    <div class="card">
+      <div class="eyebrow">Analizza una tua password</div>
+      <input id="pwd-test" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Scrivila qui, non esce dal telefono">
+      <div class="meter"><i id="pwd-test-bar"></i></div>
+      <div class="kv"><span>Entropia</span><b id="pwd-test-bits">—</b></div>
+      <div class="kv"><span>Tempo per craccarla</span><b id="pwd-test-time">—</b></div>
+      <ul id="pwd-test-warn" class="warn"></ul>
+    </div>
+  </section>
+
+  <!-- SENSORI -->
+  <section class="screen" data-screen="sensori">
+    <div class="screen-head"><a class="back" href="#home">◂ Home</a><span class="tile-code">SNS</span></div>
+    <h2>Sensori</h2>
+    <button id="sns-start" class="btn wide" type="button">Attiva sensori</button>
+    <div class="card">
+      <div class="eyebrow">Bussola</div>
+      <canvas id="compass" class="dial" width="300" height="300" aria-label="Bussola"></canvas>
+      <div class="big center"><span id="sns-heading">---</span>°<small id="sns-card"></small></div>
+    </div>
+    <div class="card">
+      <div class="eyebrow">Posizione GPS</div>
+      <div class="kv"><span>Latitudine</span><b id="gps-lat">—</b></div>
+      <div class="kv"><span>Longitudine</span><b id="gps-lon">—</b></div>
+      <div class="kv"><span>Precisione</span><b id="gps-acc">—</b></div>
+      <div class="kv"><span>Altitudine</span><b id="gps-alt">—</b></div>
+      <div class="kv"><span>Velocità</span><b id="gps-spd">—</b></div>
+      <div class="row">
+        <button id="gps-copy" class="btn ghost" type="button">Copia coordinate</button>
+        <a id="gps-map" class="btn ghost" href="#sensori" target="_blank" rel="noopener" aria-disabled="true">Apri mappa</a>
+      </div>
+    </div>
+    <div class="card">
+      <div class="eyebrow">Livella e movimento</div>
+      <canvas id="level" class="dial" width="300" height="300" aria-label="Livella"></canvas>
+      <div class="kv"><span>Inclinazione</span><b id="mot-tilt">—</b></div>
+      <div class="kv"><span>Accelerazione</span><b id="mot-g">—</b></div>
+      <div class="kv"><span>Scossoni rilevati</span><b id="mot-shakes">0</b></div>
+    </div>
+  </section>
+
+  <!-- FONOMETRO -->
+  <section class="screen" data-screen="audio">
+    <div class="screen-head"><a class="back" href="#home">◂ Home</a><span class="tile-code">AUD</span></div>
+    <h2>Fonometro</h2>
+    <button id="aud-start" class="btn wide" type="button">Accendi microfono</button>
+    <div class="card">
+      <div class="big center"><span id="aud-db">--</span><small> dB</small></div>
+      <div id="aud-label" class="center dim">In attesa</div>
+      <div class="meter db"><i id="aud-bar"></i></div>
+      <canvas id="spectrum" class="spectrum" width="600" height="220" aria-label="Spettro audio"></canvas>
+      <div class="kv"><span>Picco</span><b id="aud-peak">—</b></div>
+      <div class="kv"><span>Media</span><b id="aud-avg">—</b></div>
+      <div class="kv"><span>Frequenza dominante</span><b id="aud-freq">—</b></div>
+    </div>
+    <p class="note">Valori stimati: il microfono del telefono non è calibrato, usali per confronti e non come misura ufficiale.</p>
+  </section>
+
+  <!-- TORCIA -->
+  <section class="screen" data-screen="torcia">
+    <div class="screen-head"><a class="back" href="#home">◂ Home</a><span class="tile-code">TRC</span></div>
+    <h2>Torcia</h2>
+    <button id="trc-power" class="power" type="button" aria-pressed="false" aria-label="Accendi o spegni la luce"><span></span></button>
+    <div id="trc-src" class="center dim">Sorgente: da verificare</div>
+    <div class="seg" role="group" aria-label="Modalità luce">
+      <button data-trc-mode="fixed" type="button" aria-pressed="true">Fissa</button>
+      <button data-trc-mode="strobe" type="button" aria-pressed="false">Strobo</button>
+      <button data-trc-mode="sos" type="button" aria-pressed="false">SOS</button>
+    </div>
+    <label class="field"><span>Velocità strobo: <b id="trc-hz-val">4</b> lampi/s</span>
+      <input id="trc-hz" type="range" min="1" max="15" value="4">
+    </label>
+    <div class="card">
+      <div class="eyebrow">Trasmetti in Morse</div>
+      <div class="row">
+        <input id="trc-msg" type="text" maxlength="40" placeholder="CIAO" autocapitalize="characters">
+        <button id="trc-send" class="btn small" type="button">Invia</button>
+      </div>
+      <output id="trc-morse" class="morse">—</output>
+    </div>
+  </section>
+</main>
+
+<div id="flash" class="flash" hidden></div>
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
