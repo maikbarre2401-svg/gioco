@@ -129,13 +129,17 @@ function setupPreview() {
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
   renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 0.95;
   box.appendChild(renderer.domElement);
   const scene = new THREE.Scene();
+  scene.environment = ZephCore.studioEnvironment(THREE, renderer);
   const camera = new THREE.PerspectiveCamera(30, 1, 0.05, 50);
   scene.add(new THREE.HemisphereLight(0xeaf2ff, 0x5a6270, 0.8));
   const key = new THREE.DirectionalLight(0xfff1e0, 0.9); key.position.set(1.5, 3, 4); scene.add(key);
   const rim = new THREE.DirectionalLight(0xbcd7ff, 0.45); rim.position.set(-3, 2, -3); scene.add(rim);
   const zeph = ZephCore.build(THREE);
+  Object.values(zeph.mats || {}).forEach(m => { if (m && m.isMeshStandardMaterial) m.envMapIntensity = 0.35; });
   scene.add(zeph.root);
   const anim = new ZephCore.Animator(zeph);
   three = { renderer, scene, camera, zeph, anim, full: false, clock: new THREE.Clock(), nextTalk: 1.2 };

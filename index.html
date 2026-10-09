@@ -156,6 +156,7 @@
     <div class="chip" id="wanderchip">🚶 Passeggia da solo</div>
     <div class="chip" id="avatarchip">🧑 Il tuo avatar</div>
     <div class="chip" id="photochip">📸 Avatar dalla foto</div>
+    <div class="chip" id="stylechip">🎭 Modalità</div>
   </div>
   <div id="inputrow">
     <input id="msg" type="text" placeholder="Scrivi qualcosa… (es. «apri youtube», «balla!», «ricordami tra 5 minuti»)" autocomplete="off">
@@ -909,7 +910,10 @@ for (let i = 0; i < 7; i++) {
 const zeph = ZephCore.build(THREE);
 const anim = new ZephCore.Animator(zeph);
 scene.add(zeph.root);
-try { if (localStorage.getItem('zephHolo')) setTimeout(() => setHolo(true), 0); } catch (e) {}
+try {
+  const st0 = localStorage.getItem('zephStyle') || (localStorage.getItem('zephHolo') ? 'ologramma' : '');
+  if (st0 && st0 !== 'normale') setTimeout(() => setStyle(st0, false), 0);
+} catch (e) {}
 // all'avvio si materializza come in un teletrasporto
 setTimeout(() => holo.teleport(() => [zeph.root, actor.obj], { dur: 1.7, done: () => sparkles.burst(state.pos.x, 1.0, state.pos.z, 20) }), 400);
 // il look fatto con la foto (foto.html): colori veri e la tua faccia
@@ -919,10 +923,11 @@ const sparkles = ZephCore.createSparkles(THREE, scene);
 // modalità ologramma («ologramma» / «torna normale»)
 const holo = ZephCore.createHologram(THREE);
 scene.add(holo.base);
-function setHolo(on) {
-  holo.want = on;
-  if (on) holo.apply(actor.obj); else holo.remove(actor.obj);
-  try { localStorage.setItem('zephHolo', on ? '1' : ''); } catch (e) {}
+const styles = ZephCore.createStyles(THREE, holo);
+function setStyle(name, save) {
+  const st = styles.set(name, [zeph.root, actor.obj]);
+  if (save !== false) { try { localStorage.setItem('zephStyle', st); } catch (e) {} }
+  return st;
 }
 let prevActionName = null;
 let nextStretchAt = 30;
@@ -1062,7 +1067,7 @@ function setAvatar(gltfScene, opts) {
     if (o.material && o.material.isMeshStandardMaterial) o.material.envMapIntensity = 0.5;
   });
   avatarChip.textContent = '↩︎ Torna a Zeph';
-  if (holo.on) holo.apply(driver.root);
+  styles.refresh([zeph.root, driver.root]);
   if (!opts.quiet) {
     let msg = driver.hasRig
       ? 'Wow, guardami! Questo è il tuo avatar, e adesso cammino io per lui!'
@@ -1081,7 +1086,7 @@ function backToZeph() {
   anim.avatar = zeph;
   actor.obj = zeph.root;
   avatarChip.textContent = '🧑 Il tuo avatar';
-  if (holo.on) holo.apply(zeph.root);
+  styles.refresh([zeph.root]);
   clearAvatarBytes();
   localStorage.setItem('zephPreferZeph', '1');
   speak('Rieccomi! Però il tuo avatar mi piaceva, eh!');
@@ -1150,6 +1155,14 @@ function loadAvatarUrl(url, quiet) {
     err => { if (!quiet) { console.error(err); speak('Non riesco a caricare quell’avatar…'); } });
 }
 document.getElementById('photochip').addEventListener('click', () => { location.href = 'foto.html'; });
+// 🎭 Modalità: normale → ologramma → neon → oro → cristallo → cartone → fantasma → normale…
+document.getElementById('stylechip').addEventListener('click', () => {
+  state.interacted = true;
+  const L = ZephCore.STILI, next = L[(L.indexOf(styles.current) + 1) % L.length];
+  setStyle(next);
+  sparkles.burst(state.pos.x, 1.2, state.pos.z, 18);
+  speak('Modalità ' + ZephCore.STILI_NOMI[next].toLowerCase() + '!');
+});
 avatarChip.addEventListener('click', () => {
   state.interacted = true;
   if (avatarDriver) backToZeph();
@@ -1604,7 +1617,7 @@ function respondWith(out, fromAI) {
     }, r.seconds * 1000);
   }
   if (out.party) sparkles.burst(state.pos.x, 1.6, state.pos.z, 30);
-  if (out.holo !== undefined) setHolo(out.holo);
+  if (out.style) setStyle(out.style);
   if (out.talk) out.say = 'La conversazione a voce senza mani è nell’app sul telefono! Qui premi 🎤 e parlami.';
   if (out.wikiQuery) {
     speak(out.say);
@@ -1797,6 +1810,7 @@ function tick() {
   prevActionName = actName;
   sparkles.update(dt, camera);
   holo.update(t);
+  styles.update(t);
   if (holo.on) holo.base.position.set(state.pos.x, state.pos.y + 0.02, state.pos.z);
 
   // ogni tanto, da fermo, si stiracchia

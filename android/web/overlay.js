@@ -18,6 +18,9 @@ function syncPrefs() {
   try {
     const n = A && A.petName ? A.petName() : null;
     if (n && n !== ZephCore.memory.petName()) ZephCore.memory.setPetName(n);
+    // modalità scelta dall'app
+    const st = A && A.style ? A.style() : '';
+    if (st && window.zephSetStyle) window.zephSetStyle(st);
   } catch (e) { /* app vecchia senza questi metodi */ }
 }
 syncPrefs();
@@ -60,6 +63,9 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 3));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setClearColor(0x000000, 0);
 renderer.outputEncoding = THREE.sRGBEncoding;
+// resa realistica: tone mapping da cinema e luce da studio che si riflette su pelle, occhi e vestiti
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.92;
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
@@ -73,8 +79,9 @@ const camera = new THREE.OrthographicCamera(f0.l, f0.r, f0.t, f0.b, 0.1, 50);
 camera.position.set(0, 0, 12);
 camera.lookAt(0, 0, 0);
 
-scene.add(new THREE.HemisphereLight(0xe8f1ff, 0x8a8f96, 0.75));
-const key = new THREE.DirectionalLight(0xfff2dd, 0.85);
+scene.environment = ZephCore.studioEnvironment(THREE, renderer);
+scene.add(new THREE.HemisphereLight(0xe8f1ff, 0x8a8f96, 0.32));
+const key = new THREE.DirectionalLight(0xfff2dd, 0.95);
 key.position.set(3, 6, 8);
 scene.add(key);
 const rim = new THREE.DirectionalLight(0xbcd7ff, 0.5);
@@ -100,24 +107,31 @@ scene.add(blob);
 
 // ---------- Zeph o il tuo avatar ----------
 const zeph = ZephCore.build(THREE);
+// Zeph è fatto di colori pieni: prende poca luce d'ambiente, così non si sbiadisce
+Object.values(zeph.mats || {}).forEach(m => { if (m && m.isMeshStandardMaterial) m.envMapIntensity = 0.35; });
 scene.add(zeph.root);
 const anim = new ZephCore.Animator(zeph);
 const actor = { obj: zeph.root };
 let avatarDriver = null;
 const sparkles = ZephCore.createSparkles(THREE, scene);
-// modalità ologramma: materiali di luce e proiettore sotto i piedi
+// le modalità (ologramma, neon, oro, cristallo, cartone, fantasma) e il proiettore sotto i piedi
 const holo = ZephCore.createHologram(THREE);
 scene.add(holo.base);
-function setHolo(on) {
-  holo.want = on;
-  if (on) holo.apply(actor.obj); else holo.remove(actor.obj);
-  blob.visible = !on;
-  try { localStorage.setItem('zephHolo', on ? '1' : ''); } catch (e) {}
+const styles = ZephCore.createStyles(THREE, holo);
+function setStyle(name, save) {
+  const st = styles.set(name, [zeph.root, actor.obj]);
+  blob.visible = styles.shadow;
+  if (save !== false) {
+    try { localStorage.setItem('zephStyle', st); } catch (e) {}
+    if (A && A.setStyle) A.setStyle(st);
+  }
+  return st;
 }
-function refreshHolo() { if (holo.on) holo.apply(actor.obj); }
+function refreshHolo() { styles.refresh([zeph.root, actor.obj]); blob.visible = styles.shadow && !holo.beaming; }
+window.zephSetStyle = name => { if (name !== styles.current) setStyle(name, false); };
 // quando compare sullo schermo si materializza come in un teletrasporto
 function teleportIn() {
-  holo.teleport(() => [zeph.root, actor.obj], { dur: 2.2, done: () => { blob.visible = !holo.on; sparkles.burst(0, 1.0, 0, 18); } });
+  holo.teleport(() => [zeph.root, actor.obj], { dur: 2.2, done: () => { blob.visible = styles.shadow; sparkles.burst(0, 1.0, 0, 18); } });
   blob.visible = false;
 }
 
@@ -130,6 +144,7 @@ function setAvatarScene(avScene, animations) {
     if (avatarDriver) scene.remove(avatarDriver.root);
     avatarDriver = driver;
     zeph.root.visible = false;
+    driver.root.traverse(o => { if (o.material && o.material.isMeshStandardMaterial) o.material.envMapIntensity = 0.85; });
     scene.add(driver.root);
     anim.avatar = driver;
     actor.obj = driver.root;
@@ -222,7 +237,8 @@ function updateMovement(dt) {
 function placeWindow(t) {
   const rootY = anim.state.lastRootY || 0;
   const up = Math.max(0, rootY);
-  const hover = state.flyLerp * (0.9 + Math.sin(t * 2.1) * 0.08);
+  state.ghost = (state.ghost || 0) + ((styles.floats ? 1 : 0) - (state.ghost || 0)) * 0.05;
+  const hover = state.flyLerp * (0.9 + Math.sin(t * 2.1) * 0.08) + state.ghost * (0.22 + Math.sin(t * 1.7) * 0.06);
   actor.obj.position.y = -up;
   actor.obj.rotation.y = state.heading;
   actor.obj.rotation.z = state.grabbed ? Math.sin(t * 9) * 0.16 : 0;
@@ -482,7 +498,7 @@ function respondWith(out, fromAI) {
     ZephCore.wikiAnswer(out.wikiQuery).then(r => { anim.startAction('wave'); speak(r.say); });
     return;
   }
-  if (out.holo !== undefined) setHolo(out.holo);
+  if (out.style) setStyle(out.style);
   if (out.talk && !(A && A.openTalk && (A.openTalk(), true))) out.say = 'Aggiorna l’app per parlare a voce senza mani!';
   if (out.music === 'on') startMusic();
   if (out.music === 'off') stopMusic();
@@ -791,7 +807,7 @@ function tick() {
   acc += dtRaw;
   // batteria: 30 fotogrammi al secondo quando fa qualcosa, 15 quando sta fermo
   const busy = state.speed > 0.02 || anim.state.talking || anim.state.action || state.grabbed || state.flyLerp > 0.01 ||
-    holo.beaming || holo.on || musicOn || anim.state.mouthSmooth > 0.02;
+    holo.beaming || holo.on || styles.animated || state.ghost > 0.01 || musicOn || anim.state.mouthSmooth > 0.02;
   if (acc < (busy ? 1 / 31 : 1 / 16)) return;
   const dt = Math.min(0.08, acc);
   acc = 0;
@@ -820,11 +836,17 @@ function tick() {
   }
   sparkles.update(dt, camera);
   holo.update(t);
+  styles.update(t);
   renderer.render(scene, camera);
 }
 
 loadAvatar();
-try { if (localStorage.getItem('zephHolo')) setHolo(true); } catch (e) {}
+// la modalità scelta (nell'app o in chat) resta anche dopo il riavvio
+(function () {
+  let st = null;
+  try { st = (A && A.style ? A.style() : '') || localStorage.getItem('zephStyle') || (localStorage.getItem('zephHolo') ? 'ologramma' : ''); } catch (e) {}
+  if (st && st !== 'normale') setStyle(st, false);
+})();
 teleportIn();
 touched();
 tick();

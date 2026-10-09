@@ -39,6 +39,9 @@ Zeph — o **il tuo avatar** — vive sullo schermo del telefono, sopra tutte le
 - **Un amico che si ricorda di te**: raccontagli la giornata, i programmi («domani ho un esame»), cosa ti
   piace, le persone a cui vuoi bene. Il giorno dopo ti chiede com'è andata; «cosa sai di me?»,
   «cosa ti ho detto ieri?». Tutto resta sul telefono; «dimentica tutto» per cancellare.
+- **🎭 Modalità e vetrina 3D**: in cima all'app il tuo avatar gira su un piedistallo di luce; sotto scegli la
+  modalità (Normale, Ologramma, Neon, Oro, Cristallo, Cartone, Fantasma) e il compagno sullo schermo cambia
+  subito. Con la luce da studio gli avatar Avaturn sembrano molto più realistici.
 - **🎙 Conversazione a voce mani libere**: «Parla con…» nell'app o «parliamo a voce»; ascolta, risponde e
   riascolta da solo (serve il permesso del microfono, usato solo mentre la finestra è aperta).
 - **⚡ Poteri del telefono** (sezione nuova nell'app, tutti facoltativi):

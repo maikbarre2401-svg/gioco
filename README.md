@@ -29,6 +29,12 @@ Di base Zeph usa un cervello **offline e gratuito**. Se vuoi che chiacchieri dav
 
 Con la chiave risponde **Claude (`claude-opus-5-5`)** usando quello che Zeph sa di te; i comandi (torcia, sveglie, app, meteo…) restano al cervello veloce offline. Se il modello rifiuta una domanda, l'API la passa da sola a un modello di riserva (`fallbacks: "default"`); senza internet torna il cervello offline. La chiave resta sul dispositivo (sul telefono è esclusa anche dai backup) e viene usata solo per parlare con l'API di Anthropic.
 
+## 🎭 Zeph 8: modalità, avatar realistico, app futuristica
+
+- **Sette modalità** per Zeph e per il tuo avatar `.glb`: ✨ Normale, 🛸 Ologramma, 💠 Neon (contorni luminosi del colore di ogni parte), 🏆 Oro (statua di metallo vero, con i riflessi), 💎 Cristallo, 🎨 Cartone (tre toni e contorno nero), 👻 Fantasma (trasparente e fluttua). Di' «modalità neon», «diventa d'oro», «modalità fantasma», «cambia modalità», «torna normale»; nel browser c'è il pulsante 🎭; nell'app si sceglie con un tocco.
+- **Avatar più realistico sul telefono**: luce da studio (tre «softbox» riflesse su pelle, occhi, capelli e vestiti) e tone mapping da cinema, come nella versione browser. Gli avatar Avaturn sembrano molto più veri.
+- **App futuristica**: in alto la **vetrina 3D** con il tuo avatar che gira su un piedistallo di luce (trascinalo per ruotarlo, due tocchi e balla), le modalità a pulsante, schede di vetro scuro con bordi luminosi, titoli con la riga di luce, pulsanti sfumati con l'onda al tocco.
+
 ## 🎙 Zeph 7: parla con lui come con un amico
 
 - **Conversazione a voce, mani libere** (app Android): «🎙 Parla con…» nell'app, nella chat, oppure di' «parliamo a voce». Tu parli, lui risponde e, appena ha finito, ti ascolta di nuovo; di' «basta» per finire. Il microfono si usa solo mentre è aperta quella finestra.
@@ -172,6 +178,7 @@ Prova a scrivergli: *ciao*, *come stai?*, *chi sei?*, *vieni qui*, *canta*, *bar
 - Voce tramite **Web Speech API** con voce italiana di sistema; fumetto di testo come riserva.
 - Desktop: **Electron** con finestra trasparente click-through sempre in primo piano, icona nell'area di notifica, chat separata.
 - Librerie incluse: Three.js r147 (`three.min.js`) + `gltf-loader.js` — nessun download necessario. Per il cervello AI facoltativo c'è l'SDK ufficiale di Anthropic `@anthropic-ai/sdk` 0.128.0 impacchettato per il browser (`anthropic-sdk.js`, licenza MIT), caricato ma usato solo se metti la tua chiave.
+- Modalità: `ZephCore.createStyles` sostituisce i materiali (conservando texture, scheletro e morph) con varianti che aggiungono effetti Fresnel nello shader; ogni modalità ha la sua chiave di programma (`customProgramCacheKey`). Luce da studio: `ZephCore.studioEnvironment` crea con `PMREMGenerator` un ambiente con tre pannelli luminosi. Vetrina dell'app: `android/web/vetrina.html` / `vetrina.js`.
 - Poteri: `ZephCore.parseWhen` capisce date e ore dette a voce («domani alle 18 e mezza», «lunedì», «il 12 marzo»); su Android i promemoria usano `AlarmManager` (`Reminders.java`), rubrica e agenda sono in sola lettura (`Contacts.java`), i messaggi passano da un `NotificationListenerService` limitato alle app di chat (`MessageListener.java`) e restano solo in memoria; gli occhi sono `occhi.html` / `occhi.js` con `ZephCore.ai.see` (immagine + domanda a `claude-opus-5-5`); l'ologramma è `ZephCore.createHologram` (materiali con effetto Fresnel e linee di scansione, funziona anche sugli avatar `.glb`).
 - Memoria da amico: `zeph-core.js` (`ZephCore.memory`) salva nel `localStorage` fatti, gusti, persone, diario, umore e risposte insegnate; il saluto e le domande spontanee nascono da lì. Avatar dalla foto: `foto.html` / `foto.js` + `ZephCore.lookFromPhoto` / `applyLook` (la faccia è proiettata frontalmente su un guscio calcolato con raycasting su cranio, mento e capelli).
 - Onestà tecnica: il fotorealismo da film non è ottenibile in tempo reale nel browser; lo stile è «realistico da videogioco», leggero e fluido ovunque.

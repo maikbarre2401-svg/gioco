@@ -101,10 +101,11 @@ const actor = { obj: zeph.root };
 let avatarDriver = null;
 const holo = ZephCore.createHologram(THREE);
 scene.add(holo.base);
-function setHolo(on) {
-  holo.want = on;
-  if (on) holo.apply(actor.obj); else holo.remove(actor.obj);
-  try { localStorage.setItem('zephHolo', on ? '1' : ''); } catch (e) {}
+const styles = ZephCore.createStyles(THREE, holo);
+function setStyle(name, save) {
+  const st = styles.set(name, [zeph.root, actor.obj]);
+  if (save !== false) { try { localStorage.setItem('zephStyle', st); } catch (e) {} }
+  return st;
 }
 
 function setAvatarScene(avScene, animations) {
@@ -120,7 +121,7 @@ function setAvatarScene(avScene, animations) {
     scene.add(driver.root);
     anim.avatar = driver;
     actor.obj = driver.root;
-    if (holo.on) holo.apply(driver.root);
+    styles.refresh([zeph.root, driver.root]);
   } catch (e) { console.error('Avatar non utilizzabile:', e); }
 }
 function tryLoadAvatar() {
@@ -497,7 +498,7 @@ function respondWith(out, fromAI) {
       try { new Notification('Zeph ⏰', { body: r.text }); } catch (e) { /* niente notifiche */ }
     }, r.seconds * 1000);
   }
-  if (out.holo !== undefined) setHolo(out.holo);
+  if (out.style) setStyle(out.style);
   if (out.talk) out.say = 'La conversazione a voce senza mani è nell’app sul telefono! Qui scrivimi dalla chat.';
   if (out.wikiQuery) {
     speak(out.say);
@@ -780,6 +781,7 @@ function tick() {
   }
 
   holo.update(performance.now() / 1000);
+  styles.update(performance.now() / 1000);
   if (holo.on) holo.base.position.set(actor.obj.position.x, 0.02, actor.obj.position.z);
   renderer.render(scene, camera);
 }
@@ -787,7 +789,10 @@ tick();
 
 // avatar personalizzato, se presente
 tryLoadAvatar();
-try { if (localStorage.getItem('zephHolo')) setHolo(true); } catch (e) {}
+try {
+  const st0 = localStorage.getItem('zephStyle') || (localStorage.getItem('zephHolo') ? 'ologramma' : '');
+  if (st0 && st0 !== 'normale') setStyle(st0, false);
+} catch (e) {}
 
 // saluto di benvenuto
 setTimeout(() => {

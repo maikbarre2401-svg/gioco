@@ -35,7 +35,10 @@ public class ChatActivity extends Activity {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(18), dp(16), dp(18), dp(14));
-        box.setBackgroundColor(0xFF101827);
+        // vetro scuro con bordo di luce, come il resto dell'app
+        GradientDrawable panel = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, new int[]{0xFF0D1526, 0xFF111A2E});
+        panel.setStroke(Math.round(getResources().getDisplayMetrics().density), 0x665EEAD4);
+        box.setBackground(panel);
 
         TextView title = new TextView(this);
         title.setText("Parla con " + Prefs.petName(this));

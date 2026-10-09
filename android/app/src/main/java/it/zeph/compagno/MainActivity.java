@@ -7,7 +7,19 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.content.res.ColorStateList;
+import android.graphics.LinearGradient;
+import android.graphics.Shader;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.RippleDrawable;
+import android.view.ViewOutlineProvider;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
+import android.widget.FrameLayout;
+import android.widget.HorizontalScrollView;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -46,6 +58,12 @@ public class MainActivity extends Activity {
     private Button overlayBtn, notifBtn, startBtn, batteryBtn, chatBtn, contactsBtn, calendarBtn, messagesBtn;
     private EditText nameEdit, keyEdit;
     private Button updateBtn;
+    private WebView vetrina;
+    private TextView vetrinaLabel;
+    private String vetrinaSig = "";
+    private final java.util.List<TextView> styleChips = new java.util.ArrayList<>();
+    static final String[] STYLES = {"normale", "ologramma", "neon", "oro", "cristallo", "cartone", "fantasma"};
+    private static final String[] STYLE_LABELS = {"✨ Normale", "🛸 Ologramma", "💠 Neon", "🏆 Oro", "💎 Cristallo", "🎨 Cartone", "👻 Fantasma"};
     private static final String RELEASE_API = "https://api.github.com/repos/maikbarre2401-svg/gioco/releases/tags/android";
     private static final String APK_URL = "https://github.com/maikbarre2401-svg/gioco/releases/download/android/Zeph.apk";
 
@@ -56,23 +74,82 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
-        getWindow().setStatusBarColor(0xFF0F1726);
+        getWindow().setStatusBarColor(0xFF070B14);
+        getWindow().setNavigationBarColor(0xFF0B1220);
         ScrollView scroll = new ScrollView(this);
-        scroll.setBackgroundColor(0xFF0F1726);
+        scroll.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, new int[]{0xFF070B14, 0xFF0D1526, 0xFF111A2E}));
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(20), dp(24), dp(20), dp(32));
+        box.setPadding(dp(18), dp(20), dp(18), dp(32));
         scroll.addView(box);
 
-        TextView title = text("ZEPH", 30, 0xFF5EEAD4);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-        title.setLetterSpacing(0.15f);
+        // intestazione: il nome con la scritta sfumata e la firma
+        TextView title = new TextView(this) {
+            @Override protected void onSizeChanged(int w, int h, int ow, int oh) {
+                super.onSizeChanged(w, h, ow, oh);
+                getPaint().setShader(new LinearGradient(0, 0, getPaint().measureText("ZEPH") + dp(20), 0,
+                    new int[]{0xFF5EEAD4, 0xFF38BDF8, 0xFFA78BFA}, null, Shader.TileMode.CLAMP));
+            }
+        };
+        title.setText("ZEPH");
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 34);
+        title.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
+        title.setLetterSpacing(0.28f);
+        title.setShadowLayer(dp(12), 0, 0, 0x5538BDF8);
         box.addView(title);
-        box.addView(text("Il tuo avatar che vive sullo schermo del telefono", 14, 0xBBFFFFFF));
-        TextView creator = text("creator MaikGost", 12, 0xFFA78BFA);
-        creator.setLetterSpacing(0.12f);
-        creator.setPadding(0, dp(2), 0, 0);
+        TextView creator = text("CREATOR · MAIKGOST", 11, 0xCCA78BFA);
+        creator.setLetterSpacing(0.3f);
         box.addView(creator);
+
+        // la vetrina 3D: il tuo avatar sul piedistallo di luce
+        FrameLayout stage = new FrameLayout(this);
+        GradientDrawable stageBg = new GradientDrawable();
+        stageBg.setGradientType(GradientDrawable.RADIAL_GRADIENT);
+        stageBg.setColors(new int[]{0xFF1B2A48, 0xFF0B1220});
+        stageBg.setGradientRadius(dp(260));
+        stageBg.setCornerRadius(dp(22));
+        stageBg.setStroke(dp(1), 0x665EEAD4);
+        stage.setBackground(stageBg);
+        stage.setOutlineProvider(ViewOutlineProvider.BACKGROUND);
+        stage.setClipToOutline(true);
+        vetrina = makeVetrina();
+        stage.addView(vetrina, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        vetrinaLabel = text("", 13, 0xFFEAF2FF);
+        vetrinaLabel.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        vetrinaLabel.setPadding(dp(12), dp(6), dp(12), dp(6));
+        vetrinaLabel.setBackground(glass(0xAA0B1220, 0x445EEAD4, 14));
+        FrameLayout.LayoutParams lp1 = new FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.START);
+        lp1.setMargins(dp(12), 0, 0, dp(12));
+        stage.addView(vetrinaLabel, lp1);
+        TextView hint3d = text("↔ trascina · 2 tocchi: balla", 11, 0x88EAF2FF);
+        FrameLayout.LayoutParams lp2 = new FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.END);
+        lp2.setMargins(0, dp(10), dp(12), 0);
+        stage.addView(hint3d, lp2);
+        LinearLayout.LayoutParams stp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(320));
+        stp.topMargin = dp(14);
+        box.addView(stage, stp);
+
+        // le modalità: un tocco e il tuo compagno cambia
+        HorizontalScrollView chipsScroll = new HorizontalScrollView(this);
+        chipsScroll.setHorizontalScrollBarEnabled(false);
+        LinearLayout chips = new LinearLayout(this);
+        chips.setOrientation(LinearLayout.HORIZONTAL);
+        chips.setPadding(0, dp(10), 0, dp(2));
+        for (int k = 0; k < STYLES.length; k++) {
+            final String st = STYLES[k];
+            TextView chip = text(STYLE_LABELS[k], 14, Color.WHITE);
+            chip.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+            chip.setPadding(dp(14), dp(9), dp(14), dp(9));
+            chip.setTag(st);
+            chip.setOnClickListener(v -> chooseStyle(st));
+            LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            cp.rightMargin = dp(8);
+            chips.addView(chip, cp);
+            styleChips.add(chip);
+        }
+        chipsScroll.addView(chips);
+        box.addView(chipsScroll);
+        paintChips();
 
         // c'è una versione nuova su GitHub? (controllo ogni qualche ora)
         updateBtn = button("", 0xFF7C3AED);
@@ -83,15 +160,15 @@ public class MainActivity extends Activity {
         box.addView(updateBtn, up);
 
         status = text("", 14, Color.WHITE);
-        status.setPadding(dp(14), dp(12), dp(14), dp(12));
-        status.setBackground(round(0xFF1E293B, 12));
+        status.setPadding(dp(16), dp(14), dp(16), dp(14));
+        status.setBackground(glass(0xCC111C30, 0x555EEAD4, 16));
         LinearLayout.LayoutParams sp = full();
         sp.topMargin = dp(18);
         box.addView(status, sp);
         // la vostra amicizia, dalla memoria del compagno
         friendship = text("", 13, 0xFFFDE68A);
-        friendship.setPadding(dp(14), dp(10), dp(14), dp(10));
-        friendship.setBackground(round(0xFF2A2440, 12));
+        friendship.setPadding(dp(16), dp(11), dp(16), dp(11));
+        friendship.setBackground(glass(0xCC231B3A, 0x66A78BFA, 16));
         LinearLayout.LayoutParams fp = full();
         fp.topMargin = dp(8);
         box.addView(friendship, fp);
@@ -316,7 +393,7 @@ public class MainActivity extends Activity {
             "• Chiudi l'app quando vuoi: Zeph resta sullo schermo\n\n" +
             "Poteri: «ricordami domani alle 9 di chiamare la mamma», «chiama mia sorella», «scrivi a Giulia che arrivo», " +
             "«chi mi ha scritto?», «rispondi: arrivo subito» (ti chiede conferma), «che impegni ho oggi?», «aggiungi al calendario dentista domani alle 10», " +
-            "«com'è la mia giornata?», «chi era Leonardo da Vinci?», «traduci buongiorno in inglese», «cosa vedi?» (con il cervello AI), «modalità ologramma». " +
+            "«com'è la mia giornata?», «chi era Leonardo da Vinci?», «traduci buongiorno in inglese», «cosa vedi?» (con il cervello AI), «modalità neon / oro / cristallo / cartone / fantasma / ologramma», «torna normale». " +
             "Scuoti il telefono e arriva di corsa!\n\n" +
             "Prova a dirgli: «oggi sono andato al mare», «domani ho un esame», «mi piace la pizza», «cosa sai di me?», " +
             "«se ti dico buongiorno rispondi ciao campione», «ti chiamerò Leo», «che tempo fa a Roma», «accendi la torcia», «svegliami alle 7 e mezza», " +
@@ -336,9 +413,94 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (vetrina != null) {
+            vetrina.onResume();
+            String sig = avatarSignature();
+            if (!vetrinaSig.isEmpty() && !sig.equals(vetrinaSig)) vetrina.evaluateJavascript("window.vetrinaReload&&vetrinaReload()", null);
+            vetrinaSig = sig;
+        }
         refresh();
         showUpdate();
         checkUpdate();
+    }
+
+    @Override
+    protected void onPause() {
+        if (vetrina != null) vetrina.onPause(); // solo questa pagina: il compagno sullo schermo continua
+        super.onPause();
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (vetrina != null) { vetrina.destroy(); vetrina = null; }
+        super.onDestroy();
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private WebView makeVetrina() {
+        WebView w = new WebView(this);
+        w.setBackgroundColor(Color.TRANSPARENT);
+        WebSettings ws = w.getSettings();
+        ws.setJavaScriptEnabled(true);
+        ws.setDomStorageEnabled(true);
+        ws.setAllowFileAccess(false);
+        ws.setAllowContentAccess(false);
+        w.setVerticalScrollBarEnabled(false);
+        w.setWebViewClient(new WebViewClient() {
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView v, WebResourceRequest req) {
+                return LocalWeb.intercept(MainActivity.this, req);
+            }
+
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest req) { return true; }
+        });
+        // trascinando in orizzontale ruoti il personaggio; in verticale scorre la pagina
+        final float[] down = new float[2];
+        w.setOnTouchListener((v, e) -> {
+            if (e.getActionMasked() == android.view.MotionEvent.ACTION_DOWN) { down[0] = e.getX(); down[1] = e.getY(); }
+            else if (e.getActionMasked() == android.view.MotionEvent.ACTION_MOVE) {
+                boolean horizontal = Math.abs(e.getX() - down[0]) > Math.abs(e.getY() - down[1]);
+                v.getParent().requestDisallowInterceptTouchEvent(horizontal);
+            }
+            return false;
+        });
+        w.loadUrl("https://" + LocalWeb.HOST + "/vetrina.html?style=" + Prefs.style(this));
+        vetrinaSig = avatarSignature();
+        return w;
+    }
+
+    /** Cambia se cambi avatar o look: allora la vetrina si ricarica. */
+    private String avatarSignature() {
+        File a = new File(getFilesDir(), "avatar.glb"), l = new File(getFilesDir(), "look.json");
+        return a.lastModified() + "|" + l.lastModified() + "|" + Prefs.photoLook(this) + "|" + Prefs.useBundledAvatar(this);
+    }
+
+    private void chooseStyle(String st) {
+        Prefs.setStyle(this, st);
+        if (vetrina != null) vetrina.evaluateJavascript("window.vetrinaStyle&&vetrinaStyle('" + st + "')", null);
+        tellService(ZephService.ACTION_PREFS);
+        paintChips();
+    }
+
+    private void paintChips() {
+        String cur = Prefs.style(this);
+        for (TextView c : styleChips) {
+            boolean on = cur.equals(c.getTag());
+            if (on) {
+                GradientDrawable g = new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, new int[]{0xFF14B8A6, 0xFF0EA5E9, 0xFF8B5CF6});
+                g.setCornerRadius(dp(18));
+                c.setBackground(g);
+                c.setTextColor(Color.WHITE);
+            } else {
+                c.setBackground(glass(0xFF111C30, 0x445EEAD4, 18));
+                c.setTextColor(0xCCEAF2FF);
+            }
+        }
+        if (vetrinaLabel != null) {
+            int k = java.util.Arrays.asList(STYLES).indexOf(cur);
+            vetrinaLabel.setText(Prefs.petName(this) + " · " + (k >= 0 ? STYLE_LABELS[k] : "✨ Normale"));
+        }
     }
 
     private void refresh() {
@@ -354,6 +516,7 @@ public class MainActivity extends Activity {
         mark(messagesBtn, MessageListener.enabled(this), "✅ Ti avvisa dei messaggi («chi mi ha scritto?»)", "📩 Avvisami dei messaggi (accesso alle notifiche)");
         boolean on = ZephService.running;
         String name = Prefs.petName(this);
+        paintChips();
         String fr = friendshipText();
         friendship.setText(fr);
         friendship.setVisibility(fr.isEmpty() ? View.GONE : View.VISIBLE);
@@ -634,11 +797,27 @@ public class MainActivity extends Activity {
         return t;
     }
 
+    /** Titolo di sezione: maiuscolo, spaziato, con una riga di luce sotto. */
     private void section(LinearLayout box, String title) {
-        TextView t = text(title, 13, 0xFF5EEAD4);
-        t.setTypeface(Typeface.DEFAULT_BOLD);
-        t.setPadding(0, dp(22), 0, dp(8));
+        TextView t = text(title.toUpperCase(java.util.Locale.ITALIAN), 12, 0xFF5EEAD4);
+        t.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
+        t.setLetterSpacing(0.16f);
+        t.setPadding(0, dp(26), 0, dp(6));
         box.addView(t);
+        View line = new View(this);
+        line.setBackground(new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, new int[]{0xFF5EEAD4, 0x88A78BFA, 0x00A78BFA}));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1.5f));
+        lp.bottomMargin = dp(10);
+        box.addView(line, lp);
+    }
+
+    /** Vetro scuro con bordo luminoso. */
+    private GradientDrawable glass(int fill, int stroke, float radius) {
+        GradientDrawable g = new GradientDrawable();
+        g.setColor(fill);
+        g.setCornerRadius(dp(radius));
+        g.setStroke(dp(1), stroke);
+        return g;
     }
 
     private GradientDrawable round(int color, float radius) {
@@ -648,22 +827,39 @@ public class MainActivity extends Activity {
         return g;
     }
 
+    /** Pulsanti: principali con sfumatura luminosa, gli altri in vetro con bordo; onda al tocco. */
     private Button button(String s, int color) {
         Button b = new Button(this);
         b.setText(s);
         b.setAllCaps(false);
         b.setTextColor(Color.WHITE);
         b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        b.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         b.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
-        b.setPadding(dp(16), dp(12), dp(16), dp(12));
-        b.setBackground(round(color, 12));
+        b.setPadding(dp(16), dp(13), dp(16), dp(13));
+        b.setStateListAnimator(null);
+        GradientDrawable bg;
+        if (color == TEAL) {
+            bg = new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, new int[]{0xFF14B8A6, 0xFF0EA5E9});
+            bg.setCornerRadius(dp(14));
+        } else if (color == 0xFF7C3AED) {
+            bg = new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, new int[]{0xFF7C3AED, 0xFFDB2777});
+            bg.setCornerRadius(dp(14));
+        } else {
+            bg = glass(0xFF111C30, 0x335EEAD4, 14);
+        }
+        GradientDrawable mask = new GradientDrawable();
+        mask.setColor(Color.WHITE);
+        mask.setCornerRadius(dp(14));
+        b.setBackground(new RippleDrawable(ColorStateList.valueOf(0x555EEAD4), bg, mask));
         return b;
     }
 
     private CheckBox check(String s, boolean on) {
         CheckBox c = new CheckBox(this);
         c.setText(s);
-        c.setTextColor(Color.WHITE);
+        c.setTextColor(0xEEEAF2FF);
+        c.setButtonTintList(ColorStateList.valueOf(0xFF5EEAD4));
         c.setChecked(on);
         c.setPadding(dp(6), dp(10), 0, dp(10));
         return c;

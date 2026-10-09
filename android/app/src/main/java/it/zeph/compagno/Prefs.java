@@ -75,6 +75,13 @@ final class Prefs {
     static int latestBuild(Context c) { return p(c).getInt("latestBuild", 0); }
     static void setLatestBuild(Context c, int v) { p(c).edit().putInt("latestBuild", v).apply(); }
 
+    /** La modalità del compagno: normale, ologramma, neon, oro, cristallo, cartone, fantasma. */
+    static String style(Context c) { return p(c).getString("style", "normale"); }
+    static void setStyle(Context c, String v) {
+        boolean ok = java.util.Arrays.asList(MainActivity.STYLES).contains(v);
+        p(c).edit().putString("style", ok ? v : "normale").apply();
+    }
+
     /** Usa il look fatto con la foto (al posto del file .glb). */
     static boolean photoLook(Context c) { return p(c).getBoolean("photoLook", false); }
     static void setPhotoLook(Context c, boolean v) { p(c).edit().putBoolean("photoLook", v).apply(); }

@@ -117,8 +117,11 @@ test('poteri del telefono', () => {
   assert.equal(say('che impegni ho domani?', ctx).agenda, 1);
   assert.equal(say('aggiungi al calendario dentista domani alle 10', ctx).calAdd.title, 'Dentista');
   assert.ok(say('cosa vedi?', ctx).see);
-  assert.equal(say('modalità ologramma', ctx).holo, true);
-  assert.equal(say('torna normale', ctx).holo, false);
+  assert.equal(say('modalità ologramma', ctx).style, 'ologramma');
+  assert.equal(say('modalità neon', ctx).style, 'neon');
+  assert.equal(say('diventa d\'oro', ctx).style, 'oro');
+  assert.equal(say('torna normale', ctx).style, 'normale');
+  assert.equal(say('hai paura dei fantasmi?', ctx).style, undefined);
   assert.match(say('traduci buongiorno in inglese', ctx).open, /translate\.google\.com.*tl=en/);
   assert.equal(say('chi era leonardo da vinci?', ctx).wikiQuery, 'leonardo da vinci');
 });

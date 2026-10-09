@@ -808,6 +808,11 @@ public class ZephService extends Service {
             Prefs.setAiKey(ZephService.this, k != null && (k.isEmpty() || k.startsWith("sk-ant-")) ? k : "");
         }
 
+        /** La modalità scelta (nell'app o in chat). */
+        @JavascriptInterface public String style() { return Prefs.style(ZephService.this); }
+
+        @JavascriptInterface public void setStyle(String st) { Prefs.setStyle(ZephService.this, st); }
+
         /** Cosa può fare adesso: rubrica, agenda, messaggi, cervello AI. */
         @JavascriptInterface public String powers() {
             try {

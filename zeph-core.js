@@ -2733,6 +2733,138 @@ function createHologram(THREE) {
   };
 }
 
+// ---------- Le modalità del personaggio: neon, oro, cristallo, cartone, fantasma (e ologramma) ----------
+const STILI = ['normale', 'ologramma', 'neon', 'oro', 'cristallo', 'cartone', 'fantasma'];
+const STILI_NOMI = { normale: 'Normale', ologramma: 'Ologramma', neon: 'Neon', oro: 'Oro', cristallo: 'Cristallo', cartone: 'Cartone', fantasma: 'Fantasma' };
+function createStyles(THREE, holo) {
+  const time = { value: 0 };
+  const made = {};
+  let current = 'normale';
+  // tre toni netti per l'effetto cartone animato
+  const toonRamp = (() => {
+    const d = new Uint8Array([70, 150, 255]);
+    const tex = new THREE.DataTexture(d, 3, 1, THREE.RedFormat);
+    tex.minFilter = THREE.NearestFilter; tex.magFilter = THREE.NearestFilter; tex.generateMipmaps = false;
+    tex.needsUpdate = true;
+    return tex;
+  })();
+  // il pezzo di shader in più; la chiave distingue i programmi di ogni modalità (altrimenti three.js li confonderebbe)
+  function inject(m, kind, code, glow) {
+    m.onBeforeCompile = sh => {
+      sh.uniforms.uTime = time;
+      sh.uniforms.uGlow = { value: glow || new THREE.Color(0, 0, 0) };
+      sh.fragmentShader = 'uniform float uTime;\nuniform vec3 uGlow;\n' + sh.fragmentShader.replace('#include <dithering_fragment>', '#include <dithering_fragment>\n' +
+        'float fres = pow(1.0 - abs(dot(normalize(vViewPosition), normal)), 2.0);\n' + code);
+    };
+    m.customProgramCacheKey = () => 'zeph-' + kind;
+  }
+  function make(kind, orig) {
+    made[kind] = made[kind] || new Map();
+    if (made[kind].has(orig)) return made[kind].get(orig);
+    const col = orig && orig.color ? orig.color.clone() : new THREE.Color(0x888888);
+    let m;
+    if (kind === 'neon') {
+      // corpo scuro, contorni che brillano del colore di ogni parte (stile Tron)
+      const hsl = {}; col.getHSL(hsl);
+      const glow = new THREE.Color().setHSL(hsl.s < 0.08 ? 0.52 : hsl.h, 1, 0.55);
+      m = new THREE.MeshStandardMaterial({ color: 0x07090f, roughness: 0.35, metalness: 0.3 });
+      inject(m, kind, 'float lines = 0.85 + 0.15 * sin(gl_FragCoord.y * 0.9 - uTime * 6.0);\n' +
+        'gl_FragColor.rgb += uGlow * (pow(fres, 1.4) * 1.8 + 0.06) * lines;', glow);
+    } else if (kind === 'oro') {
+      // statua d'oro: metallo vero (riflette l'ambiente)
+      m = new THREE.MeshStandardMaterial({ color: 0xf2c14e, metalness: 1, roughness: 0.26, envMapIntensity: 1.2 });
+      inject(m, kind, 'gl_FragColor.rgb += vec3(1.0, 0.82, 0.45) * pow(fres, 3.0) * 0.35;');
+    } else if (kind === 'cristallo') {
+      // vetro: trasparente al centro, luminoso sui bordi
+      m = new THREE.MeshStandardMaterial({ color: 0xbfe6ff, metalness: 0.1, roughness: 0.04, transparent: true, depthWrite: false, envMapIntensity: 1.6 });
+      // bordi blu profondo: il vetro si vede sia sopra le app chiare sia sopra quelle scure
+      inject(m, kind, 'gl_FragColor.rgb = mix(gl_FragColor.rgb * 0.7 + vec3(0.25, 0.45, 0.6) * 0.3, vec3(0.06, 0.3, 0.55), pow(fres, 1.3) * 0.75);\n' +
+        'gl_FragColor.rgb += vec3(0.8, 0.95, 1.0) * pow(fres, 6.0) * 0.6;\n' +
+        'gl_FragColor.a = clamp(0.3 + fres * 0.7, 0.0, 1.0);');
+    } else if (kind === 'cartone') {
+      // cartone animato: tre toni netti e contorno scuro
+      m = new THREE.MeshToonMaterial({ color: col, map: orig && orig.map ? orig.map : null, gradientMap: toonRamp });
+      inject(m, kind, 'gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.05, 0.04, 0.06), smoothstep(0.62, 0.72, fres));');
+    } else {
+      // fantasma: bianco azzurrino e trasparente, con un leggero tremolio
+      m = new THREE.MeshStandardMaterial({ color: 0xe8f0ff, emissive: 0x6f8fd8, emissiveIntensity: 0.35, roughness: 0.9, transparent: true, depthWrite: false });
+      inject(m, kind, 'float fl = 0.9 + 0.1 * sin(uTime * 7.0 + gl_FragCoord.y * 0.05);\n' +
+        'gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.35, 0.45, 0.75), fres * 0.55);\n' +
+        'gl_FragColor.a = clamp(0.28 + fres * 0.62, 0.0, 0.95) * fl;');
+    }
+    made[kind].set(orig, m);
+    return m;
+  }
+  function paint(root, kind) {
+    root.traverse(o => {
+      if (!o.isMesh || !o.material || o.userData.styleOrig || o.userData.holoSkip) return;
+      o.userData.styleOrig = o.material;
+      o.material = Array.isArray(o.material) ? o.material.map(x => make(kind, x)) : make(kind, o.material);
+    });
+  }
+  function strip(root) {
+    root.traverse(o => {
+      if (!o.userData.styleOrig) return;
+      o.material = o.userData.styleOrig;
+      delete o.userData.styleOrig;
+    });
+  }
+  return {
+    LIST: STILI,
+    NAMES: STILI_NOMI,
+    get current() { return current; },
+    // floats: il fantasma galleggia; shadow: se l'ombra a terra ha senso
+    get floats() { return current === 'fantasma'; },
+    get shadow() { return current !== 'fantasma' && current !== 'ologramma'; },
+    set(name, roots) {
+      current = STILI.indexOf(name) !== -1 ? name : 'normale';
+      holo.want = current === 'ologramma';
+      roots.forEach(r => { holo.remove(r); strip(r); });
+      if (current === 'ologramma') roots.forEach(r => holo.apply(r));
+      else if (current !== 'normale') roots.forEach(r => paint(r, current));
+      return current;
+    },
+    // dopo un cambio di avatar o di look: rimette la modalità anche alle parti nuove
+    refresh(roots) {
+      const beam = holo.beaming;
+      this.set(current, roots);
+      if (beam && current !== 'ologramma') roots.forEach(r => holo.apply(r)); // il teletrasporto continua
+      return current;
+    },
+    // le modalità con effetti che si muovono vanno disegnate più spesso
+    get animated() { return current === 'neon' || current === 'fantasma' || current === 'ologramma'; },
+    update(t) { time.value = t; },
+  };
+}
+
+// luce da studio per gli avatar realistici: un ambiente con tre «softbox» che si riflettono su pelle, occhi e vestiti
+function studioEnvironment(THREE, renderer) {
+  const env = new THREE.Scene();
+  const sky = new THREE.Mesh(new THREE.SphereGeometry(10, 32, 16), new THREE.MeshBasicMaterial({ side: THREE.BackSide, vertexColors: true }));
+  const pos = sky.geometry.attributes.position, cols = [];
+  const top = new THREE.Color(0x9fb6d6), mid = new THREE.Color(0x4a5568), low = new THREE.Color(0x1a1f29);
+  for (let i = 0; i < pos.count; i++) {
+    const y = pos.getY(i) / 10;
+    const c = y > 0 ? mid.clone().lerp(top, y) : mid.clone().lerp(low, -y);
+    cols.push(c.r, c.g, c.b);
+  }
+  sky.geometry.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
+  env.add(sky);
+  function softbox(w, h, x, y, z, k) {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color: new THREE.Color(k, k, k * 0.97), side: THREE.DoubleSide }));
+    m.position.set(x, y, z);
+    m.lookAt(0, 1, 0);
+    env.add(m);
+  }
+  softbox(4, 4, 4, 5, 6, 6);     // luce principale, davanti a destra
+  softbox(5, 3, -6, 3, 3, 2.2);  // riempimento a sinistra
+  softbox(6, 2, 0, 6, -7, 3.5);  // controluce, dietro in alto
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const tex = pmrem.fromScene(env, 0.04).texture;
+  pmrem.dispose();
+  return tex;
+}
+
 // i poteri del telefono e del cervello: orari, promemoria, agenda, contatti, messaggi, occhi, sapere
 function powerIntent(t, raw, ctx) {
   let m;
@@ -2816,8 +2948,23 @@ function powerIntent(t, raw, ctx) {
     return { talk: true, say: 'Ok, parliamo! Ti ascolto.', action: 'wave' };
   }
   // ---------- ologramma ----------
-  if (/(?:basta|togli|spegni|niente|via)\b.*ologramm|torna (?:normale|solido|di carne)/.test(t)) return { holo: false, say: 'Ritorno solido! Ah, che bello sentirsi i piedi.', action: 'jump' };
-  if (/ologramm|modalità futur|diventa futuristic|\bmodalità sci-?fi\b/.test(t)) return { holo: true, say: 'Proiezione olografica attivata! Benvenuto nel futuro.', action: 'spin' };
+  if (/(?:basta|togli|spegni|niente|via)\b.*(?:ologramm|modalità)|torna (?:normale|solido|di carne|come prima)|modalità normale/.test(t)) {
+    return { style: 'normale', say: 'Ritorno me stesso! Ah, che bello sentirsi i piedi.', action: 'jump' };
+  }
+  if (/ologramm|modalità futur|diventa futuristic|\bmodalità sci-?fi\b/.test(t)) return { style: 'ologramma', say: 'Proiezione olografica attivata! Benvenuto nel futuro.', action: 'spin' };
+  if (/modalità (?:neon|tron)|diventa (?:neon|luminoso|luminosa)|^neon!?$/.test(t)) return { style: 'neon', say: 'Modalità neon! Guarda come brillo al buio.', action: 'dance' };
+  if (/modalità (?:oro|dorata|statua)|diventa d'oro|\bstatua d'oro\b/.test(t)) return { style: 'oro', say: 'Sono d’oro! Valgo una fortuna, eh?', action: 'stretch' };
+  if (/modalità (?:cristallo|vetro)|diventa (?:di )?(?:cristallo|vetro)|diventa trasparente|^cristallo!?$/.test(t)) return { style: 'cristallo', say: 'Modalità cristallo: attento a non farmi cadere!', action: 'spin' };
+  if (/modalità (?:cartone|cartoon|toon|fumetto)|diventa un cartone|cartone animato/.test(t)) return { style: 'cartone', say: 'Eccomi in versione cartone animato!', action: 'jump' };
+  if (/modalità (?:fantasma|spettro)|diventa (?:un )?fantasma|diventa invisibile|^fantasma!?$/.test(t)) return { style: 'fantasma', say: 'Uuuuh… sono un fantasma! Non avere paura, sono buono.', action: 'wave' };
+  if (/(?:che|quali) modalità|cambia modalità|modalità a caso/.test(t)) {
+    const altri = STILI.filter(x => x !== 'normale');
+    if (/a caso|cambia/.test(t)) {
+      const st = pick(altri);
+      return { style: st, say: 'Modalità ' + STILI_NOMI[st].toLowerCase() + '!', action: 'spin' };
+    }
+    return { say: 'Posso diventare: ' + altri.map(x => STILI_NOMI[x].toLowerCase()).join(', ') + '. Dimmi per esempio «modalità neon», o «torna normale».' };
+  }
   // ---------- il tuo umore della settimana ----------
   if (/come (?:sono stat[oa]|mi sono sentit[oa]|è andata) (?:questa|la|in questa|nell'ultima) settimana|il mio umore|come sto ultimamente/.test(t)) {
     const M = memory.get(), since = dayPlus(-7);
@@ -3395,6 +3542,7 @@ global.ZephCore = {
   buildDog, updateDog, bark, chime, boom, ambience, music, weatherReport,
   memory, ai, toTu, dayOf, lookFromPhoto, applyLook,
   parseWhen, whenLabel, wikiAnswer, createHologram, daysUntil, normalizeRequest,
+  createStyles, studioEnvironment, STILI, STILI_NOMI,
   FRASI_PASSEGGIO, FRASI_DESKTOP, BARZELLETTE,
   HIP_Y, HEIGHT: 1.75,
 };
