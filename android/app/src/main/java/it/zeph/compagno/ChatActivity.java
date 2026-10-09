@@ -69,6 +69,12 @@ public class ChatActivity extends Activity {
         row.setPadding(0, dp(10), 0, 0);
         Button mic = button("🎤 Parla", 0xFF334155);
         mic.setOnClickListener(v -> listen());
+        Button talk = button("🎙 Conversazione", 0xFF7C3AED);
+        talk.setOnClickListener(v -> { startActivity(new Intent(this, TalkActivity.class)); finish(); });
+        row.addView(talk);
+        LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        tp.rightMargin = dp(10);
+        talk.setLayoutParams(tp);
         Button go = button("Invia", 0xFF14B8A6);
         go.setOnClickListener(v -> send(input.getText().toString()));
         row.addView(mic);

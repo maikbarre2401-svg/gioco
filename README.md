@@ -29,12 +29,21 @@ Di base Zeph usa un cervello **offline e gratuito**. Se vuoi che chiacchieri dav
 
 Con la chiave risponde **Claude (`claude-opus-5-5`)** usando quello che Zeph sa di te; i comandi (torcia, sveglie, app, meteo…) restano al cervello veloce offline. Se il modello rifiuta una domanda, l'API la passa da sola a un modello di riserva (`fallbacks: "default"`); senza internet torna il cervello offline. La chiave resta sul dispositivo (sul telefono è esclusa anche dai backup) e viene usata solo per parlare con l'API di Anthropic.
 
+## 🎙 Zeph 7: parla con lui come con un amico
+
+- **Conversazione a voce, mani libere** (app Android): «🎙 Parla con…» nell'app, nella chat, oppure di' «parliamo a voce». Tu parli, lui risponde e, appena ha finito, ti ascolta di nuovo; di' «basta» per finire. Il microfono si usa solo mentre è aperta quella finestra.
+- **Il cervello AI agisce davvero**: con la chiave di Claude puoi chiedere le cose come vuoi («ho paura del buio» → accende la torcia, «domattina devo ricordarmi il libro» → mette il promemoria). Claude propone il comando e Zeph lo fa passare dagli stessi controlli dei comandi normali: niente chiavi, niente cancellazioni, e i messaggi chiedono sempre conferma.
+- **Capisce le frasi naturali anche senza AI**: «potresti accendere la torcia?», «mi ricordi tra mezz'ora di spegnere il forno?», «mi svegli domani alle sette?», «Leo, mi fai una foto?», «domani sera», «domattina», numeri e ore a parole.
+- **Comandi più precisi**: parole come «buio», «pioggia», «neve», «alba» o «foto» dentro una frase non fanno più partire per sbaglio gli effetti del mondo.
+- **Consuma meno batteria**: quando sta fermo disegna 15 fotogrammi al secondo invece di 30.
+- **La vostra amicizia nell'app**: «Grandi amici · insieme da 12 giorni · 85 chiacchierate · sa 9 cose di te».
+
 ## ✨ Zeph 6: avvio, teletrasporto e aggiornamenti
 
 - **Schermata d'avvio**: aprendo l'app (e la pagina nel browser) compare il logo animato di Zeph, con anelli di luce, il nome e sotto **«creator MaikGost»**; dopo un paio di secondi (o con un tocco) si apre l'app.
 - **Teletrasporto**: quando Zeph compare sullo schermo si materializza come un ologramma, con un anello di luce che sale dai piedi alla testa, e poi diventa solido.
 - **Aggiornamenti**: l'app controlla da sola se su GitHub c'è una versione più nuova e te lo dice con un pulsante (prima fai «Salva backup»).
-- **Codice più solido**: test automatici del cervello (`tests/cervello.test.js`, `npm test`): memoria, orari, poteri, correttore e cervello AI con risposte finte. GitHub li esegue prima di creare ogni APK, così una versione rotta non arriva sul telefono.
+- **Codice più solido**: test automatici del cervello (`tests/cervello.test.js`, `npm test`, 18 casi): memoria, orari, poteri, parlato naturale, correttore e cervello AI con risposte finte. GitHub li esegue prima di creare ogni APK, così una versione rotta non arriva sul telefono.
 
 ## ⚡ Zeph 5: i poteri (sul telefono funzionano davvero)
 

@@ -207,3 +207,48 @@ test('la chiave incollata in chat non finisce nei ricordi', () => {
   assert.equal(JSON.stringify(Z.memory.get().log).includes('sk-ant'), false);
   Z.ai.setKey('');
 });
+
+test('parlato naturale: richieste gentili, numeri e ore a parole', () => {
+  const ctx = fresh();
+  assert.equal(say('potresti accendere la torcia?', ctx).torch, true);
+  assert.equal(say('mi accendi la luce per favore', ctx).torch, true);
+  assert.equal(say('ehi zeph, mi dici che ore sono?', ctx).say.indexOf('Sono le'), 0);
+  assert.equal(say('mi ricordi tra mezz\'ora di spegnere il forno?', ctx).remind.seconds, 1800);
+  assert.equal(say('metti un timer di cinque minuti', ctx).timer.seconds, 300);
+  assert.deepEqual(say('mi svegli domani alle sette?', ctx).alarm, { h: 7, m: 0 });
+  assert.equal(say('potresti chiamare la mamma?', ctx).callName.name, 'mamma');
+  assert.equal(Z.normalizeRequest('puoi ricordarmi domattina di comprare il pane', 'Zeph'), 'ricordami domattina di comprare il pane');
+  assert.equal(Z.normalizeRequest('Leo, mi fai una foto?', 'Leo'), 'fammi una foto'); // è una richiesta: niente «?»
+  assert.equal(Z.normalizeRequest('oggi sono andato al mare', 'Zeph'), 'oggi sono andato al mare'); // i racconti non si toccano
+});
+
+test('date: domattina, domani sera, pomeriggio', () => {
+  const now = new Date(2026, 9, 8, 21, 47);
+  const at = t => new Date(Z.parseWhen(t, now).at);
+  assert.deepEqual([at('domattina').getDate(), at('domattina').getHours()], [9, 9]);
+  assert.equal(at('domani sera').getHours(), 20);
+  assert.equal(at('domani sera alle 8').getHours(), 20);
+  assert.equal(at('domani pomeriggio alle 3').getHours(), 15);
+  const r = say('ricordami domani sera di chiamare Luca', fresh()).remindAt;
+  assert.equal(r.text, 'Chiamare Luca');
+});
+
+test('cervello AI: propone un comando, e solo comandi innocui', async () => {
+  const ctx = fresh();
+  Z.ai.setKey('sk-ant-api03-test-test-test-test-test');
+  fakeClaude(() => msg([{ type: 'text', text: JSON.stringify({ reply: 'Certo!', action: 'none', remember: [], command: 'accendi la torcia' }) }]));
+  const r = await Z.ai.ask('ho paura del buio', ctx, 'offline');
+  assert.equal(r.command, 'accendi la torcia');
+  assert.equal(Z.ai.safeCommand('dimentica tutto'), '');
+  assert.equal(Z.ai.safeCommand('togli la chiave'), '');
+  assert.equal(Z.ai.safeCommand('sk-ant-123'), '');
+  assert.equal(Z.ai.safeCommand('svegliami alle 7'), 'svegliami alle 7');
+  Z.ai.setKey('');
+});
+
+test('conversazione a voce', () => {
+  const ctx = fresh();
+  assert.equal(say('parliamo a voce', ctx).talk, true);
+  assert.equal(say('facciamo due chiacchiere', ctx).talk, true);
+  assert.equal(say('parliamo di calcio', ctx).talk, undefined);
+});

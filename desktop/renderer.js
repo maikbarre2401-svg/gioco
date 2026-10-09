@@ -414,7 +414,17 @@ function batteryReport() {
 function botRespond(text) {
   wake(true);
   const out = ZephCore.botReply(text, botCtx);
-  if (!out) return;
+  if (out) respondWith(out, false);
+}
+// un comando proposto dal cervello AI: passa dagli stessi controlli dei tuoi
+function runAiCommand(cmd) {
+  if (!cmd) return false;
+  const out = ZephCore.botReply(cmd, botCtx);
+  if (!out || out.aiQuery || out.generic) return false;
+  respondWith(out, true);
+  return true;
+}
+function respondWith(out, fromAI) {
   if (out.phoneOnly) {
     out.say = 'Questa la so fare sul telefono! Installa l’app Zeph per Android e chiedimelo lì.';
   }
@@ -488,6 +498,7 @@ function botRespond(text) {
     }, r.seconds * 1000);
   }
   if (out.holo !== undefined) setHolo(out.holo);
+  if (out.talk) out.say = 'La conversazione a voce senza mani è nell’app sul telefono! Qui scrivimi dalla chat.';
   if (out.wikiQuery) {
     speak(out.say);
     ZephCore.wikiAnswer(out.wikiQuery).then(r => { anim.startAction('wave'); speak(r.say); });
@@ -516,9 +527,10 @@ function botRespond(text) {
   }
   if (out.photoAvatar) out.say = 'L’avatar dalla foto si crea nel browser (premi «📸 Avatar dalla foto») o nell’app sul telefono!';
   // chiacchiere: con il cervello AI (la tua chiave) risponde Claude
-  if (out.aiQuery && ZephCore.ai.enabled()) {
+  if (out.aiQuery && ZephCore.ai.enabled() && !fromAI) {
     showBubble('💭 …');
     ZephCore.ai.ask(out.aiQuery, botCtx, out.say).then(r => {
+      if (runAiCommand(r.command)) return;
       const act = r.action || out.action;
       if (act) anim.startAction(act);
       speak(r.say);

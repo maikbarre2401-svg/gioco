@@ -364,7 +364,17 @@ function thinking() {
 }
 function botRespond(text) {
   const out = ZephCore.botReply(text, botCtx);
-  if (!out) return;
+  if (out) respondWith(out, false);
+}
+// un comando proposto dal cervello AI («svegliami alle 7»): passa dagli stessi controlli dei tuoi
+function runAiCommand(cmd) {
+  if (!cmd) return false;
+  const out = ZephCore.botReply(cmd, botCtx);
+  if (!out || out.aiQuery || out.generic) return false;
+  respondWith(out, true);
+  return true;
+}
+function respondWith(out, fromAI) {
   if (out.setPetName && A && A.setPetName) A.setPetName(out.setPetName);
   if (out.party) sparkles.burst(0, 1.2, 0, 24);
   if (out.stop) { state.wander = false; state.targetX = null; }
@@ -473,6 +483,7 @@ function botRespond(text) {
     return;
   }
   if (out.holo !== undefined) setHolo(out.holo);
+  if (out.talk && !(A && A.openTalk && (A.openTalk(), true))) out.say = 'Aggiorna l’app per parlare a voce senza mani!';
   if (out.music === 'on') startMusic();
   if (out.music === 'off') stopMusic();
   if (out.dog) out.say = 'Rocky è rimasto a casa nel computer! Qui sul telefono c’è spazio solo per me.';
@@ -486,9 +497,10 @@ function botRespond(text) {
     if (!avatarDriver) randomOutfit();
   }
   // chiacchiere: con il cervello AI risponde Claude (il cervello offline resta di riserva)
-  if (out.aiQuery && ZephCore.ai.enabled()) {
+  if (out.aiQuery && ZephCore.ai.enabled() && !fromAI) {
     thinking();
     ZephCore.ai.ask(out.aiQuery, botCtx, out.say).then(r => {
+      if (runAiCommand(r.command)) return; // il cervello AI ha capito un comando: lo esegue davvero
       const act = r.action || out.action;
       if (act) anim.startAction(act);
       speak(r.say);
@@ -777,7 +789,10 @@ function tick() {
   requestAnimationFrame(tick);
   const dtRaw = Math.min(0.1, clock.getDelta());
   acc += dtRaw;
-  if (acc < 1 / 31) return;
+  // batteria: 30 fotogrammi al secondo quando fa qualcosa, 15 quando sta fermo
+  const busy = state.speed > 0.02 || anim.state.talking || anim.state.action || state.grabbed || state.flyLerp > 0.01 ||
+    holo.beaming || holo.on || musicOn || anim.state.mouthSmooth > 0.02;
+  if (acc < (busy ? 1 / 31 : 1 / 16)) return;
   const dt = Math.min(0.08, acc);
   acc = 0;
   if (!state.visible) return;

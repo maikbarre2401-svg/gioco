@@ -1485,7 +1485,7 @@ function actionIntent(t, ctx) {
   if (/^(?:spegni|disattiva|chiudi)\s+(?:la\s+|il\s+)?(?:torcia|luce|flash)\b/.test(t)) {
     return { torch: false, phoneOnly: true, say: 'Torcia spenta!' };
   }
-  m = t.match(/(?:svegliami|(?:metti|imposta|punta)\s+(?:una\s+|la\s+)?sveglia|^sveglia)\s+(?:alle|per le|a|all')\s*(\d{1,2})(?:(?:[:.]|\s+e\s+)(\d{1,2}|mezza|un quarto|quarto|tre quarti))?(?:\s+(?:di\s+)?(sera|pomeriggio|mattina|notte))?/);
+  m = t.match(/(?:svegliami|(?:metti|imposta|punta)\s+(?:una\s+|la\s+)?sveglia|^sveglia)(?:\s+(?:domani mattina|domattina|domani|stanotte|stasera))?\s+(?:alle|per le|a|all')\s*(\d{1,2})(?:(?:[:.]|\s+e\s+)(\d{1,2}|mezza|un quarto|quarto|tre quarti))?(?:\s+(?:di\s+)?(sera|pomeriggio|mattina|notte))?/);
   if (m) {
     let h = parseInt(m[1], 10);
     const mm = { mezza: 30, 'un quarto': 15, quarto: 15, 'tre quarti': 45 };
@@ -1493,7 +1493,7 @@ function actionIntent(t, ctx) {
     if ((m[3] === 'sera' || m[3] === 'pomeriggio') && h < 12) h += 12;
     if (h > 23 || min > 59) return { say: 'Quell’orario non esiste nemmeno su Marte! Riprova, tipo «svegliami alle 7 e 30».' };
     const hh = h + (min ? ' e ' + (min < 10 ? '0' + min : min) : '');
-    return { alarm: { h, m: min }, phoneOnly: true, say: 'Sveglia puntata alle ' + hh + '! Dormi tranquillo, ci penso io.', action: 'wave' };
+    return { alarm: { h, m: min }, phoneOnly: true, say: 'Sveglia puntata alle ' + hh + '! Sogni d’oro, ci penso io.', action: 'wave' };
   }
   m = t.match(/^(?:metti|imposta|fai partire|avvia)?\s*(?:un\s+|il\s+)?timer\s+(?:di|da|per)?\s*(\d+)\s*(secondi|secondo|minuti|minuto|ore|ora)/);
   if (m) {
@@ -1671,12 +1671,12 @@ function actionIntent(t, ctx) {
   if (/come mi chiamo|sai il mio nome|chi sono io/.test(t)) return { whoami: true };
 
   // cielo e meteo
-  if (/fai (?:venire la |scendere la )?notte|voglio la notte|buio/.test(t)) return { sky: 'notte', say: pick(['Uuuh, guarda che cielo stellato!', 'Arriva la notte! Ci sono pure le lucciole!']) };
-  if (/tramonto/.test(t)) return { sky: 'tramonto', say: 'Che colori, il tramonto è il mio momento preferito!' };
-  if (/alba/.test(t)) return { sky: 'alba', say: 'Sta sorgendo il sole… che pace!' };
+  if (/fai (?:venire la |scendere la )?notte|voglio la notte|^(?:fai|metti|voglio)(?: il)? buio\b/.test(t)) return { sky: 'notte', say: pick(['Uuuh, guarda che cielo stellato!', 'Arriva la notte! Ci sono pure le lucciole!']) };
+  if (/^(?:fai|metti|voglio)(?: il)? tramonto\b|^tramonto!?$/.test(t)) return { sky: 'tramonto', say: 'Che colori, il tramonto è il mio momento preferito!' };
+  if (/^(?:fai|metti|voglio)(?: l')? ?alba\b|^alba!?$/.test(t)) return { sky: 'alba', say: 'Sta sorgendo il sole… che pace!' };
   if (/fai giorno|torna il giorno|voglio il giorno/.test(t)) return { sky: 'giorno', say: 'Ed è subito giorno!' };
-  if (/fai piovere|pioggia/.test(t)) return { weather: 'rain', say: pick(['Arriva la pioggia! Speriamo di non arrugginire!', 'Piove! Senti che profumo di erba bagnata.']) };
-  if (/nevic|neve/.test(t)) return { weather: 'snow', say: 'Neveee! Guarda che fiocchi enormi!' };
+  if (/fai piovere|^(?:fai|metti|voglio)(?: la)? pioggia\b|^pioggia!?$/.test(t)) return { weather: 'rain', say: pick(['Arriva la pioggia! Speriamo di non arrugginire!', 'Piove! Senti che profumo di erba bagnata.']) };
+  if (/fai nevicare|^(?:fai|metti|voglio)(?: la)? neve\b|^neve!?$/.test(t)) return { weather: 'snow', say: 'Neveee! Guarda che fiocchi enormi!' };
   if (/bel tempo|sereno|smetti di piovere|basta pioggia|basta neve|torna il sole/.test(t)) return { weather: 'clear', sky: 'giorno', say: 'Torna il sole! Molto meglio così.' };
 
   // il cane Rocky
@@ -1696,7 +1696,7 @@ function actionIntent(t, ctx) {
     return { photoAvatar: true, say: 'Evviva! Fatti un bel selfie con tanta luce: prendo i tuoi colori e la tua faccia e divento come te!', action: 'jump' };
   }
   // foto ricordo («fotocamera» invece è l'app: gestita più sotto)
-  if (/\b(foto|selfie|fotografia|scatta)\b/.test(t)) return { photo: true, say: 'Mettiti in posa… Cheeeese!' };
+  if (/^(?:fai|scatta|fammi|facciamo)\b.*\b(?:foto|selfie|fotografia)\b|^(?:foto|selfie|scatta)!?$/.test(t)) return { photo: true, say: 'Mettiti in posa… Cheeeese!' };
 
   // ora e data
   if (/che or[ae]|dimmi l'ora/.test(t)) {
@@ -1713,9 +1713,9 @@ function actionIntent(t, ctx) {
   if (m) {
     const n = parseInt(m[1], 10);
     const mult = m[2][0] === 's' ? 1 : m[2][0] === 'm' ? 60 : 3600;
-    const testo = (m[3] || '').trim();
+    const testo = tidy(m[3] || '');
     return {
-      say: 'Ricevuto! Tra ' + m[1] + ' ' + m[2] + ' ti avviso io' + (testo ? ' per: ' + testo : '') + '. Vai tranquillo!',
+      say: 'Ricevuto! Tra ' + m[1] + ' ' + m[2] + ' ti avviso io' + (testo ? ' per: ' + testo : '') + '. Ci penso io!',
       remind: { seconds: n * mult, text: testo || 'Il tempo è scaduto!' },
     };
   }
@@ -1817,7 +1817,7 @@ const RULES = [
   { chat: true, re: /(quanti anni)/, fn: () => ({ say: 'Sono nato pochi secondi fa, quando mi hai acceso! Quindi… sono giovanissimo.' }) },
   { re: /(cosa sai fare|aiuto|help|comandi|istruzioni)/, fn: () => ({ say: 'Tantissime cose! Ti dico il meteo vero («che tempo fa a Roma»), apro le app, accendo la torcia, punto sveglie e timer, controllo la musica («prossima canzone»), converto misure («10 km in miglia»), tiro dadi e monete, conto i giorni a Natale, faccio indovinelli e calcoli, ballo, volo… e ti tengo compagnia!' }) },
   { chat: true, re: /(grazie|gentile)/, fn: () => ({ say: pick(['Prego! È un piacere!', 'Figurati! Per te, sempre!']) }) },
-  { chat: true, re: /(ti voglio bene|ti amo|sei bello|sei forte|bravo)/, fn: () => ({ say: 'Ooh, grazie! Anche tu sei il mio umano preferito!', action: 'wave' }) },
+  { chat: true, re: /(ti voglio bene|ti amo|sei bello|sei forte|bravo|bravissimo|sei fantastico|sei mitico|sei il migliore|sei grande|sei simpatico|sei carino|sei dolce|sei un amico)/, fn: () => ({ say: 'Ooh, grazie! Anche tu sei il mio umano preferito!', action: 'wave' }) },
   { chat: true, re: /(buonanotte|vado a dormire|a domani)/, fn: () => ({ say: 'Buonanotte! Io resto di guardia allo schermo. A presto!', action: 'wave' }) },
   { chat: true, re: /(ciao|salve|ehi|hey|hola|buongiorno|buonasera)\b/, fn: () => ({ say: pick(['Ciao! Che bello vederti!', 'Ehilà! Come va?', 'Ciao ciao! Sono contento che tu sia qui!']), action: 'wave' }) },
 ];
@@ -2366,8 +2366,9 @@ const ai = (function () {
       reply: { type: 'string', description: 'La risposta da dire ad alta voce, in italiano.' },
       action: { type: 'string', enum: AI_ACTIONS },
       remember: { type: 'array', items: { type: 'string' } },
+      command: { type: 'string', description: 'Un comando da eseguire sul dispositivo, oppure stringa vuota.' },
     },
-    required: ['reply', 'action', 'remember'],
+    required: ['reply', 'action', 'remember', 'command'],
     additionalProperties: false,
   };
   let client = null, clientKey = '', offlineNoted = false;
@@ -2413,6 +2414,7 @@ const ai = (function () {
       'I comandi li gestisci con altre frasi: se ti chiede di fare qualcosa sul telefono, suggerisci la frase giusta, per esempio «che tempo fa a Roma», «accendi la torcia», «svegliami alle 7», «timer di 10 minuti», «apri whatsapp», «metti la musica», «ricordami tra 5 minuti di…», «indovinello».',
       '',
       'Campo "action": un\'animazione che accompagna la risposta (wave saluto, dance balletto, jump salto, flip salto mortale, spin piroetta, stretch stiracchiata) oppure "none".',
+      'Campo "command": se ti chiede di FARE qualcosa che sai fare con i comandi (sveglia, timer, promemoria, torcia, musica, volume, meteo, chiamare, scrivere un messaggio, aprire un\'app o un sito, agenda, tradurre, ballare, ologramma…), scrivi qui il comando in italiano semplice, nella forma che conosci: per esempio «svegliami alle 7», «ricordami domani alle 9 di chiamare la mamma», «timer di 10 minuti», «accendi la torcia», «metti la musica», «apri whatsapp», «che tempo fa a Roma», «chiama mia sorella», «scrivi a Giulia che arrivo», «che impegni ho domani», «balla». Il dispositivo lo esegue e risponde da solo, quindi in "reply" basta una frase breve. Se non serve nessun comando, stringa vuota.',
       'Campo "remember": informazioni nuove e durature su chi ti parla emerse da questo messaggio (gusti, persone, progetti, eventi importanti), ognuna come frase breve in seconda persona, per esempio "ti piace il calcio". Lista vuota se non c\'è niente di nuovo.',
       '',
       'Adesso è ' + d.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) +
@@ -2457,6 +2459,13 @@ const ai = (function () {
       client = null;
     },
     useStore(s) { store = s; client = null; },
+    // un comando proposto dal cervello AI passa solo se è innocuo (mai chiavi o cancellazioni)
+    safeCommand(c) {
+      c = tidy(String(c || ''));
+      if (!c || c.length > 200 || /\n/.test(c)) return '';
+      if (/sk-ant|chiave|dimentica|memoria|cancella\s+tutt|togli la chiave|cervello/i.test(c)) return '';
+      return c;
+    },
     systemPrompt,
     // restituisce sempre { say, action } (mai un errore): se qualcosa va storto usa il cervello offline
     ask(text, ctx, fallback) {
@@ -2489,7 +2498,8 @@ const ai = (function () {
         if (data && Array.isArray(data.remember)) data.remember.slice(0, 5).forEach(x => typeof x === 'string' && memory.note(x));
         memory.log(text, say);
         offlineNoted = false;
-        return { say, action: data && data.action && data.action !== 'none' && AI_ACTIONS.indexOf(data.action) !== -1 ? data.action : null, model: resp.model };
+        return { say, action: data && data.action && data.action !== 'none' && AI_ACTIONS.indexOf(data.action) !== -1 ? data.action : null,
+          command: data && typeof data.command === 'string' ? this.safeCommand(data.command) : '', model: resp.model };
       }).catch(err => explain(err, offline));
     },
     // gli occhi: una foto e una domanda («cosa vedi?», «che pianta è?»)
@@ -2530,7 +2540,7 @@ const ai = (function () {
 // ---------- Date e ore dette a voce: «domani alle 9», «lunedì alle 18 e mezza» ----------
 const GIORNI_N = ['domenica', 'lunedi', 'martedi', 'mercoledi', 'giovedi', 'venerdi', 'sabato'];
 const MESI_RE = 'gennaio|febbraio|marzo|aprile|maggio|giugno|luglio|agosto|settembre|ottobre|novembre|dicembre';
-const QUANDO_RE = new RegExp('\\b(?:oggi pomeriggio|questo pomeriggio|stamattina|stasera|stanotte|oggi|dopodomani|domani|' +
+const QUANDO_RE = new RegExp('\\b(?:(?:domani|oggi|dopodomani)\\s+(?:mattina|sera|pomeriggio|notte)|domattina|oggi pomeriggio|questo pomeriggio|stamattina|stasera|stanotte|oggi|dopodomani|domani|' +
   '(?:lunedì|martedì|mercoledì|giovedì|venerdì|lunedi|martedi|mercoledi|giovedi|venerdi|sabato|domenica)(?: prossimo| prossima)?|' +
   '(?:il\\s+)?\\d{1,2}\\s+(?:' + MESI_RE + '))(?![a-zà-ù])', 'gi');
 const ORA_RE = /\b(?:alle|per le|verso le|all')\s*(\d{1,2})(?:(?:[:.]|\s+e\s+)(\d{1,2}|mezza|un quarto|quarto|tre quarti))?(?:\s+(?:di\s+|del\s+|della\s+)?(sera|pomeriggio|mattina|notte))?|\b(?:a\s+)?(mezzogiorno|mezzanotte)\b/;
@@ -2539,7 +2549,7 @@ function parseWhen(t, now) {
   const d0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   let day = null, m;
   if (/\bdopodomani\b/.test(t)) { day = new Date(d0); day.setDate(d0.getDate() + 2); }
-  else if (/\bdomani\b/.test(t)) { day = new Date(d0); day.setDate(d0.getDate() + 1); }
+  else if (/\b(?:domani|domattina)\b/.test(t)) { day = new Date(d0); day.setDate(d0.getDate() + 1); }
   else if (/\b(?:oggi|stasera|stamattina|stanotte|questo pomeriggio)\b/.test(t)) day = new Date(d0);
   else if ((m = t.match(/\b(lunedì|martedì|mercoledì|giovedì|venerdì|lunedi|martedi|mercoledi|giovedi|venerdi|sabato|domenica)(?![a-zà-ù])/))) {
     const idx = GIORNI_N.indexOf(m[1].replace('ì', 'i'));
@@ -2556,11 +2566,12 @@ function parseWhen(t, now) {
     h = parseInt(m[1], 10);
     const parti = { mezza: 30, 'un quarto': 15, quarto: 15, 'tre quarti': 45 };
     if (m[2]) min = parti[m[2]] !== undefined ? parti[m[2]] : parseInt(m[2], 10);
-    if ((m[3] === 'sera' || m[3] === 'pomeriggio' || /\b(?:stasera|questo pomeriggio)\b/.test(t)) && h < 12) h += 12;
+    if ((m[3] === 'sera' || m[3] === 'pomeriggio' || /\b(?:stasera|pomeriggio|sera)\b/.test(t)) && h < 12) h += 12;
     if (m[3] === 'notte' && h === 12) h = 0;
   }
   if (h === null && !day) return null;
-  if (h === null) h = 9; // un giorno senza ora: alle 9 di mattina
+  // un giorno senza ora: dipende dal momento («domani sera» → alle 20)
+  if (h === null) h = /\b(?:sera|stasera)\b/.test(t) ? 20 : /\bpomeriggio\b/.test(t) ? 15 : /\b(?:notte|stanotte)\b/.test(t) ? 23 : 9;
   if (h > 23 || min > 59) return { bad: true };
   let at = new Date(day || d0);
   at.setHours(h, min, 0, 0);
@@ -2776,7 +2787,7 @@ function powerIntent(t, raw, ctx) {
     const text = raw.slice(raw.toLowerCase().lastIndexOf(m[2])).trim();
     return { msgName: { name: p.name, alt: p.alt, label: p.label, text }, phoneOnly: true, say: 'Preparo il messaggio per ' + p.label + '…' };
   }
-  m = t.match(/^(?:chiama|telefona(?:\s+a)?|fai una chiamata a)\s+([a-zà-ù' ]{2,30})$/);
+  m = t.match(/^(?:chiama|telefona(?:\s+a)?|fai una chiamata a)\s+([a-zà-ù' ]{2,30}?)\s*[?!.]*$/);
   if (m && !/cane|cucciolo|rocky/.test(m[1])) {
     const p = persona(m[1]);
     return { callName: { name: p.name, alt: p.alt, label: p.label }, phoneOnly: true, say: 'Cerco ' + p.label + ' nei contatti…' };
@@ -2799,6 +2810,10 @@ function powerIntent(t, raw, ctx) {
     }
     return { say: 'Apro il traduttore: «' + testo + '» in ' + lang + '!',
       open: 'https://translate.google.com/?sl=auto&tl=' + LINGUE[lang] + '&op=translate&text=' + encodeURIComponent(testo) };
+  }
+  // ---------- conversazione a voce, mani libere ----------
+  if (/^(?:parliamo(?: a voce)?|facciamo (?:due|quattro) chiacchiere(?: a voce)?|conversazione(?: a voce)?|chiacchieriamo|modalità conversazione|parliamo un po')\s*[!.?]*$/.test(t)) {
+    return { talk: true, say: 'Ok, parliamo! Ti ascolto.', action: 'wave' };
   }
   // ---------- ologramma ----------
   if (/(?:basta|togli|spegni|niente|via)\b.*ologramm|torna (?:normale|solido|di carne)/.test(t)) return { holo: false, say: 'Ritorno solido! Ah, che bello sentirsi i piedi.', action: 'jump' };
@@ -2823,10 +2838,64 @@ function powerIntent(t, raw, ctx) {
   return null;
 }
 
+// ---------- Parlato naturale: «potresti accendere la torcia?» → «accendi la torcia» ----------
+const IMPERATIVI = {
+  accendere: 'accendi', spegnere: 'spegni', aprire: 'apri', chiudere: 'chiudi', mettere: 'metti', chiamare: 'chiama',
+  cercare: 'cerca', ballare: 'balla', saltare: 'salta', cantare: 'canta', volare: 'vola', tradurre: 'traduci', leggere: 'leggi',
+  mandare: 'manda', scrivere: 'scrivi', alzare: 'alza', abbassare: 'abbassa', aggiungere: 'aggiungi', segnare: 'segna',
+  fare: 'fai', raccontare: 'racconta', tirare: 'tira', lanciare: 'lancia', guardare: 'guarda', impostare: 'imposta',
+  puntare: 'punta', cancellare: 'cancella', togliere: 'togli', attivare: 'attiva', disattivare: 'disattiva', telefonare: 'telefona',
+  ricordarmi: 'ricordami', svegliarmi: 'svegliami', dirmi: 'dimmi', farmi: 'fammi', leggermi: 'leggimi', raccontarmi: 'raccontami',
+  avvisarmi: 'avvisami', darmi: 'dammi', spiegarmi: 'spiegami', aiutarmi: 'aiutami', tradurmi: 'traduci',
+};
+const CON_MI = { ricordare: 'ricordami', svegliare: 'svegliami', dire: 'dimmi', fare: 'fammi', leggere: 'leggimi', raccontare: 'raccontami',
+  avvisare: 'avvisami', dare: 'dammi', spiegare: 'spiegami', aiutare: 'aiutami' };
+const MI_PRESENTE = {
+  ricordi: 'ricordami', svegli: 'svegliami', dici: 'dimmi', fai: 'fammi', leggi: 'leggimi', racconti: 'raccontami', avvisi: 'avvisami',
+  dai: 'dammi', spieghi: 'spiegami', aiuti: 'aiutami', accendi: 'accendi', spegni: 'spegni', apri: 'apri', metti: 'metti',
+  chiami: 'chiama', cerchi: 'cerca', mandi: 'manda', scrivi: 'scrivi', traduci: 'traduci', alzi: 'alza', abbassi: 'abbassa',
+  aggiungi: 'aggiungi', segni: 'segna', punti: 'punta', imposti: 'imposta', canti: 'canta', balli: 'balla',
+};
+const NUMERI = { un: 1, uno: 1, una: 1, due: 2, tre: 3, quattro: 4, cinque: 5, sei: 6, sette: 7, otto: 8, nove: 9, dieci: 10,
+  undici: 11, dodici: 12, quindici: 15, venti: 20, venticinque: 25, trenta: 30, quaranta: 40, quarantacinque: 45, cinquanta: 50, sessanta: 60 };
+const ORE_PAROLE = { una: 1, due: 2, tre: 3, quattro: 4, cinque: 5, sei: 6, sette: 7, otto: 8, nove: 9, dieci: 10, undici: 11, dodici: 12,
+  tredici: 13, quattordici: 14, quindici: 15, sedici: 16, diciassette: 17, diciotto: 18, diciannove: 19, venti: 20, ventuno: 21, ventidue: 22, ventitré: 23, ventitre: 23 };
+const ORE_RE = new RegExp("\\b(alle|per le|verso le|dalle|entro le|all')\\s*(" + Object.keys(ORE_PAROLE).join('|') + ")(?![a-zà-ù])", 'g');
+const NUM_RE = new RegExp('\\b(' + Object.keys(NUMERI).join('|') + ')\\s+(secondi|secondo|minuti|minuto|ore|ora)\\b', 'g');
+function normalizeRequest(t, pet) {
+  let x = String(t || '').toLowerCase().trim();
+  // tempi a parole: «tra mezz'ora», «tra un'ora», «tra cinque minuti»
+  x = x.replace(/\bmezz'?\s?ora\b/g, '30 minuti').replace(/\bun quarto d'?\s?ora\b/g, '15 minuti')
+    .replace(/\bun'ora\b/g, '1 ora').replace(/\bun paio di (minuti|ore)\b/g, '2 $1')
+    .replace(NUM_RE, (m0, n, u) => NUMERI[n] + ' ' + u)
+    .replace(ORE_RE, (m0, p, n) => (p === "all'" ? 'alle' : p) + ' ' + ORE_PAROLE[n]);
+  // «ehi Zeph», «senti», «per favore», «grazie»
+  const nome = String(pet || 'zeph').toLowerCase().replace(/[^a-zà-ù' -]/g, '');
+  x = x.replace(new RegExp("^(?:(?:ehi|hey|ehy|oh|senti|scusa|allora|dai|ok|okay)[,!.\\s]+)*(?:(?:zeph|" + nome + ")\\b[,!.\\s]*)?"), '');
+  x = x.replace(/^(?:per favore|perfavore|per piacere|gentilmente)[,\s]+/, '').replace(/[,\s]*(?:per favore|perfavore|per piacere)[.!?]*$/, '');
+  // «potresti…», «mi puoi…», «riesci a…», «vorrei che tu…»
+  let mi = false, request = false;
+  x = x.replace(/^(mi\s+)?(?:potresti|puoi|può|riesci a|riusciresti a|ti dispiace|ti andrebbe di|ti va di|vorrei che tu|voglio che tu|dovresti)\s+(mi\s+)?/, (m0, a, b) => { mi = !!(a || b); request = true; return ''; });
+  if (request) x = x.replace(/[?!.]+$/, ''); // è una richiesta, non una domanda
+  let w = x.split(/\s+/);
+  if (w[0] === 'mi' && MI_PRESENTE[w[1]]) {
+    w = [MI_PRESENTE[w[1]]].concat(w.slice(2));
+    w[w.length - 1] = w[w.length - 1].replace(/[?]+$/, ''); // «mi accendi la torcia?» è una richiesta
+  }
+  else if (mi && CON_MI[w[0]]) w[0] = CON_MI[w[0]];
+  else if (IMPERATIVI[w[0]]) w[0] = IMPERATIVI[w[0]];
+  return w.join(' ').trim();
+}
+
 function replyCore(text, ctx) {
-  const raw = String(text || '').trim();
-  const t = raw.toLowerCase();
+  let raw = String(text || '').trim();
+  let t = raw.toLowerCase();
   if (!t) return null;
+  // le richieste gentili diventano comandi («potresti accendere la torcia?» → «accendi la torcia?»)
+  if (!ctx._norm) {
+    const n = normalizeRequest(t, memory.petName());
+    if (n && n !== t) { raw = n; t = n; }
+  }
   const fresh = Date.now() - (ctx.pendingAt || 0) < 5 * 60e3;
 
   // prima di tutto: se stai male davvero
@@ -3325,7 +3394,7 @@ global.ZephCore = {
   build, Animator, botReply, pick, createAvatarDriver, createSparkles,
   buildDog, updateDog, bark, chime, boom, ambience, music, weatherReport,
   memory, ai, toTu, dayOf, lookFromPhoto, applyLook,
-  parseWhen, whenLabel, wikiAnswer, createHologram, daysUntil,
+  parseWhen, whenLabel, wikiAnswer, createHologram, daysUntil, normalizeRequest,
   FRASI_PASSEGGIO, FRASI_DESKTOP, BARZELLETTE,
   HIP_Y, HEIGHT: 1.75,
 };

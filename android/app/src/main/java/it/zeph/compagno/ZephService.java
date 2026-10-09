@@ -173,9 +173,9 @@ public class ZephService extends Service {
             tts.setSpeechRate(1.04f);
             tts.setPitch(1.05f);
             tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
-                @Override public void onStart(String id) { js("zephTts('start')"); }
-                @Override public void onDone(String id) { js("zephTts('end')"); }
-                @Override @Deprecated public void onError(String id) { js("zephTts('end')"); }
+                @Override public void onStart(String id) { js("zephTts('start')"); talkEvent("start", null); }
+                @Override public void onDone(String id) { js("zephTts('end')"); talkEvent("done", null); }
+                @Override @Deprecated public void onError(String id) { js("zephTts('end')"); talkEvent("done", null); }
                 @Override public void onRangeStart(String id, int start, int end, int frame) { js("zephTts('word')"); }
             });
             ttsReady = r >= 0;
@@ -569,7 +569,15 @@ public class ZephService extends Service {
         try { wm.updateViewLayout(bubble, blp); } catch (Exception ignored) { }
     }
 
+    /** Per la conversazione a voce: «sta parlando», «ha finito», e cosa dice. */
+    private void talkEvent(String ev, String text) {
+        try {
+            sendBroadcast(new Intent(TalkActivity.ACTION_EVENT).setPackage(getPackageName()).putExtra("ev", ev).putExtra("text", text));
+        } catch (Exception ignored) { /* nessuno ascolta */ }
+    }
+
     private void showBubble(String text) {
+        talkEvent("text", text);
         if (bubble == null || hidden) return;
         bubble.setText(text);
         bubble.setVisibility(View.VISIBLE);
@@ -731,7 +739,12 @@ public class ZephService extends Service {
         @JavascriptInterface public void bubbleHide() { main.post(ZephService.this::hideBubble); }
 
         @JavascriptInterface public boolean speak(String text) {
-            if (!ttsReady || hidden) return false;
+            if (!ttsReady || hidden) {
+                // niente voce: la conversazione a voce riparte dopo il tempo di leggere il fumetto
+                long ms = 1500 + Math.min(9000, (text == null ? 0 : text.length()) * 55L);
+                main.postDelayed(() -> talkEvent("done", null), ms);
+                return false;
+            }
             String clean = text.replaceAll("[\\p{So}\\p{Cn}]", "");
             return tts.speak(clean, TextToSpeech.QUEUE_FLUSH, null, "z" + (++utterance)) == TextToSpeech.SUCCESS;
         }
@@ -761,6 +774,15 @@ public class ZephService extends Service {
         @JavascriptInterface public void remind(String text) { main.post(() -> reminder(text)); }
 
         @JavascriptInterface public void openChat() { main.post(() -> ZephService.this.openChat(false)); }
+
+        /** Conversazione a voce, mani libere. */
+        @JavascriptInterface public void openTalk() {
+            main.post(() -> {
+                try {
+                    startActivity(new Intent(ZephService.this, TalkActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                } catch (Exception e) { Log.w(TAG, "conversazione", e); }
+            });
+        }
 
         /** Apre la pagina «avatar dalla foto». */
         @JavascriptInterface public void openPhoto() {

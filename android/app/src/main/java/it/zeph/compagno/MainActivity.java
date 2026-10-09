@@ -42,7 +42,7 @@ public class MainActivity extends Activity {
     private static final int REQ_BACKUP_LOAD = 26;
     private static final int TEAL = 0xFF14B8A6;
 
-    private TextView status;
+    private TextView status, friendship;
     private Button overlayBtn, notifBtn, startBtn, batteryBtn, chatBtn, contactsBtn, calendarBtn, messagesBtn;
     private EditText nameEdit, keyEdit;
     private Button updateBtn;
@@ -88,6 +88,13 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams sp = full();
         sp.topMargin = dp(18);
         box.addView(status, sp);
+        // la vostra amicizia, dalla memoria del compagno
+        friendship = text("", 13, 0xFFFDE68A);
+        friendship.setPadding(dp(14), dp(10), dp(14), dp(10));
+        friendship.setBackground(round(0xFF2A2440, 12));
+        LinearLayout.LayoutParams fp = full();
+        fp.topMargin = dp(8);
+        box.addView(friendship, fp);
 
         section(box, "1 · Permessi");
         overlayBtn = button("Permetti di apparire sopra le altre app", 0xFF334155);
@@ -118,7 +125,7 @@ public class MainActivity extends Activity {
         });
         box.addView(startBtn, full());
         chatBtn = button("🎤 Parla con Zeph", 0xFF334155);
-        chatBtn.setOnClickListener(v -> startActivity(new Intent(this, ChatActivity.class).putExtra(ChatActivity.EXTRA_MIC, true)));
+        chatBtn.setOnClickListener(v -> startActivity(new Intent(this, TalkActivity.class)));
         box.addView(chatBtn, gap(full()));
 
         section(box, "3 · Il tuo avatar");
@@ -347,14 +354,49 @@ public class MainActivity extends Activity {
         mark(messagesBtn, MessageListener.enabled(this), "✅ Ti avvisa dei messaggi («chi mi ha scritto?»)", "📩 Avvisami dei messaggi (accesso alle notifiche)");
         boolean on = ZephService.running;
         String name = Prefs.petName(this);
+        String fr = friendshipText();
+        friendship.setText(fr);
+        friendship.setVisibility(fr.isEmpty() ? View.GONE : View.VISIBLE);
         startBtn.setText(on ? "⏹ Togli " + name + " dallo schermo" : "▶ Metti " + name + " sullo schermo");
-        chatBtn.setText("🎤 Parla con " + name);
+        chatBtn.setText("🎙 Parla con " + name + " (conversazione a voce)");
         String av = Prefs.photoLook(this) && new File(getFilesDir(), "look.json").exists() ? "con il look della tua foto"
             : new File(getFilesDir(), "avatar.glb").exists() ? "con il tuo avatar" : "come Zeph";
         String brain = Prefs.aiKey(this).isEmpty() ? "cervello offline" : "cervello AI acceso";
         status.setText(on ? "🟢 " + name + " è sul tuo schermo (" + av + ", " + brain + "). Puoi chiudere l'app: resta lì."
             : overlay ? "⚪ " + name + " è spento. Premi «Metti " + name + " sullo schermo»."
             : "⚠️ Serve il permesso di apparire sopra le altre app (punto 1).");
+    }
+
+    /** «Grandi amici · insieme da 12 giorni · 85 chiacchierate · sa 9 cose di te», dal file della memoria. */
+    private String friendshipText() {
+        String snap = ZephService.readFile(new File(getFilesDir(), "memory.json"));
+        if (snap.isEmpty()) return "";
+        try {
+            org.json.JSONObject o = new org.json.JSONObject(snap);
+            org.json.JSONObject m = new org.json.JSONObject(o.optString("zephMemory", "{}"));
+            org.json.JSONArray days = m.optJSONArray("days");
+            int n = days == null ? 0 : days.length(), talks = m.optInt("talks");
+            if (talks == 0) return "";
+            long since = 0;
+            String first = m.optString("firstMet", "");
+            if (first.length() == 10) {
+                java.util.Calendar c = java.util.Calendar.getInstance();
+                c.set(Integer.parseInt(first.substring(0, 4)), Integer.parseInt(first.substring(5, 7)) - 1, Integer.parseInt(first.substring(8, 10)), 0, 0, 0);
+                since = Math.max(0, (System.currentTimeMillis() - c.getTimeInMillis()) / 86_400_000L);
+            }
+            int known = count(m, "likes") + count(m, "dislikes") + count(m, "notes") + (m.optJSONObject("people") != null ? m.optJSONObject("people").length() : 0)
+                + (m.optJSONObject("facts") != null ? m.optJSONObject("facts").length() : 0);
+            String level = n >= 30 ? "Migliori amici" : n >= 10 ? "Grandi amici" : n >= 3 ? "Amici" : "Nuovi amici";
+            return "💛 " + level + " · " + (since > 0 ? "insieme da " + since + (since == 1 ? " giorno" : " giorni") : "vi siete conosciuti oggi") +
+                " · " + talks + (talks == 1 ? " chiacchierata" : " chiacchierate") + (known > 0 ? " · sa " + known + " cose di te" : "");
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private static int count(org.json.JSONObject m, String k) {
+        org.json.JSONArray a = m.optJSONArray(k);
+        return a == null ? 0 : a.length();
     }
 
     private void mark(Button b, boolean ok, String yes, String no) {

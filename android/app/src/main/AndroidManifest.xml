@@ -20,6 +20,8 @@
     <uses-feature android:name="android.hardware.camera.front" android:required="false" />
     <!-- «chiama Giulia» e «che impegni ho oggi?»: rubrica e agenda in sola lettura, se dai il permesso -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <!-- conversazione a voce: il microfono si usa solo mentre è aperta la finestra «Parla con…» -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.READ_CALENDAR" />
     <!-- promemoria puntuali al minuto -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" android:maxSdkVersion="32" />
@@ -62,6 +64,9 @@
         </intent>
         <intent>
             <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
         </intent>
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
@@ -112,6 +117,14 @@
             android:label="Avatar dalla foto"
             android:screenOrientation="portrait"
             android:theme="@android:style/Theme.Material.NoActionBar" />
+
+        <activity
+            android:name=".TalkActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:taskAffinity="it.zeph.compagno.talk"
+            android:theme="@android:style/Theme.Material.Dialog.NoActionBar" />
 
         <service
             android:name=".ZephService"

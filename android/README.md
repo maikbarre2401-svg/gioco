@@ -39,6 +39,8 @@ Zeph — o **il tuo avatar** — vive sullo schermo del telefono, sopra tutte le
 - **Un amico che si ricorda di te**: raccontagli la giornata, i programmi («domani ho un esame»), cosa ti
   piace, le persone a cui vuoi bene. Il giorno dopo ti chiede com'è andata; «cosa sai di me?»,
   «cosa ti ho detto ieri?». Tutto resta sul telefono; «dimentica tutto» per cancellare.
+- **🎙 Conversazione a voce mani libere**: «Parla con…» nell'app o «parliamo a voce»; ascolta, risponde e
+  riascolta da solo (serve il permesso del microfono, usato solo mentre la finestra è aperta).
 - **⚡ Poteri del telefono** (sezione nuova nell'app, tutti facoltativi):
   promemoria veri anche tra giorni («ricordami domani alle 9 di…», suonano anche a Zeph spento e dopo un
   riavvio), «chiama mia sorella» / «scrivi a Giulia che arrivo» (rubrica), «chi mi ha scritto?» e
