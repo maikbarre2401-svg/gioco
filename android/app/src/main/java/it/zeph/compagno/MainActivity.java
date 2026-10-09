@@ -36,10 +36,14 @@ import java.io.OutputStream;
 public class MainActivity extends Activity {
     private static final int REQ_AVATAR = 21;
     private static final int REQ_NOTIF = 22;
+    private static final int REQ_CONTACTS = 23;
+    private static final int REQ_CALENDAR = 24;
+    private static final int REQ_BACKUP_SAVE = 25;
+    private static final int REQ_BACKUP_LOAD = 26;
     private static final int TEAL = 0xFF14B8A6;
 
     private TextView status;
-    private Button overlayBtn, notifBtn, startBtn, batteryBtn, chatBtn;
+    private Button overlayBtn, notifBtn, startBtn, batteryBtn, chatBtn, contactsBtn, calendarBtn, messagesBtn;
     private EditText nameEdit, keyEdit;
 
     private int dp(float v) {
@@ -197,6 +201,56 @@ public class MainActivity extends Activity {
         console.setOnClickListener(v -> openWeb("https://console.anthropic.com/settings/keys"));
         box.addView(console, gap(full()));
 
+        section(box, "⚡ Poteri del telefono");
+        box.addView(text("Tutto facoltativo: dai solo i permessi che vuoi. Rubrica e agenda sono in sola lettura e niente esce dal telefono.", 13, 0x99FFFFFF));
+        contactsBtn = button("", 0xFF334155);
+        contactsBtn.setOnClickListener(v -> requestPermissions(new String[]{Manifest.permission.READ_CONTACTS}, REQ_CONTACTS));
+        box.addView(contactsBtn, gap(full()));
+        calendarBtn = button("", 0xFF334155);
+        calendarBtn.setOnClickListener(v -> requestPermissions(new String[]{Manifest.permission.READ_CALENDAR}, REQ_CALENDAR));
+        box.addView(calendarBtn, gap(full()));
+        messagesBtn = button("", 0xFF334155);
+        messagesBtn.setOnClickListener(v -> {
+            try {
+                startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS));
+                Toast.makeText(this, "Attiva «Zeph: avvisi dei messaggi»", Toast.LENGTH_LONG).show();
+            } catch (Exception e) {
+                Toast.makeText(this, "Apri Impostazioni → Notifiche → Accesso alle notifiche", Toast.LENGTH_LONG).show();
+            }
+        });
+        box.addView(messagesBtn, gap(full()));
+        box.addView(gapped(text("Se l'interruttore di Zeph è grigio («impostazione con limitazioni», Android 13+): apri Impostazioni → App → Zeph, " +
+            "tocca i tre puntini in alto a destra → «Consenti impostazioni con limitazioni», poi riprova.", 12, 0x88FFFFFF)));
+        CheckBox announce = check("Annuncia i messaggi in arrivo («Ti ha scritto Giulia!»)", Prefs.announceMessages(this));
+        announce.setOnCheckedChangeListener((c, on) -> Prefs.setAnnounceMessages(this, on));
+        box.addView(announce);
+        CheckBox readAloud = check("Leggi ad alta voce anche il testo dei messaggi", Prefs.readMessages(this));
+        readAloud.setOnCheckedChangeListener((c, on) -> Prefs.setReadMessages(this, on));
+        box.addView(readAloud);
+        CheckBox shake = check("Scuoti il telefono: arriva di corsa", Prefs.shake(this));
+        shake.setOnCheckedChangeListener((c, on) -> { Prefs.setShake(this, on); tellService(ZephService.ACTION_PREFS); });
+        box.addView(shake);
+        CheckBox brief = check("Il buongiorno (meteo, impegni, promemoria) quando sblocchi il telefono la mattina", Prefs.briefing(this));
+        brief.setOnCheckedChangeListener((c, on) -> Prefs.setBriefing(this, on));
+        box.addView(brief);
+        box.addView(gapped(text("I promemoria («ricordami domani alle 9 di…») sono veri: suonano anche se il compagno è spento o riavvii il telefono.", 13, 0x99FFFFFF)));
+
+        section(box, "💾 Backup della memoria");
+        box.addView(text("Salva in un file tutto quello che il tuo amico sa di te (e il look della foto). Se cambi telefono o reinstalli l'app, lo ripristini e si ricorda di tutto. La chiave AI non viene salvata.", 13, 0x99FFFFFF));
+        Button saveBk = button("💾 Salva backup", 0xFF334155);
+        saveBk.setOnClickListener(v -> {
+            Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
+                .setType("application/json").putExtra(Intent.EXTRA_TITLE, "memoria-" + Prefs.petName(this).toLowerCase() + ".json");
+            startActivityForResult(i, REQ_BACKUP_SAVE);
+        });
+        box.addView(saveBk, gap(full()));
+        Button loadBk = button("📂 Ripristina backup", 0xFF334155);
+        loadBk.setOnClickListener(v -> {
+            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*");
+            startActivityForResult(i, REQ_BACKUP_LOAD);
+        });
+        box.addView(loadBk, gap(full()));
+
         section(box, "5 · Opzioni");
         box.addView(text("Grandezza", 13, 0x99FFFFFF));
         RadioGroup size = new RadioGroup(this);
@@ -238,6 +292,10 @@ public class MainActivity extends Activity {
             "• Di notte, se lo lasci tranquillo, si addormenta. Toccalo per svegliarlo\n" +
             "• Raccontagli la tua giornata: se lo ricorda e il giorno dopo ti chiede com'è andata\n" +
             "• Chiudi l'app quando vuoi: Zeph resta sullo schermo\n\n" +
+            "Poteri: «ricordami domani alle 9 di chiamare la mamma», «chiama mia sorella», «scrivi a Giulia che arrivo», " +
+            "«chi mi ha scritto?», «rispondi: arrivo subito» (ti chiede conferma), «che impegni ho oggi?», «aggiungi al calendario dentista domani alle 10», " +
+            "«com'è la mia giornata?», «chi era Leonardo da Vinci?», «traduci buongiorno in inglese», «cosa vedi?» (con il cervello AI), «modalità ologramma». " +
+            "Scuoti il telefono e arriva di corsa!\n\n" +
             "Prova a dirgli: «oggi sono andato al mare», «domani ho un esame», «mi piace la pizza», «cosa sai di me?», " +
             "«se ti dico buongiorno rispondi ciao campione», «ti chiamerò Leo», «che tempo fa a Roma», «accendi la torcia», «svegliami alle 7 e mezza», " +
             "«timer di 10 minuti», «prossima canzone», «chiama 333 1234567», «apri whatsapp», " +
@@ -262,6 +320,9 @@ public class MainActivity extends Activity {
         mark(overlayBtn, overlay, "✅ Può apparire sopra le altre app", "Permetti di apparire sopra le altre app");
         mark(notifBtn, notif, "✅ Notifiche permesse", "Permetti le notifiche (per i comandi)");
         mark(batteryBtn, battery, "✅ Il risparmio batteria non lo chiude", "Non farlo mai chiudere dal risparmio batteria");
+        mark(contactsBtn, Contacts.canReadContacts(this), "✅ Rubrica: «chiama Giulia», «scrivi a Marco che…»", "📇 Permetti la rubrica («chiama Giulia»)");
+        mark(calendarBtn, Contacts.canReadCalendar(this), "✅ Agenda: «che impegni ho oggi?»", "📅 Permetti l'agenda («che impegni ho oggi?»)");
+        mark(messagesBtn, MessageListener.enabled(this), "✅ Ti avvisa dei messaggi («chi mi ha scritto?»)", "📩 Avvisami dei messaggi (accesso alle notifiche)");
         boolean on = ZephService.running;
         String name = Prefs.petName(this);
         startBtn.setText(on ? "⏹ Togli " + name + " dallo schermo" : "▶ Metti " + name + " sullo schermo");
@@ -307,9 +368,21 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    public void onRequestPermissionsResult(int req, String[] perms, int[] res) {
+        super.onRequestPermissionsResult(req, perms, res);
+        refresh();
+        if ((req == REQ_CONTACTS || req == REQ_CALENDAR) && res.length > 0 && res[0] != PackageManager.PERMISSION_GRANTED) {
+            Toast.makeText(this, "Permesso negato: se cambi idea lo trovi in Impostazioni → App → Zeph → Autorizzazioni", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    @Override
     protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
-        if (req != REQ_AVATAR || res != RESULT_OK || data == null || data.getData() == null) return;
+        if (res != RESULT_OK || data == null || data.getData() == null) return;
+        if (req == REQ_BACKUP_SAVE) { saveBackup(data.getData()); return; }
+        if (req == REQ_BACKUP_LOAD) { loadBackup(data.getData()); return; }
+        if (req != REQ_AVATAR) return;
         Uri uri = data.getData();
         new Thread(() -> {
             boolean ok = copyAvatar(uri);
@@ -325,6 +398,77 @@ public class MainActivity extends Activity {
                 refresh();
             });
         }).start();
+    }
+
+    /** Il backup: memoria, nome e look della foto (mai la chiave AI). */
+    private void saveBackup(Uri uri) {
+        new Thread(() -> {
+            boolean ok;
+            try (OutputStream out = getContentResolver().openOutputStream(uri, "wt")) {
+                org.json.JSONObject o = new org.json.JSONObject()
+                    .put("zeph", 1)
+                    .put("petName", Prefs.petName(this))
+                    .put("memory", ZephService.readFile(new File(getFilesDir(), "memory.json")))
+                    .put("look", Prefs.photoLook(this) ? ZephService.readFile(new File(getFilesDir(), "look.json")) : "");
+                if (out == null) throw new java.io.IOException("niente file");
+                out.write(o.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                ok = true;
+            } catch (Exception e) {
+                ok = false;
+            }
+            final boolean done = ok;
+            runOnUiThread(() -> Toast.makeText(this, done ? "Backup salvato! Tienilo al sicuro" : "Non sono riuscito a salvare il backup", Toast.LENGTH_LONG).show());
+        }).start();
+    }
+
+    private void loadBackup(Uri uri) {
+        new Thread(() -> {
+            boolean ok = false;
+            try (InputStream in = getContentResolver().openInputStream(uri)) {
+                if (in == null) throw new java.io.IOException("niente file");
+                java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
+                byte[] b = new byte[64 * 1024];
+                int n;
+                while ((n = in.read(b)) > 0) {
+                    buf.write(b, 0, n);
+                    if (buf.size() > 8 * 1024 * 1024) throw new java.io.IOException("troppo grande");
+                }
+                org.json.JSONObject o = new org.json.JSONObject(buf.toString("UTF-8"));
+                if (o.optInt("zeph") == 1) {
+                    String mem = o.optString("memory", "");
+                    if (!mem.isEmpty()) new org.json.JSONObject(mem); // dev'essere JSON valido
+                    writeText(new File(getFilesDir(), "memory.json"), mem);
+                    String look = o.optString("look", "");
+                    if (!look.isEmpty()) {
+                        new org.json.JSONObject(look);
+                        writeText(new File(getFilesDir(), "look.json"), look);
+                        Prefs.setPhotoLook(this, true);
+                    }
+                    if (o.has("petName")) Prefs.setPetName(this, o.optString("petName"));
+                    ok = true;
+                }
+            } catch (Exception e) {
+                ok = false;
+            }
+            final boolean done = ok;
+            runOnUiThread(() -> {
+                if (done) {
+                    tellService(ZephService.ACTION_MEMORY);
+                    tellService(ZephService.ACTION_AVATAR);
+                    nameEdit.setText(Prefs.petName(this));
+                    Toast.makeText(this, "Memoria ripristinata: si ricorda di te!", Toast.LENGTH_LONG).show();
+                } else {
+                    Toast.makeText(this, "Questo file non sembra un backup di Zeph", Toast.LENGTH_LONG).show();
+                }
+                refresh();
+            });
+        }).start();
+    }
+
+    private static void writeText(File f, String s) throws java.io.IOException {
+        try (OutputStream out = new FileOutputStream(f)) {
+            out.write(s.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
     }
 
     /** Copia il .glb scelto dentro l'app, controllando che sia davvero un glTF. */

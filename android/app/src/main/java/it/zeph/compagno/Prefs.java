@@ -53,6 +53,22 @@ final class Prefs {
     static String aiKey(Context c) { return secret(c).getString("aiKey", ""); }
     static void setAiKey(Context c, String v) { secret(c).edit().putString("aiKey", v == null ? "" : v.trim()).apply(); }
 
+    /** Annuncia i messaggi in arrivo (serve l'accesso alle notifiche). */
+    static boolean announceMessages(Context c) { return p(c).getBoolean("announceMsg", true); }
+    static void setAnnounceMessages(Context c, boolean v) { p(c).edit().putBoolean("announceMsg", v).apply(); }
+
+    /** Legge ad alta voce anche il testo dei messaggi (di base: solo chi ti ha scritto). */
+    static boolean readMessages(Context c) { return p(c).getBoolean("readMsg", false); }
+    static void setReadMessages(Context c, boolean v) { p(c).edit().putBoolean("readMsg", v).apply(); }
+
+    /** Scuoti il telefono: arriva di corsa. */
+    static boolean shake(Context c) { return p(c).getBoolean("shake", true); }
+    static void setShake(Context c, boolean v) { p(c).edit().putBoolean("shake", v).apply(); }
+
+    /** Il buongiorno con meteo e impegni, la prima volta che sblocchi il telefono la mattina. */
+    static boolean briefing(Context c) { return p(c).getBoolean("briefing", true); }
+    static void setBriefing(Context c, boolean v) { p(c).edit().putBoolean("briefing", v).apply(); }
+
     /** Usa il look fatto con la foto (al posto del file .glb). */
     static boolean photoLook(Context c) { return p(c).getBoolean("photoLook", false); }
     static void setPhotoLook(Context c, boolean v) { p(c).edit().putBoolean("photoLook", v).apply(); }

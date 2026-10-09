@@ -99,6 +99,12 @@ scene.add(blob);
 const anim = new ZephCore.Animator(zeph);
 const actor = { obj: zeph.root };
 let avatarDriver = null;
+const holo = ZephCore.createHologram(THREE);
+scene.add(holo.base);
+function setHolo(on) {
+  if (on) holo.apply(actor.obj); else holo.remove(actor.obj);
+  try { localStorage.setItem('zephHolo', on ? '1' : ''); } catch (e) {}
+}
 
 function setAvatarScene(avScene, animations) {
   try {
@@ -113,6 +119,7 @@ function setAvatarScene(avScene, animations) {
     scene.add(driver.root);
     anim.avatar = driver;
     actor.obj = driver.root;
+    if (holo.on) holo.apply(driver.root);
   } catch (e) { console.error('Avatar non utilizzabile:', e); }
 }
 function tryLoadAvatar() {
@@ -479,6 +486,33 @@ function botRespond(text) {
       try { new Notification('Zeph ⏰', { body: r.text }); } catch (e) { /* niente notifiche */ }
     }, r.seconds * 1000);
   }
+  if (out.holo !== undefined) setHolo(out.holo);
+  if (out.wikiQuery) {
+    speak(out.say);
+    ZephCore.wikiAnswer(out.wikiQuery).then(r => { anim.startAction('wave'); speak(r.say); });
+    return;
+  }
+  if (out.see) out.say = 'Gli occhi li uso nel browser («📸»…) o nell’app sul telefono: lì c’è la fotocamera!';
+  if (out.remindAt) {
+    const r = out.remindAt, ms = r.at - Date.now();
+    if (ms < 864e5) {
+      setTimeout(() => {
+        anim.startAction('jump');
+        speak('Ehi! Promemoria: ' + r.text);
+        try { new Notification(ZephCore.memory.petName() + ' ⏰', { body: r.text }); } catch (e) { /* niente notifiche */ }
+      }, ms);
+    } else out.say = 'Così lontano me lo ricordo meglio nell’app sul telefono: lì i promemoria suonano anche a Zeph spento!';
+  }
+  if (out.listReminders || out.clearReminders) out.say = 'I promemoria veri li tengo nell’app sul telefono!';
+  if (out.briefing) {
+    let city = null;
+    try { city = JSON.parse(localStorage.getItem('zephPrefs') || '{}')['città']; } catch (e) {}
+    const head = 'Ciao' + (botCtx.name ? ', ' + botCtx.name : '') + '! Oggi è ' +
+      new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' }) + '.';
+    (city ? ZephCore.weatherReport({ city, when: 'oggi' }) : Promise.resolve({ say: 'Dimmi «la mia città è …» e ti dico anche il meteo.' }))
+      .then(w => { anim.startAction('wave'); speak(head + ' ' + w.say); });
+    return;
+  }
   if (out.photoAvatar) out.say = 'L’avatar dalla foto si crea nel browser (premi «📸 Avatar dalla foto») o nell’app sul telefono!';
   // chiacchiere: con il cervello AI (la tua chiave) risponde Claude
   if (out.aiQuery && ZephCore.ai.enabled()) {
@@ -732,12 +766,15 @@ function tick() {
     disco1.intensity = 0; disco2.intensity = 0;
   }
 
+  holo.update(performance.now() / 1000);
+  if (holo.on) holo.base.position.set(actor.obj.position.x, 0.02, actor.obj.position.z);
   renderer.render(scene, camera);
 }
 tick();
 
 // avatar personalizzato, se presente
 tryLoadAvatar();
+try { if (localStorage.getItem('zephHolo')) setHolo(true); } catch (e) {}
 
 // saluto di benvenuto
 setTimeout(() => {

@@ -1934,7 +1934,11 @@ const memory = (function () {
     M = Object.assign(blank(), raw && typeof raw === 'object' ? raw : {});
     return M;
   }
-  function save() { try { localStorage.setItem(KEY, JSON.stringify(M)); } catch (e) { /* memoria piena o bloccata */ } }
+  let onSave = null;
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(M)); } catch (e) { /* memoria piena o bloccata */ }
+    if (onSave) { try { onSave(); } catch (e) { /* niente backup */ } }
+  }
   function capped(arr, item, n) { arr.push(item); if (arr.length > n) arr.splice(0, arr.length - n); }
   function addUnique(arr, item, n) {
     const i = arr.findIndex(x => x.toLowerCase() === item.toLowerCase());
@@ -1951,6 +1955,7 @@ const memory = (function () {
   const api = {
     get: load,
     reload() { M = null; return load(); },
+    setOnSave(fn) { onSave = fn; },
     petName() { return load().petName || 'Zeph'; },
     setPetName(n) { load().petName = n; save(); },
     touch() {
@@ -2423,6 +2428,26 @@ const ai = (function () {
   function textOf(resp) {
     return (resp.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
   }
+  // un errore dell'API spiegato a parole (non lancia mai)
+  function explain(err, offline) {
+    const Anthropic = sdk() || {};
+    if (Anthropic.AuthenticationError && err instanceof Anthropic.AuthenticationError) {
+      return { say: 'La chiave del cervello AI non funziona: controllala nelle impostazioni. Intanto ti rispondo col mio cervellino: ' + offline, keyError: true };
+    }
+    if (Anthropic.PermissionDeniedError && err instanceof Anthropic.PermissionDeniedError) {
+      return { say: 'Il tuo account Anthropic non mi lascia usare questo modello. Intanto: ' + offline };
+    }
+    if (Anthropic.RateLimitError && err instanceof Anthropic.RateLimitError) {
+      return { say: 'Uff, troppe domande tutte insieme! Riprova tra un attimo. ' + offline };
+    }
+    if (Anthropic.APIError && err instanceof Anthropic.APIError && /credit|billing|balance/i.test(String(err.message))) {
+      return { say: 'Il credito del tuo account Anthropic è finito: ricaricalo su console.anthropic.com. Intanto: ' + offline };
+    }
+    // niente internet o servizio irraggiungibile: cervello offline
+    const note = offlineNoted ? '' : ' (Sono senza internet, uso il cervello offline.)';
+    offlineNoted = true;
+    return { say: offline + note, offline: true };
+  }
   return {
     MODEL,
     hasKey() { return !!key(); },
@@ -2438,7 +2463,6 @@ const ai = (function () {
       ctx = ctx || {};
       const offline = fallback || pick(DEFAULT_REPLIES);
       if (!this.enabled()) return Promise.resolve({ say: offline });
-      const Anthropic = sdk();
       let req;
       try {
         req = getClient().beta.messages.create({
@@ -2466,27 +2490,308 @@ const ai = (function () {
         memory.log(text, say);
         offlineNoted = false;
         return { say, action: data && data.action && data.action !== 'none' && AI_ACTIONS.indexOf(data.action) !== -1 ? data.action : null, model: resp.model };
-      }).catch(err => {
-        if (Anthropic.AuthenticationError && err instanceof Anthropic.AuthenticationError) {
-          return { say: 'La chiave del cervello AI non funziona: controllala nelle impostazioni. Intanto ti rispondo col mio cervellino: ' + offline, keyError: true };
-        }
-        if (Anthropic.PermissionDeniedError && err instanceof Anthropic.PermissionDeniedError) {
-          return { say: 'Il tuo account Anthropic non mi lascia usare questo modello. Intanto: ' + offline };
-        }
-        if (Anthropic.RateLimitError && err instanceof Anthropic.RateLimitError) {
-          return { say: 'Uff, troppe domande tutte insieme! Riprova tra un attimo. ' + offline };
-        }
-        if (Anthropic.APIError && err instanceof Anthropic.APIError && /credit|billing|balance/i.test(String(err.message))) {
-          return { say: 'Il credito del tuo account Anthropic è finito: ricaricalo su console.anthropic.com. Intanto: ' + offline };
-        }
-        // niente internet o servizio irraggiungibile: cervello offline
-        const note = offlineNoted ? '' : ' (Sono senza internet, uso il cervello offline.)';
-        offlineNoted = true;
-        return { say: offline + note, offline: true };
-      });
+      }).catch(err => explain(err, offline));
+    },
+    // gli occhi: una foto e una domanda («cosa vedi?», «che pianta è?»)
+    see(b64, question, ctx) {
+      ctx = ctx || {};
+      if (!this.enabled()) return Promise.resolve({ say: 'Per vedere mi serve il cervello AI: metti la tua chiave nell’app.' });
+      const pet = memory.petName();
+      const q = tidy(question || '') || 'Cosa vedi? Descrivilo.';
+      let req;
+      try {
+        req = getClient().beta.messages.create({
+          model: MODEL,
+          max_tokens: 1500,
+          betas: ['server-side-fallback-2026-07-01'],
+          fallbacks: 'default',
+          output_config: { effort: 'low' },
+          system: 'Sei ' + pet + ', un piccolo amico 3D che vive nel telefono di ' + (ctx.name || 'chi ti parla') + '. Ti ha appena mostrato una foto fatta con la fotocamera. ' +
+            'Rispondi in italiano alla sua domanda guardando la foto, in modo chiaro e simpatico, in massimo 4 frasi brevi: la risposta viene letta ad alta voce, quindi niente elenchi, markdown o emoji. ' +
+            'Se c\'è un testo da leggere o tradurre, riportalo. Se non sei sicuro di cosa sia, dillo. Su salute e sicurezza (funghi, farmaci, cibi) invita sempre a chiedere a un esperto prima di usarli.',
+          messages: [{ role: 'user', content: [
+            { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } },
+            { type: 'text', text: q },
+          ] }],
+        });
+      } catch (e) {
+        return Promise.resolve({ say: 'Non riesco a guardare adesso, riprova!' });
+      }
+      return req.then(resp => {
+        if (resp.stop_reason === 'refusal') return { say: 'Questa foto preferisco non commentarla… proviamo con un’altra?', refusal: true };
+        const say = textOf(resp) || 'Uhm, non sono sicuro di cosa sia…';
+        memory.log(q + ' (con una foto)', say);
+        return { say, model: resp.model };
+      }).catch(err => explain(err, 'Non riesco a guardare adesso, riprova tra poco!'));
     },
   };
 })();
+
+// ---------- Date e ore dette a voce: «domani alle 9», «lunedì alle 18 e mezza» ----------
+const GIORNI_N = ['domenica', 'lunedi', 'martedi', 'mercoledi', 'giovedi', 'venerdi', 'sabato'];
+const MESI_RE = 'gennaio|febbraio|marzo|aprile|maggio|giugno|luglio|agosto|settembre|ottobre|novembre|dicembre';
+const QUANDO_RE = new RegExp('\\b(?:oggi pomeriggio|questo pomeriggio|stamattina|stasera|stanotte|oggi|dopodomani|domani|' +
+  '(?:lunedì|martedì|mercoledì|giovedì|venerdì|lunedi|martedi|mercoledi|giovedi|venerdi|sabato|domenica)(?: prossimo| prossima)?|' +
+  '(?:il\\s+)?\\d{1,2}\\s+(?:' + MESI_RE + '))(?![a-zà-ù])', 'gi');
+const ORA_RE = /\b(?:alle|per le|verso le|all')\s*(\d{1,2})(?:(?:[:.]|\s+e\s+)(\d{1,2}|mezza|un quarto|quarto|tre quarti))?(?:\s+(?:di\s+|del\s+|della\s+)?(sera|pomeriggio|mattina|notte))?|\b(?:a\s+)?(mezzogiorno|mezzanotte)\b/;
+function parseWhen(t, now) {
+  now = now || new Date();
+  const d0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  let day = null, m;
+  if (/\bdopodomani\b/.test(t)) { day = new Date(d0); day.setDate(d0.getDate() + 2); }
+  else if (/\bdomani\b/.test(t)) { day = new Date(d0); day.setDate(d0.getDate() + 1); }
+  else if (/\b(?:oggi|stasera|stamattina|stanotte|questo pomeriggio)\b/.test(t)) day = new Date(d0);
+  else if ((m = t.match(/\b(lunedì|martedì|mercoledì|giovedì|venerdì|lunedi|martedi|mercoledi|giovedi|venerdi|sabato|domenica)(?![a-zà-ù])/))) {
+    const idx = GIORNI_N.indexOf(m[1].replace('ì', 'i'));
+    day = new Date(d0);
+    day.setDate(d0.getDate() + ((((idx - d0.getDay()) + 7) % 7) || 7));
+  } else if ((m = t.match(new RegExp('\\b(\\d{1,2})\\s+(' + MESI_RE + ')\\b')))) {
+    day = new Date(d0.getFullYear(), MESI.indexOf(m[2]), +m[1]);
+    if (day < d0) day.setFullYear(day.getFullYear() + 1);
+  }
+  let h = null, min = 0;
+  m = t.match(ORA_RE);
+  if (m && m[4]) { h = m[4] === 'mezzogiorno' ? 12 : 0; }
+  else if (m) {
+    h = parseInt(m[1], 10);
+    const parti = { mezza: 30, 'un quarto': 15, quarto: 15, 'tre quarti': 45 };
+    if (m[2]) min = parti[m[2]] !== undefined ? parti[m[2]] : parseInt(m[2], 10);
+    if ((m[3] === 'sera' || m[3] === 'pomeriggio' || /\b(?:stasera|questo pomeriggio)\b/.test(t)) && h < 12) h += 12;
+    if (m[3] === 'notte' && h === 12) h = 0;
+  }
+  if (h === null && !day) return null;
+  if (h === null) h = 9; // un giorno senza ora: alle 9 di mattina
+  if (h > 23 || min > 59) return { bad: true };
+  let at = new Date(day || d0);
+  at.setHours(h, min, 0, 0);
+  if (!day && at <= now) {
+    // «alle 8» quando sono già passate: stasera alle 20 se ha senso, altrimenti domani
+    if (h < 12 && at.getTime() + 12 * 3600e3 > now.getTime()) at = new Date(at.getTime() + 12 * 3600e3);
+    else at.setDate(at.getDate() + 1);
+  }
+  return { at: at.getTime(), hasDay: !!day, hasTime: !!m };
+}
+function whenLabel(ms) {
+  const at = new Date(ms), now = new Date();
+  const diff = dayDiff(dayOf(now), dayOf(at));
+  const ora = 'alle ' + at.getHours() + (at.getMinutes() ? ':' + pad2(at.getMinutes()) : '');
+  const giorno = diff === 0 ? 'oggi' : diff === 1 ? 'domani' : diff === 2 ? 'dopodomani'
+    : diff < 7 ? GIORNI[at.getDay()] : 'il ' + at.getDate() + ' ' + MESI[at.getMonth()];
+  return giorno + ' ' + ora;
+}
+function senzaQuando(x) {
+  return tidy(String(x).replace(QUANDO_RE, ' ').replace(new RegExp(ORA_RE.source, 'gi'), ' ')
+    .replace(/\b(?:tra|fra)\s+\d+\s+(?:minuti|minuto|ore|ora)\b/gi, ' ').replace(/\s+/g, ' '));
+}
+
+// ---------- Wikipedia: risposte vere, gratis, senza chiavi ----------
+function wikiAnswer(topic) {
+  const q = tidy(topic).replace(/^(?:il|lo|la|i|gli|le|l'|un|una|uno)\s+/i, '');
+  const url = 'https://it.wikipedia.org/w/api.php?action=query&format=json&origin=*&redirects=1' +
+    '&generator=search&gsrlimit=1&gsrsearch=' + encodeURIComponent(q) +
+    '&prop=extracts&exintro=1&explaintext=1&exsentences=3';
+  return getJson(url).then(j => {
+    const pages = j && j.query && j.query.pages;
+    const p = pages && pages[Object.keys(pages)[0]];
+    if (!p || !p.extract) return { say: 'Su «' + q + '» non ho trovato niente… prova a dirlo in un altro modo!' };
+    // via parentesi, pronunce e note: si legge meglio ad alta voce
+    let x = p.extract.replace(/\s*\([^()]*\)/g, '').replace(/\s*\[[^\]]*\]/g, '').replace(/\s+/g, ' ').trim();
+    const frasi = x.match(/[^.!?]+[.!?]+/g) || [x];
+    let out = '';
+    for (const f of frasi) { if ((out + f).length > 330 && out) break; out += f; }
+    return { say: out.trim() + ' (L’ho letto su Wikipedia.)', title: p.title };
+  }).catch(() => ({ say: 'Non riesco a collegarmi a Wikipedia: c’è internet?' }));
+}
+
+const LINGUE = { inglese: 'en', francese: 'fr', spagnolo: 'es', tedesco: 'de', portoghese: 'pt', russo: 'ru',
+  cinese: 'zh-CN', giapponese: 'ja', arabo: 'ar', albanese: 'sq', rumeno: 'ro', ucraino: 'uk', polacco: 'pl',
+  greco: 'el', turco: 'tr', olandese: 'nl', italiano: 'it', coreano: 'ko', hindi: 'hi' };
+
+// ---------- Modalità ologramma: luce azzurra, linee di scansione e proiettore ----------
+function createHologram(THREE) {
+  const time = { value: 0 };
+  const made = new Map();
+  function holoMat(orig) {
+    if (made.has(orig)) return made.get(orig);
+    // fusione normale (non additiva): si vede bene sia sopra app chiare sia sopra quelle scure
+    const m = new THREE.MeshStandardMaterial({
+      color: 0x000000, emissive: new THREE.Color(0x1a8fd0), emissiveIntensity: 0.7, metalness: 0, roughness: 1,
+      transparent: true, opacity: 0.92, depthWrite: false,
+    });
+    if (orig && orig.map) m.emissiveMap = orig.map; // la tua faccia (o la texture dell'avatar) resta riconoscibile
+    m.onBeforeCompile = sh => {
+      sh.uniforms.uTime = time;
+      sh.fragmentShader = 'uniform float uTime;\n' + sh.fragmentShader.replace('#include <dithering_fragment>', [
+        '#include <dithering_fragment>',
+        'float fres = pow(1.0 - abs(dot(normalize(vViewPosition), normal)), 2.2);',
+        'float scan = 0.62 + 0.38 * sin(gl_FragCoord.y * 1.1 - uTime * 9.0);',
+        'float flick = 0.93 + 0.07 * sin(uTime * 37.0) * sin(uTime * 11.0);',
+        'gl_FragColor.rgb = mix(gl_FragColor.rgb * 0.9 + vec3(0.0, 0.25, 0.45), vec3(0.45, 0.97, 1.0), fres) * (0.8 + 0.2 * scan) * flick;',
+        'gl_FragColor.a = clamp(0.32 + fres * 0.8, 0.0, 1.0) * (0.7 + 0.3 * scan) * opacity;',
+      ].join('\n'));
+    };
+    made.set(orig, m);
+    return m;
+  }
+  // il proiettore sotto i piedi: anello che gira e cono di luce
+  function glowTexture() {
+    const c = document.createElement('canvas');
+    c.width = 4; c.height = 128;
+    const g = c.getContext('2d');
+    const grad = g.createLinearGradient(0, 0, 0, 128);
+    grad.addColorStop(0, 'rgba(40,180,240,0)');
+    grad.addColorStop(1, 'rgba(40,180,240,0.5)');
+    g.fillStyle = grad; g.fillRect(0, 0, 4, 128);
+    return new THREE.CanvasTexture(c);
+  }
+  const base = new THREE.Group();
+  const add = { transparent: true, depthWrite: false, side: THREE.DoubleSide };
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.36, 48), new THREE.MeshBasicMaterial(Object.assign({ color: 0x2bc4f0, opacity: 0.9 }, add)));
+  ring.rotation.x = -Math.PI / 2;
+  const ring2 = new THREE.Mesh(new THREE.RingGeometry(0.2, 0.22, 6), new THREE.MeshBasicMaterial(Object.assign({ color: 0x9ff4ff, opacity: 0.8 }, add)));
+  ring2.rotation.x = -Math.PI / 2;
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(0.3, 40), new THREE.MeshBasicMaterial(Object.assign({ color: 0x1590c8, opacity: 0.4 }, add)));
+  disc.rotation.x = -Math.PI / 2;
+  const cone = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.33, 1.95, 40, 1, true),
+    new THREE.MeshBasicMaterial(Object.assign({ map: glowTexture(), opacity: 0.55 }, add)));
+  cone.position.y = 0.975;
+  base.add(disc, ring, ring2, cone);
+  base.position.y = 0.012;
+  base.visible = false;
+  return {
+    on: false,
+    base,
+    apply(root) {
+      this.on = true;
+      base.visible = true;
+      root.traverse(o => {
+        if (!o.isMesh || !o.material || o.userData.holoOrig || o.userData.holoSkip) return;
+        o.userData.holoOrig = o.material;
+        o.material = Array.isArray(o.material) ? o.material.map(holoMat) : holoMat(o.material);
+        o.userData.holoShadow = o.castShadow;
+        o.castShadow = false;
+      });
+    },
+    remove(root) {
+      this.on = false;
+      base.visible = false;
+      root.traverse(o => {
+        if (!o.userData.holoOrig) return;
+        o.material = o.userData.holoOrig;
+        o.castShadow = !!o.userData.holoShadow;
+        delete o.userData.holoOrig;
+      });
+    },
+    update(t) {
+      time.value = t;
+      if (!base.visible) return;
+      ring.rotation.z = t * 0.8;
+      ring2.rotation.z = -t * 1.6;
+      cone.material.opacity = 0.22 + Math.sin(t * 3.1) * 0.05;
+    },
+  };
+}
+
+// i poteri del telefono e del cervello: orari, promemoria, agenda, contatti, messaggi, occhi, sapere
+function powerIntent(t, raw, ctx) {
+  let m;
+  // ---------- occhi (cervello AI con la fotocamera) ----------
+  if (/^(?:guarda(?:\s+(?:qui|qua|questo|questa|bene|un po'))?|cosa vedi|dimmi cosa vedi|che cos'?è questo|che cos'?è questa|cos'?è questo|cos'?è questa|cosa c'è (?:qui|qua)|leggimi (?:questo|questa)|leggi (?:questo|questa)|traduci questo|apri gli occhi|usa la fotocamera)\b\s*[?!.]*$/.test(t) ||
+      /^che (?:pianta|animale|fiore|insetto|uccello|razza|frutto|macchina|auto|moneta|pietra|fungo) è(?![a-zà-ù])/.test(t)) {
+    return { see: raw, say: 'Fammi vedere! Inquadra bene e premi «Guarda».', action: 'jump' };
+  }
+  // ---------- promemoria veri, anche tra giorni: «domani alle 9 ricordami di…» ----------
+  if (/\b(?:ricordami|ricordamelo|avvisami|promemoria)\b/.test(t) && !/\b(?:tra|fra)\s+\d+\s+(?:secondi|secondo|minuti|minuto|ore|ora)\b/.test(t)) {
+    if (/^(?:che|quali|i miei|elenca|dimmi i)\b.*promemoria|promemoria (?:ho|ci sono)\b/.test(t)) return { listReminders: true, say: 'Ecco i tuoi promemoria…' };
+    if (/(?:cancella|togli|elimina)\b.*promemoria/.test(t)) return { clearReminders: true, say: 'Fatto: ho cancellato tutti i promemoria.' };
+    const w = parseWhen(t);
+    if (w && w.bad) return { say: 'Quell’orario non esiste! Prova tipo «ricordami domani alle 9 di chiamare la mamma».' };
+    if (w) {
+      let cosa = senzaQuando(raw)
+        .replace(/\b(?:mi\s+)?(?:ricordami|ricordamelo|avvisami|metti(?:mi)? un promemoria|promemoria)\b/gi, ' ')
+        .replace(/^\s*(?:,|di|che|per|a|ad|del|della|dello|dei|delle)\s+/i, '').replace(/\s+/g, ' ').trim();
+      cosa = tidy(cosa) || 'il tuo promemoria';
+      return { remindAt: { at: w.at, text: capFirst(toTu(cosa)) }, say: 'Segnato! ' + capFirst(whenLabel(w.at)) + ' ti ricordo: ' + toTu(cosa) + '.', action: 'wave' };
+    }
+  }
+  // ---------- agenda ----------
+  m = t.match(/^(?:aggiungi|metti|segna|scrivi)\s+(?:in|nel|al|nell'|sul)\s*(?:calendario|agenda)\s+(.+)$/) ||
+    t.match(/^(?:aggiungi|segna|metti)\s+(.+?)\s+(?:in|nel|al|sul|nell')\s*(?:calendario|agenda)(.*)$/);
+  if (m) {
+    const all = m[1] + (m[2] || '');
+    const w = parseWhen(all);
+    if (!w || w.bad) return { say: 'Quando? Dimmi tipo «aggiungi al calendario dentista domani alle 10».' };
+    const title = capFirst(senzaQuando(all).replace(/^(?:il|lo|la|un|una)\s+/, '') || 'Impegno');
+    return { calAdd: { title, at: w.at }, phoneOnly: true, say: 'Ti preparo «' + title + '» ' + whenLabel(w.at) + ' nel calendario: controlla e salva!' };
+  }
+  if (/\b(?:impegni|appuntamenti)\b|^cosa ho (?:in agenda|da fare|in programma)|^(?:la mia agenda|cosa c'è in agenda|agenda)\b/.test(t) && !/\b(?:ricorda|aggiungi|segna)\b/.test(t)) {
+    const off = /dopodomani/.test(t) ? 2 : /domani/.test(t) ? 1 : 0;
+    return { agenda: off, phoneOnly: true, say: 'Guardo l’agenda…' };
+  }
+  if (/com'è (?:la )?mia giornata|riassunto (?:della )?(?:mia )?giornata|\bbriefing\b|cosa mi aspetta (?:oggi|domani)|il punto della giornata|dammi il buongiorno/.test(t)) {
+    return { briefing: true, say: 'Ecco la tua giornata…' };
+  }
+  // ---------- contatti: «chiama mia sorella», «scrivi a Giulia che arrivo» ----------
+  const persona = x => {
+    let n = tidy(x).replace(/^(?:a|ad)\s+/, '');
+    const rel = n.replace(/^(?:la mia|il mio|mia|mio|la|il|lo|l')\s+/, '');
+    const known = memory.get().people[rel];
+    if (known && /^(?:mamma|papà|papa|nonna|nonno)$/.test(rel)) return { name: rel, alt: known, label: capFirst(rel) };
+    if (known) return { name: known, label: known + ' (' + toTu(n) + ')' };
+    return { name: rel, label: capWords(rel) };
+  };
+  m = t.match(/^(?:scrivi|manda(?:\s+un)?\s+messaggio|messaggia|scrivigli)\s+a\s+([a-zà-ù' ]{2,30}?)\s*(?:su\s+whatsapp\s*)?(?::|,|che dice|dicendo|scrivendo|con scritto|che)\s+(.+)$/);
+  if (m && !/^\+?\d/.test(m[1])) {
+    const p = persona(m[1]);
+    const text = raw.slice(raw.toLowerCase().lastIndexOf(m[2])).trim();
+    return { msgName: { name: p.name, alt: p.alt, label: p.label, text }, phoneOnly: true, say: 'Preparo il messaggio per ' + p.label + '…' };
+  }
+  m = t.match(/^(?:chiama|telefona(?:\s+a)?|fai una chiamata a)\s+([a-zà-ù' ]{2,30})$/);
+  if (m && !/cane|cucciolo|rocky/.test(m[1])) {
+    const p = persona(m[1]);
+    return { callName: { name: p.name, alt: p.alt, label: p.label }, phoneOnly: true, say: 'Cerco ' + p.label + ' nei contatti…' };
+  }
+  // ---------- messaggi arrivati (se gli dai l'accesso alle notifiche) ----------
+  if (/chi mi ha scritto|ho (?:dei |nuovi |dei nuovi )?messaggi|leggimi i messaggi|leggi i messaggi|ultimi messaggi|cosa mi hanno scritto|ci sono messaggi|nuovi messaggi/.test(t)) {
+    return { readMsgs: true, phoneOnly: true, say: 'Vediamo chi ti ha scritto…' };
+  }
+  m = raw.match(/^\s*rispondi(?:gli|le)?(?:\s+a\s+([A-Za-zÀ-ÿ']+))?\s*(?::|,|che|dicendo|con)?\s+(.+)$/i);
+  if (m && !/^(?:alla|alle|al|a questa|a questo)\b/i.test(m[2])) {
+    return { replyMsg: { to: m[1] ? m[1].toLowerCase() : null, text: m[2].trim() }, phoneOnly: true, say: 'Preparo la risposta…' };
+  }
+  // ---------- traduttore ----------
+  m = raw.match(/^\s*(?:traduci|come si dice)\s+[«"“']?(.+?)[»"”']?\s+in\s+([a-zà-ù]+)\s*\??\s*$/i);
+  if (m && LINGUE[m[2].toLowerCase()]) {
+    const lang = m[2].toLowerCase(), testo = tidy(m[1]);
+    if (ai.enabled()) {
+      return { aiQuery: 'Traduci in ' + lang + ': «' + testo + '». Rispondi con la traduzione e, se aiuta, come si pronuncia.',
+        say: 'Adesso non riesco a tradurlo… riprova tra poco!' };
+    }
+    return { say: 'Apro il traduttore: «' + testo + '» in ' + lang + '!',
+      open: 'https://translate.google.com/?sl=auto&tl=' + LINGUE[lang] + '&op=translate&text=' + encodeURIComponent(testo) };
+  }
+  // ---------- ologramma ----------
+  if (/(?:basta|togli|spegni|niente|via)\b.*ologramm|torna (?:normale|solido|di carne)/.test(t)) return { holo: false, say: 'Ritorno solido! Ah, che bello sentirsi i piedi.', action: 'jump' };
+  if (/ologramm|modalità futur|diventa futuristic|\bmodalità sci-?fi\b/.test(t)) return { holo: true, say: 'Proiezione olografica attivata! Benvenuto nel futuro.', action: 'spin' };
+  // ---------- il tuo umore della settimana ----------
+  if (/come (?:sono stat[oa]|mi sono sentit[oa]|è andata) (?:questa|la|in questa|nell'ultima) settimana|il mio umore|come sto ultimamente/.test(t)) {
+    const M = memory.get(), since = dayPlus(-7);
+    const moods = M.moods.filter(x => x.d >= since), days = M.diary.filter(x => x.d >= since && x.k === 'fatto');
+    if (!moods.length && !days.length) return { say: 'Questa settimana non mi hai raccontato molto… Comincia adesso: com’è andata oggi?' };
+    const pos = moods.filter(x => x.f > 0).length + days.filter(x => x.f > 0).length;
+    const neg = moods.filter(x => x.f < 0).length + days.filter(x => x.f < 0).length;
+    const tono = pos > neg ? 'più giornate belle che brutte: bravo te!' : neg > pos ? 'qualche giornata pesante. Se ti va, parliamone: io ci sono.' : 'un po’ di tutto, come la vita!';
+    return { say: 'In questa settimana mi hai raccontato ' + days.length + (days.length === 1 ? ' cosa' : ' cose') + ' e mi hai detto come stavi ' + moods.length +
+      ' volte. Ci vedo ' + tono, action: pos >= neg ? 'dance' : 'wave' };
+  }
+  // ---------- il sapere: «chi era Leonardo da Vinci?», «cos'è un buco nero?» ----------
+  m = t.match(/^(?:chi (?:è|e'|era|erano|sono|fu|furono)|cos'\s?[eè]'?|cosè|cos è|che cos'?\s?[eè]|che cosa (?:è|sono)|cosa (?:è|e'|sono|significa|vuol dire)|dimmi (?:qualcosa )?su|parlami (?:di|del|della|dello|dei|delle|degli)|raccontami (?:di|del|della|dello)|spiegami (?:cos'?è|cosa sono|chi era|chi è))\s+(.+?)\s*\??$/);
+  if (m && !/^(?:te|me|noi|tu|io|questo|questa|zeph)$/.test(m[1]) && !/\b(?:mi|ti)\b.*\b(?:detto|fatto|scritto)\b/.test(t)) {
+    if (ai.enabled()) return { aiQuery: raw, say: 'Non lo so con certezza…' };
+    return { wikiQuery: m[1], say: 'Fammi controllare…' };
+  }
+  return null;
+}
 
 function replyCore(text, ctx) {
   const raw = String(text || '').trim();
@@ -2534,6 +2839,12 @@ function replyCore(text, ctx) {
     if (ind.a.test(t)) return { say: 'Esatto! Era proprio ' + ind.sol + '!', action: 'dance' };
     return { say: 'Nooo, era ' + ind.sol + '! Vuoi riprovare? Scrivi «indovinello»!' };
   }
+  if (ctx.pending === 'confirm') {
+    const data = ctx.confirmData;
+    ctx.pending = null; ctx.confirmData = null;
+    if (fresh && /^(?:sì|si|certo|confermo|ok|okay|va bene|vai|manda|mandalo|invia|sicuro)(?![a-zà-ù])/.test(t)) return { confirmed: data };
+    return { say: 'Ok, annullato: non mando niente.' };
+  }
   if (ctx.pending === 'forget') {
     ctx.pending = null;
     if (/^(?:sì|si|certo|confermo|ok|va bene|sicuro)(?![a-zà-ù])/.test(t)) {
@@ -2549,7 +2860,8 @@ function replyCore(text, ctx) {
     if (fresh && !/\?$/.test(t) && !COMANDO_RE.test(t)) {
       const mem = memoryIntent(t, raw, ctx);
       if (mem) return mem;
-      const out = memoryAnswer(k, raw, t, ctx);
+      const comando = powerIntent(t, raw, {}) || actionIntent(t, {});
+      const out = comando ? null : memoryAnswer(k, raw, t, ctx);
       if (out) return out;
     }
   }
@@ -2571,8 +2883,14 @@ function replyCore(text, ctx) {
   const taught = memory.taught(t);
   if (taught) return { say: taught, action: 'wave' };
 
+  if (/\b(?:ricordami|ricordamelo|avvisami|promemoria)\b/.test(t)) {
+    const rem = powerIntent(t, raw, ctx);
+    if (rem) return rem;
+  }
   const mem = memoryIntent(t, raw, ctx);
   if (mem) return mem;
+  const pow = powerIntent(t, raw, ctx);
+  if (pow) return pow;
   const intent = actionIntent(t, ctx);
   if (intent) return intent;
   for (const r of RULES) {
@@ -2662,11 +2980,17 @@ const ALIASES = {
   bater: 'batteria', bateria: 'batteria',
 };
 
+// parole italiane comuni che somigliano ai comandi ma non vanno mai «corrette»
+const NON_CORREGGERE = new Set(('alla alle allo agli dalla dalle della delle dello nella nelle sulla sulle sono come cosa cose ' +
+  'quando dove anche ancora tutto tutti molto poco bella bello belle sala sale casa mare sera sole luce fame torta salto ' +
+  'calla calma carte carta parla parlo palla pala balle tempo meteo dado mondo nome note notte giorno fare fatto detto ' +
+  'tanto tanta piace ciao oggi ieri stato stata poi dopo prima sempre mai volta voglio vuoi devo posso fatta brava bravo').split(' '));
 function fixTypos(t) {
   const words = t.split(/\s+/);
+  if (words.length > 4) return null; // nelle frasi lunghe il rischio di «correggere» male è troppo alto
   let changed = false;
   const out = words.map(w => {
-    if (w.length < 4) return w;
+    if (w.length < 4 || NON_CORREGGERE.has(w)) return w;
     if (ALIASES[w]) { changed = true; return ALIASES[w]; }
     let best = null, bestD = 99;
     for (const cand of LEXICON) {
@@ -2971,6 +3295,7 @@ global.ZephCore = {
   build, Animator, botReply, pick, createAvatarDriver, createSparkles,
   buildDog, updateDog, bark, chime, boom, ambience, music, weatherReport,
   memory, ai, toTu, dayOf, lookFromPhoto, applyLook,
+  parseWhen, whenLabel, wikiAnswer, createHologram, daysUntil,
   FRASI_PASSEGGIO, FRASI_DESKTOP, BARZELLETTE,
   HIP_Y, HEIGHT: 1.75,
 };

@@ -34,6 +34,15 @@ Zeph — o **il tuo avatar** — vive sullo schermo del telefono, sopra tutte le
 - **Un amico che si ricorda di te**: raccontagli la giornata, i programmi («domani ho un esame»), cosa ti
   piace, le persone a cui vuoi bene. Il giorno dopo ti chiede com'è andata; «cosa sai di me?»,
   «cosa ti ho detto ieri?». Tutto resta sul telefono; «dimentica tutto» per cancellare.
+- **⚡ Poteri del telefono** (sezione nuova nell'app, tutti facoltativi):
+  promemoria veri anche tra giorni («ricordami domani alle 9 di…», suonano anche a Zeph spento e dopo un
+  riavvio), «chiama mia sorella» / «scrivi a Giulia che arrivo» (rubrica), «chi mi ha scritto?» e
+  «rispondi: …» con conferma (accesso alle notifiche), «che impegni ho oggi?» e «aggiungi al calendario…»
+  (agenda), il buongiorno quando sblocchi il telefono la mattina, «chi era…?» con Wikipedia, «traduci…»,
+  «cosa vedi?» con la fotocamera e il cervello AI, «modalità ologramma», scuoti il telefono e arriva.
+  Su Android 13+ l'accesso alle notifiche per un'app installata da file può risultare grigio: Impostazioni →
+  App → Zeph → ⋮ → «Consenti impostazioni con limitazioni», poi riattivalo.
+- **💾 Backup della memoria**: «Salva backup» / «Ripristina backup» nell'app (la chiave AI non viene salvata).
 - **🧠 Cervello AI facoltativo**: nell'app incolla la tua chiave di Claude (console.anthropic.com, a
   consumo e a tuo carico: circa uno o due centesimi di dollaro a messaggio) e chiacchiera davvero di tutto. Senza chiave usa il cervello offline gratuito.
 
@@ -82,6 +91,14 @@ l'«avvio automatico»: attivala per Zeph se vuoi che si riaccenda da solo dopo 
 - Rete: la WebView può raggiungere solo Open-Meteo (meteo) e, se hai messo la chiave, `api.anthropic.com`
   (`LocalWeb.java`). La chiave sta in `SharedPreferences` a parte, esclusa da backup e trasferimenti
   (`res/xml/backup_rules.xml`, `data_extraction_rules.xml`), e non viene mai scritta nella pagina.
+- Permessi facoltativi: `READ_CONTACTS` e `READ_CALENDAR` (sola lettura), accesso alle notifiche
+  (`MessageListener`, solo app di chat; i messaggi non vengono salvati), `USE_EXACT_ALARM` per i promemoria.
+  Zeph non chiama e non manda nulla da solo: la chiamata e l'invio li fai tu; l'unica eccezione è
+  «rispondi: …», che parte solo dopo che hai detto «sì».
+- Aggiornamenti: ogni APK di GitHub ha un numero di versione più alto. Per installarlo sopra il vecchio
+  senza disinstallare serve la stessa firma: se aggiungi nei segreti del repository `ZEPH_KEYSTORE`
+  (un keystore in base64 con alias `zeph`) e `ZEPH_KEYSTORE_PASSWORD`, la compilazione la usa sempre.
+  Senza, prima di installare una nuova versione fai «Salva backup», disinstalla e poi «Ripristina backup».
 - Avatar dalla foto: `PhotoActivity` apre `foto.html`; la fotocamera viene concessa solo a quella pagina
   e solo per il video. Il look (colori + faccia ritagliata in JPEG) è salvato in `files/look.json`.
 - APK di debug firmato con una chiave di debug: se passi da un APK creato su GitHub a uno creato sul

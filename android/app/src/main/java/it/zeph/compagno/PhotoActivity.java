@@ -29,11 +29,15 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 
 /**
- * «Avatar dalla foto»: la pagina foto.html con la fotocamera frontale.
- * La foto resta sul telefono: il look (colori + faccia ritagliata) viene
- * salvato in look.json dentro l'app e il compagno lo indossa subito.
+ * Le pagine con la fotocamera:
+ * - «Avatar dalla foto» (foto.html): la foto resta sul telefono, il look
+ *   (colori + faccia ritagliata) va in look.json e il compagno lo indossa;
+ * - «Occhi» (occhi.html): una foto e una domanda al cervello AI («cosa vedi?»),
+ *   solo se hai messo la tua chiave; la risposta la dice il compagno.
  */
 public class PhotoActivity extends Activity {
+    static final String EXTRA_PAGE = "page";
+    static final String EXTRA_Q = "q";
     private static final String TAG = "ZephFoto";
     private static final int REQ_CAMERA = 31;
     private static final int REQ_FILE = 32;
@@ -101,7 +105,8 @@ public class PhotoActivity extends Activity {
             }
         });
         setContentView(web);
-        web.loadUrl("https://" + LocalWeb.HOST + "/foto.html");
+        boolean eyes = "occhi".equals(getIntent().getStringExtra(EXTRA_PAGE));
+        web.loadUrl("https://" + LocalWeb.HOST + (eyes ? "/occhi.html" : "/foto.html"));
     }
 
     @Override
@@ -157,9 +162,26 @@ public class PhotoActivity extends Activity {
         }
     }
 
-    /** I metodi che foto.js può chiamare. */
+    /** I metodi che foto.js e occhi.js possono chiamare. */
     private class Bridge {
         @JavascriptInterface public String petName() { return Prefs.petName(PhotoActivity.this); }
+
+        /** La domanda con cui è stata aperta la pagina degli occhi («che pianta è?»). */
+        @JavascriptInterface public String question() {
+            String q = getIntent().getStringExtra(EXTRA_Q);
+            return q == null ? "" : q;
+        }
+
+        @JavascriptInterface public String aiKey() { return Prefs.aiKey(PhotoActivity.this); }
+
+        /** Il compagno sullo schermo dice la risposta. */
+        @JavascriptInterface public void say(String text) {
+            if (text == null || !ZephService.running) return;
+            runOnUiThread(() -> startService(new Intent(PhotoActivity.this, ZephService.class)
+                .setAction(ZephService.ACTION_SAY).putExtra(ZephService.EXTRA_TEXT, text)));
+        }
+
+        @JavascriptInterface public void close() { runOnUiThread(PhotoActivity.this::finish); }
 
         @JavascriptInterface public void save(String json) {
             boolean ok = saveLook(json);

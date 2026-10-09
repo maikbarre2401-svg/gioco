@@ -10,8 +10,26 @@ android {
         applicationId 'it.zeph.compagno'
         minSdk 26
         targetSdk 34
-        versionCode 1
-        versionName '1.0'
+        // su GitHub il numero cresce a ogni compilazione: così l'aggiornamento si installa sopra
+        versionCode((System.getenv('GITHUB_RUN_NUMBER') ?: '1').toInteger())
+        versionName '5.0'
+    }
+
+    // firma fissa (facoltativa): se nei segreti di GitHub c'è ZEPH_KEYSTORE, ogni versione
+    // ha la stessa firma e si installa sopra la precedente senza perdere la memoria
+    def ks = System.getenv('ZEPH_KEYSTORE_FILE')
+    if (ks && file(ks).exists()) {
+        signingConfigs {
+            zeph {
+                storeFile file(ks)
+                storePassword System.getenv('ZEPH_KEYSTORE_PASSWORD')
+                keyAlias 'zeph'
+                keyPassword System.getenv('ZEPH_KEYSTORE_PASSWORD')
+            }
+        }
+        buildTypes {
+            debug { signingConfig signingConfigs.zeph }
+        }
     }
 
     compileOptions {
@@ -39,6 +57,8 @@ tasks.register('zephWebAssets', Sync) {
     from(new File(repoRoot, 'anthropic-sdk.js'))
     from(new File(repoRoot, 'foto.html'))
     from(new File(repoRoot, 'foto.js'))
+    from(new File(repoRoot, 'occhi.html'))
+    from(new File(repoRoot, 'occhi.js'))
     from(rootProject.file('web'))
     def av = project.findProperty('zephAvatar')
     if (av) {

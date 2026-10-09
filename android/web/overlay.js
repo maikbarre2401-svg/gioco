@@ -22,6 +22,35 @@ function syncPrefs() {
 }
 syncPrefs();
 
+const MEM_KEYS = ['zephMemory', 'zephName', 'zephPrefs'];
+function memorySnapshot() {
+  const o = {};
+  try { MEM_KEYS.forEach(k => { const v = localStorage.getItem(k); if (v != null) o[k] = v; }); } catch (e) {}
+  return JSON.stringify(o);
+}
+function restoreMemory(force) {
+  if (!A || !A.loadMemory) return false;
+  try {
+    if (!force && localStorage.getItem('zephMemory')) return false;
+    const snap = JSON.parse(A.loadMemory() || '{}');
+    if (!snap.zephMemory) return false;
+    MEM_KEYS.forEach(k => { if (snap[k] != null) localStorage.setItem(k, snap[k]); else localStorage.removeItem(k); });
+    ZephCore.memory.reload();
+    return true;
+  } catch (e) { return false; }
+}
+restoreMemory(false);
+let memTimer = null;
+ZephCore.memory.setOnSave(() => {
+  if (!A || !A.saveMemory) return;
+  clearTimeout(memTimer);
+  memTimer = setTimeout(() => A.saveMemory(memorySnapshot()), 1500);
+});
+// quello che il telefono gli permette di fare (rubrica, agenda, messaggi)
+function powers() {
+  try { return JSON.parse(A && A.powers ? A.powers() : '{}'); } catch (e) { return {}; }
+}
+
 // ---------- Scena ----------
 const VIS_H = 2.25;                 // metri visibili in altezza nella finestra
 const pxPerM = () => host.winH / VIS_H; // pixel dello schermo per metro
@@ -76,6 +105,15 @@ const anim = new ZephCore.Animator(zeph);
 const actor = { obj: zeph.root };
 let avatarDriver = null;
 const sparkles = ZephCore.createSparkles(THREE, scene);
+// modalità ologramma: materiali di luce e proiettore sotto i piedi
+const holo = ZephCore.createHologram(THREE);
+scene.add(holo.base);
+function setHolo(on) {
+  if (on) holo.apply(actor.obj); else holo.remove(actor.obj);
+  blob.visible = !on;
+  try { localStorage.setItem('zephHolo', on ? '1' : ''); } catch (e) {}
+}
+function refreshHolo() { if (holo.on) holo.apply(actor.obj); }
 
 function setAvatarScene(avScene, animations) {
   try {
@@ -89,6 +127,7 @@ function setAvatarScene(avScene, animations) {
     scene.add(driver.root);
     anim.avatar = driver;
     actor.obj = driver.root;
+    refreshHolo();
   } catch (e) { console.error('Avatar non utilizzabile:', e); }
 }
 function backToZeph() {
@@ -98,13 +137,15 @@ function backToZeph() {
   zeph.root.visible = true;
   anim.avatar = zeph;
   actor.obj = zeph.root;
+  refreshHolo();
 }
 // il look fatto con la foto (colori + la tua faccia), se c'è
 function loadLook() {
   fetch('look.json?v=' + Date.now())
     .then(r => (r.ok ? r.json() : null))
     .catch(() => null)
-    .then(look => ZephCore.applyLook(THREE, zeph, look));
+    .then(look => ZephCore.applyLook(THREE, zeph, look))
+    .then(refreshHolo);
 }
 // l'app serve il tuo avatar a questo indirizzo (404 se non c'è: resta Zeph, col tuo look)
 function loadAvatar() {
@@ -386,13 +427,46 @@ function botRespond(text) {
   }
   if (out.battery) out.say = batteryReport();
   if (out.remind) {
+    // promemoria vero (lo tiene Android: suona anche se chiudi Zeph); altrimenti il timer della pagina
     const r = out.remind;
-    setTimeout(() => {
-      anim.startAction('jump');
-      speak('Ehi! Promemoria: ' + r.text);
-      if (A) A.remind(r.text);
-    }, r.seconds * 1000);
+    if (!(A && A.remindAt && A.remindAt(Date.now() + r.seconds * 1000, r.text) > 0)) {
+      setTimeout(() => {
+        anim.startAction('jump');
+        speak('Ehi! Promemoria: ' + r.text);
+        if (A) A.remind(r.text);
+      }, r.seconds * 1000);
+    }
   }
+  if (out.remindAt) {
+    const r = out.remindAt;
+    if (A && A.remindAt) {
+      if (A.remindAt(r.at, r.text) <= 0) out.say = 'Uffa, non sono riuscito a segnare il promemoria (forse ne hai già tanti?).';
+    } else if (r.at - Date.now() < 864e5) {
+      setTimeout(() => { anim.startAction('jump'); speak('Ehi! Promemoria: ' + r.text); }, r.at - Date.now());
+    }
+  }
+  if (out.listReminders) out.say = remindersReport();
+  if (out.clearReminders && A && A.clearReminders) A.clearReminders();
+  if (out.calAdd && !phone({ type: 'calAdd', title: out.calAdd.title, at: out.calAdd.at })) {
+    out.say = 'Non trovo l’app del calendario sul telefono…';
+  }
+  if (out.agenda !== undefined) { speak(agendaReport(out.agenda)); return; }
+  if (out.briefing) { briefing(true); return; }
+  if (out.callName) { callByName(out.callName); return; }
+  if (out.msgName) { messageByName(out.msgName); return; }
+  if (out.readMsgs) { speak(messagesReport()); return; }
+  if (out.replyMsg) { askReply(out.replyMsg); return; }
+  if (out.confirmed) { doConfirmed(out.confirmed); return; }
+  if (out.see) {
+    if (!ZephCore.ai.enabled()) out.say = 'Per vedere mi serve il cervello AI: metti la tua chiave nell’app, nella sezione 🧠.';
+    else if (A && A.openEyes) A.openEyes(out.see);
+  }
+  if (out.wikiQuery) {
+    speak(out.say);
+    ZephCore.wikiAnswer(out.wikiQuery).then(r => { anim.startAction('wave'); speak(r.say); });
+    return;
+  }
+  if (out.holo !== undefined) setHolo(out.holo);
   if (out.music === 'on') startMusic();
   if (out.music === 'off') stopMusic();
   if (out.dog) out.say = 'Rocky è rimasto a casa nel computer! Qui sul telefono c’è spazio solo per me.';
@@ -418,6 +492,170 @@ function botRespond(text) {
   if (out.action) anim.startAction(out.action);
   if (out.say) speak(out.say);
 }
+
+// ---------- I poteri del telefono ----------
+function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
+function remindersReport() {
+  let list = [];
+  try { list = JSON.parse(A && A.reminders ? A.reminders() : '[]'); } catch (e) {}
+  list = list.filter(r => r.at > Date.now() - 60e3).sort((a, b) => a.at - b.at);
+  if (!list.length) return 'Non hai promemoria. Dimmi tipo «ricordami domani alle 9 di chiamare la mamma».';
+  return 'Hai ' + plural(list.length, 'promemoria', 'promemoria') + ': ' +
+    list.slice(0, 5).map(r => ZephCore.whenLabel(r.at) + ', ' + r.text).join('; ') + '.';
+}
+function eventsOf(offset) {
+  try { return JSON.parse(A && A.events ? A.events(offset) : '{"error":"perm"}'); } catch (e) { return []; }
+}
+function agendaReport(offset) {
+  const quando = offset === 0 ? 'Oggi' : offset === 1 ? 'Domani' : 'Dopodomani';
+  const ev = eventsOf(offset);
+  const day = (() => { const d = new Date(); d.setDate(d.getDate() + offset); return ZephCore.dayOf(d); })();
+  const piani = ZephCore.memory.get().diary.filter(e => e.k === 'piano' && e.d === day).map(e => '«' + e.t + '»');
+  if (ev && ev.error === 'perm') {
+    return 'Per leggere l’agenda dammi il permesso nell’app, sezione «Poteri del telefono».' +
+      (piani.length ? ' Però mi avevi detto: ' + piani.join(', ') + '.' : '');
+  }
+  const items = (Array.isArray(ev) ? ev : []).map(e => (e.allDay ? 'tutto il giorno' : ZephCore.whenLabel(e.begin).replace(/^\S+\s/, '')) + ' ' + e.title);
+  if (!items.length && !piani.length) return quando + ' non hai impegni in agenda. Giornata libera!';
+  return quando + (items.length ? ' hai ' + plural(items.length, 'impegno', 'impegni') + ': ' + items.join(', ') + '.' : ' l’agenda è vuota.') +
+    (piani.length ? ' E mi avevi detto: ' + piani.join(', ') + '.' : '');
+}
+// il buongiorno: meteo, impegni, promemoria e cose da ricordare
+let briefingBusy = false;
+function briefing(onDemand) {
+  if (briefingBusy) return;
+  briefingBusy = true;
+  const h = new Date().getHours();
+  const nome = botCtx.name ? ', ' + botCtx.name : '';
+  const parts = [(h < 12 ? 'Buongiorno' : h < 18 ? 'Ciao' : 'Buonasera') + nome + '! ' +
+    'Oggi è ' + new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' }) + '.'];
+  const city = (() => { try { return JSON.parse(localStorage.getItem('zephPrefs') || '{}')['città']; } catch (e) { return null; } })();
+  const meteo = city ? Promise.race([ZephCore.weatherReport({ city, when: 'oggi' }), new Promise(r => setTimeout(() => r(null), 6000))]) : Promise.resolve(null);
+  meteo.then(w => {
+    if (w && w.code !== undefined) parts.push(w.say);
+    const ag = agendaReport(0);
+    if (!/permesso/.test(ag) || onDemand) parts.push(ag);
+    let rem = [];
+    try { rem = JSON.parse(A && A.reminders ? A.reminders() : '[]'); } catch (e) {}
+    const today = ZephCore.dayOf();
+    rem = rem.filter(r => ZephCore.dayOf(new Date(r.at)) === today && r.at > Date.now());
+    if (rem.length) parts.push('Promemoria di oggi: ' + rem.map(r => ZephCore.whenLabel(r.at).replace(/^oggi /, '') + ' ' + r.text).join(', ') + '.');
+    const bd = ZephCore.daysUntil('compleanno');
+    if (/È OGGI/.test(bd)) parts.push(bd);
+    else if (/^Manca 1 giorno|^Mancano [2-7] giorni/.test(bd)) parts.push(bd);
+    if (!city && onDemand) parts.push('Se mi dici «la mia città è …» ti dico anche il meteo.');
+    anim.startAction('wave');
+    speak(parts.join(' '));
+    briefingBusy = false;
+  });
+}
+function contactOf(name) {
+  try { return JSON.parse(A && A.contact ? A.contact(name) : '{"error":"perm"}'); } catch (e) { return { error: 'none' }; }
+}
+function lookupPerson(p) {
+  let c = contactOf(p.name);
+  if (c.error === 'none' && p.alt) c = contactOf(p.alt);
+  return c;
+}
+function callByName(p) {
+  const c = lookupPerson(p);
+  if (c.error === 'perm') {
+    phone({ type: 'dial', number: '' });
+    speak('Per chiamare per nome dammi il permesso della rubrica nell’app. Intanto ti apro il telefono!');
+    return;
+  }
+  if (c.error) { speak('Non trovo «' + p.label + '» nella rubrica… Come l’hai salvato?'); return; }
+  if (!phone({ type: 'dial', number: c.number })) { speak('Non riesco ad aprire il telefono per chiamare.'); return; }
+  anim.startAction('wave');
+  speak('Ecco ' + c.name + ': premi il tasto verde per chiamare!');
+}
+// numero in formato internazionale per WhatsApp (i cellulari italiani senza prefisso diventano +39)
+function intlNumber(n) {
+  let d = String(n).replace(/[^\d+]/g, '');
+  if (d.indexOf('+') === 0) return d.slice(1);
+  if (d.indexOf('00') === 0) return d.slice(2);
+  if (/^3\d{8,9}$/.test(d)) return '39' + d;
+  return d;
+}
+function messageByName(p) {
+  const c = lookupPerson(p);
+  if (c.error === 'perm') { speak('Per scrivere a qualcuno per nome dammi il permesso della rubrica nell’app, sezione «Poteri del telefono».'); return; }
+  if (c.error) { speak('Non trovo «' + p.label + '» nella rubrica…'); return; }
+  const wa = 'whatsapp://send?phone=' + intlNumber(c.number) + '&text=' + encodeURIComponent(p.text);
+  if (phone({ type: 'appUrl', url: wa })) { speak('Ti ho preparato il messaggio per ' + c.name + ' su WhatsApp: premi invia!'); return; }
+  if (phone({ type: 'sms', number: c.number, text: p.text })) { speak('Ti ho preparato l’SMS per ' + c.name + ': premi invia!'); return; }
+  speak('Non riesco ad aprire né WhatsApp né i messaggi…');
+}
+function messagesList() {
+  try { return JSON.parse(A && A.messages ? A.messages() : '{"error":"perm"}'); } catch (e) { return []; }
+}
+function messagesReport() {
+  const list = messagesList();
+  if (list && list.error === 'perm') return 'Per sapere chi ti scrive dammi l’accesso alle notifiche nell’app, sezione «Poteri del telefono».';
+  if (!list.length) return 'Nessun messaggio nuovo da quando sono acceso!';
+  const top = list.slice(0, 3).map(m => m.who + ' su ' + m.app + (m.ago > 0 ? ', ' + (m.ago < 60 ? m.ago + ' minuti fa' : 'un po’ di tempo fa') : '') + ': «' + m.text.slice(0, 120) + '»');
+  return (list.length === 1 ? 'Ti ha scritto ' : 'Ultimi messaggi: ') + top.join('. ') + '. Per rispondere dimmi «rispondi: …».';
+}
+function askReply(r) {
+  const target = A && A.peekReply ? A.peekReply(r.to || '') : '';
+  if (!target) {
+    const list = messagesList();
+    speak(list && list.error === 'perm' ? 'Per rispondere ai messaggi dammi l’accesso alle notifiche nell’app.'
+      : 'Non trovo un messaggio a cui rispondere' + (r.to ? ' di «' + r.to + '»' : '') + '. Le risposte funzionano sui messaggi arrivati da quando sono acceso.');
+    return;
+  }
+  const [who, app] = target.split('|');
+  botCtx.pending = 'confirm';
+  botCtx.pendingAt = Date.now();
+  botCtx.confirmData = { kind: 'reply', to: r.to || '', text: r.text, who };
+  speak('Rispondo a ' + who + ' su ' + app + ': «' + r.text + '». Lo mando? Dimmi sì o no.', '✉️ A ' + who + ': «' + r.text + '» — lo mando? (sì / no)');
+}
+function doConfirmed(d) {
+  if (!d) return;
+  if (d.kind === 'reply') {
+    const done = A && A.reply ? A.reply(d.to, d.text) : '';
+    if (done) { anim.startAction('jump'); speak('Inviato a ' + done.split('|')[0] + '!'); }
+    else speak('Non ci sono riuscito: forse quel messaggio non si può più rispondere dalla notifica.');
+  }
+}
+window.zephMessage = function (json) {
+  let m;
+  try { m = JSON.parse(json); } catch (e) { return; }
+  if (anim.state.sleeping) { showBubble('📩 ' + m.who + ' (' + m.app + ')'); hideBubble(5000); return; }
+  anim.startAction('wave');
+  speak(m.text ? m.who + ' su ' + m.app + ' dice: ' + m.text : 'Ti ha scritto ' + m.who + ' su ' + m.app + '!',
+    '📩 ' + m.who + ' (' + m.app + ')' + (m.text ? ': ' + m.text.slice(0, 140) : ''));
+};
+// promemoria e risposte degli occhi: li dice il compagno
+window.zephSay = function (text, cmd) {
+  wake(true);
+  if (cmd && ['wave', 'dance', 'jump', 'flip', 'spin', 'stretch'].indexOf(cmd) !== -1) anim.startAction(cmd);
+  speak(String(text || ''));
+};
+window.zephShake = function () {
+  wake(true);
+  state.targetX = (host.screenW - host.winW) / 2;
+  anim.startAction('jump');
+  sparkles.burst(0, 0.4, 0, 16);
+  speak(ZephCore.pick(['Wooo! Che terremoto! Eccomi!', 'Arrivo, arrivo! Non scuotere troppo!', 'Mi hai chiamato? Eccomi qua!']));
+};
+// la prima volta che sblocchi il telefono la mattina: il buongiorno
+window.zephUnlock = function () {
+  const h = new Date().getHours(), today = ZephCore.dayOf();
+  let last = '';
+  try { last = localStorage.getItem('zephBriefDay') || ''; } catch (e) {}
+  if (h < 6 || h >= 12 || last === today || !ZephCore.memory.get().talks) return;
+  try { localStorage.setItem('zephBriefDay', today); } catch (e) {}
+  wake(true);
+  setTimeout(() => briefing(false), 1200);
+};
+window.zephRestoreMemory = function () {
+  if (restoreMemory(true)) {
+    botCtx.name = localStorage.getItem('zephName') || null;
+    anim.startAction('dance');
+    speak('Mi è tornata la memoria! ' + (botCtx.name ? 'Ciao ' + botCtx.name + ', mi ricordo tutto di te!' : 'Mi ricordo di tutto!'));
+  }
+};
 
 const OUTFITS = [
   { jacket: 0x3c5a64, jeans: 0x46618c, shoe: 0xe9eaec, hair: 0x3a2d21 },
@@ -560,10 +798,12 @@ function tick() {
     if (!act && !anim.state.talking && state.speed < 0.1 && !musicOn && !anim.state.sleeping) anim.startAction('stretch');
   }
   sparkles.update(dt, camera);
+  holo.update(t);
   renderer.render(scene, camera);
 }
 
 loadAvatar();
+try { if (localStorage.getItem('zephHolo')) setHolo(true); } catch (e) {}
 touched();
 tick();
 setTimeout(() => {

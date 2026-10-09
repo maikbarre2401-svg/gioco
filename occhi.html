@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Occhi di Zeph</title>
+<style>
+  :root { --bg:#0f1726; --card:#1e293b; --line:rgba(255,255,255,.14); --text:#eaf2ff; --dim:rgba(234,242,255,.68);
+    --teal:#14b8a6; --mint:#5eead4; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { background:var(--bg); color:var(--text); font-family:system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  body { padding:18px 16px 32px; max-width:480px; margin:0 auto; }
+  h1 { font-size:21px; color:var(--mint); }
+  p { font-size:14px; line-height:1.5; color:var(--dim); margin-top:6px; }
+  #cam { position:relative; width:100%; aspect-ratio:3/4; margin-top:14px; border-radius:18px; overflow:hidden; background:#000; }
+  #video, #shot { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+  #shot { display:none; }
+  #scan { position:absolute; inset:0; pointer-events:none; display:none;
+    background:repeating-linear-gradient(0deg, rgba(94,234,212,.0) 0 6px, rgba(94,234,212,.16) 6px 7px); animation:scan 1.4s linear infinite; }
+  @keyframes scan { from { background-position:0 0; } to { background-position:0 70px; } }
+  #corners { position:absolute; inset:14px; pointer-events:none; border-radius:12px;
+    background:
+      linear-gradient(var(--mint),var(--mint)) top left/28px 3px no-repeat, linear-gradient(var(--mint),var(--mint)) top left/3px 28px no-repeat,
+      linear-gradient(var(--mint),var(--mint)) top right/28px 3px no-repeat, linear-gradient(var(--mint),var(--mint)) top right/3px 28px no-repeat,
+      linear-gradient(var(--mint),var(--mint)) bottom left/28px 3px no-repeat, linear-gradient(var(--mint),var(--mint)) bottom left/3px 28px no-repeat,
+      linear-gradient(var(--mint),var(--mint)) bottom right/28px 3px no-repeat, linear-gradient(var(--mint),var(--mint)) bottom right/3px 28px no-repeat; }
+  #q { width:100%; margin-top:12px; border:1px solid var(--line); background:var(--card); color:var(--text);
+    border-radius:14px; padding:12px 14px; font-size:16px; outline:none; font-family:inherit; }
+  #q:focus { border-color:var(--mint); }
+  .row { display:flex; gap:10px; margin-top:12px; flex-wrap:wrap; }
+  button, .btn { flex:1; min-width:140px; border:1px solid var(--line); background:var(--card); color:var(--text);
+    border-radius:14px; padding:13px 14px; font-size:15px; cursor:pointer; text-align:center; font-family:inherit; }
+  button.main { background:var(--teal); border-color:var(--teal); color:#04222c; font-weight:700; }
+  button:disabled { opacity:.5; }
+  #answer { margin-top:14px; background:var(--card); border:1px solid var(--line); border-radius:16px; padding:14px;
+    font-size:16px; line-height:1.55; white-space:pre-wrap; }
+  #answer:empty { display:none; }
+  #err { color:#fca5a5; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<h1>👁 Gli occhi del tuo amico</h1>
+<p>Inquadra quello che vuoi fargli vedere (una pianta, un cartello, il frigo, un compito…) e chiedigli qualcosa.</p>
+<div id="cam">
+  <video id="video" playsinline muted autoplay></video>
+  <img id="shot" alt="La foto scattata">
+  <div id="corners"></div>
+  <div id="scan"></div>
+</div>
+<input id="q" maxlength="300" placeholder="Cosa vuoi sapere? (es. «che pianta è?», «traduci il cartello»)" autocomplete="off">
+<div class="row">
+  <button id="look" class="main">👁 Guarda</button>
+  <label class="btn" for="file">🖼 Da una foto</label>
+  <input id="file" type="file" accept="image/*" hidden>
+</div>
+<div id="answer"></div>
+<p id="err"></p>
+<div class="row"><button id="again" hidden>📸 Un’altra</button><button id="close">✖ Chiudi</button></div>
+<p class="small" style="font-size:12.5px">La foto va solo al cervello AI di Claude (con la tua chiave) per rispondere alla domanda.</p>
+
+<script src="anthropic-sdk.js"></script>
+<script src="zeph-core.js"></script>
+<script src="occhi.js"></script>
+</body>
+</html>

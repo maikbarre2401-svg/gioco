@@ -27,6 +27,21 @@ Di base Zeph usa un cervello **offline e gratuito**. Se vuoi che chiacchieri dav
 
 Con la chiave risponde **Claude (`claude-opus-5-5`)** usando quello che Zeph sa di te; i comandi (torcia, sveglie, app, meteo…) restano al cervello veloce offline. Se il modello rifiuta una domanda, l'API la passa da sola a un modello di riserva (`fallbacks: "default"`); senza internet torna il cervello offline. La chiave resta sul dispositivo (sul telefono è esclusa anche dai backup) e viene usata solo per parlare con l'API di Anthropic.
 
+## ⚡ Zeph 5: i poteri (sul telefono funzionano davvero)
+
+- **⏰ Promemoria veri** — «ricordami domani alle 9 di chiamare la mamma», «lunedì alle 18 e mezza ricordami la palestra», «ricordami il 12 marzo del compleanno di Giulia», «che promemoria ho?». Sul telefono li tiene Android: suonano con la notifica anche se Zeph è spento e tornano in fila dopo un riavvio.
+- **📇 Rubrica** — «chiama mia sorella» (sa chi è tua sorella!), «chiama la mamma», «scrivi a Giulia che arrivo tra 5 minuti»: trova il numero e ti prepara la chiamata o il messaggio WhatsApp (o SMS); **premi tu** il tasto verde o invia.
+- **📩 Messaggi** — se gli dai l'accesso alle notifiche: «Ti ha scritto Giulia su WhatsApp!», «chi mi ha scritto?», «rispondi: arrivo subito» → ti chiede conferma e, solo dopo il tuo «sì», risponde con il pulsante della notifica. Di base dice solo chi ti ha scritto; leggere anche il testo ad alta voce è un'opzione.
+- **📅 Agenda** — «che impegni ho oggi?», «cosa ho in programma domani?», «aggiungi al calendario dentista domani alle 10» (te lo prepara nel calendario, salvi tu).
+- **☀️ Il buongiorno** — la prima volta che sblocchi il telefono la mattina (o quando chiedi «com'è la mia giornata?»): data, meteo della tua città, impegni, promemoria e compleanno vicino.
+- **📚 Sa le cose** — «chi era Leonardo da Vinci?», «cos'è un buco nero?»: risponde con Wikipedia, gratis (con il cervello AI risponde Claude).
+- **🌍 Traduttore** — «traduci buonanotte in inglese», «come si dice gatto in giapponese?» (Google Traduttore, oppure direttamente il cervello AI).
+- **👁 Gli occhi** (con il cervello AI) — «cosa vedi?», «che pianta è questa?», «leggimi questo»: si apre la fotocamera, inquadri e Claude ti risponde a voce.
+- **🛸 Modalità ologramma** — «modalità ologramma»: diventa una proiezione di luce azzurra con linee di scansione e un proiettore sotto i piedi («torna normale» per tornare solido).
+- **📳 Scuoti il telefono** — tre scossoni e arriva di corsa.
+- **📊 «Come sono stato questa settimana?»** — fa il punto del tuo umore e di quello che gli hai raccontato.
+- **💾 Backup della memoria** — nell'app salvi in un file tutto quello che sa di te e lo ripristini su un altro telefono o dopo aver reinstallato.
+
 ## 📸 Il tuo avatar da una foto
 
 Premi **«📸 Avatar dalla foto»** (nel browser) o **«Crea l'avatar con una foto»** (nell'app Android), oppure dì **«crea il mio avatar con una foto»**: fai un selfie con la faccia nell'ovale (o scegli una foto dalla galleria) e Zeph prende **i colori veri di pelle, capelli e vestiti** e mette **la tua faccia sulla sua testa** — una maschera che segue la forma della testa e **apre la bocca quando parla**. Puoi ritoccare i colori, scegliere gli occhi, togliere i capelli e dargli un nome. La foto non viene mandata a nessuno.
@@ -139,5 +154,6 @@ Prova a scrivergli: *ciao*, *come stai?*, *chi sei?*, *vieni qui*, *canta*, *bar
 - Voce tramite **Web Speech API** con voce italiana di sistema; fumetto di testo come riserva.
 - Desktop: **Electron** con finestra trasparente click-through sempre in primo piano, icona nell'area di notifica, chat separata.
 - Librerie incluse: Three.js r147 (`three.min.js`) + `gltf-loader.js` — nessun download necessario. Per il cervello AI facoltativo c'è l'SDK ufficiale di Anthropic `@anthropic-ai/sdk` 0.128.0 impacchettato per il browser (`anthropic-sdk.js`, licenza MIT), caricato ma usato solo se metti la tua chiave.
+- Poteri: `ZephCore.parseWhen` capisce date e ore dette a voce («domani alle 18 e mezza», «lunedì», «il 12 marzo»); su Android i promemoria usano `AlarmManager` (`Reminders.java`), rubrica e agenda sono in sola lettura (`Contacts.java`), i messaggi passano da un `NotificationListenerService` limitato alle app di chat (`MessageListener.java`) e restano solo in memoria; gli occhi sono `occhi.html` / `occhi.js` con `ZephCore.ai.see` (immagine + domanda a `claude-opus-5-5`); l'ologramma è `ZephCore.createHologram` (materiali con effetto Fresnel e linee di scansione, funziona anche sugli avatar `.glb`).
 - Memoria da amico: `zeph-core.js` (`ZephCore.memory`) salva nel `localStorage` fatti, gusti, persone, diario, umore e risposte insegnate; il saluto e le domande spontanee nascono da lì. Avatar dalla foto: `foto.html` / `foto.js` + `ZephCore.lookFromPhoto` / `applyLook` (la faccia è proiettata frontalmente su un guscio calcolato con raycasting su cranio, mento e capelli).
 - Onestà tecnica: il fotorealismo da film non è ottenibile in tempo reale nel browser; lo stile è «realistico da videogioco», leggero e fluido ovunque.

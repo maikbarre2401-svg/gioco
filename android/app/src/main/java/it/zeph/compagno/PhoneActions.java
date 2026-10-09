@@ -10,6 +10,7 @@ import android.hardware.camera2.CameraManager;
 import android.media.AudioManager;
 import android.net.Uri;
 import android.provider.AlarmClock;
+import android.provider.CalendarContract;
 import android.provider.MediaStore;
 import android.provider.Settings;
 import android.view.KeyEvent;
@@ -36,6 +37,8 @@ final class PhoneActions {
             case "timer": return timer(c, o.optInt("seconds", 0));
             case "dial": return dial(c, o.optString("number", ""));
             case "media": return media(c, o.optString("key"));
+            case "calAdd": return calendarAdd(c, o.optString("title"), o.optLong("at", 0));
+            case "sms": return sms(c, o.optString("number", ""), o.optString("text", ""));
             default: return false;
         }
     }
@@ -85,6 +88,24 @@ final class PhoneActions {
     private static boolean dial(Context c, String number) {
         String n = number.replaceAll("[^0-9+]", "");
         return start(c, new Intent(Intent.ACTION_DIAL, n.isEmpty() ? null : Uri.parse("tel:" + n)));
+    }
+
+    /** SMS già scritto: lo mandi tu. */
+    private static boolean sms(Context c, String number, String text) {
+        String n = number.replaceAll("[^0-9+]", "");
+        if (n.isEmpty()) return false;
+        return start(c, new Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:" + n)).putExtra("sms_body", text));
+    }
+
+    /** Nuovo impegno nel calendario, già compilato: lo salvi tu. */
+    private static boolean calendarAdd(Context c, String title, long at) {
+        if (at <= 0) return false;
+        Intent i = new Intent(Intent.ACTION_INSERT)
+            .setData(CalendarContract.Events.CONTENT_URI)
+            .putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, at)
+            .putExtra(CalendarContract.EXTRA_EVENT_END_TIME, at + 3600_000L)
+            .putExtra(CalendarContract.Events.TITLE, title == null || title.isEmpty() ? "Impegno" : title);
+        return start(c, i);
     }
 
     /** Tasti multimediali: comandano Spotify, YouTube Music e le altre app musicali. */

@@ -22,6 +22,10 @@ import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.Icon;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
 import android.hardware.display.DisplayManager;
 import android.os.BatteryManager;
 import android.os.Build;
@@ -29,6 +33,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.service.quicksettings.TileService;
 import android.speech.tts.TextToSpeech;
@@ -59,6 +64,14 @@ import android.widget.TextView;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+
 import java.util.Locale;
 
 /**
@@ -79,6 +92,9 @@ public class ZephService extends Service {
     static final String ACTION_READ = "it.zeph.compagno.READ";
     static final String ACTION_REPLY = "it.zeph.compagno.REPLY";
     static final String ACTION_PREFS = "it.zeph.compagno.PREFS";
+    static final String ACTION_SAY = "it.zeph.compagno.SAY";
+    static final String ACTION_MESSAGE = "it.zeph.compagno.MESSAGE";
+    static final String ACTION_MEMORY = "it.zeph.compagno.MEMORY";
     static final String KEY_REPLY = "zeph_reply";
     static final String EXTRA_TEXT = "text";
     static final String EXTRA_CMD = "cmd";
@@ -113,6 +129,27 @@ public class ZephService extends Service {
     private int reminderId = 100;
     private BroadcastReceiver screenRx;
     private BroadcastReceiver phoneRx;
+    private SensorManager sensors;
+    private long lastShake, shakeWindow;
+    private int shakeCount;
+
+    /** Scuoti il telefono (tre scossoni in meno di un secondo): il compagno arriva di corsa. */
+    private final SensorEventListener shakeListener = new SensorEventListener() {
+        @Override public void onSensorChanged(SensorEvent e) {
+            float x = e.values[0], y = e.values[1], z = e.values[2];
+            double g = Math.sqrt(x * x + y * y + z * z) / SensorManager.GRAVITY_EARTH;
+            if (g < 2.3) return;
+            long now = SystemClock.uptimeMillis();
+            if (now - shakeWindow > 900) { shakeWindow = now; shakeCount = 0; }
+            if (++shakeCount >= 3 && now - lastShake > 3000) {
+                lastShake = now;
+                shakeCount = 0;
+                if (!hidden) js("zephShake()");
+            }
+        }
+
+        @Override public void onAccuracyChanged(Sensor s, int accuracy) { }
+    };
 
     // ---------------------------------------------------------------- ciclo di vita
 
@@ -145,13 +182,20 @@ public class ZephService extends Service {
         });
         screenRx = new BroadcastReceiver() {
             @Override public void onReceive(Context c, Intent i) {
+                if (Intent.ACTION_USER_PRESENT.equals(i.getAction())) {
+                    // telefono sbloccato: magari è ora del buongiorno
+                    if (!hidden && Prefs.briefing(ZephService.this)) js("zephUnlock()");
+                    return;
+                }
                 boolean on = Intent.ACTION_SCREEN_ON.equals(i.getAction());
+                if (on) startShake(); else stopShake();
                 if (!hidden) js("zephVisible(" + on + ")");
             }
         };
         IntentFilter f = new IntentFilter();
         f.addAction(Intent.ACTION_SCREEN_ON);
         f.addAction(Intent.ACTION_SCREEN_OFF);
+        f.addAction(Intent.ACTION_USER_PRESENT);
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(screenRx, f, Context.RECEIVER_NOT_EXPORTED);
         else registerReceiver(screenRx, f);
 
@@ -227,6 +271,16 @@ public class ZephService extends Service {
             js("zephPrefsChanged()");
             refreshNotification();
             updateTile();
+            stopShake();
+            startShake();
+        } else if (ACTION_SAY.equals(action) && intent.hasExtra(EXTRA_TEXT)) {
+            if (hidden) setHidden(false);
+            String cmd = intent.getStringExtra(EXTRA_CMD);
+            js("zephSay(" + JSONObject.quote(intent.getStringExtra(EXTRA_TEXT)) + "," + JSONObject.quote(cmd == null ? "" : cmd) + ")");
+        } else if (ACTION_MESSAGE.equals(action) && intent.hasExtra(EXTRA_TEXT)) {
+            if (!hidden) js("zephMessage(" + JSONObject.quote(intent.getStringExtra(EXTRA_TEXT)) + ")");
+        } else if (ACTION_MEMORY.equals(action)) {
+            js("zephRestoreMemory()");
         } else if (ACTION_RELOAD.equals(action)) {
             destroyOverlay();
             createOverlay();
@@ -247,6 +301,7 @@ public class ZephService extends Service {
         updateTile();
         try { unregisterReceiver(screenRx); } catch (Exception ignored) { }
         try { unregisterReceiver(phoneRx); } catch (Exception ignored) { }
+        stopShake();
         destroyOverlay();
         if (tts != null) tts.shutdown();
         super.onDestroy();
@@ -273,9 +328,7 @@ public class ZephService extends Service {
         ch.setDescription("La notifica fissa per controllare Zeph");
         ch.setShowBadge(false);
         nm.createNotificationChannel(ch);
-        NotificationChannel r = new NotificationChannel(CH_REMIND, "Promemoria di Zeph", NotificationManager.IMPORTANCE_HIGH);
-        r.setDescription("Quando dici a Zeph «ricordami tra…»");
-        nm.createNotificationChannel(r);
+        Reminders.channel(this);
     }
 
     private PendingIntent servicePi(String action, int code) {
@@ -441,6 +494,44 @@ public class ZephService extends Service {
         bubbleAdded = false;
 
         web.loadUrl("https://" + LocalWeb.HOST + "/overlay.html");
+        startShake();
+    }
+
+    private void startShake() {
+        if (!Prefs.shake(this) || frame == null) return;
+        if (sensors == null) sensors = getSystemService(SensorManager.class);
+        Sensor acc = sensors != null ? sensors.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) : null;
+        if (acc != null) sensors.registerListener(shakeListener, acc, SensorManager.SENSOR_DELAY_UI);
+    }
+
+    private void stopShake() {
+        if (sensors != null) sensors.unregisterListener(shakeListener);
+    }
+
+    // la memoria del compagno, copiata anche in un file dell'app (per il backup e se la pagina viene azzerata)
+    private File memoryFile() { return new File(getFilesDir(), "memory.json"); }
+
+    private void writeMemory(String json) {
+        if (json == null || json.length() > 4 * 1024 * 1024) return;
+        File tmp = new File(getFilesDir(), "memory.tmp");
+        try (OutputStream out = new FileOutputStream(tmp)) {
+            out.write(json.getBytes(StandardCharsets.UTF_8));
+        } catch (IOException e) {
+            return;
+        }
+        if (!tmp.renameTo(memoryFile())) tmp.delete();
+    }
+
+    static String readFile(File f) {
+        if (!f.exists() || f.length() > 4 * 1024 * 1024) return "";
+        try (InputStream in = new FileInputStream(f)) {
+            byte[] b = new byte[(int) f.length()];
+            int off = 0, n;
+            while (off < b.length && (n = in.read(b, off, b.length - off)) > 0) off += n;
+            return new String(b, 0, off, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            return "";
+        }
     }
 
     private void destroyOverlay() {
@@ -694,5 +785,54 @@ public class ZephService extends Service {
         @JavascriptInterface public void setAiKey(String k) {
             Prefs.setAiKey(ZephService.this, k != null && (k.isEmpty() || k.startsWith("sk-ant-")) ? k : "");
         }
+
+        /** Cosa può fare adesso: rubrica, agenda, messaggi, cervello AI. */
+        @JavascriptInterface public String powers() {
+            try {
+                return new JSONObject()
+                    .put("contacts", Contacts.canReadContacts(ZephService.this))
+                    .put("calendar", Contacts.canReadCalendar(ZephService.this))
+                    .put("messages", MessageListener.enabled(ZephService.this))
+                    .put("ai", !Prefs.aiKey(ZephService.this).isEmpty())
+                    .toString();
+            } catch (JSONException e) {
+                return "{}";
+            }
+        }
+
+        /** Promemoria vero (AlarmManager): suona anche a Zeph spento. */
+        @JavascriptInterface public int remindAt(double at, String text) { return Reminders.add(ZephService.this, (long) at, text); }
+
+        @JavascriptInterface public String reminders() { return Reminders.list(ZephService.this).toString(); }
+
+        @JavascriptInterface public void clearReminders() { Reminders.clear(ZephService.this); }
+
+        @JavascriptInterface public String contact(String name) { return Contacts.find(ZephService.this, name); }
+
+        @JavascriptInterface public String events(int offset) { return Contacts.events(ZephService.this, offset); }
+
+        @JavascriptInterface public String messages() {
+            return MessageListener.enabled(ZephService.this) ? MessageListener.recentJson() : "{\"error\":\"perm\"}";
+        }
+
+        /** A chi risponderebbe («Giulia|WhatsApp»), per chiederti conferma prima. */
+        @JavascriptInterface public String peekReply(String who) { return MessageListener.peek(who); }
+
+        /** Manda la risposta: la pagina la chiama solo dopo il tuo «sì». */
+        @JavascriptInterface public String reply(String who, String text) { return MessageListener.reply(ZephService.this, who, text); }
+
+        @JavascriptInterface public void openEyes(String q) {
+            main.post(() -> {
+                try {
+                    startActivity(new Intent(ZephService.this, PhotoActivity.class)
+                        .putExtra(PhotoActivity.EXTRA_PAGE, "occhi").putExtra(PhotoActivity.EXTRA_Q, q == null ? "" : q)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                } catch (Exception e) { Log.w(TAG, "occhi", e); }
+            });
+        }
+
+        @JavascriptInterface public void saveMemory(String json) { writeMemory(json); }
+
+        @JavascriptInterface public String loadMemory() { return readFile(memoryFile()); }
     }
 }

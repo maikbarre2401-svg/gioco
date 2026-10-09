@@ -12,6 +12,8 @@ on:
       - 'anthropic-sdk.js'
       - 'foto.html'
       - 'foto.js'
+      - 'occhi.html'
+      - 'occhi.js'
       - '.github/workflows/android.yml'
   workflow_dispatch:
 
@@ -29,7 +31,23 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      # facoltativo: con i segreti ZEPH_KEYSTORE (keystore in base64) e ZEPH_KEYSTORE_PASSWORD
+      # ogni APK ha la stessa firma, quindi si aggiorna sopra il vecchio senza disinstallare
+      - name: Chiave di firma fissa (se configurata)
+        env:
+          KS: ${{ secrets.ZEPH_KEYSTORE }}
+        run: |
+          if [ -n "$KS" ]; then
+            echo "$KS" | base64 -d > "$RUNNER_TEMP/zeph.keystore"
+            echo "ZEPH_KEYSTORE_FILE=$RUNNER_TEMP/zeph.keystore" >> "$GITHUB_ENV"
+            echo "Firma fissa attiva"
+          else
+            echo "Nessuna firma fissa: si usa la chiave di debug"
+          fi
+
       - name: Crea l'APK
+        env:
+          ZEPH_KEYSTORE_PASSWORD: ${{ secrets.ZEPH_KEYSTORE_PASSWORD }}
         run: python3 android/crea_apk.py --ci
 
       - uses: actions/upload-artifact@v4

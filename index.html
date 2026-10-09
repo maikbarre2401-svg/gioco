@@ -867,10 +867,18 @@ for (let i = 0; i < 7; i++) {
 const zeph = ZephCore.build(THREE);
 const anim = new ZephCore.Animator(zeph);
 scene.add(zeph.root);
+try { if (localStorage.getItem('zephHolo')) setTimeout(() => setHolo(true), 0); } catch (e) {}
 // il look fatto con la foto (foto.html): colori veri e la tua faccia
 try { ZephCore.applyLook(THREE, zeph, JSON.parse(localStorage.getItem('zephLook') || 'null')); } catch (e) { /* nessun look */ }
 let avatarDriver = null;
 const sparkles = ZephCore.createSparkles(THREE, scene);
+// modalità ologramma («ologramma» / «torna normale»)
+const holo = ZephCore.createHologram(THREE);
+scene.add(holo.base);
+function setHolo(on) {
+  if (on) holo.apply(actor.obj); else holo.remove(actor.obj);
+  try { localStorage.setItem('zephHolo', on ? '1' : ''); } catch (e) {}
+}
 let prevActionName = null;
 let nextStretchAt = 30;
 const botCtx = { name: localStorage.getItem('zephName') || null }; // stato giochi + nome
@@ -1009,6 +1017,7 @@ function setAvatar(gltfScene, opts) {
     if (o.material && o.material.isMeshStandardMaterial) o.material.envMapIntensity = 0.5;
   });
   avatarChip.textContent = '↩︎ Torna a Zeph';
+  if (holo.on) holo.apply(driver.root);
   if (!opts.quiet) {
     let msg = driver.hasRig
       ? 'Wow, guardami! Questo è il tuo avatar, e adesso cammino io per lui!'
@@ -1027,6 +1036,7 @@ function backToZeph() {
   anim.avatar = zeph;
   actor.obj = zeph.root;
   avatarChip.textContent = '🧑 Il tuo avatar';
+  if (holo.on) holo.apply(zeph.root);
   clearAvatarBytes();
   localStorage.setItem('zephPreferZeph', '1');
   speak('Rieccomi! Però il tuo avatar mi piaceva, eh!');
@@ -1539,6 +1549,32 @@ function botRespond(text) {
     }, r.seconds * 1000);
   }
   if (out.party) sparkles.burst(state.pos.x, 1.6, state.pos.z, 30);
+  if (out.holo !== undefined) setHolo(out.holo);
+  if (out.wikiQuery) {
+    speak(out.say);
+    ZephCore.wikiAnswer(out.wikiQuery).then(r => { anim.startAction('wave'); speak(r.say); });
+    return;
+  }
+  if (out.see) {
+    if (ZephCore.ai.enabled()) setTimeout(() => { location.href = 'occhi.html?q=' + encodeURIComponent(out.see); }, 1500);
+    else out.say = 'Per vedere mi serve il cervello AI: incolla qui la tua chiave di Claude (sk-ant-…).';
+  }
+  if (out.remindAt) {
+    const r = out.remindAt, ms = r.at - Date.now();
+    if (ms < 864e5) setTimeout(() => { anim.startAction('jump'); speak('Ehi! Promemoria: ' + r.text); }, ms);
+    else out.say = 'Nel browser me lo ricordo solo se la pagina resta aperta: per i promemoria lunghi usa l’app sul telefono!';
+  }
+  if (out.listReminders || out.clearReminders) out.say = 'I promemoria veri li tengo nell’app sul telefono!';
+  if (out.briefing) {
+    const city = (JSON.parse(localStorage.getItem('zephPrefs') || '{}'))['città'];
+    const nome = botCtx.name ? ', ' + botCtx.name : '';
+    const head = 'Ciao' + nome + '! Oggi è ' + new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' }) + '.';
+    const bd = ZephCore.daysUntil('compleanno');
+    const extra = /È OGGI|^Manca 1 giorno|^Mancano [2-7] giorni/.test(bd) ? ' ' + bd : '';
+    (city ? ZephCore.weatherReport({ city, when: 'oggi' }) : Promise.resolve({ say: 'Dimmi «la mia città è …» e ti dico anche il meteo.' }))
+      .then(w => { anim.startAction('wave'); speak(head + ' ' + w.say + extra); });
+    return;
+  }
   if (out.photoAvatar) setTimeout(() => { location.href = 'foto.html'; }, 2500);
   // chiacchiere: con il cervello AI (la tua chiave) risponde Claude
   if (out.aiQuery && ZephCore.ai.enabled()) {
@@ -1703,6 +1739,8 @@ function tick() {
   }
   prevActionName = actName;
   sparkles.update(dt, camera);
+  holo.update(t);
+  if (holo.on) holo.base.position.set(state.pos.x, state.pos.y + 0.02, state.pos.z);
 
   // ogni tanto, da fermo, si stiracchia
   if (t > nextStretchAt) {

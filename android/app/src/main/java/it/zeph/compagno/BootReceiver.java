@@ -5,12 +5,13 @@ import android.content.Context;
 import android.content.Intent;
 import android.provider.Settings;
 
-/** Riaccende Zeph quando riaccendi il telefono (o aggiorni l'app), se era acceso. */
+/** Riaccende Zeph (se era acceso) e rimette i promemoria quando riaccendi il telefono o aggiorni l'app. */
 public class BootReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context c, Intent i) {
         String a = i.getAction();
         if (!Intent.ACTION_BOOT_COMPLETED.equals(a) && !Intent.ACTION_MY_PACKAGE_REPLACED.equals(a)) return;
+        Reminders.rearmAll(c); // i promemoria tornano in fila dopo il riavvio
         if (!Prefs.autostart(c) || !Prefs.wasRunning(c) || !Settings.canDrawOverlays(c)) return;
         try {
             c.startForegroundService(new Intent(c, ZephService.class).setAction(ZephService.ACTION_START));
