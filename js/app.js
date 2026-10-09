@@ -5,14 +5,13 @@ window.GL = window.GL || {};
 
   const { native, $, $$, clock, log, toast, haptic, sha256, fitCanvas, COLORS } = GL.ui;
   const device = GL.device;
-  const scan = GL.scan;
-  const cifra = GL.cipher;
-  const password = GL.password;
-  const sensori = GL.sensors;
-  const audio = GL.audio;
-  const torcia = GL.torch;
 
-  const modules = { scan, cifra, password, sensori, audio, torcia };
+  // Tool screens keyed by their hash. Some are their own modules (map, radar removed), some share app helpers.
+  const modules = {
+    mappa: GL.map, profiler: GL.profiler, velocita: GL.speed, terminale: GL.terminal,
+    scan: GL.scan, cifra: GL.cipher, password: GL.password,
+    sensori: GL.sensors, audio: GL.audio, torcia: GL.torch, impostazioni: GL.settings,
+  };
   let current = null;
 
   /* ---------------- router ---------------- */
@@ -20,13 +19,14 @@ window.GL = window.GL || {};
     const name = (location.hash || '#home').slice(1);
     const target = $(`.screen[data-screen="${name}"]`) ? name : 'home';
     if (target === current) return;
-    if (current && modules[current]?.leave) modules[current].leave();
+    if (current && modules[current]?.leave) { try { modules[current].leave(); } catch (e) { console.error(e); } }
     $$('.screen').forEach(s => s.classList.toggle('active', s.dataset.screen === target));
     current = target;
     $('#app').scrollTop = 0;
     if (target === 'home') startRadar(); else stopRadar();
-    if (modules[target]?.enter) modules[target].enter();
+    if (modules[target]?.enter) { try { modules[target].enter(); } catch (e) { console.error(e); } }
     if (navigator.userActivation?.hasBeenActive) haptic(8);
+    GL.sfx.play('nav');
   }
 
   /* ---------------- status bar ---------------- */
@@ -57,6 +57,31 @@ window.GL = window.GL || {};
       paint();
       log(b.charging ? 'Alimentazione collegata' : 'Alimentazione scollegata', b.charging ? 'ok' : 'warn');
     });
+  }
+
+  /* ---------------- agent (XP/level) ---------------- */
+  let ghostAgent = null;
+  function refreshAgent() {
+    const p = GL.prefs.get();
+    const l = GL.prefs.level();
+    $('#agent-name').textContent = p.codename || '—';
+    $('#agent-rank').textContent = l.rank;
+    $('#agent-lvl').textContent = l.lvl;
+    $('#agent-xp').style.width = `${Math.round(l.progress * 100)}%`;
+    $('#agent-next').textContent = `${l.next} XP al livello ${l.lvl + 1}`;
+  }
+
+  function xp(amount, action) {
+    const up = GL.prefs.addXP(amount, action);
+    refreshAgent();
+    if (up) {
+      toast(`LIVELLO ${up.lvl} · ${up.rank}`, 3000);
+      log(`Salito al livello ${up.lvl}: ${up.rank}`, 'hot');
+      GL.sfx.play('lock');
+      GL.sfx.say(`Livello ${up.lvl}. ${up.rank}.`);
+      ghostAgent?.glitch();
+      haptic([20, 50, 20, 50, 40]);
+    }
   }
 
   /* ---------------- home profiler ---------------- */
@@ -139,35 +164,6 @@ window.GL = window.GL || {};
     log(msgs[Math.floor(up / 7) % msgs.length]());
   }
 
-  /* ---------------- boot sequence ---------------- */
-  function boot(nodeId) {
-    const el = $('#boot');
-    const pre = $('#boot-lines');
-    let seen = false;
-    try { seen = sessionStorage.getItem('gl-booted') === '1'; sessionStorage.setItem('gl-booted', '1'); } catch { /* storage blocked */ }
-    if (seen || reduceMotion) { el.remove(); return; }
-    const lines = [
-      ['GHOSTLINK v1.0 // kernel mobile', ''],
-      ['> verifica integrità ........ ', 'OK', 'ok'],
-      [`> identificazione nodo ...... `, nodeId, 'hot'],
-      ['> collegamento sensori ...... ', 'OK', 'ok'],
-      ['> cifratura AES-256 ......... ', 'PRONTA', 'ok'],
-      ['> accesso ................... ', 'CONCESSO', 'ok'],
-    ];
-    let i = 0;
-    const done = () => { el.classList.add('done'); setTimeout(() => el.remove(), 450); };
-    el.addEventListener('click', done, { once: true });
-    const next = () => {
-      if (i >= lines.length) { setTimeout(done, 380); return; }
-      const [txt, val, cls] = lines[i++];
-      pre.append(txt);
-      if (val) { const s = document.createElement('span'); s.className = cls; s.textContent = val; pre.append(s); }
-      pre.append('\n');
-      setTimeout(next, 170);
-    };
-    next();
-  }
-
   /* ---------------- install (PWA) ---------------- */
   let deferredPrompt = null;
   function setupInstall() {
@@ -205,9 +201,16 @@ window.GL = window.GL || {};
 
   /* ---------------- start ---------------- */
   async function start() {
+    GL.app = { xp, refreshAgent };
     for (const m of Object.values(modules)) {
       try { m.init?.(); } catch (err) { console.error(err); }
     }
+    // Any tap anywhere unlocks audio and gives tool buttons a soft click.
+    document.addEventListener('pointerdown', e => {
+      GL.sfx.unlock();
+      if (e.target.closest('.tile, .btn, .seg button, .legend-chip, .term-keys button')) GL.sfx.play('tap');
+    }, { passive: true });
+
     tickClock();
     setInterval(tickClock, 1000);
     updateNet();
@@ -217,8 +220,12 @@ window.GL = window.GL || {};
     document.addEventListener('visibilitychange', () => { if (!document.hidden) log('App riaperta'); });
     watchBattery();
 
+    // Home agent (hooded hacker) idles quietly next to the level bar.
+    try { ghostAgent = GL.hacker.mount($('#ghost')); } catch (e) { console.error(e); }
+    refreshAgent();
+    GL.prefs.onChange(refreshAgent);
+
     const nodeId = await fillProfiler();
-    boot(nodeId);
     log(`Nodo ${nodeId} online`, 'ok');
     log(`${device.detectOS()} · ${device.detectBrowser()}`);
     setInterval(heartbeat, 7000);
@@ -227,6 +234,10 @@ window.GL = window.GL || {};
     route();
     setupInstall();
     registerSW();
+
+    try { await GL.intro.run(nodeId); } catch (e) { console.error(e); $('#intro')?.remove(); }
+    refreshAgent();
+    if (!GL.sfx.ready()) log('Tocca lo schermo per attivare l\'audio', 'warn');
   }
 
   start();

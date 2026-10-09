@@ -81,10 +81,12 @@ window.GL = window.GL || {};
       if (mode === 'enc') {
         out.value = await encrypt(input, pass);
         log(`Messaggio cifrato (${input.length} caratteri)`, 'ok');
+      GL.sfx?.play('ok'); GL.app?.xp(8, 'messaggi');
         if (pass.length < 8) toast('Cifrato. Consiglio: usa una chiave di almeno 8 caratteri');
       } else {
         out.value = await decrypt(input, pass);
         log('Messaggio decifrato', 'ok');
+      GL.sfx?.play('ok');
       }
       haptic([10, 30, 10]);
     } catch (err) {
@@ -94,6 +96,7 @@ window.GL = window.GL || {};
         : 'Chiave sbagliata o messaggio incompleto';
       toast(msg, 3200);
       log('Decifratura fallita', 'hot');
+    GL.sfx?.play('err');
       haptic([60, 40, 60]);
     } finally {
       btn.disabled = false;

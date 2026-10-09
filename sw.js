@@ -1,13 +1,19 @@
 // Offline support: the whole app (fonts included) is cached on install.
-const VERSION = 'ghostlink-v2';
+const VERSION = 'ghostlink-v3';
 const SHELL = [
   './',
   'index.html',
   'manifest.webmanifest',
   'css/fonts.css',
   'css/style.css',
+  'vendor/leaflet/leaflet.js',
+  'vendor/leaflet/leaflet.css',
   'js/app.js',
   'js/ui.js',
+  'js/prefs.js',
+  'js/sfx.js',
+  'js/hacker.js',
+  'js/intro.js',
   'js/device.js',
   'js/scan.js',
   'js/cipher.js',
@@ -15,6 +21,11 @@ const SHELL = [
   'js/sensors.js',
   'js/audio.js',
   'js/torch.js',
+  'js/map.js',
+  'js/profiler.js',
+  'js/speed.js',
+  'js/terminal.js',
+  'js/settings.js',
   'fonts/ChakraPetch-400-latin-ext.woff2',
   'fonts/ChakraPetch-400-latin.woff2',
   'fonts/ChakraPetch-600-latin-ext.woff2',
@@ -54,5 +65,15 @@ self.addEventListener('fetch', event => {
       }).catch(() => caches.match(request, { ignoreSearch: true }).then(hit => hit || caches.match('index.html'))),
     );
   }
-  // Everything else (IP lookup APIs) goes straight to the network.
+  // Map tiles: cache first so a visited area stays visible offline.
+  if (url.hostname.endsWith('basemaps.cartocdn.com')) {
+    event.respondWith(
+      caches.match(request).then(hit => hit || fetch(request).then(res => {
+        if (res.ok) { const copy = res.clone(); caches.open(VERSION).then(c => c.put(request, copy)); }
+        return res;
+      }).catch(() => hit)),
+    );
+    return;
+  }
+  // Everything else (IP lookup, Overpass, Cloudflare speed test) goes to the network.
 });

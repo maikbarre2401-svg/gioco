@@ -253,21 +253,157 @@ input[type="range"] { width: 100%; accent-color: var(--cyan); }
 .flash { position: fixed; inset: 0; z-index: 100; background: #fff; }
 .flash.dark { background: #000; }
 
-/* ---------- boot + toast ---------- */
-.boot {
-  position: fixed; inset: 0; z-index: 90; background: var(--bg);
-  display: flex; align-items: flex-end; padding: 24px 20px calc(48px + var(--sab));
-  transition: opacity .4s;
-}
-.boot.done { opacity: 0; pointer-events: none; }
-/* Safety net: the overlay disappears on its own even if a script fails to run. */
-.boot { animation: boot-out .4s 3.5s forwards; }
-@keyframes boot-out { to { opacity: 0; visibility: hidden; pointer-events: none; } }
 main:not(:has(.screen.active)) .screen[data-screen="home"] { display: flex; flex-direction: column; gap: 14px; }
-.boot pre { margin: 0; font: 12px/1.7 var(--f-mono); color: var(--cyan); white-space: pre-wrap; }
-.boot pre .ok { color: var(--ok); }
-.boot pre .hot { color: var(--magenta); }
 
+/* ---------- intro ---------- */
+.intro {
+  position: fixed; inset: 0; z-index: 90; background: var(--bg);
+  display: flex; align-items: center; justify-content: center;
+  padding: calc(24px + var(--sat)) 20px calc(24px + var(--sab));
+  transition: opacity .5s;
+  /* Safety net: if no script runs (e.g. parse error), the overlay still fades away. */
+  animation: intro-fail 0.6s 6s forwards;
+}
+.intro.js-on { animation: none; }
+.intro.done { opacity: 0; pointer-events: none; }
+@keyframes intro-fail { to { opacity: 0; visibility: hidden; pointer-events: none; } }
+.intro-rain { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0.5; }
+.intro-center {
+  position: relative; z-index: 1; width: 100%; max-width: 420px;
+  display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center;
+}
+.intro-hacker { width: min(58vw, 210px); aspect-ratio: 3 / 4; height: auto; filter: drop-shadow(0 0 24px var(--glow)); }
+.intro-logo { font: 700 30px var(--f-display); letter-spacing: .22em; color: var(--fg); }
+.intro-lines { font: 12px/1.7 var(--f-mono); color: var(--cyan); min-height: 1px; width: 100%; }
+.intro-lines .ok { color: var(--ok); }
+.intro-lines .hot { color: var(--magenta); }
+.intro-granted {
+  font: 700 18px var(--f-display); letter-spacing: .18em; text-transform: uppercase; color: var(--ok);
+  padding: 8px 20px; border: 1px solid var(--ok); box-shadow: 0 0 24px rgba(77,255,176,.4);
+  animation: granted-in .4s ease-out;
+}
+@keyframes granted-in { from { opacity: 0; transform: scale(.8); } }
+.intro-login { width: 100%; display: flex; flex-direction: column; gap: 10px; animation: granted-in .4s; }
+.intro-login label { font: 600 12px var(--f-display); letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+.intro-login input { text-align: center; font: 700 18px var(--f-mono); letter-spacing: .12em; color: var(--cyan); }
+.intro-tap { animation: blink 1.4s infinite; }
+.intro-skip {
+  position: absolute; z-index: 2; right: 16px; bottom: calc(18px + var(--sab));
+  background: transparent; border: 1px solid var(--line); color: var(--dim);
+  padding: 6px 14px; font: 600 12px var(--f-display); letter-spacing: .1em; cursor: pointer;
+}
+
+/* ---------- home: agent card ---------- */
+.agent { flex-direction: row; align-items: center; gap: 14px; }
+.ghost { width: 92px; aspect-ratio: 3 / 4; height: auto; flex: none; }
+.agent-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.agent-name { font: 700 24px var(--f-display); letter-spacing: .06em; color: var(--cyan); margin: 0; overflow-wrap: anywhere; }
+.agent-rank { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+.agent-rank b { color: var(--amber); }
+.meter.xp { height: 8px; }
+.meter.xp > i { background: linear-gradient(90deg, var(--cyan), var(--magenta)); }
+
+.section-label {
+  font: 600 11px var(--f-display); letter-spacing: .2em; text-transform: uppercase; color: var(--dim);
+  padding: 4px 0 0; border-bottom: 1px solid var(--line); margin-top: 2px;
+}
+.tile.wide { grid-column: 1 / -1; }
+
+/* ---------- map (ctOS) ---------- */
+.map-wrap { position: relative; height: clamp(320px, 54vh, 460px); border: 1px solid var(--line); overflow: hidden; }
+.map { position: absolute; inset: 0; background: #05070d; }
+.map-wrap.scanning::after {
+  content: ""; position: absolute; inset: 0; z-index: 500; pointer-events: none;
+  background: linear-gradient(transparent, rgba(46,242,255,.18), transparent);
+  background-size: 100% 60px; animation: map-scan 1.1s linear infinite;
+}
+@keyframes map-scan { from { background-position: 0 -60px; } to { background-position: 0 520px; } }
+.map-hud { position: absolute; top: 8px; left: 8px; z-index: 500; display: flex; gap: 6px; flex-wrap: wrap; }
+.map-hud .chip { background: rgba(5,7,13,.8); }
+.map-reticle { position: absolute; inset: 0; z-index: 450; pointer-events: none;
+  background:
+    linear-gradient(var(--cyan), var(--cyan)) center/1px 18px no-repeat,
+    linear-gradient(var(--cyan), var(--cyan)) center/18px 1px no-repeat;
+  opacity: .25; }
+.map-btn {
+  position: absolute; right: 8px; bottom: 8px; z-index: 500;
+  width: 42px; height: 42px; border: 1px solid var(--cyan); background: rgba(5,7,13,.85);
+  color: var(--cyan); font-size: 20px; cursor: pointer;
+}
+.leaflet-container { background: #05070d !important; font-family: var(--f-mono); }
+.mk, .mk-me { display: grid; place-items: center; }
+.mk {
+  width: 26px; height: 26px; border-radius: 50%; font-size: 14px; color: var(--bg); font-weight: 700;
+  background: var(--cyan); box-shadow: 0 0 10px var(--glow); border: 1.5px solid #fff;
+}
+.mk-cam { background: var(--magenta); box-shadow: 0 0 10px rgba(255,45,117,.6); }
+.mk-sem { background: var(--amber); }
+.mk-ant { background: var(--cyan); }
+.mk-wifi { background: #9b7bff; }
+.mk-aed { background: var(--ok); color: #05241a; }
+.mk-ev { background: #ffe14d; }
+.mk-me { width: 20px; height: 20px; border-radius: 50%; background: #2ef2ff; border: 3px solid rgba(46,242,255,.3); box-shadow: 0 0 14px var(--cyan); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px; }
+.legend-chip {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  padding: 5px 9px; border: 1px solid var(--line); background: var(--panel); color: var(--fg);
+  font-size: 11px; letter-spacing: .04em;
+}
+.legend-chip i { font-style: normal; }
+.legend-chip b { color: var(--cyan); font-variant-numeric: tabular-nums; }
+.legend-chip[aria-pressed="false"] { opacity: .4; }
+.lg-cam i { color: var(--magenta); } .lg-sem i { color: var(--amber); } .lg-ant i { color: var(--cyan); }
+.lg-wifi i { color: #9b7bff; } .lg-aed i { color: var(--ok); } .lg-ev i { color: #ffe14d; }
+.card.target { border-color: var(--cyan); }
+.target-name { font: 700 18px var(--f-display); letter-spacing: .04em; color: var(--cyan); overflow-wrap: anywhere; }
+.x { background: transparent; border: 0; color: var(--dim); font-size: 16px; cursor: pointer; padding: 0 4px; }
+.hack-log { font: 11px/1.6 var(--f-mono); color: var(--cyan); max-height: 120px; overflow-y: auto; }
+.hack-log .ok { color: var(--ok); }
+
+/* ---------- camera tools (profiler) ---------- */
+.cam-wrap { position: relative; width: 100%; aspect-ratio: 3 / 4; max-height: 60vh; border: 1px solid var(--line); overflow: hidden; background: #000; }
+.cam-wrap video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cam-overlay { position: absolute; inset: 0; width: 100%; height: 100%; }
+.prf-card {
+  position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 2;
+  background: rgba(5,7,13,.9); border: 1px solid var(--magenta); padding: 12px;
+  animation: granted-in .3s; box-shadow: 0 0 22px rgba(255,45,117,.35);
+}
+.prf-tag { font: 600 10px var(--f-display); letter-spacing: .2em; color: var(--magenta); }
+.prf-name { font: 700 20px var(--f-display); color: var(--fg); }
+.prf-row { font-size: 12px; color: var(--fg); }
+.prf-fact { font-size: 12px; color: var(--cyan); }
+.prf-id { font-size: 10px; color: var(--dim); margin-top: 4px; letter-spacing: .1em; }
+
+/* ---------- speed gauge ---------- */
+.gauge { width: 100%; max-width: 360px; aspect-ratio: 320 / 200; height: auto; align-self: center; }
+
+/* ---------- terminal ---------- */
+.term {
+  display: flex; flex-direction: column; height: clamp(320px, 56vh, 520px);
+  border: 1px solid var(--line); background: rgba(3,5,10,.9); padding: 10px;
+}
+.term-out { flex: 1; min-height: 0; overflow-y: auto; font: 12px/1.6 var(--f-mono); color: var(--fg); white-space: pre-wrap; overflow-wrap: anywhere; }
+.term-out .ok { color: var(--ok); } .term-out .err { color: var(--magenta); } .term-out .term-type { color: var(--cyan); }
+.term-echo { color: var(--dim); }
+.term-prompt { color: var(--ok); }
+.term-line { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--line); padding-top: 8px; margin-top: 6px; }
+.term-line input { flex: 1; border: 0; background: transparent; color: var(--cyan); font: 13px var(--f-mono); padding: 4px 0; }
+.term-line input:focus { outline: none; box-shadow: none; }
+.matrix { margin: 0; color: var(--ok); font: 12px/1.15 var(--f-mono); letter-spacing: 2px; text-shadow: 0 0 6px rgba(77,255,176,.6); }
+.term-keys { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.term-keys button { padding: 7px 12px; border: 1px solid var(--line); background: var(--panel); color: var(--cyan); font: 12px var(--f-mono); cursor: pointer; }
+
+/* ---------- settings ---------- */
+.switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px dashed var(--line); }
+.switch span { font-size: 13px; }
+.switch input { width: 42px; height: 24px; appearance: none; background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; position: relative; cursor: pointer; flex: none; }
+.switch input::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: var(--dim); transition: transform .18s, background-color .18s; }
+.switch input:checked { border-color: var(--cyan); }
+.switch input:checked::after { transform: translateX(18px); background: var(--cyan); }
+.switch input:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+
+/* ---------- toast ---------- */
 .toast {
   position: fixed; left: 50%; bottom: calc(22px + var(--sab)); transform: translateX(-50%);
   z-index: 95; max-width: calc(100% - 32px);
@@ -279,6 +415,7 @@ main:not(:has(.screen.active)) .screen[data-screen="home"] { display: flex; flex
 @media (min-width: 640px) {
   .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .radar { width: 132px; height: 132px; }
+  .ghost { width: 110px; }
 }
 @media (max-width: 360px) {
   .checks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -286,5 +423,4 @@ main:not(:has(.screen.active)) .screen[data-screen="home"] { display: flex; flex
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
-  .boot { display: none; }
 }

@@ -1,7 +1,7 @@
 {
   "name": "Ghostlink",
   "short_name": "Ghostlink",
-  "description": "Kit di strumenti in stile hacker: scanner, cifratore di messaggi, password, sensori, fonometro e torcia.",
+  "description": "Kit da hacker per il telefono: mappa ctOS, profiler AR, cifratore, password, terminale, test di velocità, sensori, fonometro e torcia.",
   "lang": "it",
   "id": "./",
   "start_url": "./#home",
@@ -10,16 +10,66 @@
   "orientation": "portrait",
   "background_color": "#05070d",
   "theme_color": "#05070d",
-  "categories": ["utilities", "security"],
+  "categories": [
+    "utilities",
+    "security"
+  ],
   "icons": [
-    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
-    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
   ],
   "shortcuts": [
-    { "name": "Cifratore", "url": "./#cifra", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
-    { "name": "Torcia", "url": "./#torcia", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
-    { "name": "Scanner", "url": "./#scan", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] }
+    {
+      "name": "Mappa ctOS",
+      "url": "./#mappa",
+      "icons": [
+        {
+          "src": "icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Terminale",
+      "url": "./#terminale",
+      "icons": [
+        {
+          "src": "icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Cifratore",
+      "url": "./#cifra",
+      "icons": [
+        {
+          "src": "icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    }
   ]
 }

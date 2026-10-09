@@ -16,6 +16,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
+import android.speech.tts.TextToSpeech;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
@@ -37,6 +38,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Hosts the Ghostlink web app (assets/www) in a full-screen WebView.
@@ -60,6 +62,8 @@ public class MainActivity extends Activity {
     private String torchCameraId;
     private boolean torchLookupDone;
     private volatile boolean torchOn;
+    private TextToSpeech tts;
+    private volatile boolean ttsReady;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -113,6 +117,18 @@ public class MainActivity extends Activity {
         } else {
             web.loadUrl(START_URL);
         }
+
+        tts = new TextToSpeech(getApplicationContext(), new TextToSpeech.OnInitListener() {
+            @Override
+            public void onInit(int status) {
+                if (status == TextToSpeech.SUCCESS) {
+                    int r = tts.setLanguage(Locale.ITALIAN);
+                    ttsReady = r != TextToSpeech.LANG_MISSING_DATA && r != TextToSpeech.LANG_NOT_SUPPORTED;
+                    tts.setPitch(0.7f);
+                    tts.setSpeechRate(0.98f);
+                }
+            }
+        });
     }
 
     @Override
@@ -136,6 +152,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         setTorch(false);
+        if (tts != null) { tts.stop(); tts.shutdown(); }
         web.destroy();
         super.onDestroy();
     }
@@ -335,6 +352,12 @@ public class MainActivity extends Activity {
             if (clip == null || clip.getItemCount() == 0) return "";
             CharSequence text = clip.getItemAt(0).coerceToText(MainActivity.this);
             return text == null ? "" : text.toString();
+        }
+
+        @JavascriptInterface
+        public void speak(String text) {
+            if (!ttsReady || tts == null) return;
+            tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "ghostlink");
         }
 
         @JavascriptInterface

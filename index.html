@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Ghostlink</title>
-<meta name="description" content="Kit di strumenti per il telefono in stile hacker: scanner, cifratore di messaggi, password, sensori, fonometro e torcia.">
+<meta name="description" content="Kit da hacker per il telefono: mappa ctOS, profiler AR, test di velocità, cifratore, password, terminale, sensori, fonometro e torcia.">
 <meta name="theme-color" content="#05070d">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
@@ -13,14 +13,31 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Ghostlink">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css">
 <link rel="stylesheet" href="css/fonts.css">
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
 <div class="scanlines" aria-hidden="true"></div>
 
-<div id="boot" class="boot" aria-hidden="true">
-  <pre id="boot-lines"></pre>
+<div id="intro" class="intro">
+  <canvas id="intro-rain" class="intro-rain" aria-hidden="true"></canvas>
+  <div class="intro-center">
+    <canvas id="intro-hacker" class="intro-hacker" aria-hidden="true"></canvas>
+    <div class="intro-logo"><span class="glitch" data-text="GHOSTLINK">GHOSTLINK</span></div>
+    <div id="intro-lines" class="intro-lines"></div>
+    <div id="intro-granted" class="intro-granted" hidden>Accesso consentito</div>
+    <form id="intro-login" class="intro-login" hidden>
+      <label for="intro-name">Scegli il tuo nome in codice</label>
+      <div class="row">
+        <input id="intro-name" type="text" maxlength="16" autocomplete="off" autocapitalize="characters" spellcheck="false">
+        <button id="intro-dice" class="btn ghost small" type="button">Casuale</button>
+      </div>
+      <button class="btn wide" type="submit">Connettiti</button>
+    </form>
+    <button id="intro-tap" class="btn wide intro-tap" type="button" hidden>Tocca per connetterti</button>
+  </div>
+  <button id="intro-skip" class="intro-skip" type="button">Salta ▸</button>
 </div>
 
 <header class="topbar">
@@ -38,11 +55,22 @@
 
   <!-- HOME -->
   <section class="screen" data-screen="home">
+    <div class="card agent">
+      <canvas id="ghost" class="ghost" aria-hidden="true"></canvas>
+      <div class="agent-body">
+        <div class="eyebrow">Agente operativo</div>
+        <h1 id="agent-name" class="agent-name">—</h1>
+        <div class="agent-rank"><span id="agent-rank">Script kiddie</span> · LIV <b id="agent-lvl">1</b></div>
+        <div class="meter xp"><i id="agent-xp"></i></div>
+        <div id="agent-next" class="note">—</div>
+      </div>
+    </div>
+
     <div class="card profiler">
       <canvas id="radar" class="radar" width="220" height="220" aria-hidden="true"></canvas>
       <div class="profiler-body">
         <div class="eyebrow">Profiler // questo dispositivo</div>
-        <h1 id="node-id" class="node-id">NODO ----</h1>
+        <div id="node-id" class="node-id">NODO ----</div>
         <div class="kv"><span>Sistema</span><b id="p-os">—</b></div>
         <div class="kv"><span>Browser</span><b id="p-browser">—</b></div>
         <div class="kv"><span>Schermo</span><b id="p-screen">—</b></div>
@@ -50,13 +78,27 @@
       </div>
     </div>
 
-    <nav class="tiles" aria-label="Strumenti">
+    <div class="section-label">Ricognizione</div>
+    <nav class="tiles" aria-label="Ricognizione">
+      <a class="tile wide" href="#mappa"><span class="tile-code">MAP</span><span class="tile-name">Mappa ctOS</span><span class="tile-desc">Telecamere, semafori, antenne e hotspot reali intorno a te</span></a>
+      <a class="tile" href="#profiler"><span class="tile-code">PRF</span><span class="tile-name">Profiler AR</span><span class="tile-desc">Inquadra e scansiona come nel gioco</span></a>
       <a class="tile" href="#scan"><span class="tile-code">SCN</span><span class="tile-name">Scanner</span><span class="tile-desc">Cosa sa un sito di te: impronta, rete, IP</span></a>
+      <a class="tile wide" href="#velocita"><span class="tile-code">SPD</span><span class="tile-name">Velocità</span><span class="tile-desc">Ping, download e jitter della tua rete</span></a>
+    </nav>
+
+    <div class="section-label">Strumenti</div>
+    <nav class="tiles" aria-label="Strumenti">
+      <a class="tile wide" href="#terminale"><span class="tile-code">TRM</span><span class="tile-name">Terminale</span><span class="tile-desc">Riga di comando: ip, ping, hash, base64, binario, matrix…</span></a>
       <a class="tile" href="#cifra"><span class="tile-code">CRY</span><span class="tile-name">Cifratore</span><span class="tile-desc">Messaggi cifrati AES-256 da mandare in chat</span></a>
       <a class="tile" href="#password"><span class="tile-code">PWD</span><span class="tile-name">Password</span><span class="tile-desc">Genera chiavi e misura quanto resistono</span></a>
+    </nav>
+
+    <div class="section-label">Hardware</div>
+    <nav class="tiles" aria-label="Hardware">
       <a class="tile" href="#sensori"><span class="tile-code">SNS</span><span class="tile-name">Sensori</span><span class="tile-desc">GPS, bussola e livella in diretta</span></a>
       <a class="tile" href="#audio"><span class="tile-code">AUD</span><span class="tile-name">Fonometro</span><span class="tile-desc">Livello del suono e spettro delle frequenze</span></a>
       <a class="tile" href="#torcia"><span class="tile-code">TRC</span><span class="tile-name">Torcia</span><span class="tile-desc">Luce fissa, strobo e messaggi in Morse</span></a>
+      <a class="tile" href="#impostazioni"><span class="tile-code">CFG</span><span class="tile-name">Impostazioni</span><span class="tile-desc">Nome in codice, suoni, voce, vibrazione</span></a>
     </nav>
 
     <div class="card">
@@ -214,12 +256,127 @@
       <output id="trc-morse" class="morse">—</output>
     </div>
   </section>
+  <!-- MAPPA ctOS -->
+  <section class="screen" data-screen="mappa">
+    <div class="screen-head"><a class="back" href="#home">◂ Home</a><span class="tile-code">MAP</span></div>
+    <h2>Mappa ctOS</h2>
+    <div class="map-wrap">
+      <div id="map" class="map" aria-label="Mappa della zona"></div>
+      <div class="map-hud"><span id="map-status" class="chip">Posizione in attesa</span><span id="map-coords" class="chip"></span></div>
+      <div class="map-reticle" aria-hidden="true"></div>
+      <button id="map-locate" class="map-btn" type="button" aria-label="Centra sulla mia posizione">◎</button>
+    </div>
+    <button id="map-start" class="btn wide" type="button">Scansiona la zona</button>
+    <div id="map-legend" class="legend" aria-label="Filtri"></div>
+    <div id="map-target" class="card target" hidden>
+      <div class="card-head"><span id="tg-type" class="eyebrow">Bersaglio</span><button id="tg-close" class="x" type="button" aria-label="Chiudi">✕</button></div>
+      <div id="tg-name" class="target-name">—</div>
+      <div id="tg-rows"></div>
+      <button id="tg-hack" class="btn wide" type="button">Analizza</button>
+      <div class="meter"><i id="tg-bar"></i></div>
+      <div id="tg-log" class="hack-log"></div>
+    </div>
+    <p class="note">Oggetti reali presi da OpenStreetMap entro 700 m da te: sono dati pubblici e nessun dispositivo viene contattato. Mappa © OpenStreetMap, © CARTO.</p>
+  </section>
+
+  <!-- PROFILER AR -->
+  <section class="screen" data-screen="profiler">
+    <div class="screen-head"><a class="back" href="#home">◂ Home</a><span class="tile-code">PRF</span></div>
+    <h2>Profiler AR</h2>
+    <div class="cam-wrap">
+      <video id="prf-video" playsinline muted></video>
+      <canvas id="prf-overlay" class="cam-overlay" aria-hidden="true"></canvas>
+      <div id="prf-card" class="prf-card" hidden></div>
+    </div>
+    <div class="row">
+      <button id="prf-cam" class="btn ghost" type="button">Accendi fotocamera</button>
+      <button id="prf-scan" class="btn danger" type="button">Scansiona</button>
+    </div>
+    <p class="note">I profili sono inventati a caso, come nel videogioco: non contengono nessun dato reale sulle persone inquadrate.</p>
+  </section>
+
+  <!-- VELOCITÀ -->
+  <section class="screen" data-screen="velocita">
+    <div class="screen-head"><a class="back" href="#home">◂ Home</a><span class="tile-code">SPD</span></div>
+    <h2>Velocità</h2>
+    <div class="card">
+      <canvas id="spd-gauge" class="gauge" width="320" height="200" aria-label="Indicatore di velocità"></canvas>
+      <div class="big center"><span id="spd-value">--</span><small> Mbps</small></div>
+      <div id="spd-phase" class="center dim">Pronto</div>
+      <div class="kv"><span>Ping</span><b id="spd-ping">—</b></div>
+      <div class="kv"><span>Jitter</span><b id="spd-jitter">—</b></div>
+      <div class="kv"><span>Download</span><b id="spd-down">—</b></div>
+      <div class="kv"><span>Upload</span><b id="spd-up">—</b></div>
+      <div class="kv"><span>Server</span><b id="spd-server">—</b></div>
+    </div>
+    <button id="spd-run" class="btn wide" type="button">Avvia test</button>
+    <div id="spd-verdict" class="card" hidden></div>
+    <p class="note">Il test scarica e invia dati di prova ai server Cloudflare: su rete mobile consuma circa 30 MB.</p>
+  </section>
+
+  <!-- TERMINALE -->
+  <section class="screen" data-screen="terminale">
+    <div class="screen-head"><a class="back" href="#home">◂ Home</a><span class="tile-code">TRM</span></div>
+    <h2>Terminale</h2>
+    <div id="term" class="term">
+      <div id="term-out" class="term-out" aria-live="polite"></div>
+      <form id="term-form" class="term-line">
+        <label id="term-prompt" class="term-prompt" for="term-in">ghost@nodo:~$</label>
+        <input id="term-in" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="send">
+      </form>
+    </div>
+    <div id="term-keys" class="term-keys"></div>
+  </section>
+
+  <!-- IMPOSTAZIONI -->
+  <section class="screen" data-screen="impostazioni">
+    <div class="screen-head"><a class="back" href="#home">◂ Home</a><span class="tile-code">CFG</span></div>
+    <h2>Impostazioni</h2>
+    <div class="card">
+      <label class="field"><span>Nome in codice</span>
+        <div class="row">
+          <input id="set-name" type="text" maxlength="16" autocomplete="off" autocapitalize="characters" spellcheck="false">
+          <button id="set-name-save" class="btn small" type="button">Salva</button>
+        </div>
+      </label>
+    </div>
+    <div class="card">
+      <label class="switch"><span>Effetti sonori</span><input id="set-sound" type="checkbox"></label>
+      <label class="switch"><span>Voce dell'hacker</span><input id="set-voice" type="checkbox"></label>
+      <label class="switch"><span>Vibrazione</span><input id="set-vibration" type="checkbox"></label>
+      <div class="field"><span class="eyebrow">Intro all'avvio</span>
+        <div class="seg" role="group" aria-label="Intro all'avvio">
+          <button id="set-intro-full" type="button" aria-pressed="true">Completa</button>
+          <button id="set-intro-short" type="button" aria-pressed="false">Breve</button>
+        </div>
+      </div>
+      <button id="set-test" class="btn ghost wide" type="button">Prova suoni e voce</button>
+    </div>
+    <div class="card">
+      <div class="eyebrow">Carriera</div>
+      <div id="set-stats"></div>
+    </div>
+    <div class="card">
+      <div class="eyebrow">Azzera</div>
+      <p class="note">Cancella nome in codice, livello e preferenze da questo telefono.</p>
+      <button id="set-reset" class="btn ghost wide" type="button">Azzera profilo</button>
+      <div id="set-reset-confirm" class="row" hidden>
+        <button id="set-reset-yes" class="btn danger" type="button">Sì, azzera</button>
+        <button id="set-reset-no" class="btn ghost" type="button">Annulla</button>
+      </div>
+    </div>
+    <p class="note">Ghostlink 2.0 · font Chakra Petch e JetBrains Mono (SIL OFL) · mappa Leaflet, dati © OpenStreetMap.</p>
+  </section>
 </main>
 
 <div id="flash" class="flash" hidden></div>
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
 <script src="js/ui.js" defer></script>
+<script src="js/prefs.js" defer></script>
+<script src="js/sfx.js" defer></script>
+<script src="js/hacker.js" defer></script>
+<script src="js/intro.js" defer></script>
 <script src="js/device.js" defer></script>
 <script src="js/scan.js" defer></script>
 <script src="js/cipher.js" defer></script>
@@ -227,6 +384,12 @@
 <script src="js/sensors.js" defer></script>
 <script src="js/audio.js" defer></script>
 <script src="js/torch.js" defer></script>
+<script src="vendor/leaflet/leaflet.js" defer></script>
+<script src="js/map.js" defer></script>
+<script src="js/profiler.js" defer></script>
+<script src="js/speed.js" defer></script>
+<script src="js/terminal.js" defer></script>
+<script src="js/settings.js" defer></script>
 <script src="js/app.js" defer></script>
 </body>
 </html>

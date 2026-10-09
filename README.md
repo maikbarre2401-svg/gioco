@@ -1,6 +1,6 @@
 # Ghostlink
 
-App per il telefono in stile hacker futuristico (ispirata all'interfaccia di Watch Dogs). Esiste in due forme:
+App per il telefono in stile hacker futuristico (ispirata all'interfaccia di Watch Dogs). All'avvio c'è un'intro animata con hacker incappucciato, pioggia di dati, suoni e voce; al primo avvio scegli il tuo nome in codice e sali di livello usando gli strumenti. Esiste in due forme:
 
 - **APK Android**: un'app vera da installare sul telefono (cartella `android/`).
 - **PWA**: la stessa app aperta dal browser e aggiunta alla schermata Home, anche su iPhone.
@@ -17,25 +17,30 @@ Nell'APK la torcia usa il LED vero, la vibrazione e la condivisione sono quelle 
 
 | Modulo | Funzione |
 | --- | --- |
-| **Profiler** (home) | Dà un codice al tuo telefono, mostra sistema, browser, schermo e quanto sei riconoscibile online. Ha un registro di sistema in tempo reale (batteria, rete, connessione persa o ritrovata). |
-| **Scanner** | Ti mostra tutto quello che un sito può leggere dal tuo telefono senza chiedere niente: impronta digitale, processore, RAM, scheda grafica, rete, IP pubblico, zona e operatore, permessi concessi. |
-| **Cifratore** | Cifra un messaggio con una chiave segreta (AES-256). Lo mandi su WhatsApp o Telegram e solo chi ha Ghostlink e la stessa chiave può leggerlo. |
-| **Password** | Genera password casuali o frasi di parole italiane e analizza le tue: quanto sono forti e quanto tempo servirebbe per craccarle. |
-| **Sensori** | Bussola, coordinate GPS con velocità e altitudine, livella a bolla e rilevatore di scossoni. |
-| **Fonometro** | Misura il rumore in decibel con il microfono e mostra lo spettro delle frequenze. |
-| **Torcia** | Accende il LED posteriore (Android con Chrome) oppure lo schermo. Ha le modalità fissa, strobo e SOS, e può trasmettere qualsiasi messaggio in codice Morse. |
+| **Agente** (home) | Il tuo nome in codice, livello ed esperienza (XP). Usando gli strumenti sali di grado, da "Script kiddie" a "Leggenda della rete". Accanto c'è un hacker animato che reagisce e parla. |
+| **Mappa ctOS** | Mappa scura della tua zona con telecamere, semafori, antenne, hotspot Wi-Fi, defibrillatori e colonnine di ricarica **reali**, presi da OpenStreetMap. Tocca un oggetto per analizzarne i dati pubblici con un'animazione da hacking. |
+| **Profiler AR** | Fotocamera con mirino ctOS: inquadra e "scansiona" per generare un profilo (nome, età, lavoro, curiosità). I profili sono **inventati**, come nel gioco: nessun dato reale sulle persone. |
+| **Scanner** | Impronta digitale del telefono, dispositivo, rete, IP pubblico, zona e operatore, permessi concessi. |
+| **Velocità** | Test reale della connessione (ping, jitter, download, upload) con tachimetro animato, sui server Cloudflare. |
+| **Terminale** | Riga di comando con comandi veri e scherzosi: `ip`, `ping`, `hash`, `base64`, `bin`, `morse`, `matrix`, `hack`, e altri. |
+| **Cifratore** | Messaggi cifrati AES-256 da mandare in chat: solo chi ha la stessa chiave può leggerli. |
+| **Password** | Genera password forti o frasi di parole italiane e analizza quanto resistono. |
+| **Sensori** | Bussola, GPS, livella a bolla e rilevatore di scossoni. |
+| **Fonometro** | Livello del suono in decibel e spettro delle frequenze. |
+| **Torcia** | LED o schermo, con luce fissa, strobo, SOS e messaggi in Morse. |
+| **Impostazioni** | Nome in codice, effetti sonori, voce, vibrazione, tipo di intro e la tua carriera. |
 
-Tutto avviene sul telefono: l'unica richiesta a internet è quella per scoprire l'IP pubblico nello Scanner.
+I suoni e la musica dell'intro sono creati dall'app al momento (sintetizzati), non sono presi dal videogioco. Le uniche richieste a internet sono la mappa, la ricerca dell'IP e il test di velocità.
 
 ## Progetto Android
 
 ```
 android/
   app/build.gradle                   versione, SDK, firma
-  app/src/main/AndroidManifest.xml   permessi (posizione, microfono, vibrazione)
+  app/src/main/AndroidManifest.xml   permessi (posizione, fotocamera, microfono, vibrazione)
   app/src/main/java/.../MainActivity.java
                                      WebView a schermo intero, permessi, torcia LED,
-                                     vibrazione, appunti e condivisione
+                                     vibrazione, voce (TextToSpeech), appunti e condivisione
   app/src/main/res/                  icone, nome, colori, tema
   keystore/ghostlink.jks             chiave di firma di sviluppo
 ```
@@ -81,7 +86,16 @@ Sensori, microfono e torcia funzionano solo su `https` o su `localhost`.
 index.html            tutte le schermate
 css/style.css         grafica
 css/fonts.css         font
-js/app.js             avvio, navigazione, profiler, registro
+js/app.js             avvio, navigazione, agente, livelli
+js/intro.js           intro animata (hacker, pioggia di dati, voce)
+js/hacker.js          hacker incappucciato animato su canvas
+js/sfx.js             suoni sintetizzati e voce
+js/prefs.js           nome in codice, impostazioni, esperienza
+js/map.js             Mappa ctOS (Leaflet + OpenStreetMap)
+js/profiler.js        Profiler AR (fotocamera)
+js/speed.js           test di velocità
+js/terminal.js        terminale
+js/settings.js        impostazioni
 js/device.js          lettura delle informazioni del dispositivo
 js/scan.js            Scanner
 js/cipher.js          Cifratore (AES-GCM + PBKDF2)
@@ -94,6 +108,7 @@ fonts/                font inclusi (SIL Open Font License)
 sw.js                 funzionamento offline
 manifest.webmanifest  dati per l'installazione
 icons/                icone dell'app
+vendor/leaflet/       libreria della mappa (BSD)
 android/              progetto Android (APK)
 apk/ghostlink.apk     APK pronto da installare
 ```
