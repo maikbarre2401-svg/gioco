@@ -9,6 +9,10 @@ window.GL = window.GL || {};
     mappa: 'Zone scansionate', analisi: 'Oggetti analizzati', profili: 'Profili generati',
     'test velocità': 'Test di velocità', comandi: 'Comandi eseguiti', messaggi: 'Messaggi cifrati',
     password: 'Password generate', morse: 'Messaggi in Morse',
+    cassaforte: 'Accessi cassaforte', steganografia: 'Foto con segreti',
+    'controllo breach': 'Password controllate', qr: 'QR usati', metadati: 'Foto analizzate',
+    visione: 'Visione usata', decoder: 'Conversioni', voce: 'Voce modificata',
+    sismografo: 'Sismografo', iss: 'Tracker ISS', analisi: 'Oggetti analizzati',
   };
 
   function renderStats() {

@@ -1,7 +1,7 @@
 {
   "name": "Ghostlink",
   "short_name": "Ghostlink",
-  "description": "Kit da hacker per il telefono: mappa ctOS, profiler AR, cifratore, password, terminale, test di velocità, sensori, fonometro e torcia.",
+  "description": "Super-kit da hacker per il telefono: mappa ctOS, cassaforte cifrata, steganografia, QR, metadati foto, visione notturna, decoder, cambia voce, sismografo, tracker ISS e altro.",
   "lang": "it",
   "id": "./",
   "start_url": "./#home",
@@ -42,6 +42,26 @@
   ],
   "shortcuts": [
     {
+      "name": "Cassaforte",
+      "url": "./#cassaforte",
+      "icons": [
+        {
+          "src": "icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "QR Studio",
+      "url": "./#qr",
+      "icons": [
+        {
+          "src": "icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
       "name": "Mappa ctOS",
       "url": "./#mappa",
       "icons": [
@@ -54,16 +74,6 @@
     {
       "name": "Terminale",
       "url": "./#terminale",
-      "icons": [
-        {
-          "src": "icons/icon-192.png",
-          "sizes": "192x192"
-        }
-      ]
-    },
-    {
-      "name": "Cifratore",
-      "url": "./#cifra",
       "icons": [
         {
           "src": "icons/icon-192.png",

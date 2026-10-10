@@ -1,5 +1,5 @@
 // Offline support: the whole app (fonts included) is cached on install.
-const VERSION = 'ghostlink-v3';
+const VERSION = 'ghostlink-v4';
 const SHELL = [
   './',
   'index.html',
@@ -8,6 +8,8 @@ const SHELL = [
   'css/style.css',
   'vendor/leaflet/leaflet.js',
   'vendor/leaflet/leaflet.css',
+  'vendor/qr/jsQR.js',
+  'vendor/qr/qrcode.js',
   'js/app.js',
   'js/ui.js',
   'js/prefs.js',
@@ -26,6 +28,16 @@ const SHELL = [
   'js/speed.js',
   'js/terminal.js',
   'js/settings.js',
+  'js/decoder.js',
+  'js/vault.js',
+  'js/stego.js',
+  'js/breach.js',
+  'js/qr.js',
+  'js/metadata.js',
+  'js/vision.js',
+  'js/voice.js',
+  'js/seismo.js',
+  'js/iss.js',
   'fonts/ChakraPetch-400-latin-ext.woff2',
   'fonts/ChakraPetch-400-latin.woff2',
   'fonts/ChakraPetch-600-latin-ext.woff2',

@@ -86,6 +86,20 @@
       <a class="tile wide" href="#velocita"><span class="tile-code">SPD</span><span class="tile-name">Velocità</span><span class="tile-desc">Ping, download e jitter della tua rete</span></a>
     </nav>
 
+    <div class="section-label">Avanzati</div>
+    <nav class="tiles" aria-label="Avanzati">
+      <a class="tile wide" href="#cassaforte"><span class="tile-code">VLT</span><span class="tile-name">Cassaforte</span><span class="tile-desc">Password e note cifrate con PIN, solo sul tuo telefono</span></a>
+      <a class="tile" href="#stego"><span class="tile-code">STG</span><span class="tile-name">Steganografia</span><span class="tile-desc">Nascondi un messaggio dentro una foto</span></a>
+      <a class="tile" href="#breach"><span class="tile-code">BRC</span><span class="tile-name">Password spiata?</span><span class="tile-desc">Controlla se è finita in un data breach</span></a>
+      <a class="tile" href="#qr"><span class="tile-code">QR</span><span class="tile-name">QR Studio</span><span class="tile-desc">Leggi e crea QR, anche per il Wi-Fi</span></a>
+      <a class="tile" href="#metadati"><span class="tile-code">EXF</span><span class="tile-name">Metadati foto</span><span class="tile-desc">Cosa rivela una foto: GPS, fotocamera, data</span></a>
+      <a class="tile" href="#visione"><span class="tile-code">VIS</span><span class="tile-name">Visione</span><span class="tile-desc">Notturna, termica, contorni e raggi-X</span></a>
+      <a class="tile" href="#decoder"><span class="tile-code">DEC</span><span class="tile-name">Decoder</span><span class="tile-desc">Hex, binario, base64, URL, ROT13, JWT, hash</span></a>
+      <a class="tile" href="#voce"><span class="tile-code">VOX</span><span class="tile-name">Cambia voce</span><span class="tile-desc">Robot, grave, acuto, eco, radio + registratore</span></a>
+      <a class="tile" href="#sismografo"><span class="tile-code">SEI</span><span class="tile-name">Sismografo</span><span class="tile-desc">Vibrazioni e scosse con l'accelerometro</span></a>
+      <a class="tile" href="#iss"><span class="tile-code">ISS</span><span class="tile-name">Tracker ISS</span><span class="tile-desc">La Stazione Spaziale in diretta sulla mappa</span></a>
+    </nav>
+
     <div class="section-label">Strumenti</div>
     <nav class="tiles" aria-label="Strumenti">
       <a class="tile wide" href="#terminale"><span class="tile-code">TRM</span><span class="tile-name">Terminale</span><span class="tile-desc">Riga di comando: ip, ping, hash, base64, binario, matrix…</span></a>
@@ -367,6 +381,187 @@
     </div>
     <p class="note">Ghostlink 2.0 · font Chakra Petch e JetBrains Mono (SIL OFL) · mappa Leaflet, dati © OpenStreetMap.</p>
   </section>
+
+  <!-- CASSAFORTE -->
+  <section class="screen" data-screen="cassaforte">
+    <div class="screen-head"><a class="back" href="#home">◂ Home</a><span class="tile-code">VLT</span></div>
+    <h2>Cassaforte</h2>
+    <div id="vault-locked" class="card">
+      <p class="lead">Un posto cifrato dove tenere password e note. Si apre solo con il tuo PIN; se lo dimentichi, non si recupera.</p>
+      <label class="field"><span>PIN</span>
+        <input id="vault-pin" type="password" inputmode="numeric" autocomplete="off" placeholder="Almeno 4 cifre">
+      </label>
+      <button id="vault-unlock" class="btn wide" type="button">Sblocca</button>
+      <p id="vault-first" class="note" hidden>Scegli un PIN: diventerà la chiave della tua cassaforte.</p>
+      <p class="note">Cifratura AES-256 con chiave derivata dal PIN (PBKDF2). Tutto resta su questo telefono.</p>
+    </div>
+    <div id="vault-open" hidden>
+      <div class="row"><button id="vault-lock" class="btn ghost wide" type="button">🔒 Blocca cassaforte</button></div>
+      <div id="vault-list" class="stack"></div>
+      <div class="card">
+        <div class="eyebrow">Aggiungi voce</div>
+        <input id="vault-title" type="text" placeholder="Nome (es. Email, Wi-Fi casa)" autocomplete="off">
+        <textarea id="vault-secret" rows="2" placeholder="Password o nota segreta"></textarea>
+        <button id="vault-add" class="btn wide" type="button">Salva nella cassaforte</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- STEGANOGRAFIA -->
+  <section class="screen" data-screen="stego">
+    <div class="screen-head"><a class="back" href="#home">◂ Home</a><span class="tile-code">STG</span></div>
+    <h2>Steganografia</h2>
+    <p class="lead">Nascondi un messaggio segreto dentro una foto: l'immagine sembra identica, ma solo chi usa Ghostlink può tirarlo fuori.</p>
+    <label class="btn ghost wide" for="stego-file">Scegli una foto</label>
+    <input id="stego-file" type="file" accept="image/*" hidden>
+    <img id="stego-preview" class="preview-img" alt="Foto scelta" hidden>
+    <label class="field"><span>Messaggio</span><textarea id="stego-msg" rows="3" placeholder="Il segreto da nascondere"></textarea></label>
+    <label class="field"><span>Chiave (facoltativa, per cifrarlo)</span><input id="stego-key" type="text" autocomplete="off" placeholder="Lascia vuoto per non cifrare"></label>
+    <div class="row">
+      <button id="stego-hide" class="btn" type="button">Nascondi</button>
+      <button id="stego-reveal" class="btn ghost" type="button">Estrai messaggio</button>
+    </div>
+    <img id="stego-result" class="preview-img" alt="Foto con il messaggio nascosto" hidden>
+    <a id="stego-save" class="btn ghost wide" download="ghostlink.png" hidden>Salva la foto</a>
+    <p class="note">Il messaggio viene scritto nei bit meno importanti dei pixel. Funziona se la foto resta in PNG: se la ricomprimi (per esempio inoltrandola come immagine in chat) il messaggio può perdersi.</p>
+  </section>
+
+  <!-- BREACH -->
+  <section class="screen" data-screen="breach">
+    <div class="screen-head"><a class="back" href="#home">◂ Home</a><span class="tile-code">BRC</span></div>
+    <h2>Password spiata?</h2>
+    <p class="lead">Controlla se una password è già finita in una fuga di dati e quindi è nelle mani degli hacker.</p>
+    <div class="row">
+      <input id="breach-in" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Scrivi la password">
+      <button id="breach-show" class="btn ghost small" type="button" aria-pressed="false">Mostra</button>
+    </div>
+    <button id="breach-run" class="btn wide" type="button">Controlla</button>
+    <div id="breach-result" class="card" hidden></div>
+    <p class="note">Metodo sicuro (k-anonymity): al server arrivano solo le prime 5 cifre dell'impronta della password, mai la password. Dati di Have I Been Pwned.</p>
+  </section>
+
+  <!-- QR -->
+  <section class="screen" data-screen="qr">
+    <div class="screen-head"><a class="back" href="#home">◂ Home</a><span class="tile-code">QR</span></div>
+    <h2>QR Studio</h2>
+    <div class="card">
+      <div class="eyebrow">Leggi un QR</div>
+      <div class="cam-wrap qr-cam"><video id="qr-video" playsinline muted></video><div class="map-reticle" aria-hidden="true"></div></div>
+      <button id="qr-cam" class="btn wide" type="button">Accendi fotocamera</button>
+      <div id="qr-found" class="card" hidden>
+        <div class="eyebrow">Contenuto del QR</div>
+        <div id="qr-found-text" class="qr-found-text"></div>
+        <div class="row">
+          <a id="qr-open" class="btn" target="_blank" rel="noopener" hidden>Apri link</a>
+          <button id="qr-copy" class="btn ghost" type="button">Copia</button>
+          <button id="qr-rescan" class="btn ghost" type="button">Leggi un altro</button>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="eyebrow">Crea un QR</div>
+      <div class="seg" role="group" aria-label="Tipo di QR">
+        <button id="qr-mode-text" type="button" aria-pressed="true">Testo / Link</button>
+        <button id="qr-mode-wifi" type="button" aria-pressed="false">Wi-Fi</button>
+      </div>
+      <div id="qr-gen-text"><input id="qr-gen-in" type="text" placeholder="Testo o https://…" autocomplete="off"></div>
+      <div id="qr-gen-wifi" hidden>
+        <input id="qr-wifi-ssid" type="text" placeholder="Nome della rete (SSID)" autocomplete="off">
+        <input id="qr-wifi-pass" type="text" placeholder="Password del Wi-Fi" autocomplete="off">
+        <select id="qr-wifi-type"><option value="WPA">WPA/WPA2</option><option value="WEP">WEP</option><option value="nopass">Nessuna password</option></select>
+      </div>
+      <button id="qr-generate" class="btn wide" type="button">Genera QR</button>
+      <canvas id="qr-canvas" class="qr-canvas" hidden></canvas>
+    </div>
+  </section>
+
+  <!-- METADATI -->
+  <section class="screen" data-screen="metadati">
+    <div class="screen-head"><a class="back" href="#home">◂ Home</a><span class="tile-code">EXF</span></div>
+    <h2>Metadati foto</h2>
+    <p class="lead">Una foto può nascondere dove e quando è stata scattata, e con quale telefono. Scegline una e scopri cosa rivela.</p>
+    <label class="btn wide" for="meta-file">Scegli una foto</label>
+    <input id="meta-file" type="file" accept="image/*" hidden>
+    <img id="meta-preview" class="preview-img" alt="Foto analizzata" hidden>
+    <div id="meta-out" class="stack"></div>
+  </section>
+
+  <!-- VISIONE -->
+  <section class="screen" data-screen="visione">
+    <div class="screen-head"><a class="back" href="#home">◂ Home</a><span class="tile-code">VIS</span></div>
+    <h2>Visione</h2>
+    <div class="cam-wrap"><video id="vis-video" playsinline muted hidden></video><canvas id="vis-canvas" class="cam-overlay"></canvas></div>
+    <div id="vis-modes" class="chip-row"></div>
+    <div class="row">
+      <button id="vis-cam" class="btn" type="button">Accendi</button>
+      <button id="vis-torch" class="btn ghost" type="button" aria-pressed="false" hidden>Torcia</button>
+    </div>
+    <p class="note">I filtri sono elaborati sul telefono in tempo reale. La visione notturna schiarisce il buio ma non vede al buio totale: per quello serve l'infrarosso, che i telefoni non hanno.</p>
+  </section>
+
+  <!-- DECODER -->
+  <section class="screen" data-screen="decoder">
+    <div class="screen-head"><a class="back" href="#home">◂ Home</a><span class="tile-code">DEC</span></div>
+    <h2>Decoder</h2>
+    <label class="field"><span>Testo</span><textarea id="dec-in" rows="3" placeholder="Scrivi o incolla qui"></textarea></label>
+    <div id="dec-ops" class="chip-row"></div>
+    <label class="field"><span>Risultato</span><textarea id="dec-out" rows="4" readonly></textarea></label>
+    <div class="row">
+      <button id="dec-copy" class="btn ghost" type="button">Copia</button>
+      <button id="dec-swap" class="btn ghost" type="button">Risultato → ingresso</button>
+    </div>
+  </section>
+
+  <!-- VOCE -->
+  <section class="screen" data-screen="voce">
+    <div class="screen-head"><a class="back" href="#home">◂ Home</a><span class="tile-code">VOX</span></div>
+    <h2>Cambia voce</h2>
+    <div class="card">
+      <canvas id="voice-wave" class="spectrum" width="600" height="140" aria-label="Onda della voce"></canvas>
+      <div id="voice-modes" class="chip-row"></div>
+      <div class="row">
+        <button id="voice-start" class="btn" type="button">Accendi microfono</button>
+        <button id="voice-rec" class="btn ghost" type="button" disabled>Registra</button>
+      </div>
+      <audio id="voice-playback" controls hidden></audio>
+    </div>
+    <p class="note">Parla e ti ascolti con la voce modificata in tempo reale. Usa gli auricolari per evitare il fischio. La registrazione si può riascoltare qui.</p>
+  </section>
+
+  <!-- SISMOGRAFO -->
+  <section class="screen" data-screen="sismografo">
+    <div class="screen-head"><a class="back" href="#home">◂ Home</a><span class="tile-code">SEI</span></div>
+    <h2>Sismografo</h2>
+    <div class="card">
+      <canvas id="seis-canvas" class="spectrum" width="600" height="200" aria-label="Tracciato del sismografo"></canvas>
+      <div class="big center"><span id="seis-mag">0.0</span><small> magnitudine</small></div>
+      <div id="seis-label" class="center dim">Fermo</div>
+      <div class="kv"><span>Adesso</span><b id="seis-now">—</b></div>
+      <div class="kv"><span>Picco</span><b id="seis-peak">—</b></div>
+      <div class="kv"><span>Eventi</span><b id="seis-events">0</b></div>
+      <div class="row">
+        <button id="seis-start" class="btn" type="button">Avvia sismografo</button>
+        <button id="seis-reset" class="btn ghost" type="button">Azzera</button>
+      </div>
+    </div>
+    <p class="note">Misura le vibrazioni del telefono con l'accelerometro. La "magnitudine" è indicativa e per gioco: non è un sismografo ufficiale.</p>
+  </section>
+
+  <!-- ISS -->
+  <section class="screen" data-screen="iss">
+    <div class="screen-head"><a class="back" href="#home">◂ Home</a><span class="tile-code">ISS</span></div>
+    <h2>Tracker ISS</h2>
+    <div class="map-wrap"><div id="iss-map" class="map"></div><div class="map-hud"><span id="iss-status" class="chip">collegamento…</span></div></div>
+    <div class="card">
+      <div class="kv"><span>Latitudine</span><b id="iss-lat">—</b></div>
+      <div class="kv"><span>Longitudine</span><b id="iss-lon">—</b></div>
+      <div class="kv"><span>Altitudine</span><b id="iss-alt">—</b></div>
+      <div class="kv"><span>Velocità</span><b id="iss-vel">—</b></div>
+      <div class="kv"><span>Luce</span><b id="iss-vis">—</b></div>
+      <div class="kv"><span>Distanza</span><b id="iss-dist">—</b></div>
+    </div>
+    <p class="note">La Stazione Spaziale Internazionale orbita a circa 420 km e fa il giro della Terra in 90 minuti. Posizione aggiornata ogni 5 secondi.</p>
+  </section>
 </main>
 
 <div id="flash" class="flash" hidden></div>
@@ -385,10 +580,22 @@
 <script src="js/audio.js" defer></script>
 <script src="js/torch.js" defer></script>
 <script src="vendor/leaflet/leaflet.js" defer></script>
+<script src="vendor/qr/jsQR.js" defer></script>
+<script src="vendor/qr/qrcode.js" defer></script>
 <script src="js/map.js" defer></script>
 <script src="js/profiler.js" defer></script>
 <script src="js/speed.js" defer></script>
 <script src="js/terminal.js" defer></script>
+<script src="js/decoder.js" defer></script>
+<script src="js/vault.js" defer></script>
+<script src="js/stego.js" defer></script>
+<script src="js/breach.js" defer></script>
+<script src="js/qr.js" defer></script>
+<script src="js/metadata.js" defer></script>
+<script src="js/vision.js" defer></script>
+<script src="js/voice.js" defer></script>
+<script src="js/seismo.js" defer></script>
+<script src="js/iss.js" defer></script>
 <script src="js/settings.js" defer></script>
 <script src="js/app.js" defer></script>
 </body>

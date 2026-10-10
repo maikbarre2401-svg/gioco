@@ -11,6 +11,9 @@ window.GL = window.GL || {};
     mappa: GL.map, profiler: GL.profiler, velocita: GL.speed, terminale: GL.terminal,
     scan: GL.scan, cifra: GL.cipher, password: GL.password,
     sensori: GL.sensors, audio: GL.audio, torcia: GL.torch, impostazioni: GL.settings,
+    cassaforte: GL.vault, stego: GL.stego, breach: GL.breach, qr: GL.qr,
+    metadati: GL.metadata, visione: GL.vision, decoder: GL.decoder,
+    voce: GL.voice, sismografo: GL.seismo, iss: GL.iss,
   };
   let current = null;
 

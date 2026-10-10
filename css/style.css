@@ -424,3 +424,38 @@ main:not(:has(.screen.active)) .screen[data-screen="home"] { display: flex; flex
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* ---------- advanced tools (v3) ---------- */
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip-btn {
+  padding: 8px 12px; border: 1px solid var(--line); background: var(--panel); color: var(--fg);
+  font: 600 12px var(--f-mono); cursor: pointer; letter-spacing: .02em;
+}
+.chip-btn[aria-pressed="true"] { background: var(--cyan); color: var(--bg); border-color: var(--cyan); }
+
+.preview-img { width: 100%; max-height: 300px; object-fit: contain; border: 1px solid var(--line); background: #000; display: block; }
+
+/* vault */
+.vault-item { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--line); background: var(--panel); }
+.vault-item-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.vault-item-head b { overflow-wrap: anywhere; }
+.tag { font: 600 10px var(--f-display); letter-spacing: .12em; text-transform: uppercase; color: var(--dim); border: 1px solid var(--line); padding: 2px 6px; flex: none; }
+.vault-secret { font: 15px var(--f-mono); color: var(--cyan); overflow-wrap: anywhere; padding: 6px 0; border-bottom: 1px dashed var(--line); }
+.btn.ghost.small.danger { color: var(--magenta); box-shadow: inset 0 0 0 1px var(--magenta); }
+
+/* breach */
+.breach-big { font: 700 24px var(--f-display); letter-spacing: .06em; text-align: center; padding: 6px 0; }
+.breach-big.hot { color: var(--magenta); }
+.breach-big.good { color: var(--ok); }
+#breach-result p { margin: 4px 0; }
+
+/* qr */
+.qr-cam { aspect-ratio: 1; max-height: 50vh; }
+.qr-cam video { width: 100%; height: 100%; object-fit: cover; }
+.qr-found-text { font: 14px var(--f-mono); color: var(--cyan); overflow-wrap: anywhere; padding: 6px 0; }
+.qr-canvas { display: block; margin: 4px auto 0; image-rendering: pixelated; border: 6px solid #e8f6ff; max-width: 100%; }
+#qr-gen-wifi { display: flex; flex-direction: column; gap: 8px; }
+#qr-gen-wifi select { font: 14px var(--f-mono); color: var(--fg); background: rgba(5,7,13,.8); border: 1px solid var(--line); padding: 11px 12px; }
+
+/* seismograph / voice share spectrum styling already */
+.big small { display: inline; }

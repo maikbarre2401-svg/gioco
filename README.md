@@ -32,6 +32,24 @@ Nell'APK la torcia usa il LED vero, la vibrazione e la condivisione sono quelle 
 
 I suoni e la musica dell'intro sono creati dall'app al momento (sintetizzati), non sono presi dal videogioco. Le uniche richieste a internet sono la mappa, la ricerca dell'IP e il test di velocità.
 
+
+### Strumenti avanzati (v3.0)
+
+| Modulo | Funzione |
+| --- | --- |
+| **Cassaforte** | Password e note cifrate con AES-256, protette da un PIN. Tutto resta sul telefono; senza il PIN non si apre. |
+| **Steganografia** | Nasconde un messaggio (anche cifrato) dentro i pixel di una foto. L'immagine sembra identica, ma con Ghostlink si può ri-estrarre. |
+| **Password spiata?** | Controlla se una password è finita in un data breach, con il metodo sicuro k-anonymity (la password non lascia mai il telefono). Dati di Have I Been Pwned. |
+| **QR Studio** | Legge i QR con la fotocamera e ne crea di nuovi, compreso quello per condividere il Wi-Fi. |
+| **Metadati foto (EXIF)** | Mostra cosa nasconde una foto: posizione GPS, fotocamera, data e impostazioni di scatto. |
+| **Visione** | Filtri sulla fotocamera in tempo reale: notturna, termica, contorni, raggi-X e nitido. |
+| **Decoder** | Converte tra testo, base64, esadecimale, binario, URL, ROT13, Morse; decodifica JWT; calcola MD5 e SHA-1/256/512. |
+| **Cambia voce** | Modifica la voce dal microfono in tempo reale (robot, grave, acuto, eco, radio, alieno) e registra. |
+| **Sismografo** | Traccia le vibrazioni del telefono con l'accelerometro e stima una "magnitudine" (per gioco). |
+| **Tracker ISS** | Mostra la Stazione Spaziale Internazionale in diretta sulla mappa, con velocità, altitudine e distanza da te. |
+
+La cassaforte, la steganografia e il decoder funzionano anche offline. Password spiata e Tracker ISS richiedono la connessione.
+
 ## Progetto Android
 
 ```
@@ -96,6 +114,16 @@ js/profiler.js        Profiler AR (fotocamera)
 js/speed.js           test di velocità
 js/terminal.js        terminale
 js/settings.js        impostazioni
+js/decoder.js         Decoder (base64, hex, binario, JWT, hash…)
+js/vault.js           Cassaforte cifrata con PIN
+js/stego.js           Steganografia (nascondi messaggi nelle foto)
+js/breach.js          Password nei data breach (k-anonymity)
+js/qr.js              QR Studio (lettura e creazione)
+js/metadata.js        Metadati EXIF delle foto
+js/vision.js          Filtri fotocamera (notturna, termica…)
+js/voice.js           Cambia voce e registratore
+js/seismo.js          Sismografo
+js/iss.js             Tracker della Stazione Spaziale
 js/device.js          lettura delle informazioni del dispositivo
 js/scan.js            Scanner
 js/cipher.js          Cifratore (AES-GCM + PBKDF2)
@@ -109,6 +137,7 @@ sw.js                 funzionamento offline
 manifest.webmanifest  dati per l'installazione
 icons/                icone dell'app
 vendor/leaflet/       libreria della mappa (BSD)
+vendor/qr/            lettura QR (jsQR, Apache-2.0) e creazione QR (MIT)
 android/              progetto Android (APK)
 apk/ghostlink.apk     APK pronto da installare
 ```
