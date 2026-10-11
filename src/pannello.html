@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pannello assistente</title>
+<style>
+  :root {
+    --sfondo: #f4f5f7; --card: #ffffff; --testo: #1d2330; --tenue: #667085; --bordo: #e3e6ec;
+    --accento: #2f6fed; --accento-testo: #ffffff; --ok: #1a7f4b; --ok-sfondo: #e3f5ea;
+    --avviso: #9a6200; --avviso-sfondo: #fff3d6; --errore: #b42318; --errore-sfondo: #fde7e5;
+    --neutro-sfondo: #eef0f4; --tu: #dcf3e3; --bot: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --sfondo: #12151b; --card: #1b2029; --testo: #e6e9ef; --tenue: #98a2b3; --bordo: #2c3340;
+      --accento: #5b8ff9; --accento-testo: #0b1020; --ok: #5fd39a; --ok-sfondo: #163326;
+      --avviso: #f2c063; --avviso-sfondo: #3a2e12; --errore: #ff8a80; --errore-sfondo: #3d1d1b;
+      --neutro-sfondo: #262c37; --tu: #1f3b2c; --bot: #232a35;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--sfondo); color: var(--testo); }
+  header { position: sticky; top: 0; z-index: 2; background: var(--card); border-bottom: 1px solid var(--bordo); }
+  .barra { max-width: 1000px; margin: 0 auto; padding: 12px 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  h1 { font-size: 18px; margin: 0; flex: 1; }
+  nav { max-width: 1000px; margin: 0 auto; padding: 0 16px; display: flex; gap: 4px; overflow-x: auto; }
+  nav button { background: none; border: 0; border-bottom: 2px solid transparent; padding: 10px 12px; color: var(--tenue); font: inherit; cursor: pointer; white-space: nowrap; }
+  nav button.attivo { color: var(--testo); border-color: var(--accento); font-weight: 600; }
+  main { max-width: 1000px; margin: 0 auto; padding: 16px; }
+  .sezione { display: none; } .sezione.attiva { display: block; }
+  .griglia { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+  .card { background: var(--card); border: 1px solid var(--bordo); border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+  .card h2 { font-size: 15px; margin: 0 0 8px; }
+  .numero { font-size: 26px; font-weight: 700; }
+  .tenue { color: var(--tenue); font-size: 13px; }
+  .pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--neutro-sfondo); }
+  .pill.ok { background: var(--ok-sfondo); color: var(--ok); }
+  .pill.avviso { background: var(--avviso-sfondo); color: var(--avviso); }
+  .pill.errore { background: var(--errore-sfondo); color: var(--errore); }
+  button.btn { background: var(--accento); color: var(--accento-testo); border: 0; border-radius: 8px; padding: 8px 14px; font: inherit; font-weight: 600; cursor: pointer; }
+  button.btn.secondario { background: var(--neutro-sfondo); color: var(--testo); }
+  button.btn.pericolo { background: var(--errore-sfondo); color: var(--errore); }
+  input[type=text], input[type=number], input[type=time], textarea, select {
+    width: 100%; padding: 8px 10px; border: 1px solid var(--bordo); border-radius: 8px; background: var(--sfondo); color: var(--testo); font: inherit;
+  }
+  textarea { resize: vertical; min-height: 70px; }
+  label.campo { display: block; margin-bottom: 12px; }
+  label.campo > span { display: block; font-weight: 600; margin-bottom: 4px; }
+  label.check { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; font-weight: 600; }
+  .aiuto { display: block; color: var(--tenue); font-size: 13px; margin-top: 3px; font-weight: 400; }
+  .qr img { width: 260px; max-width: 100%; background: #fff; padding: 8px; border-radius: 8px; }
+  .evento { border-left: 3px solid var(--bordo); padding: 8px 12px; margin-bottom: 10px; background: var(--card); border-radius: 0 8px 8px 0; }
+  .evento.risposto, .evento.fissa { border-color: var(--ok); }
+  .evento.ignorato { border-color: var(--tenue); }
+  .evento.errore { border-color: var(--errore); }
+  .evento .testa { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px; color: var(--tenue); }
+  .evento .msg { margin: 6px 0 2px; white-space: pre-wrap; word-break: break-word; }
+  .evento .risp { margin-top: 4px; white-space: pre-wrap; word-break: break-word; color: var(--ok); }
+  .evento .analisi { margin-top: 6px; font-size: 13px; color: var(--tenue); }
+  .chat { display: flex; flex-direction: column; gap: 8px; min-height: 200px; max-height: 55vh; overflow-y: auto; padding: 8px; background: var(--sfondo); border-radius: 8px; margin-bottom: 10px; }
+  .bolla { max-width: 80%; padding: 8px 12px; border-radius: 12px; white-space: pre-wrap; word-break: break-word; }
+  .bolla.tu { align-self: flex-end; background: var(--tu); }
+  .bolla.bot { align-self: flex-start; background: var(--bot); border: 1px solid var(--bordo); }
+  .bolla .tenue { display: block; margin-top: 4px; }
+  .riga { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .riga > input { flex: 1; min-width: 160px; }
+  .regola { position: relative; }
+  .regola .rimuovi { position: absolute; top: 12px; right: 12px; }
+  .due { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 600px) { .due { grid-template-columns: 1fr; } }
+  .avviso-salvato { color: var(--ok); font-weight: 600; margin-left: 8px; }
+  .pausa-riga { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--bordo); }
+  details summary { cursor: pointer; color: var(--tenue); margin-bottom: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="barra">
+    <h1>🤖 Assistente AI</h1>
+    <span id="stato-globale" class="pill">…</span>
+    <button class="btn" id="btn-attivo">…</button>
+  </div>
+  <nav id="schede">
+    <button data-s="stato" class="attivo">Stato</button>
+    <button data-s="messaggi">Messaggi</button>
+    <button data-s="prova">Prova il bot</button>
+    <button data-s="istruzioni">Come rispondere</button>
+    <button data-s="regole">Regole</button>
+    <button data-s="impostazioni">Impostazioni</button>
+  </nav>
+</header>
+
+<main>
+  <!-- STATO -->
+  <section class="sezione attiva" id="s-stato">
+    <div class="griglia">
+      <div class="card"><h2>WhatsApp</h2><div id="wa-stato"></div></div>
+      <div class="card"><h2>Telegram</h2><div id="tg-stato"></div></div>
+      <div class="card"><h2>Groq (AI)</h2><div id="groq-stato"></div></div>
+    </div>
+    <div class="card qr" id="wa-qr" hidden></div>
+    <div class="griglia">
+      <div class="card"><div class="tenue">Messaggi ricevuti</div><div class="numero" id="n-ricevuti">0</div></div>
+      <div class="card"><div class="tenue">Risposte inviate</div><div class="numero" id="n-risposti">0</div></div>
+      <div class="card"><div class="tenue">Ignorati</div><div class="numero" id="n-ignorati">0</div></div>
+      <div class="card"><div class="tenue">Errori</div><div class="numero" id="n-errori">0</div></div>
+    </div>
+    <div class="card">
+      <h2>Chat in pausa</h2>
+      <p class="tenue">Quando rispondi tu di persona a qualcuno, il bot si ferma in quella chat per un po'. Qui puoi riattivarlo.</p>
+      <div id="pause"></div>
+    </div>
+  </section>
+
+  <!-- MESSAGGI -->
+  <section class="sezione" id="s-messaggi">
+    <p class="tenue">Gli ultimi messaggi ricevuti, l'analisi dell'AI e cosa ha risposto il bot. Si aggiorna da solo.</p>
+    <div id="eventi"></div>
+  </section>
+
+  <!-- PROVA -->
+  <section class="sezione" id="s-prova">
+    <div class="card">
+      <h2>Prova il bot</h2>
+      <p class="tenue">Scrivi come se fossi un contatto: il bot usa le stesse istruzioni e regole, ma la risposta resta qui.</p>
+      <div class="chat" id="chat-prova"></div>
+      <form class="riga" id="form-prova">
+        <input type="text" id="testo-prova" placeholder="Scrivi un messaggio…" autocomplete="off">
+        <button class="btn" type="submit">Invia</button>
+        <button class="btn secondario" type="button" id="reset-prova">Ricomincia</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- ISTRUZIONI -->
+  <section class="sezione" id="s-istruzioni">
+    <div class="card">
+      <h2>Come deve rispondere il bot</h2>
+      <p class="tenue">Scrivi con parole tue chi è il bot, che tono usare e le informazioni che deve conoscere (orari, prezzi, dove sei, cosa fai…). Più dettagli metti, meglio risponde.</p>
+      <textarea id="istruzioni" rows="18"></textarea>
+      <p><button class="btn" id="salva-istruzioni">Salva</button><span class="avviso-salvato" id="ok-istruzioni"></span></p>
+    </div>
+  </section>
+
+  <!-- REGOLE -->
+  <section class="sezione" id="s-regole">
+    <p class="tenue">Le regole dicono al bot cosa fare in casi precisi. "Quando significa" è la più intelligente: l'AI capisce il senso del messaggio anche se le parole sono diverse.</p>
+    <div id="regole"></div>
+    <p class="riga">
+      <button class="btn secondario" id="aggiungi-regola">+ Aggiungi regola</button>
+      <button class="btn" id="salva-regole">Salva regole</button>
+      <span class="avviso-salvato" id="ok-regole"></span>
+    </p>
+  </section>
+
+  <!-- IMPOSTAZIONI -->
+  <section class="sezione" id="s-impostazioni">
+    <div class="card" id="impostazioni"></div>
+    <p><button class="btn" id="salva-impostazioni">Salva impostazioni</button><span class="avviso-salvato" id="ok-impostazioni"></span></p>
+    <div class="card">
+      <h2>WhatsApp</h2>
+      <p class="tenue">Scollega questo dispositivo da WhatsApp. Al prossimo avvio apparirà un nuovo QR code.</p>
+      <button class="btn pericolo" id="scollega-wa">Scollega WhatsApp</button>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+async function api(metodo, url, corpo) {
+  const r = await fetch(url, {
+    method: metodo,
+    headers: corpo ? { 'Content-Type': 'application/json' } : {},
+    body: corpo ? JSON.stringify(corpo) : undefined,
+  });
+  const dati = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(dati.errore || `Errore ${r.status}`);
+  return dati;
+}
+
+function salvato(id, testo = '✓ Salvato') {
+  const el = $(id); el.textContent = testo; el.style.color = '';
+  setTimeout(() => (el.textContent = ''), 2500);
+}
+function errore(id, err) { const el = $(id); el.textContent = '✗ ' + err.message; el.style.color = 'var(--errore)'; }
+
+// ---------- schede ----------
+document.querySelectorAll('#schede button').forEach((b) => b.addEventListener('click', () => {
+  document.querySelectorAll('#schede button').forEach((x) => x.classList.toggle('attivo', x === b));
+  document.querySelectorAll('.sezione').forEach((s) => s.classList.toggle('attiva', s.id === 's-' + b.dataset.s));
+  if (b.dataset.s === 'messaggi') aggiornaEventi();
+}));
+
+// ---------- stato ----------
+const ETICHETTE = {
+  connesso: ['ok', 'Collegato'], qr: ['avviso', 'Scansiona il QR'], codice: ['avviso', 'Inserisci il codice'],
+  avvio: ['', 'Avvio…'], riconnessione: ['avviso', 'Riconnessione…'], scollegato: ['errore', 'Scollegato'],
+  errore: ['errore', 'Errore'], spento: ['', 'Non attivo'],
+};
+function pill(statoPiatt) {
+  const [cls, testo] = ETICHETTE[statoPiatt] || ['', statoPiatt];
+  return `<span class="pill ${cls}">${esc(testo)}</span>`;
+}
+let attivo = true;
+async function aggiornaStato() {
+  try {
+    const s = await api('GET', '/api/stato');
+    attivo = s.attivo;
+    $('#stato-globale').className = 'pill ' + (s.attivo ? 'ok' : 'avviso');
+    $('#stato-globale').textContent = s.attivo ? 'Risponde automaticamente' : 'In pausa';
+    $('#btn-attivo').textContent = s.attivo ? '⏸ Metti in pausa' : '▶️ Riattiva';
+    const wa = s.piattaforme.whatsapp, tg = s.piattaforme.telegram;
+    $('#wa-stato').innerHTML = pill(wa.stato) + (wa.numero ? `<div class="tenue">+${esc(wa.numero)}</div>` : '') + (wa.errore ? `<div class="tenue">${esc(wa.errore)}</div>` : '');
+    $('#tg-stato').innerHTML = pill(tg.stato) + (tg.username ? `<div class="tenue">@${esc(tg.username)}</div>` : '') + (tg.errore ? `<div class="tenue">${esc(tg.errore)}</div>` : '');
+    const gq = s.piattaforme.groq;
+    $('#groq-stato').innerHTML = pill(gq.stato) + (gq.errore ? `<div class="tenue">${esc(gq.errore)}</div>` : '');
+    const qr = $('#wa-qr');
+    if (wa.stato === 'qr' && wa.qr) {
+      qr.hidden = false;
+      qr.innerHTML = `<h2>Collega WhatsApp</h2><p class="tenue">Sul telefono: WhatsApp → Impostazioni → Dispositivi collegati → Collega un dispositivo, poi inquadra questo codice.</p><img alt="QR WhatsApp" src="${wa.qr}">`;
+    } else if (wa.stato === 'codice' && wa.codice) {
+      qr.hidden = false;
+      qr.innerHTML = `<h2>Collega WhatsApp</h2><p class="tenue">Sul telefono: WhatsApp → Dispositivi collegati → Collega un dispositivo → "Collega con numero di telefono" e inserisci:</p><div class="numero">${esc(wa.codice)}</div>`;
+    } else { qr.hidden = true; qr.innerHTML = ''; }
+    for (const k of ['ricevuti', 'risposti', 'ignorati', 'errori']) $('#n-' + k).textContent = s.statistiche[k];
+    $('#pause').innerHTML = s.pause.length
+      ? s.pause.map((p) => `<div class="pausa-riga"><div><b>${esc(p.nome)}</b><div class="tenue">${p.fino ? 'fino alle ' + new Date(p.fino).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }) : 'finché non la riattivi'}</div></div><button class="btn secondario" data-riprendi="${esc(p.chiave)}">Riattiva bot</button></div>`).join('')
+      : '<div class="tenue">Nessuna chat in pausa.</div>';
+  } catch (err) {
+    $('#stato-globale').className = 'pill errore';
+    $('#stato-globale').textContent = 'Bot non raggiungibile';
+  }
+}
+$('#btn-attivo').addEventListener('click', async () => { await api('POST', '/api/attivo', { attivo: !attivo }); aggiornaStato(); });
+$('#pause').addEventListener('click', async (e) => {
+  const chiave = e.target.dataset.riprendi;
+  if (chiave) { await api('POST', '/api/riprendi', { chiave }); aggiornaStato(); }
+});
+
+// ---------- messaggi ----------
+const NOMI_P = { whatsapp: 'WhatsApp', telegram: 'Telegram', prova: 'Prova' };
+function classeEsito(e) { return e.esito === 'risposta fissa' ? 'fissa' : e.esito; }
+function rigaAnalisi(a) {
+  if (!a) return '';
+  const parti = [a.intento && `🎯 ${a.intento}`, a.sentimento && `😶 ${a.sentimento}`, a.urgenza && `⏱ urgenza ${a.urgenza}`, a.serve_umano && '🙋 serve te', a.riassunto && `📝 ${a.riassunto}`].filter(Boolean);
+  return parti.length ? `<div class="analisi">${parti.map(esc).join(' · ')}</div>` : '';
+}
+function htmlEvento(e) {
+  const pillCls = { risposto: 'ok', fissa: 'ok', ignorato: '', errore: 'errore' }[classeEsito(e)] || '';
+  return `<div class="evento ${classeEsito(e)}">
+    <div class="testa"><span>${new Date(e.ora).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+    <span>${esc(NOMI_P[e.piattaforma] || e.piattaforma)}</span><b>${esc(e.nome || '')}</b>
+    <span class="pill ${pillCls}">${esc(e.esito)}</span>${e.avvisato ? '<span class="pill avviso">🔔 avvisato</span>' : ''}
+    ${e.regole?.length ? `<span class="pill">📌 ${esc(e.regole.join(', '))}</span>` : ''}</div>
+    ${e.messaggio ? `<div class="msg">${esc(e.messaggio)}</div>` : ''}
+    ${rigaAnalisi(e.analisi)}
+    ${e.risposta ? `<div class="risp">↳ ${esc(e.risposta)}</div>` : ''}
+    ${e.motivo ? `<div class="tenue">${esc(e.motivo)}</div>` : ''}
+  </div>`;
+}
+async function aggiornaEventi() {
+  try {
+    const eventi = await api('GET', '/api/eventi');
+    $('#eventi').innerHTML = eventi.length ? eventi.map(htmlEvento).join('') : '<div class="card tenue">Nessun messaggio ancora.</div>';
+  } catch {}
+}
+
+// ---------- prova ----------
+function bolla(testo, chi, extra = '') {
+  const d = document.createElement('div');
+  d.className = 'bolla ' + chi;
+  d.innerHTML = esc(testo) + (extra ? `<span class="tenue">${esc(extra)}</span>` : '');
+  $('#chat-prova').appendChild(d);
+  $('#chat-prova').scrollTop = 1e9;
+  return d;
+}
+$('#form-prova').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const testo = $('#testo-prova').value.trim();
+  if (!testo) return;
+  $('#testo-prova').value = '';
+  bolla(testo, 'tu');
+  const attesa = bolla('…', 'bot');
+  try {
+    const r = await api('POST', '/api/prova', { testo });
+    const info = [r.analisi?.intento && `intento: ${r.analisi.intento}`, r.regole?.length && `regola: ${r.regole.join(', ')}`, r.modello].filter(Boolean).join(' · ');
+    attesa.remove();
+    if (r.risposta) bolla(r.risposta, 'bot', info);
+    else bolla(`(nessuna risposta: ${r.motivo || r.esito})`, 'bot', info);
+  } catch (err) { attesa.remove(); bolla('Errore: ' + err.message, 'bot'); }
+});
+$('#reset-prova').addEventListener('click', async () => { await api('POST', '/api/prova/reset'); $('#chat-prova').innerHTML = ''; });
+
+// ---------- configurazione ----------
+let config = null;
+async function caricaConfig() {
+  config = await api('GET', '/api/config');
+  $('#istruzioni').value = config.istruzioni;
+  disegnaRegole(config.regole);
+  disegnaImpostazioni(config.impostazioni);
+}
+$('#salva-istruzioni').addEventListener('click', async () => {
+  try { await api('PUT', '/api/istruzioni', { testo: $('#istruzioni').value }); salvato('#ok-istruzioni'); } catch (err) { errore('#ok-istruzioni', err); }
+});
+
+// ---------- regole ----------
+const lista = (t) => String(t || '').split(',').map((x) => x.trim()).filter(Boolean);
+function azioneDi(r) { return r.non_rispondere ? 'ignora' : r.rispondi_con ? 'fissa' : 'ai'; }
+function htmlRegola(r, i) {
+  const az = azioneDi(r);
+  const testoAzione = az === 'fissa' ? [].concat(r.rispondi_con).join('\n---\n') : (r.istruzioni_per_ai || '');
+  return `<div class="card regola" data-i="${i}">
+    <button class="btn pericolo rimuovi" data-rimuovi="${i}" title="Elimina">✕</button>
+    <label class="campo"><span>Nome della regola</span><input type="text" name="nome" value="${esc(r.nome)}"></label>
+    <label class="check"><input type="checkbox" name="attiva" ${r.attiva !== false ? 'checked' : ''}> Attiva</label>
+    <b>QUANDO si applica</b> <span class="tenue">(basta una condizione; se le lasci tutte vuote vale sempre)</span>
+    <div class="due" style="margin-top:8px">
+      <label class="campo"><span>Il messaggio contiene…</span><input type="text" name="quando_contiene" value="${esc([].concat(r.quando_contiene || []).join(', '))}"><span class="aiuto">Parole o frasi separate da virgola</span></label>
+      <label class="campo"><span>Il messaggio significa…</span><input type="text" name="quando_significa" value="${esc(r.quando_significa)}"><span class="aiuto">Descrivi a parole, l'AI capisce il senso</span></label>
+    </div>
+    <details ${r.quando_regex || r.solo_contatti || r.solo_piattaforma ? 'open' : ''}><summary>Opzioni avanzate</summary>
+      <div class="due">
+        <label class="campo"><span>Solo per questi contatti</span><input type="text" name="solo_contatti" value="${esc([].concat(r.solo_contatti || []).join(', '))}"><span class="aiuto">Numeri (393331234567), @username o nomi, separati da virgola</span></label>
+        <label class="campo"><span>Solo su</span><select name="solo_piattaforma">
+          <option value="">WhatsApp e Telegram</option>
+          <option value="whatsapp" ${r.solo_piattaforma === 'whatsapp' ? 'selected' : ''}>Solo WhatsApp</option>
+          <option value="telegram" ${r.solo_piattaforma === 'telegram' ? 'selected' : ''}>Solo Telegram</option></select></label>
+      </div>
+      <label class="campo"><span>Espressione regolare</span><input type="text" name="quando_regex" value="${esc(r.quando_regex)}"></label>
+    </details>
+    <b>COSA fare</b>
+    <div class="due" style="margin-top:8px">
+      <label class="campo"><span>Azione</span><select name="azione">
+        <option value="ai" ${az === 'ai' ? 'selected' : ''}>L'AI risponde seguendo queste istruzioni</option>
+        <option value="fissa" ${az === 'fissa' ? 'selected' : ''}>Rispondi sempre con questo testo esatto</option>
+        <option value="ignora" ${az === 'ignora' ? 'selected' : ''}>Non rispondere</option></select></label>
+      <label class="check" style="margin-top:28px"><input type="checkbox" name="avvisami" ${r.avvisami ? 'checked' : ''}> 🔔 Avvisami quando succede</label>
+    </div>
+    <label class="campo"><span>Testo / istruzioni</span><textarea name="testo">${esc(testoAzione)}</textarea>
+      <span class="aiuto">Per il testo esatto puoi scrivere più varianti separate da una riga con solo ---: il bot ne sceglie una a caso.</span></label>
+  </div>`;
+}
+let regoleCorrenti = [];
+function disegnaRegole(r) { regoleCorrenti = r; $('#regole').innerHTML = r.map(htmlRegola).join(''); }
+function leggiRegole() {
+  return [...document.querySelectorAll('.regola')].map((el) => {
+    const v = (n) => el.querySelector(`[name=${n}]`);
+    const r = { nome: v('nome').value.trim() || 'Senza nome', attiva: v('attiva').checked };
+    const contiene = lista(v('quando_contiene').value); if (contiene.length) r.quando_contiene = contiene;
+    if (v('quando_significa').value.trim()) r.quando_significa = v('quando_significa').value.trim();
+    if (v('quando_regex').value.trim()) r.quando_regex = v('quando_regex').value.trim();
+    const contatti = lista(v('solo_contatti').value); if (contatti.length) r.solo_contatti = contatti;
+    if (v('solo_piattaforma').value) r.solo_piattaforma = v('solo_piattaforma').value;
+    const testo = v('testo').value.trim();
+    const az = v('azione').value;
+    if (az === 'ignora') r.non_rispondere = true;
+    else if (az === 'fissa') {
+      const varianti = testo.split(/\n\s*---\s*\n/).map((x) => x.trim()).filter(Boolean);
+      r.rispondi_con = varianti.length > 1 ? varianti : (varianti[0] || '');
+    } else if (testo) r.istruzioni_per_ai = testo;
+    if (v('avvisami').checked) r.avvisami = true;
+    return r;
+  });
+}
+$('#aggiungi-regola').addEventListener('click', () => {
+  disegnaRegole([...leggiRegole(), { nome: 'Nuova regola', attiva: true }]);
+  window.scrollTo(0, document.body.scrollHeight);
+});
+$('#regole').addEventListener('click', (e) => {
+  const i = e.target.dataset.rimuovi;
+  if (i !== undefined && confirm('Eliminare questa regola?')) { const r = leggiRegole(); r.splice(Number(i), 1); disegnaRegole(r); }
+});
+$('#salva-regole').addEventListener('click', async () => {
+  try { await api('PUT', '/api/regole', leggiRegole()); salvato('#ok-regole'); } catch (err) { errore('#ok-regole', err); }
+});
+
+// ---------- impostazioni ----------
+const CAMPI = [
+  ['Generale'],
+  ['attivo', 'bool', 'Bot attivo (risponde automaticamente)'],
+  ['nome_proprietario', 'text', 'Il tuo nome', 'Il bot sa per chi sta rispondendo'],
+  ['fuso_orario', 'text', 'Fuso orario', 'Es. Europe/Rome'],
+  ['Intelligenza'],
+  ['analisi_prima_di_rispondere', 'bool', 'Analizza ogni messaggio prima di rispondere', 'Capisce intento, urgenza, tono e quale regola usare'],
+  ['capisci_vocali', 'bool', 'Ascolta e capisce i messaggi vocali'],
+  ['capisci_immagini', 'bool', 'Guarda e capisce le foto'],
+  ['memoria_messaggi', 'number', 'Messaggi ricordati per chat', 'Quanti messaggi precedenti usa come contesto'],
+  ['temperatura', 'number', 'Creatività (0 – 1.5)', 'Più bassa = più precisa, più alta = più fantasiosa'],
+  ['lunghezza_massima_risposta', 'number', 'Lunghezza massima risposta (token)'],
+  ['Comportamento'],
+  ['attesa_raggruppa_messaggi_sec', 'number', 'Attesa prima di rispondere (secondi)', 'Se la persona manda più messaggi di fila, risponde a tutti insieme'],
+  ['ritardo_umano', 'bool', 'Sembra umano (mostra "sta scrivendo…" e aspetta un po\')'],
+  ['segna_come_letto', 'bool', 'Segna i messaggi come letti (spunte blu)'],
+  ['pausa_se_rispondo_io_min', 'number', 'Se rispondo io, il bot si ferma in quella chat per (minuti)', '0 = mai'],
+  ['ignora_messaggi_piu_vecchi_di_min', 'number', 'Ignora messaggi più vecchi di (minuti)', 'Evita di rispondere a vecchi messaggi quando il bot si riaccende'],
+  ['rispondi_nei_gruppi', 'select', 'Nei gruppi', '', [['mai', 'Non rispondere mai'], ['se_menzionato', 'Solo se mi menzionano o rispondono al bot'], ['sempre', 'Rispondi sempre']]],
+  ['avvisami_se_serve_umano', 'bool', '🔔 Avvisami quando un messaggio richiede me', 'Arriva su Telegram (se hai messo TELEGRAM_OWNER_ID) o nella tua chat WhatsApp "Tu"'],
+  ['Chi riceve risposta'],
+  ['whatsapp', 'bool', 'Rispondi su WhatsApp'],
+  ['telegram', 'bool', 'Rispondi su Telegram'],
+  ['contatti.modalita', 'select', 'Contatti', '', [['tutti', 'Rispondi a tutti'], ['solo_lista', 'Solo ai contatti in lista'], ['tutti_tranne_lista', 'A tutti tranne quelli in lista']]],
+  ['contatti.lista', 'list', 'Lista contatti', 'Numeri (393331234567), @username o nomi, separati da virgola'],
+  ['orario.attivo', 'bool', 'Rispondi solo in una fascia oraria'],
+  ['orario.dalle', 'time', 'Dalle'],
+  ['orario.alle', 'time', 'Alle'],
+  ['Modelli Groq (avanzato)'],
+  ['modello', 'text', 'Modello per le risposte'],
+  ['modello_riserva', 'text', 'Modello di riserva', 'Usato se il principale ha raggiunto il limite gratuito'],
+  ['modello_analisi', 'text', 'Modello per l\'analisi'],
+  ['modello_immagini', 'text', 'Modello per le foto'],
+  ['modello_audio', 'text', 'Modello per i vocali'],
+  ['lingua_audio', 'text', 'Lingua dei vocali', 'Es. it, en (vuoto = automatica)'],
+];
+const leggiPercorso = (o, p) => p.split('.').reduce((x, k) => (x == null ? undefined : x[k]), o);
+function scriviPercorso(o, p, v) { const k = p.split('.'); let x = o; for (const c of k.slice(0, -1)) x = x[c] = x[c] || {}; x[k[k.length - 1]] = v; }
+function disegnaImpostazioni(imp) {
+  $('#impostazioni').innerHTML = CAMPI.map(([k, t, l, h, opz]) => {
+    if (!t) return `<h2 style="margin-top:12px">${esc(k)}</h2>`;
+    const v = leggiPercorso(imp, k);
+    const aiuto = h ? `<span class="aiuto">${esc(h)}</span>` : '';
+    if (t === 'bool') return `<label class="check"><input type="checkbox" data-k="${k}" data-t="bool" ${v ? 'checked' : ''}> <span>${esc(l)}${aiuto}</span></label>`;
+    if (t === 'select') return `<label class="campo"><span>${esc(l)}</span><select data-k="${k}" data-t="text">${opz.map(([val, et]) => `<option value="${val}" ${v === val ? 'selected' : ''}>${esc(et)}</option>`).join('')}</select>${aiuto}</label>`;
+    const valore = t === 'list' ? (v || []).join(', ') : (v ?? '');
+    const tipo = t === 'list' ? 'text' : t;
+    return `<label class="campo"><span>${esc(l)}</span><input type="${tipo}" ${t === 'number' ? 'step="any"' : ''} data-k="${k}" data-t="${t}" value="${esc(valore)}">${aiuto}</label>`;
+  }).join('');
+}
+$('#salva-impostazioni').addEventListener('click', async () => {
+  const imp = structuredClone(config.impostazioni);
+  document.querySelectorAll('#impostazioni [data-k]').forEach((el) => {
+    const t = el.dataset.t;
+    const v = t === 'bool' ? el.checked : t === 'number' ? Number(el.value) : t === 'list' ? lista(el.value) : el.value.trim();
+    scriviPercorso(imp, el.dataset.k, v);
+  });
+  try { await api('PUT', '/api/impostazioni', imp); config.impostazioni = imp; salvato('#ok-impostazioni'); aggiornaStato(); } catch (err) { errore('#ok-impostazioni', err); }
+});
+$('#scollega-wa').addEventListener('click', async () => {
+  if (!confirm('Scollegare WhatsApp da questo bot?')) return;
+  try { await api('POST', '/api/whatsapp/scollega'); alert('WhatsApp scollegato. Tra poco comparirà un nuovo QR nella scheda Stato.'); } catch (err) { alert(err.message); }
+});
+
+aggiornaStato();
+caricaConfig();
+setInterval(aggiornaStato, 3000);
+setInterval(() => { if ($('#s-messaggi').classList.contains('attiva')) aggiornaEventi(); }, 4000);
+</script>
+</body>
+</html>

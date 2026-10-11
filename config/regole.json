@@ -1,0 +1,27 @@
+[
+  {
+    "nome": "Esempio - Saluto veloce",
+    "attiva": false,
+    "quando_contiene": ["sei sveglio", "ci sei?"],
+    "rispondi_con": "Ciao! Al momento non sono disponibile, ti rispondo appena posso 🙂"
+  },
+  {
+    "nome": "Esempio - Appuntamenti",
+    "attiva": true,
+    "quando_significa": "la persona vuole fissare un appuntamento, un incontro, una chiamata o chiede quando ci si può vedere",
+    "istruzioni_per_ai": "Chiedi gentilmente quale giorno e orario preferisce e spiega che il proprietario confermerà personalmente appena possibile. Non confermare tu nessun orario.",
+    "avvisami": true
+  },
+  {
+    "nome": "Esempio - Spam",
+    "attiva": true,
+    "quando_regex": "(bitcoin|criptovalut|guadagn[aio] subito|investimento sicuro)",
+    "non_rispondere": true
+  },
+  {
+    "nome": "Esempio - Contatto speciale",
+    "attiva": false,
+    "solo_contatti": ["393331234567"],
+    "istruzioni_per_ai": "Questa persona è un familiare: usa un tono affettuoso e informale."
+  }
+]
