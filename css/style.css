@@ -459,3 +459,23 @@ main:not(:has(.screen.active)) .screen[data-screen="home"] { display: flex; flex
 
 /* seismograph / voice share spectrum styling already */
 .big small { display: inline; }
+
+/* ---------- Cielo AR (v4) ---------- */
+.hero-tile { border-left-color: var(--magenta); background: linear-gradient(120deg, var(--panel-2), var(--panel)); }
+.sky-wrap { position: relative; width: 100%; height: clamp(360px, 62vh, 560px); border: 1px solid var(--line); overflow: hidden; background: #02040a; }
+.sky-wrap video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0.55; }
+.sky-canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+.sky-hud { position: absolute; top: 8px; left: 8px; right: 8px; z-index: 3; display: flex; flex-wrap: wrap; gap: 6px; pointer-events: none; }
+.sky-hud .chip { background: rgba(5,7,13,.72); }
+.sky-hud .chip b { color: var(--cyan); }
+.sky-info {
+  position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 4;
+  background: rgba(5,7,13,.92); border: 1px solid var(--cyan); padding: 12px;
+  box-shadow: 0 0 24px var(--glow); animation: granted-in .25s;
+}
+.sky-manual { position: absolute; right: 10px; bottom: 76px; z-index: 4; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.sky-manual button {
+  width: 42px; height: 42px; border: 1px solid var(--cyan); background: rgba(5,7,13,.8);
+  color: var(--cyan); font-size: 16px; cursor: pointer;
+}
+.sky-manual .row { display: flex; gap: 40px; }

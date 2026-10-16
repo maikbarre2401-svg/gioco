@@ -12,7 +12,7 @@ window.GL = window.GL || {};
     cassaforte: 'Accessi cassaforte', steganografia: 'Foto con segreti',
     'controllo breach': 'Password controllate', qr: 'QR usati', metadati: 'Foto analizzate',
     visione: 'Visione usata', decoder: 'Conversioni', voce: 'Voce modificata',
-    sismografo: 'Sismografo', iss: 'Tracker ISS', analisi: 'Oggetti analizzati',
+    sismografo: 'Sismografo', iss: 'Tracker ISS', cielo: 'Cielo AR',
   };
 
   function renderStats() {

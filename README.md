@@ -17,6 +17,7 @@ Nell'APK la torcia usa il LED vero, la vibrazione e la condivisione sono quelle 
 
 | Modulo | Funzione |
 | --- | --- |
+| **Cielo AR** ⭐ | Punta il telefono verso il cielo e vedi stelle, costellazioni, pianeti, Sole e Luna nelle loro **posizioni reali**, calcolate con vera astronomia dalla tua posizione GPS e dall'ora. Tocca un oggetto per sapere cos'è (tipo, costellazione, distanza, fase lunare). Funziona anche di giorno e offline. |
 | **Agente** (home) | Il tuo nome in codice, livello ed esperienza (XP). Usando gli strumenti sali di grado, da "Script kiddie" a "Leggenda della rete". Accanto c'è un hacker animato che reagisce e parla. |
 | **Mappa ctOS** | Mappa scura della tua zona con telecamere, semafori, antenne, hotspot Wi-Fi, defibrillatori e colonnine di ricarica **reali**, presi da OpenStreetMap. Tocca un oggetto per analizzarne i dati pubblici con un'animazione da hacking. |
 | **Profiler AR** | Fotocamera con mirino ctOS: inquadra e "scansiona" per generare un profilo (nome, età, lavoro, curiosità). I profili sono **inventati**, come nel gioco: nessun dato reale sulle persone. |
@@ -124,6 +125,8 @@ js/vision.js          Filtri fotocamera (notturna, termica…)
 js/voice.js           Cambia voce e registratore
 js/seismo.js          Sismografo
 js/iss.js             Tracker della Stazione Spaziale
+js/sky.js             Cielo AR (motore astronomico + realtà aumentata)
+js/skydata.js         catalogo stelle e costellazioni
 js/device.js          lettura delle informazioni del dispositivo
 js/scan.js            Scanner
 js/cipher.js          Cifratore (AES-GCM + PBKDF2)

@@ -13,7 +13,7 @@ window.GL = window.GL || {};
     sensori: GL.sensors, audio: GL.audio, torcia: GL.torch, impostazioni: GL.settings,
     cassaforte: GL.vault, stego: GL.stego, breach: GL.breach, qr: GL.qr,
     metadati: GL.metadata, visione: GL.vision, decoder: GL.decoder,
-    voce: GL.voice, sismografo: GL.seismo, iss: GL.iss,
+    voce: GL.voice, sismografo: GL.seismo, iss: GL.iss, cielo: GL.sky,
   };
   let current = null;
 

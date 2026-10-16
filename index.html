@@ -80,6 +80,7 @@
 
     <div class="section-label">Ricognizione</div>
     <nav class="tiles" aria-label="Ricognizione">
+      <a class="tile wide hero-tile" href="#cielo"><span class="tile-code">SKY</span><span class="tile-name">Cielo AR</span><span class="tile-desc">Punta il telefono al cielo: stelle, costellazioni, pianeti, Sole e Luna reali in realtà aumentata</span></a>
       <a class="tile wide" href="#mappa"><span class="tile-code">MAP</span><span class="tile-name">Mappa ctOS</span><span class="tile-desc">Telecamere, semafori, antenne e hotspot reali intorno a te</span></a>
       <a class="tile" href="#profiler"><span class="tile-code">PRF</span><span class="tile-name">Profiler AR</span><span class="tile-desc">Inquadra e scansiona come nel gioco</span></a>
       <a class="tile" href="#scan"><span class="tile-code">SCN</span><span class="tile-name">Scanner</span><span class="tile-desc">Cosa sa un sito di te: impronta, rete, IP</span></a>
@@ -270,6 +271,36 @@
       <output id="trc-morse" class="morse">—</output>
     </div>
   </section>
+  <!-- CIELO AR -->
+  <section class="screen" data-screen="cielo">
+    <div class="screen-head"><a class="back" href="#home">◂ Home</a><span class="tile-code">SKY</span></div>
+    <h2>Cielo AR</h2>
+    <div class="sky-wrap">
+      <video id="sky-video" playsinline muted hidden></video>
+      <canvas id="sky-canvas" class="sky-canvas" aria-label="Cielo in realtà aumentata"></canvas>
+      <div class="sky-hud">
+        <span class="chip">BUSSOLA <b id="sky-head">—</b></span>
+        <span class="chip">ALT <b id="sky-pitch">0°</b></span>
+        <span class="chip">VISIBILI <b id="sky-count">0</b></span>
+        <span class="chip" id="sky-loc">GPS —</span>
+      </div>
+      <div id="sky-info" class="sky-info" hidden>
+        <div class="card-head"><span id="sky-info-name" class="eyebrow">—</span><button id="sky-info-close" class="x" type="button" aria-label="Chiudi">✕</button></div>
+        <div id="sky-info-rows"></div>
+      </div>
+      <div id="sky-manual" class="sky-manual" hidden>
+        <button data-sky-nudge="0,10" type="button" aria-label="Su">▲</button>
+        <div class="row">
+          <button data-sky-nudge="-15,0" type="button" aria-label="Sinistra">◀</button>
+          <button data-sky-nudge="15,0" type="button" aria-label="Destra">▶</button>
+        </div>
+        <button data-sky-nudge="0,-10" type="button" aria-label="Giù">▼</button>
+      </div>
+    </div>
+    <button id="sky-start" class="btn wide" type="button">Attiva Cielo AR</button>
+    <p class="note">Posizioni reali calcolate dalla tua posizione GPS e dall'ora. Alza il telefono verso il cielo e muovilo per guardarti attorno; tocca una stella o un pianeta per sapere cos'è. Di giorno le stelle non si vedono nel cielo, ma l'app te le mostra lo stesso dove sono.</p>
+  </section>
+
   <!-- MAPPA ctOS -->
   <section class="screen" data-screen="mappa">
     <div class="screen-head"><a class="back" href="#home">◂ Home</a><span class="tile-code">MAP</span></div>
@@ -596,6 +627,8 @@
 <script src="js/voice.js" defer></script>
 <script src="js/seismo.js" defer></script>
 <script src="js/iss.js" defer></script>
+<script src="js/skydata.js" defer></script>
+<script src="js/sky.js" defer></script>
 <script src="js/settings.js" defer></script>
 <script src="js/app.js" defer></script>
 </body>

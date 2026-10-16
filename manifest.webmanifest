@@ -1,7 +1,7 @@
 {
   "name": "Ghostlink",
   "short_name": "Ghostlink",
-  "description": "Super-kit da hacker per il telefono: mappa ctOS, cassaforte cifrata, steganografia, QR, metadati foto, visione notturna, decoder, cambia voce, sismografo, tracker ISS e altro.",
+  "description": "Super-kit da hacker per il telefono: Cielo AR, mappa ctOS, cassaforte, steganografia, QR, metadati, visione notturna, decoder, voce, sismografo e altro.",
   "lang": "it",
   "id": "./",
   "start_url": "./#home",
@@ -42,6 +42,16 @@
   ],
   "shortcuts": [
     {
+      "name": "Cielo AR",
+      "url": "./#cielo",
+      "icons": [
+        {
+          "src": "icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
       "name": "Cassaforte",
       "url": "./#cassaforte",
       "icons": [
@@ -64,16 +74,6 @@
     {
       "name": "Mappa ctOS",
       "url": "./#mappa",
-      "icons": [
-        {
-          "src": "icons/icon-192.png",
-          "sizes": "192x192"
-        }
-      ]
-    },
-    {
-      "name": "Terminale",
-      "url": "./#terminale",
       "icons": [
         {
           "src": "icons/icon-192.png",
