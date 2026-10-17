@@ -147,7 +147,14 @@ window.GL = window.GL || {};
   function startRadar() {
     if (reduceMotion) { drawRadar(900); return; }
     if (radarRaf) return;
-    const loop = t => { drawRadar(t); radarRaf = requestAnimationFrame(loop); };
+    // ~20fps and paused while the page is hidden: the sweep reads the same, at a fraction of the cost
+    let last = 0;
+    const loop = t => {
+      radarRaf = requestAnimationFrame(loop);
+      if (document.hidden || t - last < 50) return;
+      last = t;
+      drawRadar(t);
+    };
     radarRaf = requestAnimationFrame(loop);
   }
   function stopRadar() { cancelAnimationFrame(radarRaf); radarRaf = 0; }
@@ -209,9 +216,10 @@ window.GL = window.GL || {};
       try { m.init?.(); } catch (err) { console.error(err); }
     }
     // Any tap anywhere unlocks audio and gives tool buttons a soft click.
+    let audioUnlocked = false;
     document.addEventListener('pointerdown', e => {
-      GL.sfx.unlock();
-      if (e.target.closest('.tile, .btn, .seg button, .legend-chip, .term-keys button')) GL.sfx.play('tap');
+      if (!audioUnlocked) { audioUnlocked = true; GL.sfx.unlock(); }
+      if (e.target.closest('.tile, .btn, .seg button, .legend-chip, .term-keys button, .chip-btn')) GL.sfx.play('tap');
     }, { passive: true });
 
     tickClock();
@@ -238,6 +246,8 @@ window.GL = window.GL || {};
     setupInstall();
     registerSW();
 
+    // Face unlock gates everything: nothing of the app is reachable until it passes.
+    try { await GL.face.gate(); } catch (e) { console.error(e); $('#lock')?.remove(); }
     try { await GL.intro.run(nodeId); } catch (e) { console.error(e); $('#intro')?.remove(); }
     refreshAgent();
     if (!GL.sfx.ready()) log('Tocca lo schermo per attivare l\'audio', 'warn');

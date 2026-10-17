@@ -112,7 +112,11 @@ window.GL = window.GL || {};
     $('#voice-rec').textContent = 'Registra';
   }
 
-  function drawWave() {
+  let _wavLast = 0;
+  function drawWave(t) {
+    raf = requestAnimationFrame(drawWave);
+    if (document.hidden || (t && t - _wavLast < 40)) return;
+    _wavLast = t || 0;
     const { ctx: g, w, h } = fitCanvas($('#voice-wave'));
     g.clearRect(0, 0, w, h);
     if (analyser) {
@@ -125,7 +129,6 @@ window.GL = window.GL || {};
       }
       g.stroke();
     }
-    raf = requestAnimationFrame(drawWave);
   }
 
   function record() {

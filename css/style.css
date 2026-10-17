@@ -41,10 +41,12 @@ body {
   overscroll-behavior: none;
 }
 
+/* Plain translucent stripes: mix-blend-mode here forced a full-screen blend on every
+   scroll frame and was the main source of jank on phones. */
 .scanlines {
   position: fixed; inset: 0; z-index: 50; pointer-events: none;
-  background: repeating-linear-gradient(to bottom, transparent 0 2px, rgba(0, 0, 0, .22) 2px 3px);
-  mix-blend-mode: multiply;
+  background: repeating-linear-gradient(to bottom, transparent 0 2px, rgba(0, 0, 0, .18) 2px 3px);
+  contain: strict;
 }
 
 /* ---------- top bar ---------- */
@@ -479,3 +481,25 @@ main:not(:has(.screen.active)) .screen[data-screen="home"] { display: flex; flex
   color: var(--cyan); font-size: 16px; cursor: pointer;
 }
 .sky-manual .row { display: flex; gap: 40px; }
+
+/* ---------- face unlock (v5) ---------- */
+.lock {
+  position: fixed; inset: 0; z-index: 120; background: var(--bg);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 18px; padding: calc(24px + var(--sat)) 20px calc(24px + var(--sab));
+  transition: opacity .35s;
+}
+.lock.done { opacity: 0; pointer-events: none; }
+.lock-cam {
+  position: relative; width: min(74vw, 280px); aspect-ratio: 3 / 4; flex: none;
+  border: 1px solid var(--line); overflow: hidden; background: #03050a;
+}
+.lock-cam video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+.lock-avatar { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: .55; }
+.lock-overlay { position: absolute; inset: 0; width: 100%; height: 100%; }
+.lock-panel { width: 100%; max-width: 380px; display: flex; flex-direction: column; gap: 10px; text-align: center; }
+.lock-title { font: 700 24px var(--f-display); letter-spacing: .04em; text-transform: uppercase; margin: 0; }
+.lock-title span { color: var(--cyan); }
+.lock-panel .note { text-align: left; }
+.lock-msg { min-height: 18px; color: var(--magenta); font-size: 12px; letter-spacing: .04em; }
+.lock-panel input { text-align: center; font: 700 20px var(--f-mono); letter-spacing: .3em; }

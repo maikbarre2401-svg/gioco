@@ -69,6 +69,7 @@ window.GL = window.GL || {};
       GL.sfx.say(`Test audio del nodo ${GL.intro.spoken(GL.prefs.get().codename || 'ospite')}.`);
     });
 
+    $('#set-face-go').addEventListener('click', () => GL.face.reEnroll());
     $('#set-reset').addEventListener('click', () => { $('#set-reset-confirm').hidden = false; });
     $('#set-reset-no').addEventListener('click', () => { $('#set-reset-confirm').hidden = true; });
     $('#set-reset-yes').addEventListener('click', () => {
@@ -81,6 +82,10 @@ window.GL = window.GL || {};
 
   function enter() {
     const p = GL.prefs.get();
+    const KINDS = { face: 'attivo (volto)', biometric: 'attivo (volto o impronta)', webauthn: 'attivo (volto o impronta)', pin: 'solo PIN', none: 'non attivo' };
+    const st = $('#set-face-state');
+    st.textContent = p.faceEnrolled ? (KINDS[p.faceKind] || 'attivo') : 'non attivo';
+    st.className = p.faceEnrolled && p.faceKind !== 'pin' ? 'good' : 'warn';
     $('#set-name').value = p.codename || '';
     setPressed([$('#set-intro-full'), $('#set-intro-short')], p.intro === 'short' ? $('#set-intro-short') : $('#set-intro-full'));
     renderStats();

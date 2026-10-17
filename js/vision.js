@@ -85,7 +85,11 @@ window.GL = window.GL || {};
     return src;
   }
 
-  function loop() {
+  let _visLast = 0;
+  function loop(t) {
+    raf = requestAnimationFrame(loop);
+    if (document.hidden || (t && t - _visLast < 50)) return;
+    _visLast = t || 0;
     const v = $('#vis-video');
     const out = $('#vis-canvas');
     if (stream && v.readyState >= v.HAVE_CURRENT_DATA) {
@@ -99,7 +103,6 @@ window.GL = window.GL || {};
         out.getContext('2d').putImageData(processed, 0, 0);
       }
     }
-    raf = requestAnimationFrame(loop);
   }
 
   async function toggle() {

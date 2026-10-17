@@ -9,7 +9,7 @@ window.GL = window.GL || {};
   /* ---------------- scanner (jsQR) ---------------- */
   async function startScan() {
     if (stream) { stopScan(); return; }
-    if (!window.jsQR) { toast('Scanner non disponibile'); return; }
+    if (!await GL.ui.needLib('qr')) { toast('Scanner non disponibile'); return; }
     try {
       stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
       const v = $('#qr-video');
@@ -67,6 +67,7 @@ window.GL = window.GL || {};
   let mode = 'text';
 
   function build(text) {
+    if (!window.qrcode) return null;
     // auto type number: try increasing versions until the data fits, max EC level M
     for (let type = 4; type <= 20; type++) {
       try {
@@ -111,7 +112,8 @@ window.GL = window.GL || {};
     return `WIFI:T:${type};S:${esc(ssid)};${type === 'nopass' ? '' : `P:${esc(pass)};`};`;
   }
 
-  function generate() {
+  async function generate() {
+    if (!await GL.ui.needLib('qr')) { toast('Generatore non disponibile'); return; }
     let text;
     if (mode === 'wifi') { text = wifiString(); if (!text) { toast('Scrivi almeno il nome della rete'); return; } }
     else { text = $('#qr-gen-in').value; if (!text) { toast('Scrivi il testo o il link'); return; } }

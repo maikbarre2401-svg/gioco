@@ -11,7 +11,11 @@ window.GL = window.GL || {};
   const TICKS = [1, 5, 10, 50, 100, 500, 1000];
   const pos = v => Math.max(0, Math.min(1, Math.log10(Math.max(v, 0.5) / 0.5) / Math.log10(2000)));
 
-  function drawGauge() {
+  let _spdLast = 0;
+  function drawGauge(t) {
+    raf = requestAnimationFrame(drawGauge);
+    if (document.hidden || (t && t - _spdLast < 40)) return;
+    _spdLast = t || 0;
     const { ctx, w, h } = fitCanvas($('#spd-gauge'));
     ctx.clearRect(0, 0, w, h);
     const cx = w / 2, cy = h * 0.92, R = Math.min(w / 2, h) * 0.85;
@@ -42,7 +46,6 @@ window.GL = window.GL || {};
     ctx.fillStyle = COLORS.magenta;
     ctx.beginPath(); ctx.arc(cx, cy, 5, 0, Math.PI * 2); ctx.fill();
     $('#spd-value').textContent = shown < 0.05 ? '--' : fmt.num(shown, shown < 10 ? 1 : 0);
-    raf = requestAnimationFrame(drawGauge);
   }
 
   async function timed(url, opts) {

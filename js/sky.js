@@ -164,7 +164,11 @@ window.GL = window.GL || {};
     return '#dfefff';
   }
 
-  function draw() {
+  let _skyLast = 0;
+  function draw(t) {
+    state.raf = requestAnimationFrame(draw);
+    if (document.hidden || (t && t - _skyLast < 40)) return;   // ~25fps is smooth for a star field
+    _skyLast = t || 0;
     const canvas = $('#sky-canvas');
     const { ctx, w, h } = fitCanvas(canvas);
     ctx.clearRect(0, 0, w, h);
@@ -219,7 +223,6 @@ window.GL = window.GL || {};
 
     // crosshair + selected label
     drawReticle(ctx, w, h);
-    state.raf = requestAnimationFrame(draw);
   }
 
   function drawBody(ctx, b, p) {

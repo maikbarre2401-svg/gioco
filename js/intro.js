@@ -12,9 +12,9 @@ window.GL = window.GL || {};
     const g = canvas.getContext('2d');
     const glyphs = '01ABCDEF0123456789アイウエオカキクケコ<>/$#';
     let cols = [], raf = 0, last = 0, w = 0, h = 0;
-    const size = 14;
+    const size = 18;                      // fewer, chunkier columns: same look, far less fill
     function resize() {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const dpr = 1;                      // the rain is pure texture; device pixels buy nothing
       w = canvas.clientWidth; h = canvas.clientHeight;
       canvas.width = w * dpr; canvas.height = h * dpr;
       g.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -22,7 +22,7 @@ window.GL = window.GL || {};
     }
     function frame(t) {
       raf = requestAnimationFrame(frame);
-      if (t - last < 45) return;
+      if (document.hidden || t - last < 70) return;
       last = t;
       g.fillStyle = 'rgba(5,7,13,0.18)';
       g.fillRect(0, 0, w, h);

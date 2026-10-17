@@ -8,12 +8,15 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
+import android.hardware.biometrics.BiometricManager;
+import android.hardware.biometrics.BiometricPrompt;
 import android.graphics.Insets;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.CancellationSignal;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.speech.tts.TextToSpeech;
@@ -306,6 +309,72 @@ public class MainActivity extends Activity {
         }
     }
 
+    /* --------------------------------------------------------------- biometrics */
+
+    /** 'face', 'biometric' or 'none' — what the device can actually verify. */
+    private String biometricKind() {
+        if (Build.VERSION.SDK_INT < 28) return "none";
+        boolean hasFace = getPackageManager().hasSystemFeature(PackageManager.FEATURE_FACE);
+        if (Build.VERSION.SDK_INT >= 29) {
+            BiometricManager bm = (BiometricManager) getSystemService(Context.BIOMETRIC_SERVICE);
+            if (bm == null) return "none";
+            int status = bm.canAuthenticate();
+            if (status != BiometricManager.BIOMETRIC_SUCCESS) return "none";
+        }
+        return hasFace ? "face" : "biometric";
+    }
+
+    /** Shows the system biometric prompt; the verdict goes back to the page. */
+    private void promptBiometric(final String title, final String subtitle) {
+        if (Build.VERSION.SDK_INT < 28) { sendBioResult(false, "non supportato"); return; }
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    BiometricPrompt.Builder b = new BiometricPrompt.Builder(MainActivity.this)
+                            .setTitle(title == null || title.isEmpty() ? "Ghostlink" : title)
+                            .setNegativeButton(getString(R.string.cancel), getMainExecutor(),
+                                    new android.content.DialogInterface.OnClickListener() {
+                                        @Override
+                                        public void onClick(android.content.DialogInterface d, int w) {
+                                            sendBioResult(false, "annullato");
+                                        }
+                                    });
+                    if (subtitle != null && !subtitle.isEmpty()) b.setSubtitle(subtitle);
+                    b.build().authenticate(new CancellationSignal(), getMainExecutor(),
+                            new BiometricPrompt.AuthenticationCallback() {
+                                @Override
+                                public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult r) {
+                                    sendBioResult(true, "");
+                                }
+
+                                @Override
+                                public void onAuthenticationError(int code, CharSequence err) {
+                                    sendBioResult(false, err == null ? "errore" : err.toString());
+                                }
+
+                                @Override
+                                public void onAuthenticationFailed() {
+                                    // a single mismatch: the prompt stays open, so don't resolve yet
+                                }
+                            });
+                } catch (Exception e) {
+                    sendBioResult(false, "non disponibile");
+                }
+            }
+        });
+    }
+
+    private void sendBioResult(final boolean ok, final String msg) {
+        final String safe = msg == null ? "" : msg.replace("\\", "").replace("'", "").replace("\n", " ");
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                web.evaluateJavascript("window.GL && GL.face && GL.face._native(" + ok + ",'" + safe + "')", null);
+            }
+        });
+    }
+
     /* ------------------------------------------------------------------ bridge */
 
     /** Methods callable from JavaScript as window.GhostlinkNative.*; they run on a background thread. */
@@ -352,6 +421,16 @@ public class MainActivity extends Activity {
             if (clip == null || clip.getItemCount() == 0) return "";
             CharSequence text = clip.getItemAt(0).coerceToText(MainActivity.this);
             return text == null ? "" : text.toString();
+        }
+
+        @JavascriptInterface
+        public String bioAvailable() {
+            return biometricKind();
+        }
+
+        @JavascriptInterface
+        public void bioAuth(String title, String subtitle) {
+            promptBiometric(title, subtitle);
         }
 
         @JavascriptInterface

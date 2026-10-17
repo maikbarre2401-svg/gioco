@@ -127,5 +127,34 @@ window.GL = window.GL || {};
     line: '#1b2c45', dim: '#7489a6', fg: '#d9e6f7', bg: '#05070d',
   };
 
-  GL.ui = { native, $, $$, clock, toast, log, haptic, copyText, setPressed, fmt, humanTime, sha256, fitCanvas, COLORS };
+  // Heavy libraries (map, QR reader) load only when a screen that needs them opens,
+  // so start-up stays fast. Each URL is fetched at most once.
+  const libCache = new Map();
+  function loadScript(src) {
+    if (libCache.has(src)) return libCache.get(src);
+    const p = new Promise((res, rej) => {
+      const el = document.createElement('script');
+      el.src = src;
+      el.async = false;
+      el.onload = () => res(true);
+      el.onerror = () => rej(new Error(src));
+      document.head.append(el);
+    });
+    libCache.set(src, p);
+    return p;
+  }
+
+  const LIBS = {
+    leaflet: ['vendor/leaflet/leaflet.js'],
+    qr: ['vendor/qr/jsQR.js', 'vendor/qr/qrcode.js'],
+  };
+  // Resolves once the named bundle is in memory; safe to call repeatedly.
+  async function needLib(name) {
+    const ready = { leaflet: () => !!window.L, qr: () => !!window.jsQR && !!window.qrcode }[name];
+    if (ready && ready()) return true;
+    try { await Promise.all(LIBS[name].map(loadScript)); } catch { return false; }
+    return !ready || ready();
+  }
+
+  GL.ui = { native, loadScript, needLib, $, $$, clock, toast, log, haptic, copyText, setPressed, fmt, humanTime, sha256, fitCanvas, COLORS };
 })();

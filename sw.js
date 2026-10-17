@@ -1,5 +1,5 @@
 // Offline support: the whole app (fonts included) is cached on install.
-const VERSION = 'ghostlink-v5';
+const VERSION = 'ghostlink-v6';
 const SHELL = [
   './',
   'index.html',
@@ -38,6 +38,7 @@ const SHELL = [
   'js/voice.js',
   'js/seismo.js',
   'js/iss.js',
+  'js/face.js',
   'js/skydata.js',
   'js/sky.js',
   'fonts/ChakraPetch-400-latin-ext.woff2',

@@ -68,7 +68,9 @@ window.GL = window.GL || {};
 
   function init() { /* nothing until the screen opens */ }
 
-  function enter() {
+  async function enter() {
+    $('#iss-status').textContent = 'carico la mappa…';
+    if (!await GL.ui.needLib('leaflet')) { $('#iss-status').textContent = 'mappa non disponibile'; return; }
     if (!ensureMap()) return;
     update();
     GL.app?.xp(4, 'iss');

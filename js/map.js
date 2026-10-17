@@ -236,8 +236,11 @@ window.GL = window.GL || {};
     $('#tg-close').addEventListener('click', () => { $('#map-target').hidden = true; clearInterval(hackTimer); selected = null; });
   }
 
-  function enter() {
+  async function enter() {
+    $('#map-status').textContent = 'Carico la mappa…';
+    if (!await GL.ui.needLib('leaflet')) { $('#map-status').textContent = 'Mappa non disponibile'; return; }
     if (!ensureMap()) return;
+    $('#map-status').textContent = 'Posizione in attesa';
     if ('geolocation' in navigator && watchId == null) {
       watchId = navigator.geolocation.watchPosition(onPosition, onPositionError, { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 });
     }

@@ -2,4 +2,5 @@
 <resources>
     <string name="app_name">Ghostlink</string>
     <string name="share_title">Invia messaggio cifrato</string>
+    <string name="cancel">Annulla</string>
 </resources>

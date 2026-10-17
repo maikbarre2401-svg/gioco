@@ -27,7 +27,11 @@ window.GL = window.GL || {};
   // Playful local "Richter-like" value from peak ground acceleration; clearly not a real seismograph.
   function magnitude(a) { return a < 0.05 ? 0 : Math.max(0, Math.min(9.9, Math.log10(a * 100 + 1) * 2.2)); }
 
-  function draw() {
+  let _seiLast = 0;
+  function draw(t) {
+    if (running) raf = requestAnimationFrame(draw);
+    if (document.hidden || (t && t - _seiLast < 40)) return;
+    _seiLast = t || 0;
     const { ctx, w, h } = fitCanvas($('#seis-canvas'));
     ctx.clearRect(0, 0, w, h);
     const mid = h / 2;
@@ -54,7 +58,6 @@ window.GL = window.GL || {};
     const label = mag < 1 ? 'Fermo' : mag < 2 ? 'Vibrazioni lievi' : mag < 4 ? 'Movimento netto' : 'Scossa forte';
     $('#seis-label').textContent = label;
     $('#seis-label').className = `center ${cur > 3 ? 'hot' : cur > 1 ? 'warn' : 'dim'}`;
-    if (running) raf = requestAnimationFrame(draw);
   }
 
   async function start() {

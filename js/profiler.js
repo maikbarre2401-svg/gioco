@@ -42,7 +42,11 @@ window.GL = window.GL || {};
     card.hidden = false;
   }
 
+  let _prfLast = 0;
   function draw(t) {
+    raf = requestAnimationFrame(draw);
+    if (document.hidden || (t && t - _prfLast < 45)) return;
+    _prfLast = t || 0;
     const canvas = $('#prf-overlay');
     const { ctx, w, h } = fitCanvas(canvas);
     ctx.clearRect(0, 0, w, h);
@@ -84,7 +88,6 @@ window.GL = window.GL || {};
     ctx.textAlign = 'right';
     ctx.fillText(new Date().toLocaleTimeString('it-IT'), w - 22, h - 22);
     ctx.textAlign = 'left';
-    raf = requestAnimationFrame(draw);
   }
 
   async function camera() {

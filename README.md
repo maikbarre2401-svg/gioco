@@ -13,6 +13,14 @@ App per il telefono in stile hacker futuristico (ispirata all'interfaccia di Wat
 
 Nell'APK la torcia usa il LED vero, la vibrazione e la condivisione sono quelle di Android, e tutto funziona offline.
 
+## Sblocco con il volto
+
+Al primo avvio l'app chiede di **registrare il volto**; dopo si apre solo con la tua faccia.
+
+La verifica è affidata allo **sblocco sicuro del telefono** (BiometricPrompt su Android, WebAuthn nel browser): è lo stesso sistema che sblocca il telefono, il modello del volto resta nell'area protetta del dispositivo e non entra mai nell'app. Per questo una foto o la faccia di un altro **non** funzionano. Un confronto fatto dall'app su un'immagine della fotocamera, invece, si sbloccherebbe con chiunque: per questo non è stato usato.
+
+Se il telefono non ha sblocco biometrico attivo, l'app chiede un **PIN di accesso** (salvato solo come impronta crittografica). La selfie scattata in fase di registrazione serve unicamente come avatar sulla schermata di blocco. Dalle Impostazioni puoi registrare di nuovo il volto.
+
 ## Cosa fa
 
 | Modulo | Funzione |
@@ -127,6 +135,7 @@ js/seismo.js          Sismografo
 js/iss.js             Tracker della Stazione Spaziale
 js/sky.js             Cielo AR (motore astronomico + realtà aumentata)
 js/skydata.js         catalogo stelle e costellazioni
+js/face.js            sblocco con il volto (biometria del telefono) e PIN
 js/device.js          lettura delle informazioni del dispositivo
 js/scan.js            Scanner
 js/cipher.js          Cifratore (AES-GCM + PBKDF2)
