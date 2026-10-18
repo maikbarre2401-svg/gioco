@@ -69,7 +69,24 @@ window.GL = window.GL || {};
       GL.sfx.say(`Test audio del nodo ${GL.intro.spoken(GL.prefs.get().codename || 'ospite')}.`);
     });
 
-    $('#set-face-go').addEventListener('click', () => GL.face.reEnroll());
+    $('#set-face-go').addEventListener('click', async () => { if (await GL.face.addFace()) enter(); });
+    $('#set-face-reset').addEventListener('click', () => GL.face.reEnroll());
+    $('#set-pin-go').addEventListener('click', () => {
+      const box = $('#set-pin-box');
+      box.hidden = !box.hidden;
+      $('#set-pin-a').value = ''; $('#set-pin-b').value = ''; $('#set-pin-msg').textContent = '';
+    });
+    $('#set-pin-save').addEventListener('click', async () => {
+      const a = $('#set-pin-a').value.trim(), b = $('#set-pin-b').value.trim();
+      if (a.length < 4) { $('#set-pin-msg').textContent = 'Almeno 4 cifre'; return; }
+      if (a !== b) { $('#set-pin-msg').textContent = 'I due codici non coincidono'; return; }
+      const salt = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(8))));
+      GL.prefs.set({ pinSalt: salt, pinHash: await GL.ui.sha256(salt + a), lockSetup: true });
+      $('#set-pin-box').hidden = true;
+      toast('Codice salvato');
+      GL.sfx?.play('ok');
+      enter();
+    });
     $('#set-reset').addEventListener('click', () => { $('#set-reset-confirm').hidden = false; });
     $('#set-reset-no').addEventListener('click', () => { $('#set-reset-confirm').hidden = true; });
     $('#set-reset-yes').addEventListener('click', () => {
@@ -82,10 +99,17 @@ window.GL = window.GL || {};
 
   function enter() {
     const p = GL.prefs.get();
-    const KINDS = { face: 'attivo (volto)', biometric: 'attivo (volto o impronta)', webauthn: 'attivo (volto o impronta)', pin: 'solo PIN', none: 'non attivo' };
+    const KINDS = { face: 'attivo · volto', biometric: 'attivo · volto o impronta', credential: 'attivo · codice del telefono', webauthn: 'attivo · volto o impronta' };
     const st = $('#set-face-state');
-    st.textContent = p.faceEnrolled ? (KINDS[p.faceKind] || 'attivo') : 'non attivo';
-    st.className = p.faceEnrolled && p.faceKind !== 'pin' ? 'good' : 'warn';
+    const bio = p.lockBio && GL.face.bioPossible();
+    st.textContent = bio ? (KINDS[p.lockKind] || 'attivo') : 'non attivo';
+    st.className = bio ? 'good' : 'warn';
+    $('#set-face-go').textContent = bio ? 'Rinnova lo sblocco con il volto' : 'Attiva lo sblocco con il volto';
+    const pin = $('#set-pin-state');
+    pin.textContent = p.pinHash ? 'impostato' : 'non impostato';
+    pin.className = p.pinHash ? 'good' : 'warn';
+    const detail = GL.ui.native?.bioDetail ? GL.ui.native.bioDetail() : `supporto: ${GL.face.platform()}`;
+    $('#set-bio-detail').textContent = detail;
     $('#set-name').value = p.codename || '';
     setPressed([$('#set-intro-full'), $('#set-intro-short')], p.intro === 'short' ? $('#set-intro-short') : $('#set-intro-full'));
     renderStats();

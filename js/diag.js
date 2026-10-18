@@ -132,8 +132,12 @@ window.GL = window.GL || {};
 
   async function testOther() {
     const kind = GL.face?.platform?.() || 'sconosciuto';
-    row('Sblocco biometrico', kind === 'none' ? 'warn' : 'ok',
-      { face: 'volto disponibile', biometric: 'impronta/volto disponibile', webauthn: 'volto o impronta via browser', none: 'nessun sensore o nessun volto registrato nel telefono' }[kind] || kind);
+    const detail = native?.bioDetail ? native.bioDetail() : '';
+    const words = { face: 'volto disponibile alle app', biometric: 'impronta o volto disponibili', credential: 'solo il codice del telefono', webauthn: 'volto o impronta via browser', none: 'nessuno sblocco disponibile alle app' };
+    row('Sblocco biometrico', kind === 'none' ? 'warn' : 'ok', `${words[kind] || kind}${detail ? ' · ' + detail : ''}`);
+    const p = GL.prefs.get();
+    row('Accesso registrato', (p.lockBio || p.pinHash) ? 'ok' : 'warn',
+      `${p.lockBio ? 'volto attivo' : 'volto non attivo'} · ${p.pinHash ? 'codice impostato' : 'nessun codice'}`);
     let ls = false;
     try { localStorage.setItem('gl-t', '1'); localStorage.removeItem('gl-t'); ls = true; } catch { /* blocked */ }
     row('Memoria locale', ls ? 'ok' : 'bad', ls ? 'cassaforte e impostazioni possono salvare' : 'bloccata: niente salvataggi');

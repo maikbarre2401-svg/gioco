@@ -297,7 +297,7 @@ main:not(:has(.screen.active)) .screen[data-screen="home"] { display: flex; flex
 
 /* ---------- home: agent card ---------- */
 .agent { flex-direction: row; align-items: center; gap: 14px; }
-.ghost { width: 92px; aspect-ratio: 3 / 4; height: auto; flex: none; }
+.agent-ghost { width: 92px; aspect-ratio: 3 / 4; height: auto; flex: none; }
 .agent-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
 .agent-name { font: 700 24px var(--f-display); letter-spacing: .06em; color: var(--cyan); margin: 0; overflow-wrap: anywhere; }
 .agent-rank { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
@@ -417,7 +417,7 @@ main:not(:has(.screen.active)) .screen[data-screen="home"] { display: flex; flex
 @media (min-width: 640px) {
   .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .radar { width: 132px; height: 132px; }
-  .ghost { width: 110px; }
+  .agent-ghost { width: 110px; }
 }
 @media (max-width: 360px) {
   .checks { grid-template-columns: repeat(2, minmax(0, 1fr)); }

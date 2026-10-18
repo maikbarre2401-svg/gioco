@@ -27,32 +27,46 @@
     <canvas id="lock-overlay" class="lock-overlay" aria-hidden="true"></canvas>
   </div>
 
+  <!-- first run, step 1: face -->
   <div id="lock-enroll" class="lock-panel" hidden>
-    <div class="eyebrow">Registrazione biometrica</div>
+    <div class="eyebrow">Registrazione · passo 1 di 2</div>
     <h2 class="lock-title">Registra il tuo volto</h2>
-    <p class="note">Metti il viso dentro l'ovale e premi il pulsante. Da ora in poi Ghostlink si aprirà solo con il tuo <b id="lock-kind">volto</b>.</p>
+    <p class="note">Metti il viso dentro l'ovale e premi il pulsante. Si apre la verifica sicura del telefono: <b id="lock-kind">volto</b>.</p>
     <button id="lock-enroll-go" class="btn wide" type="button">Registra il mio volto</button>
-    <div class="row">
-      <button id="lock-use-pin" class="btn ghost" type="button">Usa un PIN</button>
-      <button id="lock-skip" class="btn ghost" type="button">Per ora no</button>
-    </div>
-    <p class="note">La verifica è affidata allo sblocco sicuro del telefono: il tuo volto resta nel telefono e non viene salvato nell'app né inviato a nessuno.</p>
+    <button id="lock-enroll-skip" class="btn ghost wide" type="button">Salta, uso solo il codice</button>
+    <p class="note">Il tuo volto resta nell'area protetta del telefono: l'app non lo vede e non lo salva.</p>
   </div>
 
+  <!-- first run, step 2: backup code -->
+  <div id="lock-setpin" class="lock-panel" hidden>
+    <div class="eyebrow">Registrazione · passo 2 di 2</div>
+    <h2 class="lock-title">Codice di riserva</h2>
+    <p class="note" id="lock-setpin-why">Serve se un giorno il volto non venisse riconosciuto. Almeno 4 cifre.</p>
+    <input id="lock-newpin" type="password" inputmode="numeric" autocomplete="off" placeholder="Nuovo codice">
+    <input id="lock-newpin2" type="password" inputmode="numeric" autocomplete="off" placeholder="Ripeti il codice">
+    <div id="lock-setpin-msg" class="lock-msg"></div>
+    <button id="lock-setpin-go" class="btn wide" type="button">Salva e entra</button>
+    <button id="lock-setpin-skip" class="btn ghost wide" type="button" hidden>Salta</button>
+  </div>
+
+  <!-- returning user: both ways, always -->
   <div id="lock-unlock" class="lock-panel" hidden>
     <div class="eyebrow">Accesso riservato</div>
     <h2 class="lock-title">Bentornato, <span id="lock-unlock-who">Agente</span></h2>
     <div id="lock-unlock-msg" class="lock-msg"></div>
-    <button id="lock-unlock-go" class="btn wide" type="button">Sblocca con il volto</button>
-    <button id="lock-use-pin2" class="btn ghost wide" type="button">Usa il PIN</button>
+    <button id="lock-face-go" class="btn wide" type="button">Sblocca con il volto</button>
+    <button id="lock-pin-go2" class="btn ghost wide" type="button">Usa il codice</button>
+    <button id="lock-addface" class="btn ghost wide" type="button" hidden>Attiva lo sblocco con il volto</button>
   </div>
 
+  <!-- PIN entry -->
   <div id="lock-pinview" class="lock-panel" hidden>
     <div class="eyebrow">Codice di accesso</div>
-    <h2 id="lock-pin-title" class="lock-title">Inserisci il PIN</h2>
-    <input id="lock-pin" type="password" inputmode="numeric" autocomplete="off" placeholder="Almeno 4 cifre">
+    <h2 class="lock-title">Inserisci il codice</h2>
+    <input id="lock-pin" type="password" inputmode="numeric" autocomplete="off" placeholder="Codice">
     <div id="lock-pin-msg" class="lock-msg"></div>
-    <button id="lock-pin-go" class="btn wide" type="button">Entra</button>
+    <button id="lock-pin-enter" class="btn wide" type="button">Entra</button>
+    <button id="lock-back-face" class="btn ghost wide" type="button" hidden>◂ Torna al volto</button>
   </div>
 </div>
 
@@ -92,7 +106,7 @@
   <!-- HOME -->
   <section class="screen" data-screen="home">
     <div class="card agent">
-      <canvas id="ghost" class="ghost" aria-hidden="true"></canvas>
+      <canvas id="ghost" class="agent-ghost" aria-hidden="true"></canvas>
       <div class="agent-body">
         <div class="eyebrow">Agente operativo</div>
         <h1 id="agent-name" class="agent-name">—</h1>
@@ -456,10 +470,19 @@
       <div id="set-stats"></div>
     </div>
     <div class="card">
-      <div class="eyebrow">Sblocco con il volto</div>
-      <div class="kv"><span>Stato</span><b id="set-face-state">—</b></div>
-      <button id="set-face-go" class="btn ghost wide" type="button">Registra di nuovo il volto</button>
-      <p class="note">La verifica usa lo sblocco sicuro del telefono. Se lo disattivi lì, qui serve il PIN.</p>
+      <div class="eyebrow">Accesso all'app</div>
+      <div class="kv"><span>Sblocco con il volto</span><b id="set-face-state">—</b></div>
+      <button id="set-face-go" class="btn ghost wide" type="button">Attiva lo sblocco con il volto</button>
+      <div class="kv"><span>Codice di accesso</span><b id="set-pin-state">—</b></div>
+      <button id="set-pin-go" class="btn ghost wide" type="button">Imposta o cambia il codice</button>
+      <div id="set-pin-box" class="stack" hidden>
+        <input id="set-pin-a" type="password" inputmode="numeric" autocomplete="off" placeholder="Nuovo codice">
+        <input id="set-pin-b" type="password" inputmode="numeric" autocomplete="off" placeholder="Ripeti il codice">
+        <div id="set-pin-msg" class="lock-msg"></div>
+        <button id="set-pin-save" class="btn wide" type="button">Salva codice</button>
+      </div>
+      <p id="set-bio-detail" class="note"></p>
+      <button id="set-face-reset" class="btn ghost wide" type="button">Rifai la registrazione da capo</button>
     </div>
     <div class="card">
       <div class="eyebrow">Azzera</div>

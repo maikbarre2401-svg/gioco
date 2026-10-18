@@ -13,9 +13,11 @@ App per il telefono in stile hacker futuristico (ispirata all'interfaccia di Wat
 
 Nell'APK la torcia usa il LED vero, la vibrazione e la condivisione sono quelle di Android, e tutto funziona offline.
 
-## Sblocco con il volto
+## Sblocco con il volto o con il codice
 
-Al primo avvio l'app chiede di **registrare il volto**; dopo si apre solo con la tua faccia.
+Al primo avvio la registrazione ha due passi: **1)** registri il volto, **2)** imposti un **codice di riserva**. Dopo, la schermata di accesso offre **sempre entrambe le opzioni**: "Sblocca con il volto" e "Usa il codice". Il volto viene chiesto subito, come fa il telefono; se non viene riconosciuto puoi passare al codice e viceversa, senza restare mai chiuso fuori.
+
+Se il volto non era stato attivato, la schermata mostra il pulsante **"Attiva lo sblocco con il volto"**, e dalle Impostazioni puoi attivare o cambiare separatamente volto e codice.
 
 La verifica è affidata allo **sblocco sicuro del telefono** (BiometricPrompt su Android, WebAuthn nel browser): è lo stesso sistema che sblocca il telefono, il modello del volto resta nell'area protetta del dispositivo e non entra mai nell'app. Per questo una foto o la faccia di un altro **non** funzionano. Un confronto fatto dall'app su un'immagine della fotocamera, invece, si sbloccherebbe con chiunque: per questo non è stato usato.
 

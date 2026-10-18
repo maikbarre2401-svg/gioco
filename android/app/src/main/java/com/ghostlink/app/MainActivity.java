@@ -376,17 +376,51 @@ public class MainActivity extends Activity {
 
     /* --------------------------------------------------------------- biometrics */
 
-    /** 'face', 'biometric' or 'none' — what the device can actually verify. */
+    /**
+     * What this device can actually verify for an app: 'face', 'biometric', 'credential'
+     * (the phone's own PIN/pattern) or 'none'. Many phones expose face unlock only as a WEAK
+     * authenticator — or not at all — so weak is accepted and device credential is the fallback.
+     */
     private String biometricKind() {
         if (Build.VERSION.SDK_INT < 28) return "none";
         boolean hasFace = getPackageManager().hasSystemFeature(PackageManager.FEATURE_FACE);
-        if (Build.VERSION.SDK_INT >= 29) {
-            BiometricManager bm = (BiometricManager) getSystemService(Context.BIOMETRIC_SERVICE);
-            if (bm == null) return "none";
-            int status = bm.canAuthenticate();
-            if (status != BiometricManager.BIOMETRIC_SUCCESS) return "none";
+        boolean hasFinger = getPackageManager().hasSystemFeature(PackageManager.FEATURE_FINGERPRINT);
+        BiometricManager bm = Build.VERSION.SDK_INT >= 29
+                ? (BiometricManager) getSystemService(Context.BIOMETRIC_SERVICE) : null;
+        if (Build.VERSION.SDK_INT >= 30 && bm != null) {
+            if (bm.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_WEAK)
+                    == BiometricManager.BIOMETRIC_SUCCESS) return hasFace ? "face" : "biometric";
+            if (bm.canAuthenticate(BiometricManager.Authenticators.DEVICE_CREDENTIAL)
+                    == BiometricManager.BIOMETRIC_SUCCESS) return "credential";
+            return "none";
         }
-        return hasFace ? "face" : "biometric";
+        if (bm != null && bm.canAuthenticate() != BiometricManager.BIOMETRIC_SUCCESS) return "none";
+        return hasFace ? "face" : (hasFinger ? "biometric" : "none");
+    }
+
+    /** Human-readable capability line for the diagnostics screen. */
+    private String biometricDetail() {
+        if (Build.VERSION.SDK_INT < 28) return "Android troppo vecchio per lo sblocco biometrico nelle app";
+        StringBuilder sb = new StringBuilder();
+        sb.append(getPackageManager().hasSystemFeature(PackageManager.FEATURE_FACE) ? "sensore volto presente" : "nessun sensore volto");
+        sb.append(getPackageManager().hasSystemFeature(PackageManager.FEATURE_FINGERPRINT) ? ", impronta presente" : ", nessuna impronta");
+        if (Build.VERSION.SDK_INT >= 30) {
+            BiometricManager bm = (BiometricManager) getSystemService(Context.BIOMETRIC_SERVICE);
+            if (bm != null) {
+                sb.append("; per le app: debole=").append(statusWord(bm.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_WEAK)));
+                sb.append(", forte=").append(statusWord(bm.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)));
+                sb.append(", codice telefono=").append(statusWord(bm.canAuthenticate(BiometricManager.Authenticators.DEVICE_CREDENTIAL)));
+            }
+        }
+        return sb.toString();
+    }
+
+    private String statusWord(int status) {
+        if (status == BiometricManager.BIOMETRIC_SUCCESS) return "ok";
+        if (status == BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED) return "non registrato";
+        if (status == BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE) return "assente";
+        if (status == BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE) return "non disponibile";
+        return "no";
     }
 
     /** Shows the system biometric prompt; the verdict goes back to the page. */
@@ -397,15 +431,25 @@ public class MainActivity extends Activity {
             public void run() {
                 try {
                     BiometricPrompt.Builder b = new BiometricPrompt.Builder(MainActivity.this)
-                            .setTitle(title == null || title.isEmpty() ? "Ghostlink" : title)
-                            .setNegativeButton(getString(R.string.cancel), getMainExecutor(),
-                                    new android.content.DialogInterface.OnClickListener() {
-                                        @Override
-                                        public void onClick(android.content.DialogInterface d, int w) {
-                                            sendBioResult(false, "annullato");
-                                        }
-                                    });
+                            .setTitle(title == null || title.isEmpty() ? "Ghostlink" : title);
                     if (subtitle != null && !subtitle.isEmpty()) b.setSubtitle(subtitle);
+                    // Accept a weak authenticator (that is how most phones expose face unlock) and
+                    // let the phone's own PIN/pattern stand in. A negative button is not allowed
+                    // together with device credential, so it is only set on older releases.
+                    if (Build.VERSION.SDK_INT >= 30) {
+                        b.setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_WEAK
+                                | BiometricManager.Authenticators.DEVICE_CREDENTIAL);
+                    } else if (Build.VERSION.SDK_INT >= 29) {
+                        b.setDeviceCredentialAllowed(true);
+                    } else {
+                        b.setNegativeButton(getString(R.string.cancel), getMainExecutor(),
+                                new android.content.DialogInterface.OnClickListener() {
+                                    @Override
+                                    public void onClick(android.content.DialogInterface d, int w) {
+                                        sendBioResult(false, "annullato");
+                                    }
+                                });
+                    }
                     b.build().authenticate(new CancellationSignal(), getMainExecutor(),
                             new BiometricPrompt.AuthenticationCallback() {
                                 @Override
@@ -513,6 +557,11 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public String bioAvailable() {
             return biometricKind();
+        }
+
+        @JavascriptInterface
+        public String bioDetail() {
+            return biometricDetail();
         }
 
         @JavascriptInterface

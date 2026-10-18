@@ -1,5 +1,5 @@
 // Offline support: the whole app (fonts included) is cached on install.
-const VERSION = 'ghostlink-v7';
+const VERSION = 'ghostlink-v8';
 const SHELL = [
   './',
   'index.html',

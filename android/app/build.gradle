@@ -10,8 +10,8 @@ android {
         applicationId 'com.ghostlink.app'
         minSdk 24
         targetSdk 35
-        versionCode 7
-        versionName '5.1'
+        versionCode 8
+        versionName '5.2'
     }
 
     // Development signing key kept in the repo so every build (Android Studio, GitHub Actions,

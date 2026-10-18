@@ -6,7 +6,8 @@ window.GL = window.GL || {};
   // Per-device settings and hacker progression, kept in localStorage when available.
   const KEY = 'ghostlink-prefs';
   const DEFAULTS = { codename: '', sound: true, voice: true, vibration: true, intro: 'full', xp: 0, stats: {},
-    faceEnrolled: false, faceKind: 'none', faceCred: null, avatar: null, pinHash: null, pinSalt: null };
+    faceEnrolled: false, faceKind: 'none', faceCred: null, avatar: null, pinHash: null, pinSalt: null,
+    lockSetup: false, lockBio: false, lockKind: 'none' };
   let data = { ...DEFAULTS };
   try { data = { ...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) || '{}') }; } catch { /* storage blocked */ }
 
