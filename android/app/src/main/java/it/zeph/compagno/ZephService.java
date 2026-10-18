@@ -27,7 +27,6 @@ import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.hardware.display.DisplayManager;
-import android.os.BatteryManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -64,13 +63,6 @@ import android.widget.TextView;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
 
 import java.util.Locale;
 
@@ -95,12 +87,13 @@ public class ZephService extends Service {
     static final String ACTION_SAY = "it.zeph.compagno.SAY";
     static final String ACTION_MESSAGE = "it.zeph.compagno.MESSAGE";
     static final String ACTION_MEMORY = "it.zeph.compagno.MEMORY";
+    /** L'assistente vocale ha parlato con te: il compagno rilegge la memoria (senza dire niente). */
+    static final String ACTION_SYNC = "it.zeph.compagno.SYNC";
     static final String KEY_REPLY = "zeph_reply";
     static final String EXTRA_TEXT = "text";
     static final String EXTRA_CMD = "cmd";
 
     private static final String CH_MAIN = "zeph_main";
-    private static final String CH_REMIND = "zeph_promemoria";
     private static final int NOTIF_ID = 7;
 
     static volatile boolean running = false;
@@ -126,7 +119,6 @@ public class ZephService extends Service {
     private float density;
     private int screenW, screenH, winW, winH, groundY;
     private int curX, curLift;
-    private int reminderId = 100;
     private BroadcastReceiver screenRx;
     private BroadcastReceiver phoneRx;
     private SensorManager sensors;
@@ -281,6 +273,8 @@ public class ZephService extends Service {
             if (!hidden) js("zephMessage(" + JSONObject.quote(intent.getStringExtra(EXTRA_TEXT)) + ")");
         } else if (ACTION_MEMORY.equals(action)) {
             js("zephRestoreMemory()");
+        } else if (ACTION_SYNC.equals(action)) {
+            js("zephReloadMemory()");
         } else if (ACTION_RELOAD.equals(action)) {
             destroyOverlay();
             createOverlay();
@@ -374,16 +368,6 @@ public class ZephService extends Service {
 
     private void refreshNotification() {
         getSystemService(NotificationManager.class).notify(NOTIF_ID, buildNotification());
-    }
-
-    private void reminder(String text) {
-        Notification n = new Notification.Builder(this, CH_REMIND)
-            .setSmallIcon(R.drawable.ic_stat_zeph)
-            .setContentTitle(Prefs.petName(this) + " ⏰")
-            .setContentText(text)
-            .setAutoCancel(true)
-            .build();
-        getSystemService(NotificationManager.class).notify(reminderId++, n);
     }
 
     // ---------------------------------------------------------------- finestre
@@ -506,32 +490,6 @@ public class ZephService extends Service {
 
     private void stopShake() {
         if (sensors != null) sensors.unregisterListener(shakeListener);
-    }
-
-    // la memoria del compagno, copiata anche in un file dell'app (per il backup e se la pagina viene azzerata)
-    private File memoryFile() { return new File(getFilesDir(), "memory.json"); }
-
-    private void writeMemory(String json) {
-        if (json == null || json.length() > 4 * 1024 * 1024) return;
-        File tmp = new File(getFilesDir(), "memory.tmp");
-        try (OutputStream out = new FileOutputStream(tmp)) {
-            out.write(json.getBytes(StandardCharsets.UTF_8));
-        } catch (IOException e) {
-            return;
-        }
-        if (!tmp.renameTo(memoryFile())) tmp.delete();
-    }
-
-    static String readFile(File f) {
-        if (!f.exists() || f.length() > 4 * 1024 * 1024) return "";
-        try (InputStream in = new FileInputStream(f)) {
-            byte[] b = new byte[(int) f.length()];
-            int off = 0, n;
-            while (off < b.length && (n = in.read(b, off, b.length - off)) > 0) off += n;
-            return new String(b, 0, off, StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            return "";
-        }
     }
 
     private void destroyOverlay() {
@@ -722,8 +680,12 @@ public class ZephService extends Service {
 
     // ---------------------------------------------------------------- ponte con la pagina
 
-    /** I metodi che overlay.js può chiamare (girano su un thread a parte). */
-    private class Bridge {
+    /** I metodi che overlay.js può chiamare (girano su un thread a parte); i poteri del telefono sono in PhoneBridge. */
+    private class Bridge extends PhoneBridge {
+        Bridge() { super(ZephService.this); }
+
+        @Override protected void onPetName() { refreshNotification(); updateTile(); }
+
         @JavascriptInterface public String info() { return infoJson(); }
 
         @JavascriptInterface public void setPos(int x, int lift) {
@@ -751,115 +713,9 @@ public class ZephService extends Service {
 
         @JavascriptInterface public void stopSpeak() { if (tts != null) tts.stop(); }
 
-        @JavascriptInterface public boolean action(String json) {
-            try {
-                return PhoneActions.run(ZephService.this, new JSONObject(json));
-            } catch (JSONException e) {
-                return false;
-            }
-        }
-
-        @JavascriptInterface public String battery() {
-            BatteryManager bm = getSystemService(BatteryManager.class);
-            try {
-                return new JSONObject()
-                    .put("level", bm != null ? bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) : -1)
-                    .put("charging", bm != null && bm.isCharging())
-                    .toString();
-            } catch (JSONException e) {
-                return "{\"level\":-1}";
-            }
-        }
-
-        @JavascriptInterface public void remind(String text) { main.post(() -> reminder(text)); }
-
         @JavascriptInterface public void openChat() { main.post(() -> ZephService.this.openChat(false)); }
 
-        /** Conversazione a voce, mani libere. */
-        @JavascriptInterface public void openTalk() {
-            main.post(() -> {
-                try {
-                    startActivity(new Intent(ZephService.this, TalkActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-                } catch (Exception e) { Log.w(TAG, "conversazione", e); }
-            });
-        }
-
-        /** Apre la pagina «avatar dalla foto». */
-        @JavascriptInterface public void openPhoto() {
-            main.post(() -> {
-                try {
-                    startActivity(new Intent(ZephService.this, PhotoActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-                } catch (Exception e) { Log.w(TAG, "foto", e); }
-            });
-        }
-
-        /** Il nome del compagno (lo puoi cambiare dalla chat o dall'app). */
-        @JavascriptInterface public String petName() { return Prefs.petName(ZephService.this); }
-
-        @JavascriptInterface public void setPetName(String n) {
-            Prefs.setPetName(ZephService.this, n);
-            main.post(() -> { refreshNotification(); updateTile(); });
-        }
-
-        /** La tua chiave per il cervello AI: sta nelle impostazioni dell'app, non nella pagina. */
-        @JavascriptInterface public String aiKey() { return Prefs.aiKey(ZephService.this); }
-
-        @JavascriptInterface public void setAiKey(String k) {
-            Prefs.setAiKey(ZephService.this, k != null && (k.isEmpty() || k.startsWith("sk-ant-")) ? k : "");
-        }
-
-        /** La modalità scelta (nell'app o in chat). */
-        @JavascriptInterface public String style() { return Prefs.style(ZephService.this); }
-
-        @JavascriptInterface public void setStyle(String st) { Prefs.setStyle(ZephService.this, st); }
-
-        /** Cosa può fare adesso: rubrica, agenda, messaggi, cervello AI. */
-        @JavascriptInterface public String powers() {
-            try {
-                return new JSONObject()
-                    .put("contacts", Contacts.canReadContacts(ZephService.this))
-                    .put("calendar", Contacts.canReadCalendar(ZephService.this))
-                    .put("messages", MessageListener.enabled(ZephService.this))
-                    .put("ai", !Prefs.aiKey(ZephService.this).isEmpty())
-                    .toString();
-            } catch (JSONException e) {
-                return "{}";
-            }
-        }
-
-        /** Promemoria vero (AlarmManager): suona anche a Zeph spento. */
-        @JavascriptInterface public int remindAt(double at, String text) { return Reminders.add(ZephService.this, (long) at, text); }
-
-        @JavascriptInterface public String reminders() { return Reminders.list(ZephService.this).toString(); }
-
-        @JavascriptInterface public void clearReminders() { Reminders.clear(ZephService.this); }
-
-        @JavascriptInterface public String contact(String name) { return Contacts.find(ZephService.this, name); }
-
-        @JavascriptInterface public String events(int offset) { return Contacts.events(ZephService.this, offset); }
-
-        @JavascriptInterface public String messages() {
-            return MessageListener.enabled(ZephService.this) ? MessageListener.recentJson() : "{\"error\":\"perm\"}";
-        }
-
-        /** A chi risponderebbe («Giulia|WhatsApp»), per chiederti conferma prima. */
-        @JavascriptInterface public String peekReply(String who) { return MessageListener.peek(who); }
-
-        /** Manda la risposta: la pagina la chiama solo dopo il tuo «sì». */
-        @JavascriptInterface public String reply(String who, String text) { return MessageListener.reply(ZephService.this, who, text); }
-
-        @JavascriptInterface public void openEyes(String q) {
-            main.post(() -> {
-                try {
-                    startActivity(new Intent(ZephService.this, PhotoActivity.class)
-                        .putExtra(PhotoActivity.EXTRA_PAGE, "occhi").putExtra(PhotoActivity.EXTRA_Q, q == null ? "" : q)
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-                } catch (Exception e) { Log.w(TAG, "occhi", e); }
-            });
-        }
-
-        @JavascriptInterface public void saveMemory(String json) { writeMemory(json); }
-
-        @JavascriptInterface public String loadMemory() { return readFile(memoryFile()); }
+        /** «Ehi Zeph» dalla chat del compagno: apre l'assistente vocale. */
+        @JavascriptInterface public void openAssist() { open(new Intent(ZephService.this, AssistActivity.class)); }
     }
 }

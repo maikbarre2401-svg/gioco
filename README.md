@@ -29,6 +29,16 @@ Di base Zeph usa un cervello **offline e gratuito**. Se vuoi che chiacchieri dav
 
 Con la chiave risponde **Claude (`claude-opus-5-5`)** usando quello che Zeph sa di te; i comandi (torcia, sveglie, app, meteo…) restano al cervello veloce offline. Se il modello rifiuta una domanda, l'API la passa da sola a un modello di riserva (`fallbacks: "default"`); senza internet torna il cervello offline. La chiave resta sul dispositivo (sul telefono è esclusa anche dai backup) e viene usata solo per parlare con l'API di Anthropic.
 
+## 🎙 Zeph 9: l'assistente vocale (app Android)
+
+Nell'app scegli la modalità: **🚶 Compagno** (cammina sul tuo schermo, come prima) oppure **🎙 Assistente** (non resta sullo schermo: compare quando lo chiami e fa le cose sul telefono con la voce).
+
+- **Come lo chiami**: tieni premuto il **tasto Home** (con i gesti: scorri in diagonale da un angolo in basso) dopo averlo scelto come «App assistente digitale» (pulsante nell'app), oppure il riquadro «Zeph» nelle Impostazioni rapide, la scorciatoia «Assistente» tenendo premuta l'icona, o il tasto delle cuffie.
+- **Il tuo avatar** (Avaturn, foto o Zeph) compare a mezzo busto in un portale di luce sopra un pannello di vetro, ti ascolta subito, muove la bocca mentre risponde; l'onda luminosa segue la tua voce. ♾ per una conversazione continua, ⌨ per scrivere, «basta» per chiuderlo.
+- **Cosa fa**: «portami a casa» / «come arrivo a Milano?» (navigatore), «cerca una farmacia qui vicino», «metti Vasco su Spotify», «fammi vedere un video di gatti», «apri Instagram» (qualsiasi app installata, per nome), «chiama la mamma» (con il permesso chiama davvero, ma solo dopo il tuo «sì»), «attiva il wifi / bluetooth / modalità aereo / hotspot / posizione», «non disturbare», «metti il telefono in vibrazione», «volume al 50», «luminosità al massimo», «disattiva la rotazione», «fai uno screenshot», «torna indietro», «app recenti», «apri le notifiche», «blocca il telefono», «scorri giù», «fai un selfie», «registra un video», «che sveglie ho?», «prendi nota: comprare il latte», «il mio indirizzo è via…». E tutto quello che sa già: meteo, promemoria, agenda, messaggi, Wikipedia, traduzioni, il cervello AI.
+- **Permessi nuovi, tutti facoltativi**: chiamate a voce, «Comandi del telefono» (un servizio di accessibilità che preme solo i tasti di sistema che chiedi e non legge lo schermo), «Modifica impostazioni di sistema» (luminosità e rotazione). Wi-Fi, Bluetooth e dati: Android non lascia accenderli alle app, quindi l'assistente apre il pannello giusto e tu tocchi l'interruttore.
+- Il compagno sullo schermo e l'assistente hanno lo stesso cervello e la stessa memoria.
+
 ## 🎭 Zeph 8: modalità, avatar realistico, app futuristica
 
 - **Sette modalità** per Zeph e per il tuo avatar `.glb`: ✨ Normale, 🛸 Ologramma, 💠 Neon (contorni luminosi del colore di ogni parte), 🏆 Oro (statua di metallo vero, con i riflessi), 💎 Cristallo, 🎨 Cartone (tre toni e contorno nero), 👻 Fantasma (trasparente e fluttua). Di' «modalità neon», «diventa d'oro», «modalità fantasma», «cambia modalità», «torna normale»; nel browser c'è il pulsante 🎭; nell'app si sceglie con un tocco.

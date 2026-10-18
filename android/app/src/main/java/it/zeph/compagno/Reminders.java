@@ -9,6 +9,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.os.SystemClock;
 import android.os.Build;
 
 import org.json.JSONArray;
@@ -36,6 +37,19 @@ final class Reminders {
         NotificationChannel r = new NotificationChannel(CHANNEL, "Promemoria di Zeph", NotificationManager.IMPORTANCE_HIGH);
         r.setDescription("Quando dici a Zeph «ricordami…»");
         nm.createNotificationChannel(r);
+    }
+
+    /** Un avviso subito (i timer brevi della pagina, quando il promemoria vero non si può segnare). */
+    static void notifyNow(Context c, String text) {
+        channel(c);
+        Notification n = new Notification.Builder(c, CHANNEL)
+            .setSmallIcon(R.drawable.ic_stat_zeph)
+            .setContentTitle(Prefs.petName(c) + " ⏰")
+            .setContentText(text)
+            .setAutoCancel(true)
+            .build();
+        NotificationManager nm = c.getSystemService(NotificationManager.class);
+        if (nm != null) nm.notify(5000 + (int) (SystemClock.uptimeMillis() % 1000), n);
     }
 
     static synchronized JSONArray list(Context c) {

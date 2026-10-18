@@ -25,34 +25,8 @@ function syncPrefs() {
 }
 syncPrefs();
 
-const MEM_KEYS = ['zephMemory', 'zephName', 'zephPrefs'];
-function memorySnapshot() {
-  const o = {};
-  try { MEM_KEYS.forEach(k => { const v = localStorage.getItem(k); if (v != null) o[k] = v; }); } catch (e) {}
-  return JSON.stringify(o);
-}
-function restoreMemory(force) {
-  if (!A || !A.loadMemory) return false;
-  try {
-    if (!force && localStorage.getItem('zephMemory')) return false;
-    const snap = JSON.parse(A.loadMemory() || '{}');
-    if (!snap.zephMemory) return false;
-    MEM_KEYS.forEach(k => { if (snap[k] != null) localStorage.setItem(k, snap[k]); else localStorage.removeItem(k); });
-    ZephCore.memory.reload();
-    return true;
-  } catch (e) { return false; }
-}
-restoreMemory(false);
-let memTimer = null;
-ZephCore.memory.setOnSave(() => {
-  if (!A || !A.saveMemory) return;
-  clearTimeout(memTimer);
-  memTimer = setTimeout(() => A.saveMemory(memorySnapshot()), 1500);
-});
-// quello che il telefono gli permette di fare (rubrica, agenda, messaggi)
-function powers() {
-  try { return JSON.parse(A && A.powers ? A.powers() : '{}'); } catch (e) { return {}; }
-}
+// la memoria è copiata anche nell'app (backup, e se Android azzera la pagina): vedi telefono.js
+ZephTelefono.syncMemory(A);
 
 // ---------- Scena ----------
 const VIS_H = 2.25;                 // metri visibili in altezza nella finestra
@@ -361,297 +335,36 @@ let musicOn = false;
 function startMusic() { if (musicOn) return; musicOn = true; ZephCore.music.start(); anim.state.danceFreq = 6.6; }
 function stopMusic() { musicOn = false; ZephCore.music.stop(); anim.state.danceFreq = 6.0; }
 
-// ---------- Il cervello: risposte e azioni sul telefono ----------
-function phone(o) {
-  if (!A) return true;
-  try { return !!A.action(JSON.stringify(o)); } catch (e) { return false; }
-}
-function batteryReport() {
-  try {
-    const b = JSON.parse(A ? A.battery() : '{"level":-1}');
-    if (b.level < 0) throw new Error('n/d');
-    return 'La batteria è al ' + b.level + ' per cento' +
-      (b.charging ? ' e si sta caricando!' : b.level < 20 ? '… mettila in carica!' : '!');
-  } catch (e) { return 'Non riesco a leggere la batteria del telefono!'; }
-}
+// ---------- Il cervello: risposte e azioni sul telefono (i poteri sono in telefono.js) ----------
 function thinking() {
   showBubble('💭 …');
   anim.state.gestureLead = 1;
 }
-function botRespond(text) {
-  const out = ZephCore.botReply(text, botCtx);
-  if (out) respondWith(out, false);
-}
-// un comando proposto dal cervello AI («svegliami alle 7»): passa dagli stessi controlli dei tuoi
-function runAiCommand(cmd) {
-  if (!cmd) return false;
-  const out = ZephCore.botReply(cmd, botCtx);
-  if (!out || out.aiQuery || out.generic) return false;
-  respondWith(out, true);
-  return true;
-}
-function respondWith(out, fromAI) {
-  if (out.setPetName && A && A.setPetName) A.setPetName(out.setPetName);
-  if (out.party) sparkles.burst(0, 1.2, 0, 24);
-  if (out.stop) { state.wander = false; state.targetX = null; }
-  if (out.wander) state.wander = true;
-  if (out.follow) out.say = 'Sul telefono non c’è il mouse da seguire… ma posso passeggiare! Dimmi «cammina».';
-  if (out.come) state.targetX = (host.screenW - host.winW) / 2;
-  if (out.run !== undefined) state.running = out.run;
-  if (out.fly !== undefined) state.flying = out.fly;
-  if (out.setName) { try { localStorage.setItem('zephName', out.setName); } catch (e) {} botCtx.name = out.setName; }
-  if (out.whoami) {
-    out.say = botCtx.name ? 'Ti chiami ' + botCtx.name + '! Come potrei dimenticarlo?'
-      : 'Non me l’hai ancora detto! Scrivimi «mi chiamo…» e me lo ricorderò.';
-  }
-  if (out.setPref) {
-    try {
-      const p = JSON.parse(localStorage.getItem('zephPrefs') || '{}');
-      p[out.setPref.k] = out.setPref.v;
-      localStorage.setItem('zephPrefs', JSON.stringify(p));
-    } catch (e) {}
-  }
-  if (out.getPref) {
-    let p = {};
-    try { p = JSON.parse(localStorage.getItem('zephPrefs') || '{}'); } catch (e) {}
-    out.say = p[out.getPref] ? 'Il tuo ' + out.getPref + ' preferito è ' + p[out.getPref] + '!'
-      : 'Non me l’hai ancora detto! Scrivimi «il mio ' + out.getPref + ' preferito è …»';
-  }
-  // app vere del telefono: prima l'app, poi il sito come riserva
-  if (out.appUrl || out.app || out.open) {
-    let ok = false;
-    if (out.appUrl) ok = phone({ type: 'appUrl', url: out.appUrl });
-    if (!ok && out.app) ok = phone({ type: 'app', id: out.app });
-    if (!ok && out.open) ok = phone({ type: 'url', url: out.open });
-    if (!ok) out.say = 'Uffa, sul telefono questa non la trovo: forse l’app non è installata.';
-  }
-  if (out.volume) {
-    phone({ type: 'volume', dir: out.volume });
-    out.say = out.say.replace(/del PC/g, 'del telefono');
-  }
-  if (out.torch !== undefined && !phone({ type: 'torch', on: out.torch })) {
-    out.say = 'Uffa, su questo telefono non riesco a usare la torcia.';
-  }
-  if (out.alarm && !phone({ type: 'alarm', h: out.alarm.h, m: out.alarm.m })) {
-    out.say = 'Non riesco a puntare la sveglia: c’è l’app Orologio sul telefono?';
-  }
-  if (out.timer) {
-    // il timer vero dell'Orologio suona anche se Zeph è chiuso: allora niente doppione
-    if (phone({ type: 'timer', seconds: out.timer.seconds })) {
-      delete out.remind;
-      out.say += ' L’ho messo anche nell’Orologio del telefono.';
+const tel = ZephTelefono.create({
+  A, ctx: botCtx, speak, thinking,
+  act: name => anim.startAction(name),
+  burst: n => sparkles.burst(0, 1.2, 0, n),
+  setStyle: name => setStyle(name),
+  media: key => { if (key === 'pause' && musicOn) stopMusic(); },
+  // quello che sa fare solo il compagno sullo schermo
+  local(out) {
+    if (out.stop) { state.wander = false; state.targetX = null; }
+    if (out.wander) state.wander = true;
+    if (out.follow) out.say = 'Sul telefono non c’è il mouse da seguire… ma posso passeggiare! Dimmi «cammina».';
+    if (out.come) state.targetX = (host.screenW - host.winW) / 2;
+    if (out.run !== undefined) state.running = out.run;
+    if (out.fly !== undefined) state.flying = out.fly;
+    if (out.music === 'on') startMusic();
+    if (out.music === 'off') stopMusic();
+    if (out.outfit) {
+      out.say = avatarDriver ? 'Il look lo cambio solo quando sono Zeph, non con il tuo avatar!' : out.say;
+      if (!avatarDriver) randomOutfit();
     }
-  }
-  if (out.dial !== undefined && !phone({ type: 'dial', number: out.dial })) {
-    out.say = 'Non riesco ad aprire il telefono per chiamare.';
-  }
-  if (out.media) {
-    if (out.media === 'pause' && musicOn) stopMusic();
-    phone({ type: 'media', key: out.media });
-  }
-  if (out.weatherQuery) {
-    speak(ZephCore.pick(['Un attimo che guardo fuori…', 'Controllo il cielo…', 'Vediamo cosa dicono le nuvole…']));
-    ZephCore.weatherReport(out.weatherQuery).then(r => {
-      if (r.kind === 'rain' || r.kind === 'snow') anim.startAction('stretch');
-      else if (r.kind === 'clear') anim.startAction('wave');
-      speak(r.say);
-    });
-  }
-  if (out.battery) out.say = batteryReport();
-  if (out.remind) {
-    // promemoria vero (lo tiene Android: suona anche se chiudi Zeph); altrimenti il timer della pagina
-    const r = out.remind;
-    if (!(A && A.remindAt && A.remindAt(Date.now() + r.seconds * 1000, r.text) > 0)) {
-      setTimeout(() => {
-        anim.startAction('jump');
-        speak('Ehi! Promemoria: ' + r.text);
-        if (A) A.remind(r.text);
-      }, r.seconds * 1000);
-    }
-  }
-  if (out.remindAt) {
-    const r = out.remindAt;
-    if (A && A.remindAt) {
-      if (A.remindAt(r.at, r.text) <= 0) out.say = 'Uffa, non sono riuscito a segnare il promemoria (forse ne hai già tanti?).';
-    } else if (r.at - Date.now() < 864e5) {
-      setTimeout(() => { anim.startAction('jump'); speak('Ehi! Promemoria: ' + r.text); }, r.at - Date.now());
-    }
-  }
-  if (out.listReminders) out.say = remindersReport();
-  if (out.clearReminders && A && A.clearReminders) A.clearReminders();
-  if (out.calAdd && !phone({ type: 'calAdd', title: out.calAdd.title, at: out.calAdd.at })) {
-    out.say = 'Non trovo l’app del calendario sul telefono…';
-  }
-  if (out.agenda !== undefined) { speak(agendaReport(out.agenda)); return; }
-  if (out.briefing) { briefing(true); return; }
-  if (out.callName) { callByName(out.callName); return; }
-  if (out.msgName) { messageByName(out.msgName); return; }
-  if (out.readMsgs) { speak(messagesReport()); return; }
-  if (out.replyMsg) { askReply(out.replyMsg); return; }
-  if (out.confirmed) { doConfirmed(out.confirmed); return; }
-  if (out.see) {
-    if (!ZephCore.ai.enabled()) out.say = 'Per vedere mi serve il cervello AI: metti la tua chiave nell’app, nella sezione 🧠.';
-    else if (A && A.openEyes) A.openEyes(out.see);
-  }
-  if (out.wikiQuery) {
-    speak(out.say);
-    ZephCore.wikiAnswer(out.wikiQuery).then(r => { anim.startAction('wave'); speak(r.say); });
-    return;
-  }
-  if (out.style) setStyle(out.style);
-  if (out.talk && !(A && A.openTalk && (A.openTalk(), true))) out.say = 'Aggiorna l’app per parlare a voce senza mani!';
-  if (out.music === 'on') startMusic();
-  if (out.music === 'off') stopMusic();
-  if (out.dog) out.say = 'Rocky è rimasto a casa nel computer! Qui sul telefono c’è spazio solo per me.';
-  if (out.photoAvatar && !(A && A.openPhoto && (A.openPhoto(), true))) out.say = 'Apri l’app e premi «Crea l’avatar con una foto»!';
-  if (out.sky || out.weather || out.autoSky !== undefined || out.photo || out.stars ||
-      out.missions || out.fireworks || out.camMode || out.quality || out.ball) {
-    out.say = 'Questa la so fare nel mio mondo sul computer! Qui sul telefono cammino, ballo e ti apro le app.';
-  }
-  if (out.outfit) {
-    out.say = avatarDriver ? 'Il look lo cambio solo quando sono Zeph, non con il tuo avatar!' : out.say;
-    if (!avatarDriver) randomOutfit();
-  }
-  // chiacchiere: con il cervello AI risponde Claude (il cervello offline resta di riserva)
-  if (out.aiQuery && ZephCore.ai.enabled() && !fromAI) {
-    thinking();
-    ZephCore.ai.ask(out.aiQuery, botCtx, out.say).then(r => {
-      if (runAiCommand(r.command)) return; // il cervello AI ha capito un comando: lo esegue davvero
-      const act = r.action || out.action;
-      if (act) anim.startAction(act);
-      speak(r.say);
-    });
-    return;
-  }
-  if (out.action) anim.startAction(out.action);
-  if (out.say) speak(out.say);
-}
-
-// ---------- I poteri del telefono ----------
-function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
-function remindersReport() {
-  let list = [];
-  try { list = JSON.parse(A && A.reminders ? A.reminders() : '[]'); } catch (e) {}
-  list = list.filter(r => r.at > Date.now() - 60e3).sort((a, b) => a.at - b.at);
-  if (!list.length) return 'Non hai promemoria. Dimmi tipo «ricordami domani alle 9 di chiamare la mamma».';
-  return 'Hai ' + plural(list.length, 'promemoria', 'promemoria') + ': ' +
-    list.slice(0, 5).map(r => ZephCore.whenLabel(r.at) + ', ' + r.text).join('; ') + '.';
-}
-function eventsOf(offset) {
-  try { return JSON.parse(A && A.events ? A.events(offset) : '{"error":"perm"}'); } catch (e) { return []; }
-}
-function agendaReport(offset) {
-  const quando = offset === 0 ? 'Oggi' : offset === 1 ? 'Domani' : 'Dopodomani';
-  const ev = eventsOf(offset);
-  const day = (() => { const d = new Date(); d.setDate(d.getDate() + offset); return ZephCore.dayOf(d); })();
-  const piani = ZephCore.memory.get().diary.filter(e => e.k === 'piano' && e.d === day).map(e => '«' + e.t + '»');
-  if (ev && ev.error === 'perm') {
-    return 'Per leggere l’agenda dammi il permesso nell’app, sezione «Poteri del telefono».' +
-      (piani.length ? ' Però mi avevi detto: ' + piani.join(', ') + '.' : '');
-  }
-  const items = (Array.isArray(ev) ? ev : []).map(e => (e.allDay ? 'tutto il giorno' : ZephCore.whenLabel(e.begin).replace(/^\S+\s/, '')) + ' ' + e.title);
-  if (!items.length && !piani.length) return quando + ' non hai impegni in agenda. Giornata libera!';
-  return quando + (items.length ? ' hai ' + plural(items.length, 'impegno', 'impegni') + ': ' + items.join(', ') + '.' : ' l’agenda è vuota.') +
-    (piani.length ? ' E mi avevi detto: ' + piani.join(', ') + '.' : '');
-}
-// il buongiorno: meteo, impegni, promemoria e cose da ricordare
-let briefingBusy = false;
-function briefing(onDemand) {
-  if (briefingBusy) return;
-  briefingBusy = true;
-  const h = new Date().getHours();
-  const nome = botCtx.name ? ', ' + botCtx.name : '';
-  const parts = [(h < 12 ? 'Buongiorno' : h < 18 ? 'Ciao' : 'Buonasera') + nome + '! ' +
-    'Oggi è ' + new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' }) + '.'];
-  const city = (() => { try { return JSON.parse(localStorage.getItem('zephPrefs') || '{}')['città']; } catch (e) { return null; } })();
-  const meteo = city ? Promise.race([ZephCore.weatherReport({ city, when: 'oggi' }), new Promise(r => setTimeout(() => r(null), 6000))]) : Promise.resolve(null);
-  meteo.then(w => {
-    if (w && w.code !== undefined) parts.push(w.say);
-    const ag = agendaReport(0);
-    if (!/permesso/.test(ag) || onDemand) parts.push(ag);
-    let rem = [];
-    try { rem = JSON.parse(A && A.reminders ? A.reminders() : '[]'); } catch (e) {}
-    const today = ZephCore.dayOf();
-    rem = rem.filter(r => ZephCore.dayOf(new Date(r.at)) === today && r.at > Date.now());
-    if (rem.length) parts.push('Promemoria di oggi: ' + rem.map(r => ZephCore.whenLabel(r.at).replace(/^oggi /, '') + ' ' + r.text).join(', ') + '.');
-    const bd = ZephCore.daysUntil('compleanno');
-    if (/È OGGI/.test(bd)) parts.push(bd);
-    else if (/^Manca 1 giorno|^Mancano [2-7] giorni/.test(bd)) parts.push(bd);
-    if (!city && onDemand) parts.push('Se mi dici «la mia città è …» ti dico anche il meteo.');
-    anim.startAction('wave');
-    speak(parts.join(' '));
-    briefingBusy = false;
-  });
-}
-function contactOf(name) {
-  try { return JSON.parse(A && A.contact ? A.contact(name) : '{"error":"perm"}'); } catch (e) { return { error: 'none' }; }
-}
-function lookupPerson(p) {
-  let c = contactOf(p.name);
-  if (c.error === 'none' && p.alt) c = contactOf(p.alt);
-  return c;
-}
-function callByName(p) {
-  const c = lookupPerson(p);
-  if (c.error === 'perm') {
-    phone({ type: 'dial', number: '' });
-    speak('Per chiamare per nome dammi il permesso della rubrica nell’app. Intanto ti apro il telefono!');
-    return;
-  }
-  if (c.error) { speak('Non trovo «' + p.label + '» nella rubrica… Come l’hai salvato?'); return; }
-  if (!phone({ type: 'dial', number: c.number })) { speak('Non riesco ad aprire il telefono per chiamare.'); return; }
-  anim.startAction('wave');
-  speak('Ecco ' + c.name + ': premi il tasto verde per chiamare!');
-}
-// numero in formato internazionale per WhatsApp (i cellulari italiani senza prefisso diventano +39)
-function intlNumber(n) {
-  let d = String(n).replace(/[^\d+]/g, '');
-  if (d.indexOf('+') === 0) return d.slice(1);
-  if (d.indexOf('00') === 0) return d.slice(2);
-  if (/^3\d{8,9}$/.test(d)) return '39' + d;
-  return d;
-}
-function messageByName(p) {
-  const c = lookupPerson(p);
-  if (c.error === 'perm') { speak('Per scrivere a qualcuno per nome dammi il permesso della rubrica nell’app, sezione «Poteri del telefono».'); return; }
-  if (c.error) { speak('Non trovo «' + p.label + '» nella rubrica…'); return; }
-  const wa = 'whatsapp://send?phone=' + intlNumber(c.number) + '&text=' + encodeURIComponent(p.text);
-  if (phone({ type: 'appUrl', url: wa })) { speak('Ti ho preparato il messaggio per ' + c.name + ' su WhatsApp: premi invia!'); return; }
-  if (phone({ type: 'sms', number: c.number, text: p.text })) { speak('Ti ho preparato l’SMS per ' + c.name + ': premi invia!'); return; }
-  speak('Non riesco ad aprire né WhatsApp né i messaggi…');
-}
-function messagesList() {
-  try { return JSON.parse(A && A.messages ? A.messages() : '{"error":"perm"}'); } catch (e) { return []; }
-}
-function messagesReport() {
-  const list = messagesList();
-  if (list && list.error === 'perm') return 'Per sapere chi ti scrive dammi l’accesso alle notifiche nell’app, sezione «Poteri del telefono».';
-  if (!list.length) return 'Nessun messaggio nuovo da quando sono acceso!';
-  const top = list.slice(0, 3).map(m => m.who + ' su ' + m.app + (m.ago > 0 ? ', ' + (m.ago < 60 ? m.ago + ' minuti fa' : 'un po’ di tempo fa') : '') + ': «' + m.text.slice(0, 120) + '»');
-  return (list.length === 1 ? 'Ti ha scritto ' : 'Ultimi messaggi: ') + top.join('. ') + '. Per rispondere dimmi «rispondi: …».';
-}
-function askReply(r) {
-  const target = A && A.peekReply ? A.peekReply(r.to || '') : '';
-  if (!target) {
-    const list = messagesList();
-    speak(list && list.error === 'perm' ? 'Per rispondere ai messaggi dammi l’accesso alle notifiche nell’app.'
-      : 'Non trovo un messaggio a cui rispondere' + (r.to ? ' di «' + r.to + '»' : '') + '. Le risposte funzionano sui messaggi arrivati da quando sono acceso.');
-    return;
-  }
-  const [who, app] = target.split('|');
-  botCtx.pending = 'confirm';
-  botCtx.pendingAt = Date.now();
-  botCtx.confirmData = { kind: 'reply', to: r.to || '', text: r.text, who };
-  speak('Rispondo a ' + who + ' su ' + app + ': «' + r.text + '». Lo mando? Dimmi sì o no.', '✉️ A ' + who + ': «' + r.text + '» — lo mando? (sì / no)');
-}
-function doConfirmed(d) {
-  if (!d) return;
-  if (d.kind === 'reply') {
-    const done = A && A.reply ? A.reply(d.to, d.text) : '';
-    if (done) { anim.startAction('jump'); speak('Inviato a ' + done.split('|')[0] + '!'); }
-    else speak('Non ci sono riuscito: forse quel messaggio non si può più rispondere dalla notifica.');
-  }
-}
+    return false;
+  },
+});
+function botRespond(text) { tel.respond(text); }
+function briefing(onDemand) { tel.briefing(onDemand); }
 window.zephMessage = function (json) {
   let m;
   try { m = JSON.parse(json); } catch (e) { return; }
@@ -683,8 +396,13 @@ window.zephUnlock = function () {
   wake(true);
   setTimeout(() => briefing(false), 1200);
 };
+// l'assistente vocale ha parlato con te: rilegge la memoria in silenzio
+window.zephReloadMemory = function () {
+  ZephCore.memory.reload();
+  try { botCtx.name = localStorage.getItem('zephName') || null; } catch (e) {}
+};
 window.zephRestoreMemory = function () {
-  if (restoreMemory(true)) {
+  if (ZephTelefono.restoreMemory(A, true)) {
     botCtx.name = localStorage.getItem('zephName') || null;
     anim.startAction('dance');
     speak('Mi è tornata la memoria! ' + (botCtx.name ? 'Ciao ' + botCtx.name + ', mi ricordo tutto di te!' : 'Mi ricordo di tutto!'));

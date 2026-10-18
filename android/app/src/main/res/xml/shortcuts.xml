@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_mic"
+        android:shortcutId="assistente"
+        android:shortcutLongLabel="@string/sc_assist_long"
+        android:shortcutShortLabel="@string/sc_assist_short">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetClass="it.zeph.compagno.AssistActivity"
+            android:targetPackage="it.zeph.compagno" />
+    </shortcut>
+</shortcuts>

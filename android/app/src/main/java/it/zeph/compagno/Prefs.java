@@ -82,6 +82,11 @@ final class Prefs {
         p(c).edit().putString("style", ok ? v : "normale").apply();
     }
 
+    /** Come lo vuoi: «compagno» (cammina sullo schermo) o «assistente» (compare quando lo chiami). */
+    static String mode(Context c) { return p(c).getString("mode", "compagno"); }
+    static void setMode(Context c, String v) { p(c).edit().putString("mode", "assistente".equals(v) ? "assistente" : "compagno").apply(); }
+    static boolean assistantMode(Context c) { return "assistente".equals(mode(c)); }
+
     /** Usa il look fatto con la foto (al posto del file .glb). */
     static boolean photoLook(Context c) { return p(c).getBoolean("photoLook", false); }
     static void setPhotoLook(Context c, boolean v) { p(c).edit().putBoolean("photoLook", v).apply(); }

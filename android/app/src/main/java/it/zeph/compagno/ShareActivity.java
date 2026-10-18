@@ -18,6 +18,11 @@ public class ShareActivity extends Activity {
         CharSequence text = in != null ? in.getCharSequenceExtra(Intent.EXTRA_TEXT) : null;
         if (text == null || text.toString().trim().isEmpty()) {
             Toast.makeText(this, "Non c'è niente da leggere", Toast.LENGTH_SHORT).show();
+        } else if (Prefs.assistantMode(this) && !ZephService.running) {
+            // modalità assistente: legge la voce dell'app, senza mettere il compagno sullo schermo
+            String t = text.toString().trim();
+            Voce.get(this).speak(t.length() > 3800 ? t.substring(0, 3800) : t);
+            Toast.makeText(this, "📖 Ti leggo il testo…", Toast.LENGTH_SHORT).show();
         } else if (!Settings.canDrawOverlays(this)) {
             Toast.makeText(this, "Prima apri Zeph e dagli il permesso di apparire sopra le app", Toast.LENGTH_LONG).show();
         } else {

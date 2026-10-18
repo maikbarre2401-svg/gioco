@@ -26,6 +26,14 @@
     <!-- promemoria puntuali al minuto -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <!-- assistente vocale: «chiama la mamma» chiama davvero, ma solo se dai il permesso e dici «sì» alla domanda -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
+    <!-- «luminosità al massimo», «rotazione automatica»: solo se lo permetti nelle Impostazioni -->
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+    <!-- «accendi il wifi» sui telefoni con Android 9 o più vecchio -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 
     <!-- app che Zeph sa aprire (da Android 11 vanno dichiarate) -->
     <queries>
@@ -51,6 +59,23 @@
         <package android:name="com.microsoft.office.excel" />
         <package android:name="com.microsoft.office.powerpoint" />
         <package android:name="com.microsoft.office.officehubrow" />
+        <package android:name="com.google.android.apps.maps" />
+        <package android:name="com.google.android.youtube" />
+        <package android:name="com.google.android.apps.youtube.music" />
+        <package android:name="com.amazon.mp3" />
+        <package android:name="deezer.android.app" />
+        <!-- «apri Instagram»: per trovare le app installate per nome -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <intent>
+            <action android:name="android.media.action.MEDIA_PLAY_FROM_SEARCH" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="geo" />
+        </intent>
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="https" />
@@ -94,6 +119,31 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- tieni premuta l'icona: «Assistente» -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+        </activity>
+
+        <!-- l'assistente vocale: tasto Home tenuto premuto (se lo scegli come assistente), cuffie, scorciatoia, riquadro -->
+        <activity
+            android:name=".AssistActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:label="Assistente Zeph"
+            android:launchMode="singleTask"
+            android:taskAffinity="it.zeph.compagno.assist"
+            android:theme="@style/Zeph.Assist"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.ASSIST" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VOICE_COMMAND" />
+                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
 
@@ -171,6 +221,20 @@
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
+        </service>
+
+        <!-- «Comandi del telefono»: indietro, home, app recenti, screenshot, blocca schermo, scorri (solo se lo attivi tu) -->
+        <service
+            android:name=".ZephAccess"
+            android:exported="true"
+            android:label="Zeph: comandi del telefono"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/zeph_access" />
         </service>
 
         <receiver

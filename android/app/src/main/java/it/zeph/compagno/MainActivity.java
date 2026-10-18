@@ -52,10 +52,13 @@ public class MainActivity extends Activity {
     private static final int REQ_CALENDAR = 24;
     private static final int REQ_BACKUP_SAVE = 25;
     private static final int REQ_BACKUP_LOAD = 26;
+    private static final int REQ_CALL = 27;
     private static final int TEAL = 0xFF14B8A6;
 
     private TextView status, friendship;
     private Button overlayBtn, notifBtn, startBtn, batteryBtn, chatBtn, contactsBtn, calendarBtn, messagesBtn;
+    private Button assistBtn, callBtn, accessBtn, settingsBtn;
+    private TextView modeCompanion, modeAssist;
     private EditText nameEdit, keyEdit;
     private Button updateBtn;
     private WebView vetrina;
@@ -151,6 +154,22 @@ public class MainActivity extends Activity {
         box.addView(chipsScroll);
         paintChips();
 
+        // come lo vuoi: il compagno che cammina sullo schermo, o l'assistente vocale che compare quando lo chiami
+        LinearLayout modes = new LinearLayout(this);
+        modes.setOrientation(LinearLayout.HORIZONTAL);
+        modeCompanion = modeCard("🚶  Compagno", "cammina sul tuo schermo");
+        modeAssist = modeCard("🎙  Assistente", "compare quando lo chiami e fa le cose a voce");
+        modeCompanion.setOnClickListener(v -> chooseMode("compagno"));
+        modeAssist.setOnClickListener(v -> chooseMode("assistente"));
+        modes.addView(modeCompanion, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f));
+        LinearLayout.LayoutParams map = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f);
+        map.leftMargin = dp(10);
+        modes.addView(modeAssist, map);
+        LinearLayout.LayoutParams msp = full();
+        msp.topMargin = dp(12);
+        box.addView(modes, msp);
+        paintModes();
+
         // c'è una versione nuova su GitHub? (controllo ogni qualche ora)
         updateBtn = button("", 0xFF7C3AED);
         updateBtn.setVisibility(View.GONE);
@@ -190,6 +209,10 @@ public class MainActivity extends Activity {
         section(box, "2 · Il tuo compagno");
         startBtn = button("", TEAL);
         startBtn.setOnClickListener(v -> {
+            if (Prefs.assistantMode(this)) {
+                startActivity(new Intent(this, AssistActivity.class));
+                return;
+            }
             if (ZephService.running) {
                 startService(new Intent(this, ZephService.class).setAction(ZephService.ACTION_STOP));
                 ZephService.running = false;
@@ -204,6 +227,11 @@ public class MainActivity extends Activity {
         chatBtn = button("🎤 Parla con Zeph", 0xFF334155);
         chatBtn.setOnClickListener(v -> startActivity(new Intent(this, TalkActivity.class)));
         box.addView(chatBtn, gap(full()));
+        assistBtn = button("", 0xFF334155);
+        assistBtn.setOnClickListener(v -> openAssistantSettings());
+        box.addView(assistBtn, gap(full()));
+        box.addView(gapped(text("Così lo chiami da qualsiasi app: tieni premuto il tasto Home (con i gesti: scorri in diagonale da un angolo in basso). " +
+            "Oppure il riquadro «Zeph» nelle Impostazioni rapide, o tieni premuta l'icona dell'app → «Assistente».", 12, 0x88FFFFFF)));
 
         section(box, "3 · Il tuo avatar");
         box.addView(text("Fatti un selfie: il tuo compagno prende i tuoi colori e la tua faccia (la foto resta sul telefono).", 13, 0x99FFFFFF));
@@ -318,7 +346,31 @@ public class MainActivity extends Activity {
             }
         });
         box.addView(messagesBtn, gap(full()));
-        box.addView(gapped(text("Se l'interruttore di Zeph è grigio («impostazione con limitazioni», Android 13+): apri Impostazioni → App → Zeph, " +
+        callBtn = button("", 0xFF334155);
+        callBtn.setOnClickListener(v -> requestPermissions(new String[]{Manifest.permission.CALL_PHONE}, REQ_CALL));
+        box.addView(callBtn, gap(full()));
+        accessBtn = button("", 0xFF334155);
+        accessBtn.setOnClickListener(v -> {
+            try {
+                startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
+                Toast.makeText(this, "Cerca «Zeph: comandi del telefono» (a volte è in «App installate») e attivalo", Toast.LENGTH_LONG).show();
+            } catch (Exception e) {
+                Toast.makeText(this, "Apri Impostazioni → Accessibilità", Toast.LENGTH_LONG).show();
+            }
+        });
+        box.addView(accessBtn, gap(full()));
+        settingsBtn = button("", 0xFF334155);
+        settingsBtn.setOnClickListener(v -> {
+            try {
+                startActivity(new Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:" + getPackageName())));
+            } catch (Exception e) {
+                Toast.makeText(this, "Apri Impostazioni → App → Zeph → Modifica impostazioni di sistema", Toast.LENGTH_LONG).show();
+            }
+        });
+        box.addView(settingsBtn, gap(full()));
+        box.addView(gapped(text("Le chiamate a voce partono solo dopo il tuo «sì» («Chiamo Giulia? Dimmi sì o no»). I comandi del telefono premono soltanto " +
+            "i tasti che gli chiedi (indietro, home, app recenti, notifiche, screenshot, blocca schermo, scorri): non leggono lo schermo.", 12, 0x88FFFFFF)));
+        box.addView(gapped(text("Se un interruttore di Zeph è grigio («impostazione con limitazioni», Android 13+): apri Impostazioni → App → Zeph, " +
             "tocca i tre puntini in alto a destra → «Consenti impostazioni con limitazioni», poi riprova.", 12, 0x88FFFFFF)));
         CheckBox announce = check("Annuncia i messaggi in arrivo («Ti ha scritto Giulia!»)", Prefs.announceMessages(this));
         announce.setOnCheckedChangeListener((c, on) -> Prefs.setAnnounceMessages(this, on));
@@ -382,6 +434,12 @@ public class MainActivity extends Activity {
 
         section(box, "Come si usa");
         box.addView(text(
+            "🎙 ASSISTENTE VOCALE — tieni premuto il tasto Home (dopo averlo scelto come assistente, punto 2), il riquadro «Zeph» nelle Impostazioni rapide " +
+            "o la scorciatoia «Assistente» sull'icona. Il tuo avatar compare, ti ascolta e lo fa. Prova: «portami a casa», «metti Vasco su Spotify», " +
+            "«apri Instagram», «chiama la mamma» (ti chiede conferma), «scrivi a Giulia che arrivo», «attiva il wifi», «non disturbare», «volume al 50», " +
+            "«luminosità al massimo», «metti il telefono in vibrazione», «fai uno screenshot», «torna indietro», «blocca il telefono», «cerca una farmacia qui vicino», " +
+            "«fai un selfie», «prendi nota: comprare il latte», «che tempo fa?», «chi mi ha scritto?». Tocca ♾ per parlare senza fermarti. Di' «basta» per chiuderlo.\n\n" +
+            "🚶 COMPAGNO SULLO SCHERMO\n" +
             "• Tocca Zeph: reagisce (saluta, balla, salta…). Toccalo tante volte: soffre il solletico!\n" +
             "• Tienilo premuto: si apre la chat (scrivi o parla)\n" +
             "• Trascinalo: lo sollevi, e se lo lasci cade giù\n" +
@@ -514,9 +572,29 @@ public class MainActivity extends Activity {
         mark(contactsBtn, Contacts.canReadContacts(this), "✅ Rubrica: «chiama Giulia», «scrivi a Marco che…»", "📇 Permetti la rubrica («chiama Giulia»)");
         mark(calendarBtn, Contacts.canReadCalendar(this), "✅ Agenda: «che impegni ho oggi?»", "📅 Permetti l'agenda («che impegni ho oggi?»)");
         mark(messagesBtn, MessageListener.enabled(this), "✅ Ti avvisa dei messaggi («chi mi ha scritto?»)", "📩 Avvisami dei messaggi (accesso alle notifiche)");
+        mark(callBtn, checkSelfPermission(Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED,
+            "✅ Chiamate a voce (ti chiede sempre conferma)", "📞 Permetti le chiamate a voce («chiama la mamma» → «sì»)");
+        mark(accessBtn, ZephAccess.enabled(this), "✅ Comandi del telefono: indietro, screenshot, blocca…", "🕹 Comandi del telefono (indietro, screenshot, blocca schermo)");
+        mark(settingsBtn, Settings.System.canWrite(this), "✅ Luminosità e rotazione a voce", "☀️ Permetti luminosità e rotazione a voce");
+        boolean assistant = isAssistant();
+        mark(assistBtn, assistant, "✅ È il tuo assistente: tieni premuto il tasto Home", "🏠 Rendilo il tuo assistente (tieni premuto Home)");
         boolean on = ZephService.running;
         String name = Prefs.petName(this);
         paintChips();
+        paintModes();
+        boolean assistMode = Prefs.assistantMode(this);
+        chatBtn.setVisibility(assistMode ? View.GONE : View.VISIBLE);
+        if (assistMode) {
+            startBtn.setText("🎙 Apri l'assistente " + name);
+            String av = Prefs.photoLook(this) && new File(getFilesDir(), "look.json").exists() ? "con il look della tua foto"
+                : new File(getFilesDir(), "avatar.glb").exists() ? "con il tuo avatar" : "come Zeph";
+            status.setText("🎙 Modalità assistente (" + av + ", " + (Prefs.aiKey(this).isEmpty() ? "cervello offline" : "cervello AI acceso") + "). " +
+                (assistant ? "Tieni premuto il tasto Home in qualsiasi app e parla." : "Scegli " + name + " come assistente (punto 2) e poi tieni premuto il tasto Home."));
+            String fr0 = friendshipText();
+            friendship.setText(fr0);
+            friendship.setVisibility(fr0.isEmpty() ? View.GONE : View.VISIBLE);
+            return;
+        }
         String fr = friendshipText();
         friendship.setText(fr);
         friendship.setVisibility(fr.isEmpty() ? View.GONE : View.VISIBLE);
@@ -530,9 +608,82 @@ public class MainActivity extends Activity {
             : "⚠️ Serve il permesso di apparire sopra le altre app (punto 1).");
     }
 
+    // ---------------------------------------------------------------- modalità e assistente
+
+    private TextView modeCard(String title, String sub) {
+        TextView t = text(title + "\n" + sub, 13, Color.WHITE);
+        t.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        t.setPadding(dp(14), dp(12), dp(12), dp(12));
+        t.setLineSpacing(dp(2), 1.1f);
+        return t;
+    }
+
+    private void paintModes() {
+        if (modeCompanion == null) return;
+        boolean assist = Prefs.assistantMode(this);
+        for (TextView c : new TextView[]{modeCompanion, modeAssist}) {
+            boolean on = (c == modeAssist) == assist;
+            if (on) {
+                GradientDrawable g = new GradientDrawable(GradientDrawable.Orientation.TL_BR, new int[]{0xFF0F766E, 0xFF0369A1, 0xFF5B21B6});
+                g.setCornerRadius(dp(16));
+                g.setStroke(dp(1), 0xAA5EEAD4);
+                c.setBackground(g);
+                c.setTextColor(Color.WHITE);
+                c.setAlpha(1f);
+            } else {
+                c.setBackground(glass(0xFF111C30, 0x335EEAD4, 16));
+                c.setTextColor(0xBBEAF2FF);
+                c.setAlpha(0.85f);
+            }
+        }
+    }
+
+    private void chooseMode(String m) {
+        Prefs.setMode(this, m);
+        if ("assistente".equals(m)) {
+            if (ZephService.running) {
+                startService(new Intent(this, ZephService.class).setAction(ZephService.ACTION_STOP));
+                ZephService.running = false;
+            }
+            Toast.makeText(this, isAssistant() ? "Modalità assistente: tieni premuto il tasto Home e parla!"
+                : "Modalità assistente! Ora sceglilo come assistente (punto 2)", Toast.LENGTH_LONG).show();
+        } else {
+            Toast.makeText(this, "Modalità compagno: premi «Metti sullo schermo»", Toast.LENGTH_SHORT).show();
+        }
+        try {
+            android.service.quicksettings.TileService.requestListeningState(this, new android.content.ComponentName(this, ZephTileService.class));
+        } catch (Exception ignored) { }
+        refresh();
+    }
+
+    /** Zeph è l'«App assistente digitale»? (allora il tasto Home tenuto premuto apre l'assistente) */
+    private boolean isAssistant() {
+        try {
+            if (Build.VERSION.SDK_INT >= 29) {
+                android.app.role.RoleManager rm = getSystemService(android.app.role.RoleManager.class);
+                return rm != null && rm.isRoleHeld(android.app.role.RoleManager.ROLE_ASSISTANT);
+            }
+            String a = Settings.Secure.getString(getContentResolver(), "assistant");
+            return a != null && a.startsWith(getPackageName() + "/");
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private void openAssistantSettings() {
+        String[] actions = {Settings.ACTION_VOICE_INPUT_SETTINGS, Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS, Settings.ACTION_SETTINGS};
+        for (String a : actions) {
+            try {
+                startActivity(new Intent(a));
+                Toast.makeText(this, "Scegli «App assistente digitale» (o «Assistente») → " + Prefs.petName(this), Toast.LENGTH_LONG).show();
+                return;
+            } catch (Exception ignored) { /* prova la prossima */ }
+        }
+    }
+
     /** «Grandi amici · insieme da 12 giorni · 85 chiacchierate · sa 9 cose di te», dal file della memoria. */
     private String friendshipText() {
-        String snap = ZephService.readFile(new File(getFilesDir(), "memory.json"));
+        String snap = PhoneBridge.readFile(new File(getFilesDir(), "memory.json"));
         if (snap.isEmpty()) return "";
         try {
             org.json.JSONObject o = new org.json.JSONObject(snap);
@@ -662,7 +813,7 @@ public class MainActivity extends Activity {
     public void onRequestPermissionsResult(int req, String[] perms, int[] res) {
         super.onRequestPermissionsResult(req, perms, res);
         refresh();
-        if ((req == REQ_CONTACTS || req == REQ_CALENDAR) && res.length > 0 && res[0] != PackageManager.PERMISSION_GRANTED) {
+        if ((req == REQ_CONTACTS || req == REQ_CALENDAR || req == REQ_CALL) && res.length > 0 && res[0] != PackageManager.PERMISSION_GRANTED) {
             Toast.makeText(this, "Permesso negato: se cambi idea lo trovi in Impostazioni → App → Zeph → Autorizzazioni", Toast.LENGTH_LONG).show();
         }
     }
@@ -699,8 +850,8 @@ public class MainActivity extends Activity {
                 org.json.JSONObject o = new org.json.JSONObject()
                     .put("zeph", 1)
                     .put("petName", Prefs.petName(this))
-                    .put("memory", ZephService.readFile(new File(getFilesDir(), "memory.json")))
-                    .put("look", Prefs.photoLook(this) ? ZephService.readFile(new File(getFilesDir(), "look.json")) : "");
+                    .put("memory", PhoneBridge.readFile(new File(getFilesDir(), "memory.json")))
+                    .put("look", Prefs.photoLook(this) ? PhoneBridge.readFile(new File(getFilesDir(), "look.json")) : "");
                 if (out == null) throw new java.io.IOException("niente file");
                 out.write(o.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
                 ok = true;

@@ -1776,14 +1776,16 @@ function actionIntent(t, ctx) {
     if (/^(browser|internet|chrome|edge|firefox)/.test(q)) {
       return { say: 'Apro il browser!', open: 'https://www.google.com', action: 'jump' };
     }
+    // appName: sul telefono prima si cerca l'app installata con quel nome (Instagram, Gmail, Galleria…)
+    const appName = q.replace(/[?!.]+$/, '').replace(/^(?:app|applicazione)\s+(?:di\s+|del\s+|della\s+)?/, '').trim();
     for (const nome in SITI) {
       if (q.indexOf(nome) !== -1) {
-        return { say: 'Apro ' + nome + '!', open: SITI[nome], appUrl: APP_PROTO[nome], action: 'jump' };
+        return { say: 'Apro ' + nome + '!', open: SITI[nome], appUrl: APP_PROTO[nome], appName, action: 'jump' };
       }
     }
-    if (APP_PROTO[q]) return { say: 'Apro ' + q + '!', appUrl: APP_PROTO[q], action: 'jump' };
+    if (APP_PROTO[q]) return { say: 'Apro ' + q + '!', appUrl: APP_PROTO[q], appName, action: 'jump' };
     if (/^[\w-]+(\.[\w-]+)+/.test(q)) return { say: 'Apro ' + q + '!', open: 'https://' + q, action: 'jump' };
-    return { say: 'Non conosco «' + q + '», te lo cerco su Google!', open: searchUrl(q) };
+    return { say: 'Non conosco «' + q + '», te lo cerco su Google!', open: searchUrl(q), appName, appSay: 'Apro ' + capWords(appName) + '!' };
   }
 
   return null;
@@ -2397,7 +2399,8 @@ const ai = (function () {
     const d = new Date();
     return [
       'Sei ' + pet + ', un piccolo personaggio 3D che vive sullo schermo del telefono (o del computer) di ' + user + '. ' +
-      'Siete amici: chiacchierate, vi fate compagnia, ti ricordi quello che ti racconta e ti interessi davvero alla sua vita.',
+      'Siete amici: chiacchierate, vi fate compagnia, ti ricordi quello che ti racconta e ti interessi davvero alla sua vita. ' +
+      'Sul telefono sei anche il suo assistente vocale: lo aiuti a fare le cose con la voce.',
       '',
       'Come parli:',
       '- Sempre in italiano, con frasi brevi e calde: da una a tre frasi, al massimo 60 parole. La risposta compare in un fumetto e viene letta ad alta voce, quindi niente elenchi, markdown, link o emoji.',
@@ -2414,7 +2417,7 @@ const ai = (function () {
       'I comandi li gestisci con altre frasi: se ti chiede di fare qualcosa sul telefono, suggerisci la frase giusta, per esempio «che tempo fa a Roma», «accendi la torcia», «svegliami alle 7», «timer di 10 minuti», «apri whatsapp», «metti la musica», «ricordami tra 5 minuti di…», «indovinello».',
       '',
       'Campo "action": un\'animazione che accompagna la risposta (wave saluto, dance balletto, jump salto, flip salto mortale, spin piroetta, stretch stiracchiata) oppure "none".',
-      'Campo "command": se ti chiede di FARE qualcosa che sai fare con i comandi (sveglia, timer, promemoria, torcia, musica, volume, meteo, chiamare, scrivere un messaggio, aprire un\'app o un sito, agenda, tradurre, ballare, ologramma…), scrivi qui il comando in italiano semplice, nella forma che conosci: per esempio «svegliami alle 7», «ricordami domani alle 9 di chiamare la mamma», «timer di 10 minuti», «accendi la torcia», «metti la musica», «apri whatsapp», «che tempo fa a Roma», «chiama mia sorella», «scrivi a Giulia che arrivo», «che impegni ho domani», «balla». Il dispositivo lo esegue e risponde da solo, quindi in "reply" basta una frase breve. Se non serve nessun comando, stringa vuota.',
+      'Campo "command": se ti chiede di FARE qualcosa che sai fare con i comandi (sveglia, timer, promemoria, torcia, musica, volume, meteo, chiamare, scrivere un messaggio, aprire un\'app o un sito, agenda, tradurre, ballare, ologramma…), scrivi qui il comando in italiano semplice, nella forma che conosci: per esempio «svegliami alle 7», «ricordami domani alle 9 di chiamare la mamma», «timer di 10 minuti», «accendi la torcia», «metti la musica», «apri whatsapp», «apri instagram», «che tempo fa a Roma», «chiama mia sorella», «scrivi a Giulia che arrivo», «che impegni ho domani», «portami a Milano», «metti Vasco su Spotify», «attiva il wifi», «non disturbare», «volume al 50», «luminosità al massimo», «fai uno screenshot», «prendi nota: comprare il latte», «balla». Il dispositivo lo esegue e risponde da solo, quindi in "reply" basta una frase breve. Se non serve nessun comando, stringa vuota.',
       'Campo "remember": informazioni nuove e durature su chi ti parla emerse da questo messaggio (gusti, persone, progetti, eventi importanti), ognuna come frase breve in seconda persona, per esempio "ti piace il calcio". Lista vuota se non c\'è niente di nuovo.',
       '',
       'Adesso è ' + d.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) +
@@ -2985,6 +2988,177 @@ function powerIntent(t, raw, ctx) {
   return null;
 }
 
+// ---------- L'assistente del telefono: navigatore, musica, impostazioni, comandi di sistema ----------
+// Ogni comando diventa { sys: {...} }: il telefono lo esegue con la sua lista chiusa (PhoneActions).
+const APP_MUSICA = { spotify: 'spotify', 'youtube music': 'ytmusic', youtube: 'youtube', yt: 'youtube', 'amazon music': 'amazonmusic', deezer: 'deezer' };
+const NOMI_APP_MUSICA = { spotify: 'Spotify', ytmusic: 'YouTube Music', youtube: 'YouTube', amazonmusic: 'Amazon Music', deezer: 'Deezer' };
+const INTERRUTTORI = [
+  { k: 'wifi', re: /wi-?fi|wireless|wai fai/, nome: 'il Wi-Fi' },
+  { k: 'bluetooth', re: /bluetooth|blutut|blu tooth/, nome: 'il Bluetooth' },
+  { k: 'dati', re: /dati(?: mobili| cellulare)?|connessione dati|rete mobile|internet/, nome: 'i dati mobili' },
+  { k: 'nfc', re: /\bnfc\b/, nome: 'l’NFC' },
+  { k: 'aereo', re: /aereo/, nome: 'la modalità aereo' },
+  { k: 'hotspot', re: /hotspot|hot spot|condivisione (?:della )?(?:rete|connessione)|router portatile/, nome: 'l’hotspot' },
+  { k: 'posizione', re: /posizione|gps|localizzazione/, nome: 'la posizione' },
+  { k: 'rotazione', re: /rotazione(?: automatica)?(?: dello schermo)?|ruota(?:re)? (?:lo )?schermo/, nome: 'la rotazione automatica' },
+  { k: 'risparmio', re: /risparmio (?:energetico|energia|batteria)|modalità risparmio/, nome: 'il risparmio energetico' },
+  { k: 'scuro', re: /tema scuro|modalità scura|dark mode|schermo scuro/, nome: 'il tema scuro' },
+];
+const GLOBALI = [
+  { k: 'back', re: /^(?:torna|vai|va') indietro|^pagina precedente$|^indietro di una pagina$/, say: 'Indietro!' },
+  { k: 'home', re: /^(?:vai|torna|portami) (?:alla |sulla |nella )?(?:schermata )?(?:home|principale)|^schermata (?:home|principale)$|^home$/, say: 'Eccoti alla schermata principale!' },
+  { k: 'recents', re: /^(?:mostra(?:mi)?|apri|fammi vedere) (?:le )?app (?:recenti|aperte)|^app (?:recenti|aperte)$|^multitasking$/, say: 'Ecco le app aperte!' },
+  { k: 'notifications', re: /^(?:apri|mostra(?:mi)?|fammi vedere|abbassa) (?:le |la tendina delle )?notifiche$|^(?:apri |abbassa )?la tendina$/, say: 'Ecco le notifiche!' },
+  { k: 'quick', re: /^(?:apri |mostra(?:mi)? )?(?:le )?impostazioni rapide$/, say: 'Ecco le impostazioni rapide!' },
+  { k: 'screenshot', re: /^(?:fai|fammi|scatta|prendi|cattura)?\s*(?:uno |un )?(?:screenshot|screen shot)$|^cattura (?:lo |dello )?schermo$|^(?:fai|scatta) (?:una )?foto (?:allo|dello) schermo$/, say: 'Click! Screenshot fatto.' },
+  { k: 'lock', re: /^blocca (?:il telefono|lo schermo|il cellulare)|^spegni lo schermo$/, say: 'Telefono bloccato. A dopo!' },
+  { k: 'power', re: /^(?:spegni|riavvia) (?:il )?(?:telefono|cellulare)|^menu di (?:accensione|spegnimento)$/, say: 'Ti apro il menu di accensione: scegli tu.' },
+  { k: 'split', re: /^(?:attiva |metti |apri )?(?:lo )?schermo diviso$|^dividi (?:lo )?schermo$/, say: 'Schermo diviso!' },
+  { k: 'scrollDown', re: /^scorri(?: la pagina)? (?:in )?(?:giù|giu|basso|sotto)$|^scorri$/, say: 'Scorro giù.' },
+  { k: 'scrollUp', re: /^scorri(?: la pagina)? (?:in )?(?:su|alto|sopra)$/, say: 'Scorro su.' },
+];
+function phoneIntent(t, raw, ctx) {
+  let m;
+  const pulito = x => tidy(x).replace(/[?!.]+$/, '').trim();
+  const prefs = () => { try { return JSON.parse(localStorage.getItem('zephPrefs') || '{}'); } catch (e) { return {}; } };
+
+  // ---------- indirizzo di casa (per «portami a casa») ----------
+  m = t.match(/^(?:il mio indirizzo (?:è|e')|abito in|vivo in|casa mia è in)\s+((?:via|viale|piazza|piazzale|corso|largo|vicolo|strada|contrada|località)\s+.+)$/);
+  if (m) {
+    const ind = capWords(pulito(m[1]));
+    return { setPref: { k: 'indirizzo', v: ind }, say: 'Segnato: abiti in ' + ind + '. Quando vuoi dimmi «portami a casa»!', action: 'wave' };
+  }
+  // ---------- navigatore ----------
+  m = t.match(/^(?:portami|accompagnami|guidami|naviga(?:tore)?|avvia (?:il )?navigatore|navigazione)\s+(?:verso |fino )?(?:all'|alla|allo|alle|ai|al|ad|a|in|dalla|dal|da|per)(?:\s+|(?<='))(.+)$/) ||
+    t.match(/^(?:come (?:arrivo|si arriva|ci arrivo|ci vado|vado)|strada per|indicazioni(?: stradali)? per|percorso per|quanto ci (?:metto|vuole) (?:per andare )?)\s*(?:(?:all'|alla|allo|alle|ai|al|ad|a|in|da|per)(?:\s+|(?<=')))?(.+)$/);
+  if (m && !/^(?:dormire|letto|nanna|casa tua)$/.test(pulito(m[1])) && !/^(?:fare|dire|dare|stare|bere|[a-zà-ù]{3,}(?:are|ere|ire))\b/.test(pulito(m[1]))) {
+    let dest = pulito(m[1]);
+    const casa = /^(?:casa|casa mia|a casa)$/.test(dest);
+    const ind = casa ? prefs().indirizzo : null;
+    if (casa && ind) dest = ind;
+    return { sys: { type: 'navigate', q: casa && !ind ? 'casa' : dest }, phoneOnly: true, action: 'wave',
+      say: casa && !ind ? 'Ti porto a casa! (Se il navigatore non sa dov’è, dimmi «il mio indirizzo è via…».)' : 'Si parte! Ti porto a ' + capWords(dest) + '.' };
+  }
+  if (/^dove (?:sono|mi trovo|siamo)(?: adesso| ora)?\??$/.test(t)) {
+    return { sys: { type: 'maps', q: '' }, phoneOnly: true, say: 'Ti apro la mappa: il puntino blu sei tu!' };
+  }
+  m = t.match(/^(?:cerca(?:mi)?|trova(?:mi)?|c'è|dove (?:trovo|c'è))\s+(?:un |una |uno |un'|il |la |lo |l'|dei |delle |degli )?(.+?)\s+(?:qui |qua )?(?:vicino|vicina|vicini|nei dintorni|in zona)(?: a me)?\??$/) ||
+    t.match(/^(?:qual è |qual'è |dov'è |dove è |dov'e |cerca(?:mi)? |trova(?:mi)? |dimmi )?(?:il |la |l'|lo |i |le |gli )?([a-zà-ù' ]+?) più vicin[oaie]\??$/);
+  if (m) {
+    const cosa = pulito(m[1]);
+    return { sys: { type: 'maps', q: cosa }, phoneOnly: true, say: 'Cerco ' + cosa + ' qui vicino sulla mappa!' };
+  }
+
+  // ---------- musica e video: «metti Vasco su Spotify», «riproduci Imagine» ----------
+  m = t.match(/^(?:metti|riproduci|fai partire|suona|ascolta|cerca|fammi (?:sentire|ascoltare|vedere)|voglio (?:sentire|ascoltare|vedere)|guarda|apri)\s+(.+?)\s+su\s+(spotify|youtube music|youtube|yt|amazon music|deezer)$/);
+  if (m) {
+    let q = pulito(m[1]).replace(/^(?:la canzone|il brano|l'album|la playlist|il video|un video|dei video)\s+(?:di\s+)?/, '');
+    if (/^(?:la |un po' di |della |qualcosa di )?musica$|^qualcosa$/.test(q)) q = '';
+    const app = APP_MUSICA[m[2]];
+    return { sys: { type: 'play', q, app }, phoneOnly: true, action: 'dance', say: q ? 'Metto «' + q + '» su ' + NOMI_APP_MUSICA[app] + '!' : 'Musica su ' + NOMI_APP_MUSICA[app] + '!' };
+  }
+  m = t.match(/^(?:fammi vedere|mostrami|metti|cerca|voglio vedere|guarda)\s+(?:un |dei |il |qualche )?video (?:di |su |dei |del |della |delle |degli |sui |sugli |sulle |con )?(.+)$/);
+  if (m) {
+    const q = pulito(m[1]);
+    return { sys: { type: 'play', q, app: 'youtube' }, phoneOnly: true, say: 'Cerco video di ' + q + ' su YouTube!' };
+  }
+  m = t.match(/^(?:riproduci|fammi (?:sentire|ascoltare)|voglio (?:sentire|ascoltare)|metti (?:su )?(?:la canzone|il brano|l'album|la playlist|un po' di|qualcosa di|le canzoni di|canzoni di)|fai partire (?:la canzone|il brano|la playlist|l'album)|suona (?:la canzone|il brano)|ascoltiamo)\s+(.+)$/);
+  if (m && !/^(?:la |un po' di |della )?musica$/.test(pulito(m[1]))) {
+    const q = pulito(m[1]).replace(/^(?:la canzone|il brano)\s+/, '');
+    return { sys: { type: 'play', q, app: '' }, phoneOnly: true, action: 'dance', say: 'Metto «' + q + '»!' };
+  }
+
+  // ---------- emergenze: il numero lo prepara, la chiamata la fai tu ----------
+  if (/^chiama (?:il |l')?(?:112|113|115|118|emergenz[ae]|soccorso|ambulanza|un'ambulanza|i carabinieri|carabinieri|la polizia|polizia|i pompieri|pompieri|i vigili del fuoco|vigili del fuoco)$/.test(t)) {
+    return { dial: '112', phoneOnly: true, say: 'Ti preparo il 112, il numero unico di emergenza: premi il tasto verde.' };
+  }
+
+  // ---------- volume, suoneria, non disturbare ----------
+  m = t.match(/volume (?:al|a|del|allo|all')\s*(\d{1,3})\s*(%|per ?cento)?/);
+  if (m) {
+    let n = parseInt(m[1], 10);
+    if (!m[2] && n <= 10) n *= 10; // «volume a 5» = metà
+    n = Math.max(0, Math.min(100, n));
+    return { sys: { type: 'volumeSet', level: n }, phoneOnly: true, say: 'Volume al ' + n + ' per cento!' };
+  }
+  if (/volume (?:al )?(?:massimo|max|a palla|tutto)|(?:alza|metti) (?:tutto )?il volume al massimo/.test(t)) return { sys: { type: 'volumeSet', level: 100 }, phoneOnly: true, say: 'Volume al massimo!', action: 'dance' };
+  if (/volume (?:al )?minimo|volume bassissimo/.test(t)) return { sys: { type: 'volumeSet', level: 10 }, phoneOnly: true, say: 'Volume al minimo.' };
+  if (/volume (?:a )?metà/.test(t)) return { sys: { type: 'volumeSet', level: 50 }, phoneOnly: true, say: 'Volume a metà!' };
+  if (/^(?:togli (?:il )?muto|riattiva (?:l'audio|il volume|i suoni))$/.test(t)) return { sys: { type: 'volumeSet', level: 50, unmute: true }, phoneOnly: true, say: 'Audio riacceso!' };
+  if (/non disturbare|modalità (?:silenzio|riposo|notte)\b|niente notifiche|silenzia le notifiche/.test(t)) {
+    const off = /^(?:togli|disattiva|spegni|leva|basta)\b|(?:disattiva|togli)\b/.test(t);
+    return { sys: { type: 'dnd', on: !off }, phoneOnly: true, say: off ? 'Non disturbare tolto: ti arrivano di nuovo le notifiche.' : 'Non disturbare attivato: niente notifiche fino a quando non me lo dici.' };
+  }
+  if (/^(?:metti|attiva)?\s*(?:il telefono )?(?:in |la |a )?(?:modalità )?vibra(?:zione|zioni|re)?$|^metti (?:il telefono )?(?:in|a) vibrazione$|^solo vibrazione$/.test(t)) {
+    return { sys: { type: 'ringer', mode: 'vibrate' }, phoneOnly: true, say: 'Telefono in vibrazione!' };
+  }
+  if (/^(?:metti|attiva)?\s*(?:il telefono )?(?:in |a |la )?(?:modalità )?silenzios[oa]$|^metti (?:il telefono )?(?:in |a )?silenzioso$|^silenzia il telefono$/.test(t)) {
+    return { sys: { type: 'ringer', mode: 'silent' }, phoneOnly: true, say: 'Telefono silenzioso. Shhh!' };
+  }
+  if (/^(?:togli (?:il |la )?(?:silenzioso|vibrazione)|riattiva (?:la )?suoneria|suoneria normale|(?:metti|attiva) (?:la )?suoneria|modalità normale suoneria)$/.test(t)) {
+    return { sys: { type: 'ringer', mode: 'normal' }, phoneOnly: true, say: 'Suoneria riattivata!' };
+  }
+
+  // ---------- luminosità ----------
+  m = t.match(/luminosità (?:al|a|allo|all')\s*(\d{1,3})\s*(%|per ?cento)?/);
+  if (m) {
+    let n = parseInt(m[1], 10);
+    if (!m[2] && n <= 10) n *= 10;
+    n = Math.max(1, Math.min(100, n));
+    return { sys: { type: 'brightness', level: n }, phoneOnly: true, say: 'Luminosità al ' + n + ' per cento!' };
+  }
+  if (/luminosità (?:al )?massim[oa]|schermo (?:al )?massimo|(?:alza|aumenta) (?:la )?luminosità al massimo/.test(t)) return { sys: { type: 'brightness', level: 100 }, phoneOnly: true, say: 'Luminosità al massimo!' };
+  if (/luminosità (?:al )?minim[oa]/.test(t)) return { sys: { type: 'brightness', level: 5 }, phoneOnly: true, say: 'Luminosità al minimo.' };
+  if (/luminosità automatica|luminosità adattiva/.test(t)) return { sys: { type: 'brightness', auto: !/^(?:togli|disattiva|spegni)/.test(t) }, phoneOnly: true, say: 'Fatto!' };
+  if (/(?:alza|aumenta|più) (?:la )?luminosità|schermo più luminoso|più luce (?:sullo|allo) schermo/.test(t)) return { sys: { type: 'brightness', dir: 'up' }, phoneOnly: true, say: 'Schermo più luminoso!' };
+  if (/(?:abbassa|diminuisci|riduci|meno) (?:la )?luminosità|schermo (?:più scuro|meno luminoso)/.test(t)) return { sys: { type: 'brightness', dir: 'down' }, phoneOnly: true, say: 'Schermo più scuro.' };
+
+  // ---------- interruttori: wifi, bluetooth, dati, aereo, hotspot, posizione… ----------
+  m = t.match(/^(accendi|attiva|abilita|metti|spegni|disattiva|disabilita|togli|leva|apri|apri le impostazioni (?:del|della|dei|delle|dell'))\s+(?:il |la |lo |l'|i |le |gli )?(?:modalità )?(.+?)\s*[!.]*$/);
+  if (m) {
+    const sw = INTERRUTTORI.find(s => s.re.test(m[2]) && m[2].length <= 30);
+    if (sw && !(sw.k === 'dati' && /^apri\b/.test(m[1]) && !/dati/.test(m[2]))) {
+      const on = /^(?:accendi|attiva|abilita|metti)/.test(m[1]) ? true : /^(?:spegni|disattiva|disabilita|togli|leva)/.test(m[1]) ? false : null;
+      return { sys: { type: 'setting', what: sw.k, on }, phoneOnly: true,
+        say: on === null ? 'Ti apro ' + sw.nome + '!' : (on ? 'Accendo ' : 'Spengo ') + sw.nome + '!' };
+    }
+  }
+
+  // ---------- comandi di sistema (servono i «Comandi del telefono» nell'app) ----------
+  for (const g of GLOBALI) {
+    if (g.re.test(t)) return { sys: { type: 'global', what: g.k }, phoneOnly: true, say: g.say };
+  }
+
+  // ---------- fotocamera, sveglie, notifiche ----------
+  if (/^(?:fai|fammi|scatta|facciamo)(?:mi)?\s+(?:un |una )?selfie$|^selfie!?$/.test(t)) {
+    return { photo: true, sys: { type: 'camera', front: true }, say: 'Mettiti in posa… Cheeeese!' };
+  }
+  if (/^(?:registra|fai|fammi|gira)\s+(?:un |il )?video$|^videocamera$|^apri la videocamera$/.test(t)) {
+    return { sys: { type: 'camera', video: true }, phoneOnly: true, say: 'Ciak, si gira! Ti apro la videocamera.' };
+  }
+  if (/^(?:mostra(?:mi)?|che|quali|apri|fammi vedere) (?:le )?sveglie(?: ho| ci sono)?\??$|^le mie sveglie$/.test(t)) {
+    return { sys: { type: 'alarms' }, phoneOnly: true, say: 'Ecco le tue sveglie!' };
+  }
+  if (/^(?:cancella|togli|spegni|elimina|disattiva) (?:la |le )?svegli[ae](?: di domani| di domattina)?$/.test(t)) {
+    return { sys: { type: 'alarmOff' }, phoneOnly: true, say: 'Ti apro l’Orologio: scegli tu quale sveglia togliere.' };
+  }
+  if (/^(?:leggi(?:mi)?|che|quali) (?:le )?notifiche(?: ho| ci sono)?\??$/.test(t)) {
+    return { readMsgs: true, phoneOnly: true, say: 'Vediamo chi ti ha scritto…' };
+  }
+  // ---------- appunti veloci: «prendi nota: comprare il latte» ----------
+  m = raw.match(/^\s*(?:prendi (?:nota|appunti?)|appunta(?:ti)?|segna(?:ti)?|annota|scrivi una nota)\s*(?:che|:|,|di)?\s+(.{3,})$/i);
+  if (m && !/\b(?:calendario|agenda|promemoria)\b/i.test(m[1])) {
+    const nota = tidy(m[1]).replace(/[.!]+$/, '');
+    memory.note('nota: ' + toTu(nota));
+    return { say: 'Segnato: «' + toTu(nota) + '». Chiedimi «cosa ho segnato?» quando vuoi.', action: 'wave' };
+  }
+  if (/^(?:cosa|che cosa) (?:ho segnato|mi sono segnato|hai segnato|ti ho detto di segnare)|^(?:leggimi |dimmi )?(?:le mie |i miei )?(?:note|appunti)\??$/.test(t)) {
+    const note = memory.get().notes.filter(x => /^nota: /.test(x)).map(x => x.slice(6));
+    return { say: note.length ? 'Hai segnato: ' + note.slice(-6).join('; ') + '.' : 'Non hai ancora segnato niente. Dimmi «prendi nota: …».' };
+  }
+  return null;
+}
+
 // ---------- Parlato naturale: «potresti accendere la torcia?» → «accendi la torcia» ----------
 const IMPERATIVI = {
   accendere: 'accendi', spegnere: 'spegni', aprire: 'apri', chiudere: 'chiudi', mettere: 'metti', chiamare: 'chiama',
@@ -3088,8 +3262,8 @@ function replyCore(text, ctx) {
   if (ctx.pending === 'confirm') {
     const data = ctx.confirmData;
     ctx.pending = null; ctx.confirmData = null;
-    if (fresh && /^(?:sì|si|certo|confermo|ok|okay|va bene|vai|manda|mandalo|invia|sicuro)(?![a-zà-ù])/.test(t)) return { confirmed: data };
-    return { say: 'Ok, annullato: non mando niente.' };
+    if (fresh && /^(?:sì|si|certo|confermo|ok|okay|va bene|vai|manda|mandalo|invia|sicuro|chiama|chiamal[ao]|procedi)(?![a-zà-ù])/.test(t)) return { confirmed: data };
+    return { say: data && data.kind === 'call' ? 'Ok, non chiamo nessuno.' : 'Ok, annullato: non mando niente.' };
   }
   if (ctx.pending === 'forget') {
     ctx.pending = null;
@@ -3106,7 +3280,7 @@ function replyCore(text, ctx) {
     if (fresh && !/\?$/.test(t) && !COMANDO_RE.test(t)) {
       const mem = memoryIntent(t, raw, ctx);
       if (mem) return mem;
-      const comando = powerIntent(t, raw, {}) || actionIntent(t, {});
+      const comando = phoneIntent(t, raw, {}) || powerIntent(t, raw, {}) || actionIntent(t, {});
       const out = comando ? null : memoryAnswer(k, raw, t, ctx);
       if (out) return out;
     }
@@ -3117,7 +3291,7 @@ function replyCore(text, ctx) {
       const mem = memoryIntent(t, raw, ctx);
       if (mem) return mem;
       const racconto = PASSATO_RE.test(t) || feeling(t) !== 0 || t.split(' ').length >= 5;
-      if (racconto && !/\b(?:raccontami|dimmi|fammi|parlami|spiegami|aiutami|insegnami)\b/.test(t) && !actionIntent(t, {})) {
+      if (racconto && !/\b(?:raccontami|dimmi|fammi|parlami|spiegami|aiutami|insegnami)\b/.test(t) && !actionIntent(t, {}) && !phoneIntent(t, raw, {})) {
         const f = feeling(t);
         memory.diary(raw, 'fatto', dayOf(), f);
         return diaryReply(raw, t, f, ctx);
@@ -3135,6 +3309,8 @@ function replyCore(text, ctx) {
   }
   const mem = memoryIntent(t, raw, ctx);
   if (mem) return mem;
+  const tel = phoneIntent(t, raw, ctx);
+  if (tel) return tel;
   const pow = powerIntent(t, raw, ctx);
   if (pow) return pow;
   const intent = actionIntent(t, ctx);

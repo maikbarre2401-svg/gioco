@@ -1,9 +1,16 @@
 package it.zeph.compagno;
 
+import android.Manifest;
+import android.app.SearchManager;
 import android.content.ActivityNotFoundException;
+import android.content.ComponentName;
+import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
+import android.net.wifi.WifiManager;
+import android.os.Build;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
@@ -17,10 +24,16 @@ import android.view.KeyEvent;
 
 import org.json.JSONObject;
 
+import java.text.Normalizer;
+import java.util.List;
+import java.util.Locale;
+
 /**
  * Le azioni che Zeph può fare sul telefono: aprire app vere, impostazioni,
- * siti e cambiare il volume. Tutto passa da qui ed è in una lista chiusa:
- * nessun comando arbitrario.
+ * siti, navigatore, musica, volume, luminosità, non disturbare e i tasti di
+ * sistema. Tutto passa da qui ed è in una lista chiusa: nessun comando arbitrario.
+ * Niente viene mandato o chiamato da solo: le chiamate dirette partono solo se
+ * hai dato il permesso e hai detto «sì» alla domanda di conferma.
  */
 final class PhoneActions {
     private PhoneActions() {}
@@ -41,6 +54,287 @@ final class PhoneActions {
             case "sms": return sms(c, o.optString("number", ""), o.optString("text", ""));
             default: return false;
         }
+    }
+
+    /**
+     * I comandi dell'assistente. Risponde a parole semplici per la pagina:
+     * "ok", "ok:Nome app", "panel" (ti ho aperto le impostazioni giuste),
+     * "perm:access" / "perm:settings" / "perm:dnd" / "perm:call" (manca un permesso), "fail".
+     */
+    static String sys(Context c, JSONObject o) {
+        String type = o.optString("type");
+        switch (type) {
+            case "navigate": return navigate(c, o.optString("q"));
+            case "maps": return maps(c, o.optString("q"));
+            case "play": return play(c, o.optString("q"), o.optString("app"));
+            case "volumeSet": return volumeSet(c, o.optInt("level", 50), o.optBoolean("unmute"));
+            case "ringer": return ringer(c, o.optString("mode"));
+            case "dnd": return dnd(c, o.optBoolean("on", true));
+            case "brightness": return brightness(c, o);
+            case "setting": return setting(c, o.optString("what"), o.has("on") && !o.isNull("on") ? o.optBoolean("on") : null);
+            case "global": return global(c, o.optString("what"), o.optLong("delay", 0));
+            case "camera": return camera(c, o.optBoolean("front"), o.optBoolean("video"));
+            case "alarms": return ok(start(c, new Intent(AlarmClock.ACTION_SHOW_ALARMS)));
+            case "alarmOff": return ok(start(c, new Intent(AlarmClock.ACTION_DISMISS_ALARM)
+                .putExtra(AlarmClock.EXTRA_ALARM_SEARCH_MODE, AlarmClock.ALARM_SEARCH_MODE_ALL)) || start(c, new Intent(AlarmClock.ACTION_SHOW_ALARMS)));
+            case "launch": return launchByName(c, o.optString("name"));
+            case "call": return call(c, o.optString("number"));
+            default: return ok(run(c, o));
+        }
+    }
+
+    private static String ok(boolean b) { return b ? "ok" : "fail"; }
+
+    private static String enc(String q) { return Uri.encode(q == null ? "" : q.trim()); }
+
+    /** Il navigatore (Google Maps, o l'app di mappe che hai). */
+    private static String navigate(Context c, String q) {
+        if (q == null || q.trim().isEmpty()) return maps(c, "");
+        if (start(c, new Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=" + enc(q))))) return "ok";
+        if (start(c, new Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=" + enc(q))))) return "ok";
+        return ok(openUrl(c, "https://www.google.com/maps/dir/?api=1&destination=" + enc(q)));
+    }
+
+    private static String maps(Context c, String q) {
+        if (q != null && !q.trim().isEmpty()) {
+            // «geo:0,0?q=farmacia» cerca vicino a dove sei
+            if (start(c, new Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=" + enc(q))))) return "ok";
+            return ok(openUrl(c, "https://www.google.com/maps/search/" + enc(q)));
+        }
+        if (launch(c, "com.google.android.apps.maps")) return "ok";
+        return ok(openUrl(c, "https://www.google.com/maps"));
+    }
+
+    /** «Metti Vasco su Spotify»: le app musicali partono da sole con la ricerca. */
+    private static String play(Context c, String q, String app) {
+        String pkg;
+        switch (app == null ? "" : app) {
+            case "spotify": pkg = "com.spotify.music"; break;
+            case "ytmusic": pkg = "com.google.android.apps.youtube.music"; break;
+            case "amazonmusic": pkg = "com.amazon.mp3"; break;
+            case "deezer": pkg = "deezer.android.app"; break;
+            case "youtube": pkg = "com.google.android.youtube"; break;
+            default: pkg = null;
+        }
+        if ("com.google.android.youtube".equals(pkg)) {
+            if (q.isEmpty()) return ok(launch(c, pkg) || openUrl(c, "https://www.youtube.com"));
+            Intent s = new Intent(Intent.ACTION_SEARCH).setPackage(pkg).putExtra(SearchManager.QUERY, q).putExtra("query", q);
+            if (start(c, s)) return "ok";
+            return ok(openUrl(c, "https://www.youtube.com/results?search_query=" + enc(q)));
+        }
+        Intent i = new Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
+            .putExtra(SearchManager.QUERY, q == null ? "" : q)
+            .putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*");
+        if (pkg != null) i.setPackage(pkg);
+        if (start(c, i)) return "ok";
+        if ("com.spotify.music".equals(pkg)) {
+            if (start(c, new Intent(Intent.ACTION_VIEW, Uri.parse("spotify:search:" + enc(q))).setPackage(pkg))) return "ok";
+            if (launch(c, pkg)) return "ok";
+            return ok(openUrl(c, "https://open.spotify.com/search/" + enc(q)));
+        }
+        if (pkg != null && launch(c, pkg)) return "ok";
+        if ("com.google.android.apps.youtube.music".equals(pkg) || pkg == null) {
+            if (q.isEmpty()) return "fail";
+            return ok(openUrl(c, (pkg == null ? "https://www.youtube.com/results?search_query=" : "https://music.youtube.com/search?q=") + enc(q)));
+        }
+        return "fail";
+    }
+
+    private static String volumeSet(Context c, int level, boolean unmute) {
+        AudioManager am = c.getSystemService(AudioManager.class);
+        if (am == null) return "fail";
+        try {
+            if (unmute) am.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_UNMUTE, 0);
+            int max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+            int v = Math.max(0, Math.min(max, Math.round(max * Math.max(0, Math.min(100, level)) / 100f)));
+            if (level > 0 && v == 0) v = 1;
+            am.setStreamVolume(AudioManager.STREAM_MUSIC, v, AudioManager.FLAG_SHOW_UI);
+            return "ok";
+        } catch (SecurityException e) {
+            return "perm:dnd"; // con «non disturbare» acceso alcuni telefoni non lo permettono
+        }
+    }
+
+    /** Suoneria: normale, vibrazione, silenzioso. */
+    private static String ringer(Context c, String mode) {
+        AudioManager am = c.getSystemService(AudioManager.class);
+        if (am == null) return "fail";
+        int m = "silent".equals(mode) ? AudioManager.RINGER_MODE_SILENT
+            : "vibrate".equals(mode) ? AudioManager.RINGER_MODE_VIBRATE : AudioManager.RINGER_MODE_NORMAL;
+        try {
+            am.setRingerMode(m);
+            return "ok";
+        } catch (SecurityException e) {
+            // da Android 7 il silenzioso tocca il «non disturbare»: ci prova con l'accesso alle notifiche
+            if (m == AudioManager.RINGER_MODE_SILENT) {
+                if (MessageListener.setDnd(true)) return "ok";
+                try { am.setRingerMode(AudioManager.RINGER_MODE_VIBRATE); return "ok:vibrate"; } catch (SecurityException e2) { return "perm:dnd"; }
+            }
+            if (MessageListener.setDnd(false)) {
+                try { am.setRingerMode(m); return "ok"; } catch (SecurityException e3) { return "perm:dnd"; }
+            }
+            return "perm:dnd";
+        }
+    }
+
+    private static String dnd(Context c, boolean on) {
+        if (MessageListener.setDnd(on)) return "ok";
+        if (start(c, new Intent("android.settings.ZEN_MODE_SETTINGS")) || start(c, new Intent(Settings.ACTION_SOUND_SETTINGS))) return "perm:dnd";
+        return "fail";
+    }
+
+    /** Luminosità: serve il permesso «Modifica impostazioni di sistema» (lo dai dall'app). */
+    private static String brightness(Context c, JSONObject o) {
+        if (!Settings.System.canWrite(c)) {
+            start(c, new Intent(Settings.ACTION_DISPLAY_SETTINGS));
+            return "perm:settings";
+        }
+        ContentResolver cr = c.getContentResolver();
+        try {
+            if (o.has("auto")) {
+                Settings.System.putInt(cr, Settings.System.SCREEN_BRIGHTNESS_MODE, o.optBoolean("auto")
+                    ? Settings.System.SCREEN_BRIGHTNESS_MODE_AUTOMATIC : Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL);
+                return "ok";
+            }
+            Settings.System.putInt(cr, Settings.System.SCREEN_BRIGHTNESS_MODE, Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL);
+            int cur = Settings.System.getInt(cr, Settings.System.SCREEN_BRIGHTNESS, 128);
+            int v;
+            if (o.has("level")) v = Math.round(255 * Math.max(1, Math.min(100, o.optInt("level"))) / 100f);
+            else v = cur + ("up".equals(o.optString("dir")) ? 64 : -64);
+            Settings.System.putInt(cr, Settings.System.SCREEN_BRIGHTNESS, Math.max(3, Math.min(255, v)));
+            return "ok";
+        } catch (SecurityException | IllegalArgumentException e) {
+            return "perm:settings";
+        }
+    }
+
+    /** Wi-Fi, Bluetooth, dati, aereo…: Android non lascia accenderli alle app, quindi apre il pannello giusto. */
+    private static String setting(Context c, String what, Boolean on) {
+        switch (what) {
+            case "wifi":
+                if (Build.VERSION.SDK_INT < 29 && on != null) {
+                    WifiManager wm = c.getApplicationContext().getSystemService(WifiManager.class);
+                    if (wm != null && legacyWifi(wm, on)) return "ok";
+                }
+                return panel(c, Build.VERSION.SDK_INT >= 29 ? Settings.Panel.ACTION_WIFI : null, Settings.ACTION_WIFI_SETTINGS);
+            case "bluetooth": return panel(c, null, Settings.ACTION_BLUETOOTH_SETTINGS);
+            case "dati": return panel(c, Build.VERSION.SDK_INT >= 29 ? Settings.Panel.ACTION_INTERNET_CONNECTIVITY : null, Settings.ACTION_DATA_ROAMING_SETTINGS);
+            case "nfc": return panel(c, Build.VERSION.SDK_INT >= 29 ? Settings.Panel.ACTION_NFC : null, Settings.ACTION_NFC_SETTINGS);
+            case "aereo": return panel(c, null, Settings.ACTION_AIRPLANE_MODE_SETTINGS);
+            case "hotspot": {
+                Intent t = new Intent().setComponent(new ComponentName("com.android.settings", "com.android.settings.TetherSettings"));
+                if (start(c, t)) return "panel";
+                return panel(c, "android.settings.TETHER_SETTINGS", Settings.ACTION_WIRELESS_SETTINGS);
+            }
+            case "posizione": return panel(c, null, Settings.ACTION_LOCATION_SOURCE_SETTINGS);
+            case "risparmio": return panel(c, null, Settings.ACTION_BATTERY_SAVER_SETTINGS);
+            case "scuro": return panel(c, "android.settings.DARK_THEME_SETTINGS", Settings.ACTION_DISPLAY_SETTINGS);
+            case "rotazione": {
+                if (!Settings.System.canWrite(c)) {
+                    start(c, new Intent(Settings.ACTION_DISPLAY_SETTINGS));
+                    return "perm:settings";
+                }
+                ContentResolver cr = c.getContentResolver();
+                boolean now = Settings.System.getInt(cr, Settings.System.ACCELEROMETER_ROTATION, 0) == 1;
+                try {
+                    Settings.System.putInt(cr, Settings.System.ACCELEROMETER_ROTATION, (on == null ? !now : on) ? 1 : 0);
+                    return "ok";
+                } catch (SecurityException | IllegalArgumentException e) {
+                    return "perm:settings";
+                }
+            }
+            default: return "fail";
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    private static boolean legacyWifi(WifiManager wm, boolean on) {
+        try { return wm.setWifiEnabled(on); } catch (SecurityException e) { return false; }
+    }
+
+    private static String panel(Context c, String first, String second) {
+        if (first != null && start(c, new Intent(first))) return "panel";
+        if (second != null && start(c, new Intent(second))) return "panel";
+        return start(c, new Intent(Settings.ACTION_SETTINGS)) ? "panel" : "fail";
+    }
+
+    /** I tasti di sistema: la home la apre da solo, il resto con i «Comandi del telefono» (accessibilità). */
+    private static String global(Context c, String what, long delay) {
+        if ("home".equals(what)) {
+            return ok(start(c, new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)));
+        }
+        if (!ZephAccess.connected()) return "perm:access";
+        return ok(ZephAccess.perform(what, delay));
+    }
+
+    private static String camera(Context c, boolean front, boolean video) {
+        if (video) return ok(start(c, new Intent(MediaStore.INTENT_ACTION_VIDEO_CAMERA)));
+        Intent i = new Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA);
+        if (front) {
+            // ogni marca usa un nome diverso per «parti con la fotocamera davanti»
+            i.putExtra("android.intent.extras.CAMERA_FACING", 1)
+                .putExtra("android.intent.extras.LENS_FACING_FRONT", 1)
+                .putExtra("android.intent.extra.USE_FRONT_CAMERA", true)
+                .putExtra("com.google.assistant.extra.USE_FRONT_CAMERA", true);
+        }
+        return ok(start(c, i));
+    }
+
+    /** Chiamata diretta: la pagina la chiede solo dopo il tuo «sì», e solo se hai dato il permesso. */
+    private static String call(Context c, String number) {
+        String n = number == null ? "" : number.replaceAll("[^0-9+]", "");
+        if (n.isEmpty()) return "fail";
+        if (c.checkSelfPermission(Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED) {
+            return dial(c, n) ? "perm:call" : "fail";
+        }
+        return ok(start(c, new Intent(Intent.ACTION_CALL, Uri.parse("tel:" + n))));
+    }
+
+    /** «Apri Instagram»: cerca tra le app installate quella con quel nome. */
+    private static String launchByName(Context c, String name) {
+        String want = norm(name);
+        if (want.length() < 2) return "fail";
+        PackageManager pm = c.getPackageManager();
+        List<ResolveInfo> apps = pm.queryIntentActivities(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0);
+        ResolveInfo best = null;
+        int bestScore = 0;
+        for (ResolveInfo r : apps) {
+            if (r.activityInfo == null || c.getPackageName().equals(r.activityInfo.packageName)) continue;
+            String label = norm(String.valueOf(r.loadLabel(pm)));
+            if (label.isEmpty()) continue;
+            int score;
+            if (label.equals(want)) score = 100;
+            else if (label.startsWith(want) || want.startsWith(label) && label.length() >= 4) score = 80;
+            else if ((" " + label + " ").contains(" " + want + " ")) score = 70;
+            else if (want.length() >= 4 && label.contains(want)) score = 60;
+            else if (want.length() >= 5 && distance(label, want) <= (want.length() >= 8 ? 2 : 1)) score = 50;
+            else score = 0;
+            if (score > bestScore) { bestScore = score; best = r; }
+        }
+        if (best == null) return "fail";
+        Intent i = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+            .setComponent(new ComponentName(best.activityInfo.packageName, best.activityInfo.name))
+            .addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
+        return start(c, i) ? "ok:" + best.loadLabel(pm) : "fail";
+    }
+
+    private static String norm(String s) {
+        String x = Normalizer.normalize(s == null ? "" : s, Normalizer.Form.NFD).replaceAll("\\p{M}", "");
+        return x.toLowerCase(Locale.ITALIAN).replaceAll("[^a-z0-9]+", " ").trim();
+    }
+
+    private static int distance(String a, String b) {
+        int[] prev = new int[b.length() + 1], cur = new int[b.length() + 1];
+        for (int j = 0; j <= b.length(); j++) prev[j] = j;
+        for (int i = 1; i <= a.length(); i++) {
+            cur[0] = i;
+            for (int j = 1; j <= b.length(); j++) {
+                int cost = a.charAt(i - 1) == b.charAt(j - 1) ? 0 : 1;
+                cur[j] = Math.min(Math.min(cur[j - 1] + 1, prev[j] + 1), prev[j - 1] + cost);
+            }
+            int[] t = prev; prev = cur; cur = t;
+        }
+        return prev[b.length()];
     }
 
     /** Torcia: non serve il permesso della fotocamera per accenderla. */

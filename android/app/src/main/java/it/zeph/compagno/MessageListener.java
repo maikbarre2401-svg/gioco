@@ -45,6 +45,25 @@ public class MessageListener extends NotificationListenerService {
 
     private static final ArrayDeque<Msg> recent = new ArrayDeque<>();
     private static final int MAX = 20;
+    private static volatile MessageListener self;
+
+    @Override public void onListenerConnected() { self = this; }
+
+    @Override public void onListenerDisconnected() { self = null; }
+
+    @Override public void onDestroy() { self = null; super.onDestroy(); }
+
+    /** «Non disturbare» a voce: lo può fare chi ha l'accesso alle notifiche. */
+    static boolean setDnd(boolean on) {
+        MessageListener s = self;
+        if (s == null) return false;
+        try {
+            s.requestInterruptionFilter(on ? INTERRUPTION_FILTER_PRIORITY : INTERRUPTION_FILTER_ALL);
+            return true;
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
 
     static boolean enabled(Context c) {
         String s = Settings.Secure.getString(c.getContentResolver(), "enabled_notification_listeners");

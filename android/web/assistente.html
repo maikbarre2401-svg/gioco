@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Assistente</title>
+<style>
+  :root {
+    --teal: #5eead4; --sky: #38bdf8; --violet: #a78bfa; --pink: #f472b6;
+    --ink: #eaf2ff; --dim: rgba(234, 242, 255, .62); --glass: rgba(9, 14, 28, .82);
+    --line: rgba(94, 234, 212, .32); --accent: var(--teal);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: transparent; color: var(--ink);
+    font: 400 16px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  body { touch-action: manipulation; user-select: none; -webkit-user-select: none; }
+
+  /* il fondo: toccalo per chiudere */
+  #shade { position: fixed; inset: 0; background: linear-gradient(180deg, rgba(4,8,18,0) 0%, rgba(4,8,18,.28) 40%, rgba(4,8,18,.72) 100%); animation: fade .3s both; }
+  @keyframes fade { from { opacity: 0; } }
+
+  /* il tuo avatar che esce dal pannello, dentro un portale di luce */
+  #stage { position: fixed; left: 0; right: 0; bottom: calc(var(--panel-h, 300px) - 46px); height: min(46vh, 430px); pointer-events: none; }
+  #halo { position: absolute; left: 50%; top: 52%; width: min(78vw, 360px); aspect-ratio: 1; transform: translate(-50%, -50%) scale(var(--halo, 1));
+    border-radius: 50%; transition: transform .12s ease-out, opacity .4s;
+    background: radial-gradient(circle, rgba(56,189,248,.34) 0%, rgba(94,234,212,.16) 38%, rgba(167,139,250,.08) 58%, transparent 70%); }
+  #ring { position: absolute; left: 50%; top: 52%; width: min(66vw, 300px); aspect-ratio: 1; transform: translate(-50%, -50%); border-radius: 50%;
+    border: 1.5px solid transparent; background: conic-gradient(from var(--spin, 0deg), var(--teal), var(--sky), var(--violet), var(--pink), var(--teal)) border-box;
+    -webkit-mask: linear-gradient(#000 0 0) padding-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; opacity: .75; }
+  #ring2 { position: absolute; left: 50%; top: 52%; width: min(74vw, 336px); aspect-ratio: 1; transform: translate(-50%, -50%) rotate(var(--spin2, 0deg));
+    border-radius: 50%; border: 1px dashed rgba(167,139,250,.55); }
+  canvas#three { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+  /* il pannello di vetro */
+  #panel { position: fixed; left: 10px; right: 10px; bottom: calc(10px + env(safe-area-inset-bottom)); border-radius: 28px; padding: 16px 16px 14px;
+    background: linear-gradient(180deg, rgba(14, 22, 42, .86), var(--glass)); border: 1px solid var(--line);
+    box-shadow: 0 -12px 60px rgba(56, 189, 248, .18), inset 0 1px 0 rgba(255,255,255,.06); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+    animation: up .38s cubic-bezier(.2, .9, .25, 1.15) both; }
+  #panel::before { content: ""; position: absolute; left: 22px; right: 22px; top: -1px; height: 2px; border-radius: 2px;
+    background: linear-gradient(90deg, transparent, var(--teal), var(--sky), var(--violet), transparent); opacity: .9; }
+  @keyframes up { from { transform: translateY(40px); opacity: 0; } to { transform: none; opacity: 1; } }
+  body.closing #panel { transition: transform .22s ease-in, opacity .22s; transform: translateY(60px); opacity: 0; }
+  body.closing #stage { transition: opacity .2s; opacity: 0; }
+
+  #top { display: flex; align-items: center; gap: 10px; }
+  #name { font-weight: 700; letter-spacing: .22em; font-size: 12px; text-transform: uppercase;
+    background: linear-gradient(90deg, var(--teal), var(--sky), var(--violet)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  #status { font-size: 12.5px; color: var(--dim); display: flex; align-items: center; gap: 6px; }
+  #status i { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+  #top .sp { flex: 1; }
+  .ico { width: 34px; height: 34px; border-radius: 12px; display: grid; place-items: center; font-size: 16px; color: var(--ink);
+    background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.08); }
+  .ico:active { transform: scale(.94); }
+
+  #heard { margin-top: 12px; min-height: 30px; font-size: 22px; line-height: 1.25; font-weight: 600; letter-spacing: -.01em; color: #fff; word-wrap: break-word; }
+  #heard.partial { color: rgba(255,255,255,.72); }
+  #heard.hint { color: var(--dim); font-weight: 500; font-size: 20px; }
+  #reply { margin-top: 8px; font-size: 16px; color: #bff6ec; max-height: 30vh; overflow-y: auto; word-wrap: break-word; }
+  #reply:empty { display: none; }
+
+  canvas#wave { display: block; width: 100%; height: 46px; margin-top: 8px; }
+
+  #chips { display: flex; gap: 8px; overflow-x: auto; padding: 6px 2px 4px; margin: 2px -4px 0; scrollbar-width: none; }
+  #chips::-webkit-scrollbar { display: none; }
+  .chip { flex: none; padding: 8px 13px; border-radius: 999px; font-size: 13.5px; color: var(--ink); white-space: nowrap;
+    background: rgba(17, 28, 48, .9); border: 1px solid rgba(94,234,212,.22); }
+  .chip:active { background: rgba(94,234,212,.18); }
+  .chip.on { background: linear-gradient(90deg, #14b8a6, #0ea5e9, #8b5cf6); border-color: transparent; }
+
+  #bar { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; }
+  #mic { width: 68px; height: 68px; border-radius: 50%; border: 0; display: grid; place-items: center; font-size: 28px; color: #fff; position: relative;
+    background: radial-gradient(circle at 35% 30%, #7dd3fc, #14b8a6 45%, #6d28d9 100%); box-shadow: 0 0 0 calc(var(--lvl, 0) * 16px) rgba(94, 234, 212, .18), 0 8px 30px rgba(56,189,248,.45);
+    transition: box-shadow .08s linear; }
+  #mic::after { content: ""; position: absolute; inset: -7px; border-radius: 50%; border: 1.5px solid rgba(94,234,212,.5); opacity: 0; }
+  body.listening #mic::after { animation: pulse 1.4s ease-out infinite; }
+  body.thinking #mic { background: radial-gradient(circle at 35% 30%, #c4b5fd, #8b5cf6 50%, #312e81 100%); }
+  @keyframes pulse { from { transform: scale(.9); opacity: .9; } to { transform: scale(1.35); opacity: 0; } }
+  #mic:active { transform: scale(.95); }
+
+  #typeRow { display: none; gap: 8px; margin-top: 10px; }
+  body.typing #typeRow { display: flex; }
+  #typed { flex: 1; min-width: 0; padding: 12px 14px; border-radius: 14px; font: inherit; color: #fff; background: rgba(255,255,255,.06);
+    border: 1px solid rgba(94,234,212,.35); outline: none; user-select: text; -webkit-user-select: text; }
+  #send { padding: 0 16px; border-radius: 14px; border: 0; color: #fff; font: 600 15px system-ui, sans-serif; background: linear-gradient(90deg, #14b8a6, #0ea5e9); }
+
+  .foot { text-align: center; font-size: 10.5px; letter-spacing: .26em; color: rgba(167,139,250,.6); margin-top: 8px; text-transform: uppercase; }
+</style>
+</head>
+<body>
+<div id="shade"></div>
+<div id="stage">
+  <div id="halo"></div>
+  <div id="ring2"></div>
+  <div id="ring"></div>
+  <canvas id="three"></canvas>
+</div>
+<div id="panel">
+  <div id="top">
+    <div>
+      <div id="name">Zeph</div>
+      <div id="status"><i></i><span id="statusText">Un attimo…</span></div>
+    </div>
+    <div class="sp"></div>
+    <div class="ico" id="loop" title="Conversazione continua">♾</div>
+    <div class="ico" id="app" title="Apri l’app">⚙</div>
+  </div>
+  <div id="heard" class="hint">Ciao! Dimmi pure…</div>
+  <div id="reply"></div>
+  <canvas id="wave"></canvas>
+  <div id="chips"></div>
+  <div id="typeRow"><input id="typed" type="text" placeholder="Scrivi qui…" enterkeyhint="send" autocomplete="off"><button id="send">Invia</button></div>
+  <div id="bar">
+    <div class="ico" id="kbd" title="Scrivi">⌨</div>
+    <button id="mic" aria-label="Parla">🎙</button>
+    <div class="ico" id="close" title="Chiudi">✕</div>
+  </div>
+  <div class="foot">creator maikgost</div>
+</div>
+<script src="three.min.js"></script>
+<script src="gltf-loader.js"></script>
+<script src="anthropic-sdk.js"></script>
+<script src="zeph-core.js"></script>
+<script src="telefono.js"></script>
+<script src="assistente.js"></script>
+</body>
+</html>

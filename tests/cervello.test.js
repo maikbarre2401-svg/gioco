@@ -255,3 +255,49 @@ test('conversazione a voce', () => {
   assert.equal(say('facciamo due chiacchiere', ctx).talk, true);
   assert.equal(say('parliamo di calcio', ctx).talk, undefined);
 });
+
+test('assistente del telefono: navigatore, musica, impostazioni, sistema', () => {
+  const ctx = fresh();
+  const sys = text => (say(text, ctx).sys || {});
+  assert.deepEqual(sys('portami a Milano'), { type: 'navigate', q: 'milano' });
+  assert.equal(sys('come arrivo a Bologna?').q, 'bologna');
+  assert.equal(say('portami a fare un giro', ctx).sys, undefined);
+  assert.equal(sys('portami al mare').q, 'mare');
+  assert.deepEqual(sys('cerca una farmacia qui vicino'), { type: 'maps', q: 'farmacia' });
+  assert.deepEqual(sys('mi metti vasco su spotify?'), { type: 'play', q: 'vasco', app: 'spotify' });
+  assert.equal(sys('fammi vedere un video di gatti').app, 'youtube');
+  assert.equal(say('metti la musica', ctx).music, 'on'); // la musica di Zeph resta com'era
+  assert.deepEqual(sys('volume al 30%'), { type: 'volumeSet', level: 30 });
+  assert.deepEqual(sys('potresti attivare il wifi?'), { type: 'setting', what: 'wifi', on: true });
+  assert.deepEqual(sys('spegni il bluetooth'), { type: 'setting', what: 'bluetooth', on: false });
+  assert.equal(say('apri internet', ctx).open, 'https://www.google.com');
+  assert.deepEqual(sys('non disturbare'), { type: 'dnd', on: true });
+  assert.deepEqual(sys('togli non disturbare'), { type: 'dnd', on: false });
+  assert.equal(sys('metti il telefono in vibrazione').mode, 'vibrate');
+  assert.equal(sys('luminosità al massimo').level, 100);
+  assert.equal(sys('fai uno screenshot').what, 'screenshot');
+  assert.equal(say('come si fa uno screenshot?', ctx).sys, undefined);
+  assert.equal(sys('torna indietro').what, 'back');
+  assert.equal(say('indietro', ctx).media, 'prev');
+  assert.equal(sys('blocca il telefono').what, 'lock');
+  assert.equal(say('chiama i carabinieri', ctx).dial, '112');
+  assert.equal(say('apri instagram', ctx).appName, 'instagram');
+  // il selfie sul computer resta la foto ricordo, sul telefono apre la fotocamera
+  const selfie = say('fai un selfie', ctx);
+  assert.equal(selfie.photo, true);
+  assert.equal(selfie.sys.front, true);
+});
+
+test('assistente: appunti, indirizzo di casa, chiamata con conferma', () => {
+  const ctx = fresh();
+  assert.match(say('prendi nota: comprare il latte', ctx).say, /comprare il latte/);
+  assert.match(say('cosa ho segnato?', ctx).say, /comprare il latte/);
+  assert.deepEqual(say('il mio indirizzo è via Roma 5', ctx).setPref, { k: 'indirizzo', v: 'Via Roma 5' });
+  localStorage.setItem('zephPrefs', JSON.stringify({ indirizzo: 'Via Roma 5' }));
+  assert.equal(say('portami a casa', ctx).sys.q, 'Via Roma 5');
+  // la conferma di una chiamata (preparata dal telefono) accetta «chiamala»
+  ctx.pending = 'confirm'; ctx.pendingAt = Date.now(); ctx.confirmData = { kind: 'call', number: '333' };
+  assert.deepEqual(say('sì, chiamala', ctx).confirmed, { kind: 'call', number: '333' });
+  ctx.pending = 'confirm'; ctx.pendingAt = Date.now(); ctx.confirmData = { kind: 'call', number: '333' };
+  assert.match(say('no', ctx).say, /non chiamo/);
+});

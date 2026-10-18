@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Zeph</string>
+    <string name="sc_assist_short">Assistente</string>
+    <string name="sc_assist_long">Parla con l\'assistente</string>
+    <string name="access_summary">Indietro, home, app recenti, notifiche, screenshot, blocca schermo e scorri, con la voce</string>
+    <string name="access_desc">Con questo l\'assistente Zeph può premere per te i tasti di sistema quando glielo chiedi a voce: «torna indietro», «app recenti», «apri le notifiche», «fai uno screenshot», «blocca il telefono», «scorri giù». Non legge cosa c\'è sullo schermo e non tocca niente da solo.</string>
 </resources>

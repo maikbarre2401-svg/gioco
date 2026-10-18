@@ -15,8 +15,8 @@ import java.util.Map;
 
 /**
  * Serve le pagine, le librerie, il tuo avatar e il tuo look come se fossero
- * un sito (https://zeph.local/...). Verso internet passano solo il meteo e,
- * se hai messo la tua chiave, il cervello AI di Claude.
+ * un sito (https://zeph.local/...). Verso internet passano solo il meteo,
+ * Wikipedia e, se hai messo la tua chiave, il cervello AI di Claude.
  */
 final class LocalWeb {
     static final String HOST = "zeph.local";
@@ -29,6 +29,9 @@ final class LocalWeb {
         String h = u.getHost();
         if (h != null && (h.equals("api.open-meteo.com") || h.equals("geocoding-api.open-meteo.com"))) {
             return null; // il meteo vero
+        }
+        if ("it.wikipedia.org".equals(h)) {
+            return null; // «chi era Leonardo da Vinci?»: le risposte di Wikipedia
         }
         if ("api.anthropic.com".equals(h) && Prefs.aiKey(c).length() > 0) {
             return null; // il cervello AI, solo se hai messo la tua chiave

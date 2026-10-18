@@ -6,6 +6,16 @@ All'apertura c'è la schermata d'avvio animata (logo, «ZEPH» e «creator MaikG
 compare un pulsante viola quando su GitHub c'è una versione nuova.
 
 Zeph — o **il tuo avatar** — vive sullo schermo del telefono, sopra tutte le app, come su desktop.
+Oppure, in **modalità assistente**, compare solo quando lo chiami (tasto Home tenuto premuto) e fa
+le cose sul telefono con la voce.
+
+- **🎙 Assistente vocale (Zeph 9)**: nell'app tocca «🎙 Assistente», poi «🏠 Rendilo il tuo assistente» e
+  scegli Zeph come «App assistente digitale». Da quel momento, in qualsiasi app, tieni premuto il tasto
+  Home (o scorri dall'angolo in basso con i gesti): il tuo avatar compare sopra un pannello di vetro e ti
+  ascolta. «portami a casa», «metti Vasco su Spotify», «apri Instagram», «chiama la mamma» (conferma con
+  «sì»), «attiva il wifi», «non disturbare», «volume al 50», «luminosità al massimo», «fai uno screenshot»,
+  «torna indietro», «blocca il telefono», «cerca una farmacia qui vicino», «fai un selfie», «prendi nota: …».
+  Anche dal riquadro «Zeph» nelle Impostazioni rapide, dalla scorciatoia «Assistente» sull'icona o dalle cuffie.
 
 - **Cammina** lungo il fondo dello schermo, si guarda intorno, ti saluta, balla e salta.
 - **Toccalo**: reagisce. **Tienilo premuto**: si apre la chat (scrivi o parla col microfono).
@@ -105,17 +115,25 @@ l'«avvio automatico»: attivala per Zeph se vuoi che si riaccenda da solo dopo 
   (niente esce dal telefono). Voce: `TextToSpeech` di Android; fumetto: finestra nativa sopra la testa.
 - Le azioni sul telefono sono in una lista chiusa (`PhoneActions.java`): solo app, impostazioni e
   siti noti, niente comandi arbitrari.
-- Rete: la WebView può raggiungere solo Open-Meteo (meteo) e, se hai messo la chiave, `api.anthropic.com`
+- Rete: la WebView può raggiungere solo Open-Meteo (meteo), Wikipedia e, se hai messo la chiave, `api.anthropic.com`
   (`LocalWeb.java`). La chiave sta in `SharedPreferences` a parte, esclusa da backup e trasferimenti
   (`res/xml/backup_rules.xml`, `data_extraction_rules.xml`), e non viene mai scritta nella pagina.
 - Permessi facoltativi: `READ_CONTACTS` e `READ_CALENDAR` (sola lettura), accesso alle notifiche
   (`MessageListener`, solo app di chat; i messaggi non vengono salvati), `USE_EXACT_ALARM` per i promemoria.
-  Zeph non chiama e non manda nulla da solo: la chiamata e l'invio li fai tu; l'unica eccezione è
-  «rispondi: …», che parte solo dopo che hai detto «sì».
+  Zeph non chiama e non manda nulla da solo: la chiamata e l'invio li fai tu; le eccezioni sono
+  «rispondi: …» e, se dai il permesso delle chiamate, «chiama …», che partono solo dopo che hai detto «sì».
 - Aggiornamenti: ogni APK di GitHub ha un numero di versione più alto. Per installarlo sopra il vecchio
   senza disinstallare serve la stessa firma: se aggiungi nei segreti del repository `ZEPH_KEYSTORE`
   (un keystore in base64 con alias `zeph`) e `ZEPH_KEYSTORE_PASSWORD`, la compilazione la usa sempre.
   Senza, prima di installare una nuova versione fai «Salva backup», disinstalla e poi «Ripristina backup».
+- Assistente: `AssistActivity` (finestra trasparente, `ACTION_ASSIST` e `VOICE_COMMAND`) carica
+  `android/web/assistente.html`; microfono con `SpeechRecognizer` solo mentre è aperta, voce con `Voce.java`
+  (resta viva un minuto, così la frase finisce anche quando si apre un'altra app). I poteri sono gli stessi
+  del compagno (`PhoneBridge.java` + `android/web/telefono.js`). I comandi di sistema passano da
+  `ZephAccess` (servizio di accessibilità con `canRetrieveWindowContent="false"`: solo tasti globali e
+  scorrimento), il «non disturbare» dall'accesso alle notifiche, luminosità e rotazione da `WRITE_SETTINGS`.
+  Le chiamate dirette (`CALL_PHONE`) partono solo dopo il «sì» alla domanda di conferma; le emergenze
+  (112) aprono solo il telefono col numero.
 - Avatar dalla foto: `PhotoActivity` apre `foto.html`; la fotocamera viene concessa solo a quella pagina
   e solo per il video. Il look (colori + faccia ritagliata in JPEG) è salvato in `files/look.json`.
 - APK di debug firmato con una chiave di debug: se passi da un APK creato su GitHub a uno creato sul

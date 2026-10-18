@@ -174,9 +174,10 @@ public class PhotoActivity extends Activity {
 
         @JavascriptInterface public String aiKey() { return Prefs.aiKey(PhotoActivity.this); }
 
-        /** Il compagno sullo schermo dice la risposta. */
+        /** Il compagno sullo schermo dice la risposta (in modalità assistente la dice la voce dell'app). */
         @JavascriptInterface public void say(String text) {
-            if (text == null || !ZephService.running) return;
+            if (text == null) return;
+            if (!ZephService.running) { Voce.get(PhotoActivity.this).speak(text); return; }
             runOnUiThread(() -> startService(new Intent(PhotoActivity.this, ZephService.class)
                 .setAction(ZephService.ACTION_SAY).putExtra(ZephService.EXTRA_TEXT, text)));
         }
