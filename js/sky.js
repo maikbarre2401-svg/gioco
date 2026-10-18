@@ -313,10 +313,13 @@ window.GL = window.GL || {};
       }
     } catch {}
     // camera as background (optional)
-    try {
-      state.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
-      const v = $('#sky-video'); v.srcObject = state.stream; await v.play(); v.hidden = false;
-    } catch { state.stream = null; $('#sky-video').hidden = true; }
+    const cam = await GL.ui.getCamera();
+    if (cam.stream) {
+      state.stream = cam.stream;
+      const v = $('#sky-video'); v.srcObject = state.stream;
+      try { await v.play(); } catch { /* autoplay guard */ }
+      v.hidden = false;
+    } else { state.stream = null; $('#sky-video').hidden = true; }
 
     state.orientEvt = 'ondeviceorientationabsolute' in window ? 'deviceorientationabsolute' : 'deviceorientation';
     window.addEventListener(state.orientEvt, onOrient);

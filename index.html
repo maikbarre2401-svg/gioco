@@ -150,6 +150,7 @@
       <a class="tile" href="#audio"><span class="tile-code">AUD</span><span class="tile-name">Fonometro</span><span class="tile-desc">Livello del suono e spettro delle frequenze</span></a>
       <a class="tile" href="#torcia"><span class="tile-code">TRC</span><span class="tile-name">Torcia</span><span class="tile-desc">Luce fissa, strobo e messaggi in Morse</span></a>
       <a class="tile" href="#impostazioni"><span class="tile-code">CFG</span><span class="tile-name">Impostazioni</span><span class="tile-desc">Nome in codice, suoni, voce, vibrazione</span></a>
+      <a class="tile wide" href="#diagnostica"><span class="tile-code">DIA</span><span class="tile-name">Diagnostica</span><span class="tile-desc">Controlla fotocamera, GPS, bussola, mappa e rete su questo telefono</span></a>
     </nav>
 
     <div class="card">
@@ -347,6 +348,7 @@
       <div class="map-reticle" aria-hidden="true"></div>
       <button id="map-locate" class="map-btn" type="button" aria-label="Centra sulla mia posizione">◎</button>
     </div>
+    <p id="map-hint" class="note" hidden>Senza GPS puoi comunque trascinare la mappa sul punto che ti interessa e premere Scansiona.</p>
     <button id="map-start" class="btn wide" type="button">Scansiona la zona</button>
     <div id="map-legend" class="legend" aria-label="Filtri"></div>
     <div id="map-target" class="card target" hidden>
@@ -407,6 +409,22 @@
       </form>
     </div>
     <div id="term-keys" class="term-keys"></div>
+  </section>
+
+  <!-- DIAGNOSTICA -->
+  <section class="screen" data-screen="diagnostica">
+    <div class="screen-head"><a class="back" href="#home">◂ Home</a><span class="tile-code">DIA</span></div>
+    <h2>Diagnostica</h2>
+    <p class="lead">Prova davvero fotocamera, microfono, GPS, bussola, mappa e rete su questo telefono, e dice cosa non funziona e perché.</p>
+    <button id="diag-run" class="btn wide" type="button">Avvia i test</button>
+    <div id="diag-phase" class="center dim"></div>
+    <div id="diag-out" class="card"></div>
+    <div id="diag-summary" class="center"></div>
+    <div class="row">
+      <button id="diag-copy" class="btn ghost" type="button">Copia referto</button>
+      <button id="diag-settings" class="btn ghost" type="button">Permessi dell'app</button>
+    </div>
+    <p class="note">Il test chiede i permessi di fotocamera, microfono e posizione: è normale, serve per verificarli davvero. Niente viene inviato: il referto resta sul telefono finché non lo copi tu.</p>
   </section>
 
   <!-- IMPOSTAZIONI -->
@@ -667,6 +685,7 @@
 <script src="js/seismo.js" defer></script>
 <script src="js/iss.js" defer></script>
 <script src="js/face.js" defer></script>
+<script src="js/diag.js" defer></script>
 <script src="js/skydata.js" defer></script>
 <script src="js/sky.js" defer></script>
 <script src="js/settings.js" defer></script>

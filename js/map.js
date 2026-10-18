@@ -44,9 +44,7 @@ window.GL = window.GL || {};
     if (map) { setTimeout(() => map.invalidateSize(), 50); return true; }
     if (!window.L) { $('#map-status').textContent = 'Mappa non disponibile'; return false; }
     map = L.map('map', { zoomControl: false, attributionControl: false, center: [41.9028, 12.4964], zoom: 15 });
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-      subdomains: 'abcd', maxZoom: 20, detectRetina: true,
-    }).addTo(map);
+    GL.ui.darkTiles(map, document.querySelector('.map-wrap'));
     Object.keys(CATS).forEach(k => { layers[k] = L.layerGroup().addTo(map); counts[k] = 0; });
     renderLegend();
     setTimeout(() => map.invalidateSize(), 50);
@@ -68,8 +66,9 @@ window.GL = window.GL || {};
   }
 
   function onPositionError(err) {
-    $('#map-status').textContent = err.code === 1 ? 'Permesso posizione negato' : 'GPS non disponibile';
+    $('#map-status').textContent = err.code === 1 ? 'Posizione negata · sposta la mappa a mano' : 'GPS assente · sposta la mappa a mano';
     $('#map-status').className = 'chip off';
+    $('#map-hint').hidden = false;
   }
 
   function renderLegend() {
@@ -104,9 +103,17 @@ window.GL = window.GL || {};
     throw lastErr;
   }
 
+  // Centre of the search: the GPS fix when there is one, otherwise wherever the map is pointed.
+  function searchCentre() {
+    if (pos) return pos;
+    if (map) { const c = map.getCenter(); return { lat: c.lat, lon: c.lng, acc: 0 }; }
+    return null;
+  }
+
   async function scanArea() {
     if (scanning) return;
-    if (!pos) { toast('Aspetta il segnale GPS (consenti la posizione)'); return; }
+    const centre = searchCentre();
+    if (!centre) { toast('Mappa non pronta'); return; }
     scanning = true;
     const btn = $('#map-start');
     btn.disabled = true;
@@ -114,7 +121,7 @@ window.GL = window.GL || {};
     $('.map-wrap').classList.add('scanning');
     GL.sfx.play('nav');
     try {
-      const data = await overpass(query(pos.lat, pos.lon));
+      const data = await overpass(query(centre.lat, centre.lon));
       Object.values(layers).forEach(l => l.clearLayers());
       Object.keys(counts).forEach(k => { counts[k] = 0; });
       for (const el of data.elements || []) {
@@ -165,7 +172,8 @@ window.GL = window.GL || {};
     $('#map-target').hidden = false;
     $('#tg-type').textContent = `${c.one} · OSM ${item.type === 'way' ? 'W' : 'N'}${item.id}`;
     $('#tg-name').textContent = t.name || t.operator || t.brand || t.ref || `${c.one} ${String(item.id).slice(-4)}`;
-    const rows = [['Distanza', `${fmt.num(distance(pos || item, item), 0)} m`]];
+    const from = pos || searchCentre() || item;
+    const rows = [['Distanza', `${fmt.num(distance(from, item), 0)} m`]];
     DETAILS.forEach(([k, label]) => { if (t[k]) rows.push([label, VALUES[t[k]] || t[k]]); });
     rows.push(['Coordinate', `${item.lat.toFixed(5)}, ${item.lon.toFixed(5)}`]);
     $('#tg-rows').replaceChildren(...rows.map(([k, v]) => {
@@ -242,6 +250,8 @@ window.GL = window.GL || {};
     if (!ensureMap()) return;
     $('#map-status').textContent = 'Posizione in attesa';
     if ('geolocation' in navigator && watchId == null) {
+      const perm = await GL.ui.askPermission('location');
+      if (!perm.ok) { onPositionError({ code: 1 }); return; }
       watchId = navigator.geolocation.watchPosition(onPosition, onPositionError, { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 });
     }
   }

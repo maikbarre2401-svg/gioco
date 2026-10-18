@@ -10,16 +10,24 @@ window.GL = window.GL || {};
   async function startScan() {
     if (stream) { stopScan(); return; }
     if (!await GL.ui.needLib('qr')) { toast('Scanner non disponibile'); return; }
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
-      const v = $('#qr-video');
-      v.srcObject = stream;
-      await v.play();
-      $('#qr-cam').textContent = 'Spegni fotocamera';
-      scanning = true;
-      tick();
-      GL.sfx.play('nav');
-    } catch { toast('Fotocamera non disponibile'); }
+    const btn = $('#qr-cam');
+    btn.disabled = true; btn.textContent = 'Apro…';
+    const res = await GL.ui.getCamera();
+    btn.disabled = false;
+    if (!res.stream) {
+      btn.textContent = 'Accendi fotocamera';
+      toast(`Fotocamera: ${res.error}`, 4500);
+      if (res.blocked) GL.ui.openSettings();
+      return;
+    }
+    stream = res.stream;
+    const v = $('#qr-video');
+    v.srcObject = stream;
+    try { await v.play(); } catch { /* autoplay guard */ }
+    btn.textContent = 'Spegni fotocamera';
+    scanning = true;
+    tick();
+    GL.sfx.play('nav');
   }
 
   function stopScan() {

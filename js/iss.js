@@ -11,7 +11,7 @@ window.GL = window.GL || {};
     if (map) { setTimeout(() => map.invalidateSize(), 50); return true; }
     if (!window.L) { toast('Mappa non disponibile'); return false; }
     map = L.map('iss-map', { zoomControl: false, attributionControl: false, worldCopyJump: true, center: [20, 0], zoom: 2 });
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { subdomains: 'abcd', maxZoom: 7, detectRetina: true }).addTo(map);
+    GL.ui.darkTiles(map, document.querySelector('#iss-map').closest('.map-wrap'));
     trail = L.polyline([], { color: '#2ef2ff', weight: 2, opacity: 0.6 }).addTo(map);
     setTimeout(() => map.invalidateSize(), 50);
     return true;

@@ -14,6 +14,7 @@ import android.graphics.Insets;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
 import android.net.Uri;
+import android.provider.Settings;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.CancellationSignal;
@@ -56,6 +57,9 @@ public class MainActivity extends Activity {
     private static final int BG = 0xFF05070D;
     private static final int REQ_WEB = 1;
     private static final int REQ_GEO = 2;
+    private static final int REQ_CAMERA = 10;
+    private static final int REQ_MIC = 11;
+    private static final int REQ_LOCATION = 12;
 
     private WebView web;
     private PermissionRequest pendingWebRequest;
@@ -265,6 +269,11 @@ public class MainActivity extends Activity {
             if (r == PackageManager.PERMISSION_GRANTED) anyGranted = true;
             else allGranted = false;
         }
+        if (requestCode == REQ_CAMERA || requestCode == REQ_MIC || requestCode == REQ_LOCATION) {
+            String kind = requestCode == REQ_CAMERA ? "camera" : requestCode == REQ_MIC ? "mic" : "location";
+            sendPermResult(kind, anyGranted, anyGranted ? "granted" : "denied");
+            return;
+        }
         if (requestCode == REQ_WEB && pendingWebRequest != null) {
             if (allGranted) pendingWebRequest.grant(pendingWebRequest.getResources());
             else pendingWebRequest.deny();
@@ -307,6 +316,62 @@ public class MainActivity extends Activity {
         } catch (Exception ignored) {
             // camera busy or torch unavailable
         }
+    }
+
+    /* -------------------------------------------------------------- permissions */
+
+    private String[] permsFor(String kind) {
+        if ("camera".equals(kind)) return new String[]{Manifest.permission.CAMERA};
+        if ("mic".equals(kind)) return new String[]{Manifest.permission.RECORD_AUDIO};
+        if ("location".equals(kind)) {
+            return new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION};
+        }
+        return new String[0];
+    }
+
+    private int codeFor(String kind) {
+        if ("camera".equals(kind)) return REQ_CAMERA;
+        if ("mic".equals(kind)) return REQ_MIC;
+        return REQ_LOCATION;
+    }
+
+    private boolean held(String kind) {
+        String[] perms = permsFor(kind);
+        if (perms.length == 0) return false;
+        for (String p : perms) {
+            if (checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED) return true;
+        }
+        return false;
+    }
+
+    /** Asks Android for a permission before the page touches the matching API. */
+    private void ensurePermission(final String kind) {
+        if (held(kind)) { sendPermResult(kind, true, "granted"); return; }
+        final String[] perms = permsFor(kind);
+        if (perms.length == 0) { sendPermResult(kind, false, "unknown"); return; }
+        // A permission the user permanently denied returns instantly with no dialog: say so,
+        // so the page can offer to open the system settings instead of looping.
+        final boolean canAsk = shouldShowRequestPermissionRationale(perms[0]) || !askedAlready.contains(kind);
+        askedAlready.add(kind);
+        if (!canAsk) { sendPermResult(kind, false, "blocked"); return; }
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                requestPermissions(perms, codeFor(kind));
+            }
+        });
+    }
+
+    private final java.util.Set<String> askedAlready = new java.util.HashSet<String>();
+
+    private void sendPermResult(final String kind, final boolean ok, final String state) {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                web.evaluateJavascript("window.GL && GL.ui && GL.ui._perm && GL.ui._perm('"
+                        + kind + "'," + ok + ",'" + state + "')", null);
+            }
+        });
     }
 
     /* --------------------------------------------------------------- biometrics */
@@ -421,6 +486,28 @@ public class MainActivity extends Activity {
             if (clip == null || clip.getItemCount() == 0) return "";
             CharSequence text = clip.getItemAt(0).coerceToText(MainActivity.this);
             return text == null ? "" : text.toString();
+        }
+
+        @JavascriptInterface
+        public void ensurePermission(String kind) {
+            MainActivity.this.ensurePermission(kind);
+        }
+
+        @JavascriptInterface
+        public String permState(String kind) {
+            return held(kind) ? "granted" : "unknown";
+        }
+
+        @JavascriptInterface
+        public void openAppSettings() {
+            try {
+                Intent i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.fromParts("package", getPackageName(), null));
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(i);
+            } catch (Exception ignored) {
+                // settings screen unavailable
+            }
         }
 
         @JavascriptInterface

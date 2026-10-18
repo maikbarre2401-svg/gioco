@@ -30,12 +30,12 @@ window.GL = window.GL || {};
       $('#trc-src').textContent = 'Sorgente: LED posteriore';
       return source;
     }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } } });
-      const t = stream.getVideoTracks()[0];
+    const res = await GL.ui.getCamera({ video: { facingMode: { ideal: 'environment' } } });
+    if (res.stream) {
+      const t = res.stream.getVideoTracks()[0];
       if (t?.getCapabilities?.().torch) { track = t; source = 'led'; }
-      else { stream.getTracks().forEach(x => x.stop()); source = 'screen'; }
-    } catch { source = 'screen'; }
+      else { res.stream.getTracks().forEach(x => x.stop()); source = 'screen'; }
+    } else source = 'screen';
     $('#trc-src').textContent = source === 'led' ? 'Sorgente: LED posteriore' : 'Sorgente: schermo (il LED non è accessibile da qui)';
     return source;
   }

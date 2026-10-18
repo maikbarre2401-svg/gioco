@@ -503,3 +503,15 @@ main:not(:has(.screen.active)) .screen[data-screen="home"] { display: flex; flex
 .lock-panel .note { text-align: left; }
 .lock-msg { min-height: 18px; color: var(--magenta); font-size: 12px; letter-spacing: .04em; }
 .lock-panel input { text-align: center; font: 700 20px var(--f-mono); letter-spacing: .3em; }
+
+/* Fallback tiles are light OSM ones: invert them so the dark look survives. */
+.map-fallback .leaflet-tile { filter: invert(1) hue-rotate(180deg) brightness(.85) contrast(1.1); }
+
+/* ---------- diagnostics ---------- */
+.diag-row { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 8px 0; border-bottom: 1px dashed var(--line); }
+.diag-row:last-child { border-bottom: 0; }
+.diag-label { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); }
+.diag-state { font: 600 11px var(--f-display); letter-spacing: .1em; text-align: right; }
+.diag-ok { color: var(--ok); } .diag-bad { color: var(--magenta); } .diag-warn { color: var(--amber); } .diag-info { color: var(--dim); }
+.diag-detail { grid-column: 1 / -1; font-size: 12px; color: var(--fg); overflow-wrap: anywhere; }
+#diag-out:empty { display: none; }

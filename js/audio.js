@@ -83,16 +83,14 @@ window.GL = window.GL || {};
   }
 
   async function start() {
-    if (!navigator.mediaDevices?.getUserMedia) { toast('Microfono non disponibile su questo browser'); return; }
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-      });
-    } catch {
-      toast('Permesso microfono negato: abilitalo nelle impostazioni del browser', 3500);
+    const mic = await GL.ui.getMic();
+    if (!mic.stream) {
+      toast(`Microfono: ${mic.error}`, 4500);
+      if (mic.blocked) GL.ui.openSettings();
       log('Accesso al microfono negato', 'hot');
       return;
     }
+    stream = mic.stream;
     ctx = new (window.AudioContext || window.webkitAudioContext)();
     analyser = ctx.createAnalyser();
     analyser.fftSize = 4096;

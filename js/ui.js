@@ -156,5 +156,84 @@ window.GL = window.GL || {};
     return !ready || ready();
   }
 
-  GL.ui = { native, loadScript, needLib, $, $$, clock, toast, log, haptic, copyText, setPressed, fmt, humanTime, sha256, fitCanvas, COLORS };
+  // Dark map tiles with a fallback: if CARTO is unreachable the layer switches to plain
+  // OpenStreetMap tiles, darkened with a CSS filter, so the map still appears.
+  function darkTiles(map, container) {
+    const PRIMARY = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png';
+    const FALLBACK = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+    let errors = 0, swapped = false;
+    const layer = window.L.tileLayer(PRIMARY, { subdomains: 'abcd', maxZoom: 19, crossOrigin: true });
+    layer.on('tileerror', () => {
+      if (swapped || ++errors < 4) return;
+      swapped = true;
+      layer.options.subdomains = 'abc';
+      layer.setUrl(FALLBACK);
+      container?.classList.add('map-fallback');
+    });
+    layer.addTo(map);
+    return layer;
+  }
+
+  /* ---------------- device permissions & camera ---------------- */
+  // In the APK the WebView only sees a camera/mic/GPS once Android itself has granted the
+  // runtime permission, so ask for it first and report precisely what happened.
+  const permWaiters = new Map();
+  function _perm(kind, ok, state) {
+    const w = permWaiters.get(kind);
+    permWaiters.delete(kind);
+    if (w) w({ ok: !!ok, state: state || (ok ? 'granted' : 'denied') });
+  }
+
+  function askPermission(kind) {
+    if (!native || !native.ensurePermission) return Promise.resolve({ ok: true, state: 'browser' });
+    if (native.permState && native.permState(kind) === 'granted') return Promise.resolve({ ok: true, state: 'granted' });
+    return new Promise(res => {
+      permWaiters.set(kind, res);
+      try { native.ensurePermission(kind); } catch { permWaiters.delete(kind); res({ ok: false, state: 'error' }); }
+      setTimeout(() => { if (permWaiters.has(kind)) { permWaiters.delete(kind); res({ ok: false, state: 'timeout' }); } }, 45000);
+    });
+  }
+
+  function openSettings() { try { native?.openAppSettings?.(); } catch { /* not in the APK */ } }
+
+  const CAM_REASON = {
+    NotAllowedError: 'permesso negato',
+    NotFoundError: 'nessuna fotocamera trovata',
+    NotReadableError: 'la fotocamera è occupata da un\'altra app',
+    OverconstrainedError: 'questa fotocamera non supporta la modalità richiesta',
+    SecurityError: 'bloccata: serve una connessione sicura',
+    AbortError: 'avvio interrotto',
+  };
+
+  // Single entry point for every camera screen: { stream } on success, { error, blocked } on failure.
+  async function getCamera(constraints = { video: { facingMode: { ideal: 'environment' } }, audio: false }) {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      return { error: 'questo browser non espone la fotocamera (serve https)' };
+    }
+    const perm = await askPermission('camera');
+    if (!perm.ok) {
+      return { error: perm.state === 'blocked' ? 'permesso fotocamera negato in modo permanente' : 'permesso fotocamera non concesso', blocked: perm.state === 'blocked' };
+    }
+    try {
+      return { stream: await navigator.mediaDevices.getUserMedia(constraints) };
+    } catch (e) {
+      // A device without a rear camera rejects facingMode: retry with whatever exists.
+      if (e.name === 'OverconstrainedError' || e.name === 'NotFoundError') {
+        try { return { stream: await navigator.mediaDevices.getUserMedia({ video: true, audio: !!constraints.audio }) }; } catch (e2) {
+          return { error: CAM_REASON[e2.name] || e2.name };
+        }
+      }
+      return { error: CAM_REASON[e.name] || e.name, blocked: e.name === 'NotAllowedError' };
+    }
+  }
+
+  async function getMic(constraints = { audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } }) {
+    if (!navigator.mediaDevices?.getUserMedia) return { error: 'microfono non disponibile' };
+    const perm = await askPermission('mic');
+    if (!perm.ok) return { error: 'permesso microfono non concesso', blocked: perm.state === 'blocked' };
+    try { return { stream: await navigator.mediaDevices.getUserMedia(constraints) }; }
+    catch (e) { return { error: CAM_REASON[e.name] || e.name, blocked: e.name === 'NotAllowedError' }; }
+  }
+
+  GL.ui = { native, loadScript, needLib, darkTiles, askPermission, openSettings, getCamera, getMic, _perm, $, $$, clock, toast, log, haptic, copyText, setPressed, fmt, humanTime, sha256, fitCanvas, COLORS };
 })();

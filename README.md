@@ -38,6 +38,7 @@ Se il telefono non ha sblocco biometrico attivo, l'app chiede un **PIN di access
 | **Fonometro** | Livello del suono in decibel e spettro delle frequenze. |
 | **Torcia** | LED o schermo, con luce fissa, strobo, SOS e messaggi in Morse. |
 | **Impostazioni** | Nome in codice, effetti sonori, voce, vibrazione, tipo di intro e la tua carriera. |
+| **Diagnostica** | Prova davvero fotocamera, microfono, GPS, bussola, accelerometro, tessere della mappa e rete su questo telefono, e dice cosa non funziona e perché. Il referto si copia con un tocco. |
 
 I suoni e la musica dell'intro sono creati dall'app al momento (sintetizzati), non sono presi dal videogioco. Le uniche richieste a internet sono la mappa, la ricerca dell'IP e il test di velocità.
 
@@ -136,6 +137,7 @@ js/iss.js             Tracker della Stazione Spaziale
 js/sky.js             Cielo AR (motore astronomico + realtà aumentata)
 js/skydata.js         catalogo stelle e costellazioni
 js/face.js            sblocco con il volto (biometria del telefono) e PIN
+js/diag.js            Diagnostica di fotocamera, sensori, mappa e rete
 js/device.js          lettura delle informazioni del dispositivo
 js/scan.js            Scanner
 js/cipher.js          Cifratore (AES-GCM + PBKDF2)

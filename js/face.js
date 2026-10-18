@@ -74,14 +74,14 @@ window.GL = window.GL || {};
       $('#lock-video').srcObject = null;
       return;
     }
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
-      const v = $('#lock-video');
-      v.srcObject = stream;
-      await v.play();
-      v.hidden = false;
-      drawScan();
-    } catch { toast('Fotocamera non disponibile: puoi comunque usare il PIN'); }
+    const res = await GL.ui.getCamera({ video: { facingMode: 'user' }, audio: false });
+    if (!res.stream) { drawScan(); return; }   // the oval still animates; the PIN stays available
+    stream = res.stream;
+    const v = $('#lock-video');
+    v.srcObject = stream;
+    try { await v.play(); } catch { /* autoplay guard */ }
+    v.hidden = false;
+    drawScan();
   }
 
   let scanLast = 0;

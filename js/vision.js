@@ -107,18 +107,27 @@ window.GL = window.GL || {};
 
   async function toggle() {
     if (stream) { stop(); return; }
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
-      const v = $('#vis-video');
-      v.srcObject = stream; await v.play();
-      torchTrack = stream.getVideoTracks()[0];
-      $('#vis-torch').hidden = !(torchTrack.getCapabilities?.().torch);
-      $('#vis-cam').textContent = 'Spegni';
-      GL.sfx.play('nav');
-      log('Visione attiva', 'ok');
-      GL.app?.xp(4, 'visione');
-      cancelAnimationFrame(raf); loop();
-    } catch { toast('Fotocamera non disponibile'); }
+    const btn = $('#vis-cam');
+    btn.disabled = true; btn.textContent = 'Apro…';
+    const res = await GL.ui.getCamera();
+    btn.disabled = false;
+    if (!res.stream) {
+      btn.textContent = 'Accendi';
+      toast(`Fotocamera: ${res.error}`, 4500);
+      if (res.blocked) GL.ui.openSettings();
+      return;
+    }
+    stream = res.stream;
+    const v = $('#vis-video');
+    v.srcObject = stream;
+    try { await v.play(); } catch { /* autoplay guard */ }
+    torchTrack = stream.getVideoTracks()[0];
+    $('#vis-torch').hidden = !(torchTrack.getCapabilities?.().torch);
+    btn.textContent = 'Spegni';
+    GL.sfx.play('nav');
+    log('Visione attiva', 'ok');
+    GL.app?.xp(4, 'visione');
+    cancelAnimationFrame(raf); loop();
   }
 
   function stop() {

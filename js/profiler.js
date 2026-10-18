@@ -90,20 +90,25 @@ window.GL = window.GL || {};
     ctx.textAlign = 'left';
   }
 
+  function camFail(res) {
+    toast(`Fotocamera: ${res.error}`, 4500);
+    if (res.blocked) setTimeout(() => { toast('Apri le impostazioni per consentire la fotocamera', 4000); GL.ui.openSettings(); }, 1200);
+  }
+
   async function camera() {
     if (stream) { stopCamera(); return; }
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
-      const v = $('#prf-video');
-      v.srcObject = stream;
-      await v.play();
-      $('#prf-cam').textContent = 'Spegni fotocamera';
-      GL.sfx.play('nav');
-      log('Profiler: fotocamera attiva', 'ok');
-    } catch {
-      stream = null;
-      toast('Fotocamera non disponibile: il profiler funziona lo stesso', 3000);
-    }
+    const btn = $('#prf-cam');
+    btn.disabled = true; btn.textContent = 'Apro…';
+    const res = await GL.ui.getCamera();
+    btn.disabled = false;
+    if (!res.stream) { btn.textContent = 'Accendi fotocamera'; camFail(res); return; }
+    stream = res.stream;
+    const v = $('#prf-video');
+    v.srcObject = stream;
+    try { await v.play(); } catch { /* autoplay guard */ }
+    btn.textContent = 'Spegni fotocamera';
+    GL.sfx.play('nav');
+    log('Profiler: fotocamera attiva', 'ok');
   }
 
   function stopCamera() {
