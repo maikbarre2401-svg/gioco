@@ -13,16 +13,19 @@
     - Scheda: "ESP32 Dev Module"
     - Partition Scheme: "Huge APP (3MB No OTA/1MB SPIFFS)"   <-- OBBLIGATORIO (WiFi+BT sono grandi)
 
-  FUNZIONI (v5.0):
-    STAT  : STATO (figura animata + sensori) | SISTEMA (info chip, rete) | GRAFICI (storico sensori)
+  FUNZIONI (v6.0):
+    STAT  : STATO (figura animata + sensori + livello) | SISTEMA (info chip, rete) | GRAFICI (storico sensori)
             | CONFIG (2 pagine: tema, luminosita' manuale/automatica, suono, effetto olo, LED RGB,
               salvaschermo, calibrazione touch, WiFi salvato, riavvio)
     INV   : ARMI | ATTREZZI | AIUTI
-    DATA  : ORA (orologio NTP) | METEO (Open-Meteo, previsioni 3 giorni) | MISSIONI | LOG eventi
+    DATA  : ORA (orologio NTP) | METEO (Open-Meteo, previsioni 3 giorni) | TIMER (conto alla rovescia
+            e cronometro) | MISSIONI | LOG eventi
     MAP   : radar animato con reti WiFi e dispositivi Bluetooth reali (TUTTI | WIFI | BT)
     RADIO : WIFI (scansione + connessione con tastiera) | BLUETOOTH (scansione BLE)
-    GIOCO : TERMINALE (trova la password) | SERPENTE (record salvato)
-    Extra : salvaschermo, suoni non bloccanti, LED di stato, avvio saltabile con un tocco
+            | CANALI (analizzatore dei canali WiFi) | LINK (pannello web + hotspot + codice QR)
+    GIOCO : TERMINALE (trova la password) | SERPENTE | DIFESA (difendi i rifugi dai missili)
+    Extra : livelli ed esperienza, pannello web con schermo dal vivo e tocco a distanza,
+            messaggi dal telefono, salvaschermo, suoni non bloccanti, LED di stato
 */
 
 #include <SPI.h>
@@ -31,6 +34,8 @@
 #include <WiFi.h>
 #include <Preferences.h>
 #include <HTTPClient.h>
+#include <WebServer.h>
+#include <ESPmDNS.h>
 #include <BLEDevice.h>
 #include <BLEScan.h>
 #include <BLEAdvertisedDevice.h>
@@ -89,6 +94,7 @@ struct Config {
   bool autoBright = false;
   bool led = true;
   int saver = 2;                    // indice in SAVER_MIN
+  bool ap = false;                  // hotspot VX26 per il pannello web
   int tminx = TS_MINX, tmaxx = TS_MAXX, tminy = TS_MINY, tmaxy = TS_MAXY;
   String ssid, pass;
 } cfg;
@@ -97,21 +103,28 @@ struct Config {
 #define NTABS 6
 #define TAB_W 53
 const char* TABS[NTABS] = {"STAT", "INV", "DATA", "MAP", "RADIO", "GIOCO"};
-const char* SUBS[NTABS][4] = {
-  {"STATO", "SISTEMA", "GRAFICI", "CONFIG"},
-  {"ARMI", "ATTREZZI", "AIUTI", nullptr},
-  {"ORA", "METEO", "MISSIONI", "LOG"},
-  {"TUTTI", "WIFI", "BT", nullptr},
-  {"WIFI", "BLUETOOTH", nullptr, nullptr},
-  {"TERMINALE", "SERPENTE", nullptr, nullptr},
+const char* SUBS[NTABS][5] = {
+  {"STATO", "SISTEMA", "GRAFICI", "CONFIG", nullptr},
+  {"ARMI", "ATTREZZI", "AIUTI", nullptr, nullptr},
+  {"ORA", "METEO", "TIMER", "MISSIONI", "LOG"},
+  {"TUTTI", "WIFI", "BT", nullptr, nullptr},
+  {"WIFI", "BLUETOOTH", "CANALI", "LINK", nullptr},
+  {"TERMINALE", "SERPENTE", "DIFESA", nullptr, nullptr},
 };
-const int SUBN[NTABS] = {4, 3, 4, 3, 2, 2};
+const int SUBN[NTABS] = {4, 3, 5, 3, 4, 3};
 int tab = 0, sub[NTABS] = {0, 0, 0, 0, 0, 0};
-int subX0[4], subX1[4];
+int subX0[5], subX1[5];
+// sottoschede usate nel codice
+enum { S_ORA, S_METEO, S_TIMER, S_MISSIONI, S_LOG };
+enum { S_WIFI, S_BT, S_CANALI, S_LINK };
+enum { S_TERM, S_SNAKE, S_DIFESA };
 
-enum Modal { M_NONE, M_KB, M_CONN, M_MSG, M_CAL };
+enum Modal { M_NONE, M_KB, M_CONN, M_MSG, M_CAL, M_RX };
 Modal modal = M_NONE;
 String msgL1, msgL2;
+String rxText;                    // messaggio arrivato dal pannello web
+unsigned long toastUntil = 0;     // avviso temporaneo in alto (livello raggiunto ecc.)
+String toastText;
 
 bool dirty = true;
 unsigned long lastFrame = 0, lastStats = 0;
@@ -263,10 +276,54 @@ int snLen = 0, snDx = 1, snDy = 0, snNdx = 1, snNdy = 0;
 int snFx = 0, snFy = 0, snScore = 0, snHi = 0, snState = 0;   // 0 pronto, 1 in corsa, 2 fine, 3 pausa
 unsigned long snLast = 0, snDeadT = 0;
 
+// ---------------- LIVELLI / ESPERIENZA ----------------
+long xp = 0;
+
+// ---------------- TIMER / CRONOMETRO ----------------
+int tmMode = 0;                   // 0 conto alla rovescia, 1 cronometro
+long tmSet = 300000;              // durata impostata (ms)
+long tmLeft = 300000;             // tempo rimasto quando e' fermo
+unsigned long tmStart = 0;        // millis() all'avvio
+bool tmRun = false, tmAlarm = false;
+unsigned long tmAlarmT = 0;
+long crBase = 0;                  // cronometro: tempo accumulato
+unsigned long crStart = 0;
+bool crRun = false;
+long crLap[3] = {-1, -1, -1};
+int crLapN = 0;
+
+// ---------------- PANNELLO WEB / HOTSPOT ----------------
+#define AP_SSID "VX26-OPERATOR"
+#define AP_PASS "vx26-2026"
+#define MDNS_NAME "vx26"
+WebServer web(80);
+bool mdnsOn = false;
+int qrShowWifi = 0;               // 0 = indirizzo del pannello, 1 = credenziali hotspot
+unsigned long webHits = 0, webLastHit = 0;
+
+// ---------------- GIOCO: DIFESA ----------------
+#define DF_EN 18
+#define DF_SH 6
+#define DF_EX 16
+#define DF_GROUND 206
+struct DfMissile { float sx, sy, x, y, vx, vy; int target; bool on, split; };
+struct DfShot { float x, y, vx, vy, tx, ty; int n; bool on; };
+struct DfBoom { float x, y; int age, maxR; bool on, player; };
+DfMissile dfEn[DF_EN];
+DfShot dfSh[DF_SH];
+DfBoom dfEx[DF_EX];
+const int DF_CITY_X[4] = {38, 102, 218, 282};
+bool dfCity[4];
+int dfState = 0;                  // 0 pronto, 1 in gioco, 2 fine, 3 pausa, 4 fine ondata
+int dfWave = 1, dfScore = 0, dfHi = 0, dfAmmo = 0, dfToSpawn = 0, dfSpawnT = 0, dfBonus = 0;
+unsigned long dfLast = 0, dfStateT = 0;
+
 // Prototipi
 void startWifiScan();
 void startBtScan();
 void arrowBtnH(int x, int y, int w, int h, bool left);
+void addXp(int n);
+void ledRGB(int r, int g, int b);
 
 // =================================================================
 //  UTILITA'
@@ -345,6 +402,7 @@ void saveConfig() {
   prefs.putBool("auto", cfg.autoBright);
   prefs.putBool("led", cfg.led);
   prefs.putInt("saver", cfg.saver);
+  prefs.putBool("ap", cfg.ap);
   prefs.putInt("tminx", cfg.tminx);
   prefs.putInt("tmaxx", cfg.tmaxx);
   prefs.putInt("tminy", cfg.tminy);
@@ -361,6 +419,7 @@ void loadConfig() {
   cfg.autoBright = prefs.getBool("auto", false);
   cfg.led    = prefs.getBool("led", true);
   cfg.saver  = constrain(prefs.getInt("saver", 2), 0, 3);
+  cfg.ap     = prefs.getBool("ap", false);
   cfg.tminx  = prefs.getInt("tminx", TS_MINX);
   cfg.tmaxx  = prefs.getInt("tmaxx", TS_MAXX);
   cfg.tminy  = prefs.getInt("tminy", TS_MINY);
@@ -373,6 +432,8 @@ void loadConfig() {
   uint8_t q  = prefs.getUChar("quests", 1);
   for (int i = 0; i < 5; i++) qDone[i] = (q >> i) & 1;
   snHi       = prefs.getInt("snhi", 0);
+  dfHi       = prefs.getInt("dfhi", 0);
+  xp         = prefs.getLong("xp", 0);
   blAuto     = cfg.bright;
 }
 
@@ -388,6 +449,27 @@ void completeQuest(int i) {
   saveQuests();
   addLog("MISSIONE OK: " + String(QUESTS[i]).substring(0, 20));
   sndOk();
+  addXp(100);
+}
+
+// livello n richiede 40*(n-1)^2 punti esperienza
+int levelOf(long x) { int l = 1; while (40L * l * l <= x) l++; return l; }
+long xpFor(int l) { return 40L * (l - 1) * (l - 1); }
+
+void toast(const String& s) { toastText = s; toastUntil = millis() + 2600; }
+
+void addXp(int n) {
+  if (n <= 0) return;
+  int before = levelOf(xp);
+  xp += n;
+  prefs.putLong("xp", xp);
+  int after = levelOf(xp);
+  if (after > before) {
+    toast("LIVELLO " + String(after) + " RAGGIUNTO");
+    addLog("LIVELLO " + String(after));
+    queueTone(880, 60); queueTone(1175, 60); queueTone(1568, 60); queueTone(2093, 160);
+    glitchUntil = millis() + 150;
+  }
 }
 
 void applyTheme() {
@@ -607,8 +689,9 @@ void drawHeader() {
 }
 
 void drawSubtabs() {
-  int n = SUBN[tab], gap = 18, tot = 0, w[4];
+  int n = SUBN[tab], gap = 18, tot = 0, w[5];
   for (int i = 0; i < n; i++) { w[i] = spr.textWidth(SUBS[tab][i], 2); tot += w[i]; }
+  if (n > 1) gap = constrain((312 - tot) / (n - 1), 8, 18);
   tot += gap * (n - 1);
   int x = 160 - tot / 2;
   for (int i = 0; i < n; i++) {
@@ -760,9 +843,11 @@ void drawStato() {
   int hp = sTemp > 70 ? constrain(100 - (int)((sTemp - 70) * 3), 10, 100) : 100;
   chamferFill(0, 195, 100, 20, 5, C_DARK);
   txtG("HP " + String(hp) + "/100", 50, 205, C_HI, MC_DATUM);
+  int lv = levelOf(xp);
+  long x0 = xpFor(lv), x1 = xpFor(lv + 1);
   chamferFill(103, 195, 114, 20, 5, C_DARK);
-  txtG("LIV " + String(1 + s / 300), 110, 205, C_HI, ML_DATUM);
-  segBar(160, 201, 54, 8, (s % 300) * 100 / 300, 6);
+  txtG("LIV " + String(lv), 110, 205, C_HI, ML_DATUM);
+  segBar(160, 201, 54, 8, (int)((xp - x0) * 100 / max(1L, x1 - x0)), 6);
   chamferFill(220, 195, 100, 20, 5, C_DARK);
   txtG("UP " + String(s / 3600) + "h" + two((s / 60) % 60), 270, 205, C_HI, MC_DATUM);
 }
@@ -1058,6 +1143,7 @@ void pollWifiScan() {
   WiFi.scanDelete();
   netScroll = 0;
   addLog("WIFI: " + String(n) + " reti trovate");
+  addXp(5);
 }
 
 void startConnect(const String& ssid, const String& pass) {
@@ -1096,6 +1182,7 @@ void checkWifiStatus() {
     was = c;
     if (c) {
       configTzTime(TZ_INFO, NTP1, NTP2);
+      if (!mdnsOn && MDNS.begin(MDNS_NAME)) { MDNS.addService("http", "tcp", 80); mdnsOn = true; }
       addLog("WIFI OK " + WiFi.localIP().toString());
       completeQuest(1);
       if (wxState != 1) wxState = 0;        // meteo subito alla connessione
@@ -1174,6 +1261,7 @@ void checkBtDone() {
         if (bdevs[j].rssi > bdevs[i].rssi) { BDev t = bdevs[i]; bdevs[i] = bdevs[j]; bdevs[j] = t; }
     portEXIT_CRITICAL(&btMux);
     addLog("BT: " + String((int)bdevCount) + " dispositivi");
+    addXp(5);
     if (netCount > 0) completeQuest(2);
   }
   was = btScanning;
@@ -1243,6 +1331,20 @@ void drawModalBox() {
     txt(connSsid.substring(0, 24), 160, 112, C_MAIN, MC_DATUM);
     int p = constrain((int)((millis() - connStart) * 100 / 15000), 0, 100);
     segBar(50, 138, 220, 10, p, 20);
+  } else if (modal == M_RX) {
+    txtG("TRASMISSIONE IN ARRIVO", 160, 86, C_HI, MC_DATUM);
+    String rest = rxText;
+    for (int line = 0; line < 3 && rest.length(); line++) {      // a capo automatico
+      int cut = rest.length();
+      while (cut > 1 && spr.textWidth(rest.substring(0, cut), 2) > 250) {
+        int sp = rest.lastIndexOf(' ', cut - 1);
+        cut = sp > 0 ? sp : cut - 1;
+      }
+      txt(rest.substring(0, cut), 160, 108 + line * 17, C_MAIN, MC_DATUM);
+      rest = rest.substring(cut);
+      rest.trim();
+    }
+    if ((millis() / 500) % 2) txt("[ TOCCA PER CONTINUARE ]", 160, 160, C_DIM, MC_DATUM, 1);
   } else {
     txtG(msgL1, 160, 94, C_HI, MC_DATUM);
     txt(msgL2, 160, 118, C_MAIN, MC_DATUM);
@@ -1634,6 +1736,7 @@ void termTouch(int x, int y) {
     sndOk();
     addLog("TERMINALE: ACCESSO OTTENUTO");
     completeQuest(3);
+    addXp(60);
   } else if (--twTries == 0) {
     twState = 2;
     twLockUntil = millis() + 10000;
@@ -1679,6 +1782,7 @@ void snStep() {
       prefs.putInt("snhi", snHi);
       addLog("SERPENTE: RECORD " + String(snHi));
     }
+    addXp(snScore * 3);
     return;
   }
   bool eat = nx == snFx && ny == snFy;
@@ -1801,6 +1905,818 @@ void calTouch() {
 }
 
 // =================================================================
+//  CODICE QR (versione 3, correzione L: fino a 53 caratteri)
+// =================================================================
+#define QR_N 29
+uint8_t qrMod[QR_N][QR_N];        // 1 = modulo scuro
+uint8_t qrFun[QR_N][QR_N];        // 1 = modulo di servizio (non mascherabile)
+char qrCached[64] = "";
+
+static uint8_t gfMul(uint8_t x, uint8_t y) {
+  int z = 0;
+  for (int i = 7; i >= 0; i--) {
+    z = (z << 1) ^ ((z >> 7) * 0x11D);
+    z ^= ((y >> i) & 1) * x;
+  }
+  return (uint8_t)z;
+}
+
+static void qrSetF(int x, int y, bool dark) { qrMod[y][x] = dark; qrFun[y][x] = 1; }
+
+static void qrFinder(int cx, int cy) {
+  for (int dy = -4; dy <= 4; dy++)
+    for (int dx = -4; dx <= 4; dx++) {
+      int x = cx + dx, y = cy + dy;
+      if (x < 0 || y < 0 || x >= QR_N || y >= QR_N) continue;
+      int d = max(abs(dx), abs(dy));
+      qrSetF(x, y, d != 2 && d != 4);
+    }
+}
+
+static void qrFormat(int mask) {
+  int data = (1 << 3) | mask;                    // livello L = 01
+  int rem = data;
+  for (int i = 0; i < 10; i++) rem = (rem << 1) ^ ((rem >> 9) * 0x537);
+  int bits = ((data << 10) | rem) ^ 0x5412;
+  auto bit = [&](int i) { return ((bits >> i) & 1) != 0; };
+  for (int i = 0; i <= 5; i++) qrSetF(8, i, bit(i));
+  qrSetF(8, 7, bit(6));
+  qrSetF(8, 8, bit(7));
+  qrSetF(7, 8, bit(8));
+  for (int i = 9; i < 15; i++) qrSetF(14 - i, 8, bit(i));
+  for (int i = 0; i < 8; i++) qrSetF(QR_N - 1 - i, 8, bit(i));
+  for (int i = 8; i < 15; i++) qrSetF(8, QR_N - 15 + i, bit(i));
+  qrSetF(8, QR_N - 8, true);                     // modulo scuro fisso
+}
+
+static bool qrMaskBit(int m, int x, int y) {
+  switch (m) {
+    case 0: return (x + y) % 2 == 0;
+    case 1: return y % 2 == 0;
+    case 2: return x % 3 == 0;
+    case 3: return (x + y) % 3 == 0;
+    case 4: return (x / 3 + y / 2) % 2 == 0;
+    case 5: return x * y % 2 + x * y % 3 == 0;
+    case 6: return (x * y % 2 + x * y % 3) % 2 == 0;
+    default: return ((x + y) % 2 + x * y % 3) % 2 == 0;
+  }
+}
+
+static void qrApplyMask(int m) {
+  for (int y = 0; y < QR_N; y++)
+    for (int x = 0; x < QR_N; x++)
+      if (!qrFun[y][x] && qrMaskBit(m, x, y)) qrMod[y][x] ^= 1;
+}
+
+// penalita' semplificata (righe/colonne uniformi, blocchi 2x2, bilanciamento)
+static long qrPenalty() {
+  long p = 0;
+  int dark = 0;
+  for (int pass = 0; pass < 2; pass++)
+    for (int a = 0; a < QR_N; a++) {
+      int run = 1;
+      for (int b = 1; b < QR_N; b++) {
+        bool c = pass ? qrMod[b][a] : qrMod[a][b], pc = pass ? qrMod[b - 1][a] : qrMod[a][b - 1];
+        if (c == pc) { if (++run == 5) p += 3; else if (run > 5) p++; }
+        else run = 1;
+      }
+    }
+  for (int y = 0; y < QR_N - 1; y++)
+    for (int x = 0; x < QR_N - 1; x++) {
+      int c = qrMod[y][x];
+      if (c == qrMod[y][x + 1] && c == qrMod[y + 1][x] && c == qrMod[y + 1][x + 1]) p += 3;
+    }
+  for (int y = 0; y < QR_N; y++) for (int x = 0; x < QR_N; x++) dark += qrMod[y][x];
+  int k = abs(dark * 20 - QR_N * QR_N * 10) / (QR_N * QR_N);
+  return p + k * 10;
+}
+
+void qrMake(const char* text) {
+  if (strcmp(text, qrCached) == 0) return;
+  strncpy(qrCached, text, sizeof(qrCached) - 1);
+  const int DATA = 55, ECC = 15;
+  uint8_t cw[DATA + ECC];
+  memset(cw, 0, sizeof(cw));
+  int len = min((int)strlen(text), 53), bitPos = 0;
+  auto put = [&](int val, int n) {
+    for (int i = n - 1; i >= 0; i--, bitPos++)
+      if ((val >> i) & 1) cw[bitPos >> 3] |= 0x80 >> (bitPos & 7);
+  };
+  put(4, 4);                                     // modalita' byte
+  put(len, 8);
+  for (int i = 0; i < len; i++) put((uint8_t)text[i], 8);
+  put(0, min(4, DATA * 8 - bitPos));             // terminatore
+  bitPos = (bitPos + 7) & ~7;
+  for (int i = bitPos / 8, k = 0; i < DATA; i++, k++) cw[i] = k % 2 ? 0x11 : 0xEC;
+
+  uint8_t gen[ECC], root = 1;                    // Reed-Solomon
+  memset(gen, 0, sizeof(gen));
+  gen[ECC - 1] = 1;
+  for (int i = 0; i < ECC; i++) {
+    for (int j = 0; j < ECC; j++) {
+      gen[j] = gfMul(gen[j], root);
+      if (j + 1 < ECC) gen[j] ^= gen[j + 1];
+    }
+    root = gfMul(root, 2);
+  }
+  uint8_t* ec = cw + DATA;
+  for (int i = 0; i < DATA; i++) {
+    uint8_t f = cw[i] ^ ec[0];
+    memmove(ec, ec + 1, ECC - 1);
+    ec[ECC - 1] = 0;
+    for (int j = 0; j < ECC; j++) ec[j] ^= gfMul(gen[j], f);
+  }
+
+  memset(qrMod, 0, sizeof(qrMod));               // moduli di servizio
+  memset(qrFun, 0, sizeof(qrFun));
+  for (int i = 0; i < QR_N; i++) { qrSetF(6, i, i % 2 == 0); qrSetF(i, 6, i % 2 == 0); }
+  qrFinder(3, 3); qrFinder(QR_N - 4, 3); qrFinder(3, QR_N - 4);
+  for (int dy = -2; dy <= 2; dy++)
+    for (int dx = -2; dx <= 2; dx++) qrSetF(22 + dx, 22 + dy, max(abs(dx), abs(dy)) != 1);
+  qrFormat(0);
+
+  int i = 0;                                     // dati a zig-zag
+  for (int right = QR_N - 1; right >= 1; right -= 2) {
+    if (right == 6) right = 5;
+    for (int v = 0; v < QR_N; v++)
+      for (int j = 0; j < 2; j++) {
+        int x = right - j, y = ((right + 1) & 2) == 0 ? QR_N - 1 - v : v;
+        if (!qrFun[y][x] && i < (DATA + ECC) * 8) { qrMod[y][x] = (cw[i >> 3] >> (7 - (i & 7))) & 1; i++; }
+      }
+  }
+
+  int best = 0;
+  long bestP = -1;
+  for (int m = 0; m < 8; m++) {                  // sceglie la maschera migliore
+    qrApplyMask(m); qrFormat(m);
+    long p = qrPenalty();
+    if (bestP < 0 || p < bestP) { bestP = p; best = m; }
+    qrApplyMask(m);
+  }
+  qrApplyMask(best); qrFormat(best);
+}
+// =================================================================
+//  TIMER - conto alla rovescia e cronometro
+// =================================================================
+long timerLeft() { return tmRun ? max(0L, tmLeft - (long)(millis() - tmStart)) : tmLeft; }
+long cronoNow() { return crRun ? crBase + (long)(millis() - crStart) : crBase; }
+
+// minuti:secondi (up = arrotonda per eccesso, per il conto alla rovescia)
+String mmss(long ms, bool up) {
+  long s = up ? (ms + 999) / 1000 : ms / 1000;
+  return two((s / 60) % 100) + ":" + two(s % 60);
+}
+
+String crStr(long ms) { return mmss(ms, false) + "." + two((ms / 10) % 100); }
+
+void pollTimer() {
+  if (tmRun && timerLeft() == 0) {
+    tmRun = false;
+    tmLeft = 0;
+    tmAlarm = true;
+    tmAlarmT = millis();
+    lastInput = millis();
+    if (saverOn) { saverOn = false; applyBrightness(); }
+    if (!(tab == 2 && sub[2] == S_TIMER) && modal == M_NONE) {
+      msgL1 = "TEMPO SCADUTO";
+      msgL2 = "Timer da " + mmss(tmSet, true);
+      modal = M_MSG;
+    }
+    addLog("TIMER: TEMPO SCADUTO");
+  }
+  if (tmAlarm) {
+    unsigned long e = millis() - tmAlarmT;
+    if (e > 20000) tmAlarm = false;
+    else if (toneLen == 0 && (e / 600) % 2 == 0) { queueTone(2400, 80); queueTone(0, 50); queueTone(2400, 80); queueTone(0, 50); }
+  }
+}
+
+void drawTimer() {
+  button(60, 48, 96, 20, "TIMER", tmMode == 0);
+  button(164, 48, 96, 20, "CRONO", tmMode == 1);
+  if (tmMode == 0) {
+    long l = timerLeft();
+    if (!(tmAlarm && (millis() / 250) % 2)) txtG(mmss(l, true), 160, 104, C_HI, MC_DATUM, 7);
+    segBar(40, 140, 240, 8, tmSet > 0 ? (int)(l * 100 / tmSet) : 0, 24);
+    if (tmAlarm) txtG("TEMPO SCADUTO - TOCCA", 160, 166, C_HI, MC_DATUM);
+    else txt(tmRun ? "IN CORSO" : l == tmSet ? "IMPOSTA LA DURATA E PREMI AVVIA" : "IN PAUSA", 160, 166, C_DIM, MC_DATUM, 1);
+    button(4, 190, 50, 22, "-1M");
+    button(58, 190, 50, 22, "+1M");
+    button(112, 190, 50, 22, "+5M");
+    button(166, 190, 80, 22, tmRun ? "PAUSA" : "AVVIA", tmRun);
+    button(250, 190, 66, 22, "AZZERA");
+  } else {
+    long c = cronoNow();
+    String m = mmss(c, false);
+    int w = spr.textWidth(m, 7), x0 = 160 - (w + 40) / 2;
+    txtG(m, x0, 78, C_HI, TL_DATUM, 7);
+    txt("." + two((c / 10) % 100), x0 + w + 4, 100, C_MAIN, TL_DATUM, 4);
+    if (crLap[0] < 0) txt("GIRO: SALVA UN TEMPO PARZIALE", 160, 150, C_DIM, MC_DATUM, 1);
+    for (int i = 0; i < 3; i++) {
+      if (crLap[i] < 0) break;
+      txt("GIRO " + String(crLapN - i), 96, 136 + i * 16, i == 0 ? C_MAIN : C_DIM);
+      txt(crStr(crLap[i]), 224, 136 + i * 16, i == 0 ? C_HI : C_DIM, TR_DATUM);
+    }
+    button(4, 190, 100, 22, crRun ? "PAUSA" : "AVVIA", crRun);
+    button(110, 190, 100, 22, "GIRO");
+    button(216, 190, 100, 22, "AZZERA");
+  }
+}
+
+void timerTouch(int x, int y) {
+  if (y >= 44 && y < 72) {
+    if (x >= 56 && x < 160) tmMode = 0;
+    else if (x >= 160 && x < 264) tmMode = 1;
+    return;
+  }
+  if (y < 186 || y >= 216) return;
+  if (tmMode == 0) {
+    long d = 0;
+    if (x < 56) d = -60000;
+    else if (x < 110) d = 60000;
+    else if (x < 164) d = 300000;
+    else if (x < 248) {
+      if (tmRun) { tmLeft = timerLeft(); tmRun = false; }
+      else {
+        if (tmLeft == 0) tmLeft = tmSet;
+        tmStart = millis();
+        tmRun = true;
+        addLog("TIMER AVVIATO " + mmss(tmLeft, true));
+      }
+      return;
+    } else { tmRun = false; tmLeft = tmSet; return; }
+    if (tmRun) { tmLeft = constrain(timerLeft() + d, 1000L, 5999000L); tmStart = millis(); }
+    else { tmSet = constrain(tmSet + d, 60000L, 5940000L); tmLeft = tmSet; }
+  } else {
+    if (x < 107) {
+      if (crRun) { crBase = cronoNow(); crRun = false; }
+      else { crStart = millis(); crRun = true; }
+    } else if (x < 213) {
+      if (crRun) { crLap[2] = crLap[1]; crLap[1] = crLap[0]; crLap[0] = cronoNow(); crLapN++; }
+    } else { crRun = false; crBase = 0; crLap[0] = crLap[1] = crLap[2] = -1; crLapN = 0; }
+  }
+}
+
+// =================================================================
+//  CANALI - analizzatore dello spettro WiFi a 2,4 GHz
+// =================================================================
+void drawCanali() {
+  const int gx = 30, gy = 50, gw = 284, gh = 118;
+  auto X = [&](float ch) { return gx + (int)((ch + 1) * gw / 16.0f); };
+  auto Y = [&](int rssi) { return gy + (constrain(-30 - rssi, 0, 70)) * gh / 70; };
+  for (int db = -30; db >= -90; db -= 20) {
+    dotted(gx, Y(db), gx + gw, Y(db), C_FAINT);
+    txt(String(db), gx - 4, Y(db) - 3, C_DIM2, TR_DATUM, 1);
+  }
+  spr.drawFastHLine(gx, gy + gh, gw, C_DIM);
+  for (int c = 1; c <= 13; c++) {
+    spr.drawFastVLine(X(c), gy + gh, 3, C_DIM);
+    txt(String(c), X(c), gy + gh + 5, c == 1 || c == 6 || c == 11 ? C_MAIN : C_DIM2, TC_DATUM, 1);
+  }
+  if (wifiScanning) { scanAnim(108, "ANALISI SPETTRO..."); }
+  else if (netCount == 0) txt("NESSUN DATO - PREMI SCAN", 160, 100, C_DIM, MC_DATUM);
+  else {
+    String cur = WiFi.status() == WL_CONNECTED ? WiFi.SSID() : String("");
+    int lx[6], ly[6], ln = 0;
+    for (int i = netCount - 1; i >= 0; i--) {         // i piu' forti disegnati per ultimi (sopra)
+      int ch = constrain(nets[i].ch, 1, 13);
+      bool isCur = cur.length() && nets[i].ssid == cur;
+      uint8_t c = isCur ? C_HI : i < 3 ? C_MAIN : i < 6 ? C_MID : C_DIM;
+      int top = Y(nets[i].rssi), base = gy + gh, px = -1, py = 0;
+      for (int k = -20; k <= 20; k++) {
+        float t = k / 10.0f;
+        int x = X(ch + t), y = base - (int)((base - top) * (1 - t * t / 4));
+        if (isCur && (k & 1) == 0) spr.drawFastVLine(x, y, base - y, C_DARK);
+        if (px >= 0) spr.drawLine(px, py, x, y, c);
+        px = x; py = y;
+      }
+    }
+    for (int i = 0; i < netCount && ln < 6; i++) {    // etichette dei piu' forti senza sovrapporle
+      int x = X(constrain(nets[i].ch, 1, 13)), y = Y(nets[i].rssi) - 10;
+      bool clash = false;
+      for (int k = 0; k < ln; k++) if (abs(lx[k] - x) < 46 && abs(ly[k] - y) < 10) clash = true;
+      if (clash || y < gy - 2) continue;
+      String s = nets[i].ssid.length() ? nets[i].ssid.substring(0, 9) : String("?");
+      txt(s, x, y, i == 0 ? C_HI : C_MAIN, TC_DATUM, 1);
+      lx[ln] = x; ly[ln] = y; ln++;
+    }
+  }
+  // canale consigliato tra 1, 6, 11 (meno interferenze pesate per segnale)
+  int best = 0;
+  long load[3] = {0, 0, 0};
+  const int CH3[3] = {1, 6, 11};
+  for (int k = 0; k < 3; k++) {
+    for (int i = 0; i < netCount; i++) {
+      int d = abs(nets[i].ch - CH3[k]);
+      if (d < 5) load[k] += (long)(5 - d) * (nets[i].rssi + 100);
+    }
+    if (load[k] < load[best]) best = k;
+  }
+  button(4, 190, 70, 22, "SCAN", wifiScanning && (millis() / 300) % 2);
+  if (netCount) {
+    txt("CANALE MIGLIORE", 84, 201, C_DIM, ML_DATUM, 1);
+    txtG(String(CH3[best]), 186, 201, C_HI, ML_DATUM, 4);
+    txt(String(netCount) + " RETI", 314, 201, C_DIM, MR_DATUM);
+  } else txt("TOCCA SCAN PER ANALIZZARE", 196, 201, C_DIM, MC_DATUM, 1);
+}
+
+// =================================================================
+//  LINK - pannello web, hotspot e codice QR
+// =================================================================
+String linkUrl() {
+  if (WiFi.status() == WL_CONNECTED) return "http://" + WiFi.localIP().toString() + "/";
+  if (cfg.ap) return "http://" + WiFi.softAPIP().toString() + "/";
+  return "";
+}
+
+void applyAp() {
+  if (cfg.ap) {
+    WiFi.mode(WIFI_AP_STA);
+    WiFi.softAP(AP_SSID, AP_PASS);
+    if (!mdnsOn && MDNS.begin(MDNS_NAME)) { MDNS.addService("http", "tcp", 80); mdnsOn = true; }
+    addLog("HOTSPOT " + WiFi.softAPIP().toString());
+  } else {
+    WiFi.softAPdisconnect(true);
+    WiFi.mode(WIFI_STA);
+  }
+}
+
+void drawLink() {
+  bool wc = WiFi.status() == WL_CONNECTED;
+  String url = linkUrl();
+  bool wifiQr = cfg.ap && qrShowWifi;
+  const int bx = 6, by = 48, bs = QR_N * 4 + 16;
+  if (url.length() || wifiQr) {
+    qrMake(wifiQr ? "WIFI:T:WPA;S:" AP_SSID ";P:" AP_PASS ";;" : url.c_str());
+    spr.fillRect(bx, by, bs, bs, C_HI);
+    for (int y = 0; y < QR_N; y++)
+      for (int x = 0; x < QR_N; x++)
+        if (qrMod[y][x]) spr.fillRect(bx + 8 + x * 4, by + 8 + y * 4, 4, 4, BG);
+  } else {
+    chamfer(bx, by, bs, bs, 8, C_DIM2);
+    txt("OFFLINE", bx + bs / 2, by + bs / 2 - 8, C_DIM, MC_DATUM);
+    txt("niente da inquadrare", bx + bs / 2, by + bs / 2 + 10, C_DIM2, MC_DATUM, 1);
+  }
+
+  const int rx = bx + bs + 8;
+  txt("PANNELLO WEB", rx, 48, C_DIM, TL_DATUM, 1);
+  if (wc) {
+    txtG(WiFi.localIP().toString(), rx, 58, C_HI);
+    txt(mdnsOn ? "o  " MDNS_NAME ".local" : "dalla stessa rete WiFi", rx, 76, C_MAIN, TL_DATUM, 1);
+  } else {
+    txt(cfg.ap ? "SOLO VIA HOTSPOT" : "WIFI NON CONNESSO", rx, 58, C_MAIN);
+    txt(cfg.ap ? "collegati alla rete qui sotto" : "connetti il WiFi o l'hotspot", rx, 76, C_DIM, TL_DATUM, 1);
+  }
+  spr.drawFastHLine(rx, 89, 316 - rx, C_FAINT);
+  txt("HOTSPOT", rx, 107, C_MAIN, ML_DATUM);
+  button(232, 96, 84, 22, cfg.ap ? "ON" : "OFF", cfg.ap);
+  if (cfg.ap) {
+    txt("RETE " AP_SSID, rx, 124, C_MAIN, TL_DATUM, 1);
+    txt("PASS " AP_PASS, rx, 136, C_MAIN, TL_DATUM, 1);
+    txt("IP " + WiFi.softAPIP().toString() + "  CLIENT " + String(WiFi.softAPgetStationNum()), rx, 148, C_DIM, TL_DATUM, 1);
+  } else txt("rete propria " AP_SSID, rx, 124, C_DIM2, TL_DATUM, 1);
+  spr.drawFastHLine(rx, 161, 316 - rx, C_FAINT);
+  String last = webHits ? String((millis() - webLastHit) / 1000) + "s FA" : String("MAI");
+  txt("RICHIESTE " + String(webHits), rx, 166, C_DIM, TL_DATUM, 1);
+  txt("ULTIMA " + last, rx, 177, webHits && millis() - webLastHit < 3000 ? C_HI : C_DIM, TL_DATUM, 1);
+
+  if (cfg.ap) button(4, 190, 148, 22, wifiQr ? "QR: HOTSPOT" : "QR: PANNELLO");
+  else { txt("INQUADRA IL QR", 74, 196, C_DIM2, MC_DATUM, 1); txt("COL TELEFONO", 74, 207, C_DIM2, MC_DATUM, 1); }
+  txt(wifiQr ? "1) ENTRA NELLA RETE" : "APRE IL PANNELLO", 238, 196, C_DIM, MC_DATUM, 1);
+  txt(wifiQr ? "2) POI QR: PANNELLO" : "SCHERMO + COMANDI", 238, 207, C_DIM, MC_DATUM, 1);
+}
+
+void linkTouch(int x, int y) {
+  if (inRect(x, y, 226, 90, 94, 34)) {
+    cfg.ap = !cfg.ap;
+    qrShowWifi = cfg.ap ? 1 : 0;
+    applyAp();
+    saveConfig();
+  } else if (cfg.ap && inRect(x, y, 0, 186, 156, 30)) qrShowWifi ^= 1;
+}
+
+// ---------------- server web ----------------
+const char PAGE[] PROGMEM = R"rawliteral(<!doctype html><html lang="it"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>VX-26 LINK</title><style>
+:root{--c:#1eff46;--bg:#050805}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--c);
+font:14px/1.4 ui-monospace,Menlo,Consolas,monospace}main{max-width:700px;margin:auto;padding:12px}
+h1{font-size:18px;letter-spacing:3px;margin:4px 0 10px;display:flex;justify-content:space-between}
+#dot{width:10px;height:10px;border-radius:50%;background:var(--c);display:inline-block;box-shadow:0 0 8px var(--c)}
+.off #dot{background:#555;box-shadow:none}.scr{position:relative;border:2px solid var(--c);border-radius:14px;
+padding:6px;background:#000;box-shadow:0 0 18px color-mix(in srgb,var(--c) 35%,transparent)}
+#s{width:100%;display:block;image-rendering:pixelated;border-radius:8px;cursor:crosshair;aspect-ratio:4/3;background:#000}
+.row{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}button,select,input{font:inherit;color:var(--c);
+background:transparent;border:1px solid var(--c);border-radius:4px;padding:7px 10px}button:active{background:var(--c);color:#000}
+.tabs button{flex:1}.on{background:var(--c);color:#000}.g{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:6px}
+.k{border:1px solid color-mix(in srgb,var(--c) 40%,transparent);border-radius:4px;padding:6px 8px}
+.k b{display:block;font-size:11px;opacity:.65;font-weight:normal}.bar{height:6px;border:1px solid var(--c);margin-top:4px}
+.bar i{display:block;height:100%;background:var(--c)}input[type=text]{flex:1;min-width:0}
+input[type=range]{flex:1;accent-color:var(--c)}h2{font-size:13px;opacity:.7;margin:16px 0 4px;letter-spacing:2px}
+small{opacity:.6}</style></head><body><main id="m"><h1><span>VX-26 // LINK</span><span><span id="dot"></span></span></h1>
+<div class="scr"><img id="s" alt="schermo"></div>
+<div class="row"><button id="live" class="on">LIVE</button><small id="hint">Tocca l'immagine per toccare lo schermo vero.</small></div>
+<div class="row tabs" id="tabs"></div>
+<h2>STATO</h2><div class="g" id="st"></div>
+<h2>TRASMETTI UN MESSAGGIO</h2><div class="row"><input type="text" id="msg" maxlength="96" placeholder="Scrivi qui...">
+<button id="send">INVIA</button></div>
+<h2>CONTROLLI</h2><div class="row"><select id="tema"></select><button id="suono">SUONO</button>
+<button id="olo">OLO</button><button id="led">LED</button></div>
+<div class="row"><span>LUCE</span><input type="range" id="luce" min="20" max="255"></div>
+<small>VX-26 Operator v6.0 - pannello locale, nessun dato esce dalla tua rete.</small></main><script>
+const $=i=>document.getElementById(i);let live=1,S={};
+const T=['STAT','INV','DATA','MAP','RADIO','GIOCO'];
+T.forEach((t,i)=>{const b=document.createElement('button');b.textContent=t;b.onclick=()=>fetch('/api/vai?tab='+i).then(st);$('tabs').appendChild(b)});
+function shot(){if(!live)return;const n=new Image();n.onload=()=>{$('s').src=n.src;setTimeout(shot,250)};
+n.onerror=()=>setTimeout(shot,1500);n.src='/screen.bmp?t='+Date.now()}
+$('s').onclick=e=>{const r=e.target.getBoundingClientRect();const x=Math.round((e.clientX-r.left)*320/r.width),
+y=Math.round((e.clientY-r.top)*240/r.height);fetch('/api/tap?x='+x+'&y='+y)};
+$('live').onclick=()=>{live^=1;$('live').classList.toggle('on',!!live);if(live)shot()};
+function k(l,v,p){return'<div class="k"><b>'+l+'</b>'+v+(p!=null?'<div class="bar"><i style="width:'+p+'%"></i></div>':'')+'</div>'}
+function st(){fetch('/api/stato').then(r=>r.json()).then(d=>{S=d;document.body.classList.remove('off');
+document.documentElement.style.setProperty('--c',d.colore);
+const lp=Math.round((d.xp-d.xpDa)*100/Math.max(1,d.xpA-d.xpDa));
+$('st').innerHTML=k('LIVELLO',d.liv+' <small>'+d.xp+' XP</small>',lp)+k('MEMORIA LIBERA',d.ram+'%',d.ram)+
+k('CPU',d.temp+' C',Math.min(100,d.temp))+k('LUCE AMBIENTE',d.luce+'%',d.luce)+
+k('WIFI',d.wifi?d.ssid+' <small>'+d.rssi+' dBm</small>':'non connesso')+k('HOTSPOT',d.ap?'attivo, '+d.apClienti+' client':'spento')+
+k('METEO',d.meteo?d.t+' C '+d.cond+' <small>'+d.citta+'</small>':'--')+k('ACCESO DA',d.up)+
+k('TIMER',d.timer+(d.timerOn?' <small>in corso</small>':''))+k('RADAR',d.reti+' reti, '+d.bt+' BT');
+if(!$('tema').options.length)d.temi.forEach((t,i)=>$('tema').add(new Option(t,i)));
+$('tema').value=d.tema;$('luce').value=d.luminosita;
+[['suono',d.suono],['olo',d.olo],['led',d.led]].forEach(([i,v])=>$(i).classList.toggle('on',!!v));
+[...$('tabs').children].forEach((b,i)=>b.classList.toggle('on',i==d.tab))}).catch(()=>document.body.classList.add('off'))}
+function set(q){fetch('/api/set?'+q).then(st)}
+$('tema').onchange=e=>set('tema='+e.target.value);$('luce').onchange=e=>set('luce='+e.target.value);
+['suono','olo','led'].forEach(i=>$(i).onclick=()=>set(i+'='+(S[i]?0:1)));
+$('send').onclick=()=>{const t=$('msg').value.trim();if(!t)return;fetch('/api/msg?t='+encodeURIComponent(t))
+.then(r=>{$('msg').value='';$('msg').placeholder=r.ok?'Inviato!':'Schermo occupato, riprova'})};
+$('msg').onkeydown=e=>{if(e.key=='Enter')$('send').click()};
+shot();st();setInterval(st,2000);
+</script></body></html>)rawliteral";
+
+void webNote() { webHits++; webLastHit = millis(); }
+
+// immagine BMP a 16 colori presa direttamente dal framebuffer
+void webScreen() {
+  webNote();
+  const uint32_t off = 14 + 40 + 64, img = 320 * 240 / 2;
+  uint8_t h[off];
+  memset(h, 0, off);
+  auto le32 = [&](int i, uint32_t v) { h[i] = v; h[i + 1] = v >> 8; h[i + 2] = v >> 16; h[i + 3] = v >> 24; };
+  h[0] = 'B'; h[1] = 'M';
+  le32(2, off + img); le32(10, off); le32(14, 40); le32(18, 320); le32(22, 240);
+  h[26] = 1; h[28] = 4;
+  le32(34, img); le32(38, 2835); le32(42, 2835); le32(46, 16);
+  for (int i = 0; i < 16; i++) {
+    uint16_t c = pal[i];
+    uint8_t r = (c >> 11) & 31, g = (c >> 5) & 63, b = c & 31;
+    h[54 + i * 4] = (b << 3) | (b >> 2);
+    h[55 + i * 4] = (g << 2) | (g >> 4);
+    h[56 + i * 4] = (r << 3) | (r >> 2);
+  }
+  web.setContentLength(off + img);
+  web.sendHeader("Cache-Control", "no-store");
+  web.send(200, "image/bmp", "");
+  WiFiClient cl = web.client();
+  cl.write(h, off);
+  const uint8_t* buf = (const uint8_t*)spr.getPointer();
+  static uint8_t chunk[160 * 8];
+  for (int y = 239; y >= 0; y -= 8) {               // il BMP va dal basso verso l'alto
+    for (int k = 0; k < 8; k++) memcpy(chunk + k * 160, buf + (y - k) * 160, 160);
+    if (cl.write(chunk, sizeof(chunk)) == 0) break;
+  }
+}
+
+String jsonEsc(const String& s) {
+  String o;
+  for (int i = 0; i < (int)s.length(); i++) {
+    char c = s[i];
+    if (c == '"' || c == '\\') o += '\\';
+    if ((uint8_t)c >= 32) o += c;
+  }
+  return o;
+}
+
+void webStato() {
+  webNote();
+  bool wc = WiFi.status() == WL_CONNECTED;
+  Weather w;
+  portENTER_CRITICAL(&wxMux);
+  w = wx;
+  portEXIT_CRITICAL(&wxMux);
+  int lv = levelOf(xp);
+  Theme& t = THEMES[cfg.theme];
+  char col[8];
+  snprintf(col, sizeof(col), "#%02x%02x%02x", t.r, t.g, t.b);
+  String temi;
+  for (int i = 0; i < THEME_N; i++) temi += String(i ? "," : "") + "\"" + THEMES[i].name + "\"";
+  String j = "{\"ver\":\"6.0\",\"up\":\"" + uptimeStr() + "\",\"ram\":" + String(sRam) + ",\"temp\":" + String((int)sTemp) +
+             ",\"luce\":" + String(sLight) + ",\"wifi\":" + (wc ? "true" : "false") + ",\"ssid\":\"" + jsonEsc(wc ? WiFi.SSID() : String("")) +
+             "\",\"rssi\":" + String(wc ? WiFi.RSSI() : 0) + ",\"ap\":" + (cfg.ap ? "true" : "false") +
+             ",\"apClienti\":" + String(cfg.ap ? WiFi.softAPgetStationNum() : 0) + ",\"liv\":" + String(lv) +
+             ",\"xp\":" + String(xp) + ",\"xpDa\":" + String(xpFor(lv)) + ",\"xpA\":" + String(xpFor(lv + 1)) +
+             ",\"tema\":" + String(cfg.theme) + ",\"temi\":[" + temi + "],\"colore\":\"" + col + "\",\"luminosita\":" + String(cfg.bright) +
+             ",\"suono\":" + (cfg.sound ? "1" : "0") + ",\"olo\":" + (cfg.crt ? "1" : "0") + ",\"led\":" + (cfg.led ? "1" : "0") +
+             ",\"meteo\":" + (w.ok ? "true" : "false") + ",\"t\":" + String((int)lroundf(w.ok ? w.t : 0)) +
+             ",\"citta\":\"" + jsonEsc(w.city) + "\",\"cond\":\"" + (w.ok ? wxText(w.code) : "") + "\",\"tab\":" + String(tab) +
+             ",\"sub\":" + String(sub[tab]) + ",\"reti\":" + String(netCount) + ",\"bt\":" + String((int)bdevCount) +
+             ",\"timer\":\"" + (tmMode == 1 ? crStr(cronoNow()) : mmss(timerLeft(), true)) + "\",\"timerOn\":" + (tmRun || crRun ? "true" : "false") + "}";
+  web.sendHeader("Cache-Control", "no-store");
+  web.send(200, "application/json", j);
+}
+
+void wakeUp() {
+  lastInput = millis();
+  if (saverOn) { saverOn = false; applyBrightness(); }
+  dirty = true;
+}
+
+void webTap() {
+  webNote();
+  int x = web.arg("x").toInt(), y = web.arg("y").toInt();
+  if (x >= 0 && x < 320 && y >= 0 && y < 240) { onTouch(x, y); dirty = true; }
+  web.send(204);
+}
+
+void webVai() {
+  webNote();
+  int t = web.arg("tab").toInt();
+  if (modal == M_NONE && t >= 0 && t < NTABS) {
+    wakeUp();
+    if (t != tab) { tab = t; glitchUntil = millis() + 160; chirp(); }
+    if (web.hasArg("sub")) sub[t] = constrain((int)web.arg("sub").toInt(), 0, SUBN[t] - 1);
+  }
+  web.send(204);
+}
+
+void webSet() {
+  if (web.hasArg("tema")) { cfg.theme = constrain((int)web.arg("tema").toInt(), 0, THEME_N - 1); applyTheme(); }
+  if (web.hasArg("luce")) { cfg.bright = constrain((int)web.arg("luce").toInt(), 20, 255); cfg.autoBright = false; applyBrightness(); }
+  if (web.hasArg("suono")) cfg.sound = web.arg("suono") == "1";
+  if (web.hasArg("olo")) cfg.crt = web.arg("olo") == "1";
+  if (web.hasArg("led")) cfg.led = web.arg("led") == "1";
+  saveConfig();
+  dirty = true;
+  webStato();
+}
+
+// tiene solo caratteri ASCII stampabili (le vocali accentate diventano lettere semplici)
+String foldAscii(const String& in, int maxLen) {
+  String out;
+  for (int i = 0; i < (int)in.length() && (int)out.length() < maxLen; i++) {
+    uint8_t c = in[i];
+    if (c >= 32 && c < 127) out += (char)c;
+    else if (c == '\n' || c == '\t') out += ' ';
+    else if (c == 0xC3 && i + 1 < (int)in.length()) {
+      uint8_t b = (uint8_t)in[++i];
+      bool low = b >= 0xA0;
+      b &= 0xDF;
+      char m = b <= 0x85 ? 'A' : (b >= 0x88 && b <= 0x8B) ? 'E' : (b >= 0x8C && b <= 0x8F) ? 'I'
+             : (b >= 0x92 && b <= 0x96) ? 'O' : (b >= 0x99 && b <= 0x9C) ? 'U' : 0;
+      if (m) out += low ? (char)tolower(m) : m;
+    }
+  }
+  out.trim();
+  return out;
+}
+
+void webMsg() {
+  webNote();
+  String t = foldAscii(web.arg("t"), 96);
+  if (!t.length()) { web.send(400, "text/plain", "vuoto"); return; }
+  if (modal != M_NONE && modal != M_MSG && modal != M_RX) { web.send(409, "text/plain", "occupato"); return; }
+  rxText = t;
+  modal = M_RX;
+  wakeUp();
+  for (int i = 0; i < 3; i++) { queueTone(1800, 50); queueTone(0, 40); }
+  queueTone(2600, 160);
+  addLog("MSG RICEVUTO VIA LINK");
+  addXp(5);
+  web.send(200, "text/plain", "ok");
+}
+
+void webBegin() {
+  web.on("/", []() { webNote(); web.send_P(200, "text/html", PAGE); });
+  web.on("/screen.bmp", webScreen);
+  web.on("/api/stato", webStato);
+  web.on("/api/tap", webTap);
+  web.on("/api/vai", webVai);
+  web.on("/api/set", webSet);
+  web.on("/api/msg", webMsg);
+  web.onNotFound([]() { web.send(404, "text/plain", "VX-26: pagina non trovata"); });
+  web.begin();
+}
+
+// =================================================================
+//  GIOCO - DIFESA (abbatti i missili prima che colpiscano i rifugi)
+// =================================================================
+int dfCitiesLeft() { int n = 0; for (int i = 0; i < 4; i++) n += dfCity[i]; return n; }
+
+// raggio di un'esplosione: cresce in fretta, poi si spegne piano
+int dfBoomR(const DfBoom& e) { return e.age * 2 <= e.maxR ? e.age * 2 : e.maxR - (e.age - e.maxR / 2); }
+
+void dfBoomAt(float x, float y, int r, bool player) {
+  for (int i = 0; i < DF_EX; i++)
+    if (!dfEx[i].on) { dfEx[i] = {x, y, 0, r, true, player}; return; }
+}
+
+void dfSpawn(float sx, float sy, bool canSplit) {
+  for (int i = 0; i < DF_EN; i++) {
+    if (dfEn[i].on) continue;
+    int opts[5], n = 0;
+    for (int c = 0; c < 4; c++) if (dfCity[c]) opts[n++] = c;
+    opts[n++] = 4;                                   // 4 = torretta: bersaglio di disturbo
+    int t = opts[random(n)];
+    float tx = t < 4 ? DF_CITY_X[t] : 160, dx = tx - sx, dy = DF_GROUND - sy, d = sqrtf(dx * dx + dy * dy);
+    float sp = 0.55f + dfWave * 0.1f;
+    dfEn[i] = {sx, sy, sx, sy, dx / d * sp, dy / d * sp, t, true, canSplit && dfWave >= 3 && random(100) < 30};
+    return;
+  }
+}
+
+void dfNewWave() {
+  for (int i = 0; i < DF_EN; i++) dfEn[i].on = false;
+  for (int i = 0; i < DF_SH; i++) dfSh[i].on = false;
+  for (int i = 0; i < DF_EX; i++) dfEx[i].on = false;
+  dfToSpawn = 6 + dfWave * 2;
+  dfAmmo = dfToSpawn + 6;
+  dfSpawnT = 15;
+}
+
+void dfReset() {
+  dfWave = 1;
+  dfScore = 0;
+  for (int i = 0; i < 4; i++) dfCity[i] = true;
+  dfNewWave();
+}
+
+void dfGameOver() {
+  dfState = 2;
+  dfStateT = millis();
+  glitchUntil = millis() + 300;
+  sndErr();
+  if (dfScore > dfHi) {
+    dfHi = dfScore;
+    prefs.putInt("dfhi", dfHi);
+    addLog("DIFESA: RECORD " + String(dfHi));
+  }
+  addXp(dfScore / 25);
+}
+
+void dfStep() {
+  if (dfToSpawn > 0 && --dfSpawnT <= 0) {
+    int n = dfWave >= 2 && random(100) < 35 ? 2 : 1;
+    for (int k = 0; k < n && dfToSpawn > 0; k++, dfToSpawn--) dfSpawn(random(10, 310), 52, true);
+    dfSpawnT = max(10, 42 - dfWave * 4) + random(24);
+  }
+  for (int i = 0; i < DF_EN; i++) {
+    DfMissile& m = dfEn[i];
+    if (!m.on) continue;
+    m.x += m.vx;
+    m.y += m.vy;
+    if (m.split && m.y > 105) {                      // testata multipla: si divide in due
+      m.split = false;
+      dfSpawn(m.x, m.y, false);
+      dfSpawn(m.x, m.y, false);
+      queueTone(1500, 25);
+    }
+    if (m.y >= DF_GROUND) {
+      m.on = false;
+      dfBoomAt(m.x, DF_GROUND - 2, 14, false);
+      if (m.target < 4 && dfCity[m.target]) {
+        dfCity[m.target] = false;
+        glitchUntil = millis() + 180;
+        queueTone(140, 160);
+        if (dfCitiesLeft() == 0) { dfGameOver(); return; }
+      } else queueTone(200, 60);
+    }
+  }
+  for (int i = 0; i < DF_SH; i++) {
+    DfShot& s = dfSh[i];
+    if (!s.on) continue;
+    s.x += s.vx;
+    s.y += s.vy;
+    if (--s.n <= 0) { s.on = false; dfBoomAt(s.tx, s.ty, 20, true); queueTone(320, 30); queueTone(170, 50); }
+  }
+  for (int i = 0; i < DF_EX; i++) {
+    DfBoom& e = dfEx[i];
+    if (!e.on) continue;
+    e.age++;
+    int r = dfBoomR(e);
+    if (r <= 0) { e.on = false; continue; }
+    if (!e.player) continue;
+    for (int k = 0; k < DF_EN; k++) {                // reazione a catena
+      DfMissile& m = dfEn[k];
+      if (!m.on) continue;
+      float dx = m.x - e.x, dy = m.y - e.y;
+      if (dx * dx + dy * dy <= r * r) {
+        m.on = false;
+        dfScore += 25;
+        dfBoomAt(m.x, m.y, 12, true);
+        queueTone(900, 20);
+      }
+    }
+  }
+  bool busy = dfToSpawn > 0;
+  for (int i = 0; i < DF_EN && !busy; i++) busy = dfEn[i].on;
+  for (int i = 0; i < DF_EX && !busy; i++) busy = dfEx[i].on;
+  if (!busy) {
+    dfBonus = dfCitiesLeft() * 100 + dfAmmo * 10;
+    dfScore += dfBonus;
+    dfState = 4;
+    dfStateT = millis();
+    sndOk();
+  }
+}
+
+void dfTouch(int x, int y) {
+  if (dfState == 2 && millis() - dfStateT < 800) return;
+  if (dfState == 0 || dfState == 2) { dfReset(); dfState = 1; dfLast = millis(); return; }
+  if (dfState == 3) { dfState = 1; dfLast = millis(); return; }
+  if (dfState != 1 || y < 56 || y > 190) return;
+  if (dfAmmo <= 0) { queueTone(120, 80); return; }
+  for (int i = 0; i < DF_SH; i++) {
+    DfShot& s = dfSh[i];
+    if (s.on) continue;
+    float dx = x - 160, dy = y - (DF_GROUND - 16), d = sqrtf(dx * dx + dy * dy);
+    int n = max(1, (int)(d / 6));
+    s = {160, (float)(DF_GROUND - 16), dx / n, dy / n, (float)x, (float)y, n, true};
+    dfAmmo--;
+    queueTone(1300, 15);
+    queueTone(800, 20);
+    return;
+  }
+}
+
+void drawDifesa() {
+  txt("PUNTI " + String(dfScore), 8, 47, C_HI, TL_DATUM, 1);
+  txt("ONDATA " + String(dfWave), 160, 47, C_MAIN, TC_DATUM, 1);
+  txt("COLPI " + String(dfAmmo), 312, 47, dfAmmo < 4 && dfState == 1 ? C_HI : C_DIM, TR_DATUM, 1);
+  for (int i = 0; i < 26; i++) spr.drawPixel((i * 97 + 13) % 314 + 3, 62 + (i * 53) % 110, i % 5 ? C_DIM2 : C_DIM);
+  spr.drawFastHLine(0, DF_GROUND + 1, 320, C_MID);
+  for (int x = 2; x < 320; x += 6) spr.drawPixel(x, DF_GROUND + 4, C_DIM2);
+
+  unsigned long t = millis();
+  for (int c = 0; c < 4; c++) {                      // rifugi
+    int cx = DF_CITY_X[c];
+    if (dfCity[c]) {
+      spr.fillCircle(cx, DF_GROUND - 4, 9, C_MAIN);
+      spr.fillRect(cx - 13, DF_GROUND - 4, 27, 6, C_MAIN);
+      spr.drawCircleHelper(cx, DF_GROUND - 4, 12, 1 | 2, C_DIM);
+      for (int k = -1; k <= 1; k++) spr.fillRect(cx + k * 5 - 1, DF_GROUND - 6, 2, 2, (t / 400 + c + k) % 4 ? BG : C_HI);
+      spr.drawFastVLine(cx + 6, DF_GROUND - 18, 6, C_MID);
+      if ((t / 500 + c) % 2) spr.drawPixel(cx + 6, DF_GROUND - 19, C_HI);
+    } else {
+      spr.fillRect(cx - 11, DF_GROUND - 2, 7, 3, C_DIM);
+      spr.fillRect(cx - 3, DF_GROUND - 5, 6, 6, C_DIM);
+      spr.fillRect(cx + 5, DF_GROUND - 2, 6, 3, C_DIM);
+      for (int k = 0; k < 4; k++) {                  // fumo
+        int sy = (t / 60 + k * 9) % 30;
+        spr.drawPixel(cx - 2 + (k % 3) * 2 + (sy / 8) % 2, DF_GROUND - 6 - sy, sy < 15 ? C_DIM : C_DIM2);
+      }
+    }
+  }
+  spr.fillTriangle(160, DF_GROUND - 13, 149, DF_GROUND, 171, DF_GROUND, C_HI);   // torretta
+  spr.fillRect(158, DF_GROUND - 19, 4, 7, C_MAIN);
+
+  for (int i = 0; i < DF_EN; i++) {
+    DfMissile& m = dfEn[i];
+    if (!m.on) continue;
+    spr.drawLine(m.sx, m.sy, m.x, m.y, C_DIM);
+    spr.fillRect((int)m.x - 1, (int)m.y - 1, 3, 3, (t / 90 + i) % 2 ? C_HI : C_MAIN);
+  }
+  for (int i = 0; i < DF_SH; i++) {
+    DfShot& s = dfSh[i];
+    if (!s.on) continue;
+    spr.drawLine(160, DF_GROUND - 19, s.x, s.y, C_MID);
+    spr.fillRect((int)s.x - 1, (int)s.y - 1, 2, 2, C_HI);
+    int tx = s.tx, ty = s.ty;
+    spr.drawLine(tx - 3, ty - 3, tx + 3, ty + 3, C_MAIN);
+    spr.drawLine(tx - 3, ty + 3, tx + 3, ty - 3, C_MAIN);
+  }
+  for (int i = 0; i < DF_EX; i++) {
+    DfBoom& e = dfEx[i];
+    if (!e.on) continue;
+    int r = dfBoomR(e);
+    if (r <= 0) continue;
+    spr.fillCircle(e.x, e.y, r, e.player ? C_MID : C_DIM);
+    spr.drawCircle(e.x, e.y, r, C_HI);
+    if (r > 5) spr.fillCircle(e.x, e.y, r / 3, C_HI);
+  }
+
+  if (dfState != 1) {
+    chamferFill(60, 88, 200, 74, 8, BG);
+    chamfer(60, 88, 200, 74, 8, C_MAIN);
+    const char* t1 = dfState == 0 ? "DIFESA" : dfState == 2 ? "GAME OVER" : dfState == 3 ? "PAUSA" : "ONDATA SUPERATA";
+    txtG(t1, 160, 106, C_HI, MC_DATUM, dfState == 4 ? 2 : 4);
+    String l2 = dfState == 0 ? String("PROTEGGI I 4 RIFUGI") : dfState == 2 ? "PUNTI " + String(dfScore) + "   RECORD " + String(dfHi)
+              : dfState == 4 ? "BONUS +" + String(dfBonus) + "  (RIFUGI E COLPI)" : "ONDATA " + String(dfWave);
+    txt(l2, 160, 130, C_MAIN, MC_DATUM, dfState == 4 ? 1 : 2);
+    const char* l3 = dfState == 0 ? "TOCCA IL CIELO PER SPARARE" : dfState == 3 ? "TOCCA PER RIPRENDERE" : dfState == 4 ? "ARRIVA LA PROSSIMA..." : "TOCCA PER RIGIOCARE";
+    if (dfState == 4 || (millis() / 500) % 2) txt(l3, 160, 150, C_DIM, MC_DATUM, 1);
+  }
+}
+
+// =================================================================
 //  LED RGB DI STATO (attivo basso)
 // =================================================================
 void ledSetup() {
@@ -1821,7 +2737,9 @@ void updateLed() {
   if (cfg.led && !saverOn) {
     unsigned long t = millis();
     int br = 6 + (int)((sin(t / 650.0) * 0.5 + 0.5) * 40);
-    if (modal == M_CONN) { r = (t / 120) % 2 ? 70 : 0; g = r / 2; }
+    if (tmAlarm) r = (t / 150) % 2 ? 120 : 0;
+    else if (modal == M_RX) { g = br; b = br; }
+    else if (modal == M_CONN) { r = (t / 120) % 2 ? 70 : 0; g = r / 2; }
     else if (wifiScanning || btScanning || wxState == 1) b = (t / 150) % 2 ? 60 : 4;
     else if (WiFi.status() == WL_CONNECTED) g = br;
     else r = br / 2;
@@ -1840,12 +2758,18 @@ void drawContent() {
       break;
     case 1: drawInv(); break;
     case 2:
-      if (sub[2] == 0) drawOra(); else if (sub[2] == 1) drawMeteo();
-      else if (sub[2] == 2) drawMissioni(); else drawLog();
+      if (sub[2] == S_ORA) drawOra(); else if (sub[2] == S_METEO) drawMeteo();
+      else if (sub[2] == S_TIMER) drawTimer();
+      else if (sub[2] == S_MISSIONI) drawMissioni(); else drawLog();
       break;
     case 3: drawRadar(); break;
-    case 4: if (sub[4] == 0) drawWifi(); else drawBt(); break;
-    case 5: if (sub[5] == 0) drawTerminal(); else drawSnake(); break;
+    case 4:
+      if (sub[4] == S_WIFI) drawWifi(); else if (sub[4] == S_BT) drawBt();
+      else if (sub[4] == S_CANALI) drawCanali(); else drawLink();
+      break;
+    case 5:
+      if (sub[5] == S_TERM) drawTerminal(); else if (sub[5] == S_SNAKE) drawSnake(); else drawDifesa();
+      break;
   }
 }
 
@@ -1860,7 +2784,12 @@ void render() {
     drawSubtabs();
     drawContent();
     drawFooter();
-    if (modal == M_CONN || modal == M_MSG) drawModalBox();
+    if (millis() < toastUntil) {
+      chamferFill(40, 50, 240, 24, 6, BG);
+      chamfer(40, 50, 240, 24, 6, C_HI);
+      txtG(toastText, 160, 62, C_HI, MC_DATUM);
+    }
+    if (modal == M_CONN || modal == M_MSG || modal == M_RX) drawModalBox();
   }
   present();
 }
@@ -1937,9 +2866,10 @@ void onTouch(int x, int y) {
   lastInput = millis();
   if (saverOn) { saverOn = false; applyBrightness(); return; }   // il tocco sveglia e basta
   click();
+  if (tmAlarm) { tmAlarm = false; if (modal == M_MSG) modal = M_NONE; return; }
   if (modal == M_CAL) { calTouch(); return; }
   if (modal == M_KB)  { kbTouch(x, y); return; }
-  if (modal == M_MSG) { modal = M_NONE; return; }
+  if (modal == M_MSG || modal == M_RX) { modal = M_NONE; return; }
   if (modal == M_CONN) return;
 
   if (y < 24) {
@@ -1961,8 +2891,9 @@ void onTouch(int x, int y) {
       if (x < 170 && y >= 50 && y < 50 + INV_N * 26) invSel[sub[1]] = (y - 50) / 26;
       break;
     case 2:
-      if (sub[2] == 1) startWeather();
-      else if (sub[2] == 2 && y >= 50 && y < 180) {
+      if (sub[2] == S_METEO) startWeather();
+      else if (sub[2] == S_TIMER) timerTouch(x, y);
+      else if (sub[2] == S_MISSIONI && y >= 50 && y < 180) {
         int i = (y - 50) / 26;
         if (i >= 0 && i < 5) { qDone[i] = !qDone[i]; saveQuests(); }
       }
@@ -1971,7 +2902,10 @@ void onTouch(int x, int y) {
       if (inRect(x, y, 6, 186, 90, 28)) { startWifiScan(); startBtScan(); }
       break;
     case 4:
-      if (sub[4] == 0) {
+      if (sub[4] == S_CANALI) {
+        if (inRect(x, y, 0, 186, 76, 30)) startWifiScan();
+      } else if (sub[4] == S_LINK) linkTouch(x, y);
+      else if (sub[4] == S_WIFI) {
         if (inRect(x, y, 0, 186, 76, 30)) startWifiScan();
         else if (inRect(x, y, 78, 186, 114, 30) && WiFi.status() == WL_CONNECTED) WiFi.disconnect();
         else if (inRect(x, y, 230, 186, 44, 30)) netScroll = max(0, netScroll - 3);
@@ -1992,7 +2926,7 @@ void onTouch(int x, int y) {
       }
       break;
     case 5:
-      if (sub[5] == 0) termTouch(x, y); else snakeTouch(x, y);
+      if (sub[5] == S_TERM) termTouch(x, y); else if (sub[5] == S_SNAKE) snakeTouch(x, y); else dfTouch(x, y);
       break;
   }
 }
@@ -2058,13 +2992,14 @@ void bootSequence() {
   }
   if (!bootSkip) chirp();
   const char* lines[] = {
-    "VX-26 OPERATOR SYSTEM  v5.0",
+    "VX-26 OPERATOR SYSTEM  v6.0",
     "BUILD 2026.10 // CORE XTENSA LX6",
     "",
     "> MEMORIA",
     "> SENSORI",
     "> MODULO WIFI",
     "> MODULO BLUETOOTH",
+    "> VX-LINK // PANNELLO WEB",
     "> METEO // GIOCHI // OLOGRAFIA",
   };
   const int N = sizeof(lines) / sizeof(lines[0]);
@@ -2073,12 +3008,12 @@ void bootSequence() {
     for (int c = 0; c <= len && !skipBoot(); c += 3) {
       spr.fillSprite(BG);
       for (int k = 0; k < l; k++) {
-        txt(lines[k], 14, 12 + k * 20, C_MAIN);
-        if (k >= 3) txt("[ OK ]", 306, 12 + k * 20, C_HI, TR_DATUM);
+        txt(lines[k], 14, 10 + k * 18, C_MAIN);
+        if (k >= 3) txt("[ OK ]", 306, 10 + k * 18, C_HI, TR_DATUM);
       }
       String part = String(lines[l]).substring(0, c);
-      txtG(part, 14, 12 + l * 20, C_HI);
-      spr.fillRect(16 + spr.textWidth(part, 2), 14 + l * 20, 7, 13, C_MAIN);
+      txtG(part, 14, 10 + l * 18, C_HI);
+      spr.fillRect(16 + spr.textWidth(part, 2), 12 + l * 18, 7, 13, C_MAIN);
       present();
     }
     if (!bootSkip) click();
@@ -2134,9 +3069,12 @@ void setup() {
 
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
+  if (cfg.ap) applyAp();
+  webBegin();
   randomSeed(analogRead(LDR_PIN) ^ micros());
   newTerminal();
   snReset();
+  dfReset();
 
   bootSequence();
   updateStats();
@@ -2159,19 +3097,29 @@ void loop() {
   checkWifiStatus();
   checkBtDone();
   pollWeather();
+  pollTimer();
+  web.handleClient();
 
   unsigned long now = millis();
   if (now - lastStats >= 1000) { lastStats = now; updateStats(); }
 
   // serpente: avanza solo se visibile, altrimenti va in pausa
   if (snState == 1) {
-    if (!(tab == 5 && sub[5] == 1) || modal != M_NONE) snState = 3;
+    if (!(tab == 5 && sub[5] == S_SNAKE) || modal != M_NONE) snState = 3;
     else if (now - snLast >= (unsigned long)max(55, 130 - snScore * 3)) { snLast = now; snStep(); dirty = true; }
+  }
+
+  // difesa: 30 passi al secondo, in pausa se non e' visibile
+  if (dfState == 1 || dfState == 4) {
+    bool vis = tab == 5 && sub[5] == S_DIFESA && modal == M_NONE;
+    if (!vis) { if (dfState == 1) dfState = 3; }
+    else if (dfState == 4) { if (now - dfStateT > 2400) { dfWave++; dfNewWave(); dfState = 1; dfLast = now; } }
+    else if (now - dfLast >= 33) { dfLast += 33; if (now - dfLast > 200) dfLast = now; dfStep(); }
   }
 
   // salvaschermo
   int smin = SAVER_MIN[cfg.saver];
-  if (!saverOn && smin && modal == M_NONE && snState != 1 && !wifiScanning && !btScanning &&
+  if (!saverOn && smin && modal == M_NONE && snState != 1 && dfState != 1 && !tmAlarm && !wifiScanning && !btScanning &&
       now - lastInput > (unsigned long)smin * 60000UL) {
     saverOn = true;
     initSaver();
@@ -2182,7 +3130,8 @@ void loop() {
   if (now - lastLed >= 30) { lastLed = now; updateLed(); }
 
   bool anim = saverOn || cfg.crt || tab == 1 || tab == 3 || tab == 5 || (tab == 0 && sub[0] == 0) ||
-              (tab == 2 && sub[2] == 1) || wifiScanning || btScanning || wxState == 1 || modal != M_NONE;
+              (tab == 2 && (sub[2] == S_METEO || sub[2] == S_TIMER)) || (tab == 4 && sub[4] == S_LINK) ||
+              wifiScanning || btScanning || wxState == 1 || modal != M_NONE || millis() < toastUntil || tmAlarm;
   unsigned long iv = anim ? 40 : 250;
   if (dirty || now - lastFrame >= iv) {
     lastFrame = now;

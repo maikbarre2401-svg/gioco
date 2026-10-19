@@ -1,23 +1,36 @@
-# VX26 Operator v5.0 — firmware precompilato (ESP32 Cheap Yellow Display)
+# VX26 Operator v6.0 — firmware precompilato (ESP32 Cheap Yellow Display)
 
 Compilato con: **arduino-esp32 2.0.17**, TFT_eSPI 2.5.43, XPT2046_Touchscreen 1.4
 Scheda: **ESP32 Dev Module**, Partition Scheme: **Huge APP (3MB No OTA / 1MB SPIFFS)**
-Dimensione sketch: 1.804.885 byte (57% della partizione da 3 MB)
+Dimensione sketch: 1.887.765 byte (60% della partizione da 3 MB)
 
-## Novita' della v5.0
+## Novita' della v6.0
 
-- **STAT > GRAFICI**: storico degli ultimi 2 minuti di RAM, temperatura CPU, luce e segnale WiFi.
-- **DATA > METEO**: condizioni attuali e previsioni a 3 giorni (Open-Meteo, nessuna chiave API).
-  La posizione e' stimata dall'IP; si aggiorna da solo ogni 15 minuti, oppure tocca lo schermo.
-- **Nuova scheda GIOCO**: *Terminale* (trova la password: ogni tentativo dice quante lettere sono
-  al posto giusto, 4 tentativi) e *Serpente* (tocca sopra/sotto o a sinistra/destra della testa
-  per girare; il record resta salvato).
-- **Salvaschermo** a pioggia di codice con orologio, che abbassa la retroilluminazione (1/3/10 min o OFF).
-- **Luce automatica** tramite il sensore di luce della scheda.
-- **LED RGB di stato**: verde = WiFi connesso, blu = scansione o meteo, ambra = connessione in corso.
-- **Calibrazione touch** da CONFIG (se i tocchi risultano spostati).
-- Suoni non bloccanti (niente piu' scatti durante i bip), missioni salvate e completate in automatico,
-  avvio saltabile con un tocco. CONFIG ora ha due pagine (frecce in basso).
+- **RADIO > LINK — pannello web**: dal telefono o dal PC apri l'indirizzo mostrato
+  (es. `http://192.168.1.42` oppure `http://vx26.local`) e hai:
+  - lo **schermo della scheda dal vivo**: toccando l'immagine tocchi lo schermo vero;
+  - i pulsanti delle schede, lo stato (livello, memoria, CPU, luce, WiFi, meteo, timer);
+  - tema, luminosita', suono, effetto olo e LED;
+  - **messaggi**: scrivi un testo e sulla scheda appare "TRASMISSIONE IN ARRIVO".
+  Sulla scheda c'e' un **codice QR**: lo inquadri con la fotocamera e il pannello si apre.
+- **Hotspot VX26** (RADIO > LINK > HOTSPOT ON): la scheda crea la rete `VX26-OPERATOR`
+  (password `vx26-2026`), cosi' il pannello funziona anche senza router, all'indirizzo
+  `http://192.168.4.1`. Il pulsante "QR: HOTSPOT" mostra un QR che collega il telefono alla rete.
+- **RADIO > CANALI**: analizzatore dello spettro WiFi. Disegna ogni rete come una campana
+  sul suo canale (altezza = segnale) e consiglia il canale meno affollato tra 1, 6 e 11.
+- **GIOCO > DIFESA**: i missili cadono sui 4 rifugi e tu tocchi il cielo per far esplodere
+  le contromisure; le esplosioni fanno reazione a catena. Ondate sempre piu' veloci, dalla
+  terza arrivano testate che si dividono in due. Bonus per rifugi salvati e colpi avanzati,
+  record salvato.
+- **DATA > TIMER**: conto alla rovescia (-1/+1/+5 minuti, allarme con suono e LED rosso
+  anche se sei in un'altra scheda) e cronometro con tempi parziali.
+- **Livelli ed esperienza veri**: giochi, missioni, scansioni e messaggi danno punti XP;
+  il livello in STAT > STATO ora e' reale e viene salvato. Avviso "LIVELLO N RAGGIUNTO".
+
+### Cose da sapere
+- Il pannello web funziona sulla stessa rete WiFi della scheda (o collegandosi all'hotspot).
+  Chiunque sia sulla stessa rete puo' aprirlo: usalo a casa, non su reti pubbliche.
+- Le impostazioni, i record e la configurazione WiFi della v5 restano (stesse partizioni).
 
 ## Opzione A — un solo file, flasher dal browser (consigliata)
 
