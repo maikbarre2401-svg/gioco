@@ -30,7 +30,9 @@ Dimensione sketch: 1.887.765 byte (60% della partizione da 3 MB)
 ### Cose da sapere
 - Il pannello web funziona sulla stessa rete WiFi della scheda (o collegandosi all'hotspot).
   Chiunque sia sulla stessa rete puo' aprirlo: usalo a casa, non su reti pubbliche.
-- Le impostazioni, i record e la configurazione WiFi della v5 restano (stesse partizioni).
+- Il file unico `FULL` riscrive anche la zona delle impostazioni: dopo il flash tema, record
+  e WiFi salvato tornano ai valori iniziali (la password WiFi va reinserita). Per conservarli
+  usa l'opzione C e scrivi solo `VX26_Operator_APP_0x10000.bin` all'indirizzo 0x10000.
 
 ## Opzione A — un solo file, flasher dal browser (consigliata)
 
