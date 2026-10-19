@@ -2,7 +2,7 @@
 
 Compilato con: **arduino-esp32 2.0.17**, TFT_eSPI 2.5.43, XPT2046_Touchscreen 1.4
 Scheda: **ESP32 Dev Module**, Partition Scheme: **Huge APP (3MB No OTA / 1MB SPIFFS)**
-Dimensione sketch: 1.804.781 byte (57% della partizione da 3 MB)
+Dimensione sketch: 1.804.885 byte (57% della partizione da 3 MB)
 
 ## Novita' della v5.0
 

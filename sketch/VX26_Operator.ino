@@ -1267,8 +1267,14 @@ void drawGrafici() {
     for (int i = 0; i < histN; i++) {
       int v = hist[k][(histPos - histN + i + HIST) % HIST];
       lo = min(lo, v); hi = max(hi, v);
+    }
+    // scala automatica: almeno 20 punti di escursione, con un po' di margine
+    int a = max(0, lo - 4), b = min(100, hi + 4);
+    if (b - a < 20) { b = min(100, (a + b) / 2 + 10); a = max(0, b - 20); b = a + 20; }
+    for (int i = 0; i < histN; i++) {
+      int v = hist[k][(histPos - histN + i + HIST) % HIST];
       int x = gx + (HIST - histN + i) * gw / (HIST - 1);
-      int y = gy + gh - v * gh / 100;
+      int y = gy + gh - (constrain(v, a, b) - a) * gh / (b - a);
       spr.drawFastVLine(x, y, gy + gh - y, C_FAINT);
       if (prevX >= 0) spr.drawLine(prevX, prevY, x, y, C_MAIN);
       prevX = x; prevY = y;
@@ -1522,7 +1528,7 @@ void drawMeteo() {
   txt("VENTO " + String((int)lroundf(w.wind)) + " KM/H", 314, 88, C_MAIN, TR_DATUM);
   txtG(wxText(w.code), 106, 106, C_MAIN);
   if (wxState == 1) { if ((millis() / 300) % 2) txt("AGGIORNAMENTO IN CORSO...", 106, 128, C_DIM, TL_DATUM, 1); }
-  else txt("AGG. " + String(w.upd) + "  //  TOCCA PER AGGIORNARE", 106, 128, C_DIM2, TL_DATUM, 1);
+  else txt("AGG. " + String(w.upd) + "  (TOCCA = AGGIORNA)", 106, 128, C_DIM2, TL_DATUM, 1);
 
   struct tm ti;
   bool hasDay = getNow(ti);
@@ -1570,7 +1576,7 @@ void newTerminal() {
 }
 
 void drawTerminal() {
-  txt("VX-26 TERMLINK // ACCESSO PROTETTO", 6, 48, C_DIM, TL_DATUM, 1);
+  txt("TERMLINK VX-26 // PROTETTO", 6, 48, C_DIM, TL_DATUM, 1);
   txt("TENTATIVI", 214, 48, C_DIM, TL_DATUM, 1);
   for (int i = 0; i < 4; i++) spr.fillRect(272 + i * 11, 48, 8, 8, i < twTries ? C_HI : C_DARK);
   for (int i = 0; i < TW_N; i++) {
@@ -1600,11 +1606,11 @@ void drawTerminal() {
   }
   if (twState == 0) {
     if ((millis() / 400) % 2) txt(">_", 218, ly, C_HI);
-    txt("TOCCA UNA PAROLA: TROVA LA PASSWORD", 6, 196, C_DIM2, TL_DATUM, 1);
+    txt("TOCCA LA PASSWORD GIUSTA", 6, 196, C_DIM2, TL_DATUM, 1);
   } else if (twState == 1) {
     txtG("ACCESSO", 265, 184, C_HI, MC_DATUM);
     txtG("CONSENTITO", 265, 200, C_HI, MC_DATUM);
-    txt("TOCCA PER UN NUOVO TERMINALE", 6, 196, C_DIM, TL_DATUM, 1);
+    txt("TOCCA = NUOVO TERMINALE", 6, 196, C_DIM, TL_DATUM, 1);
   } else {
     long left = (long)twLockUntil - (long)millis();
     if ((millis() / 300) % 2) txtG("BLOCCATO", 265, 184, C_HI, MC_DATUM);
