@@ -1,8 +1,23 @@
-# VX26 Operator — firmware precompilato (ESP32 Cheap Yellow Display)
+# VX26 Operator v5.0 — firmware precompilato (ESP32 Cheap Yellow Display)
 
 Compilato con: **arduino-esp32 2.0.17**, TFT_eSPI 2.5.43, XPT2046_Touchscreen 1.4
 Scheda: **ESP32 Dev Module**, Partition Scheme: **Huge APP (3MB No OTA / 1MB SPIFFS)**
-Dimensione sketch: 1.633.505 byte (51% della partizione da 3 MB)
+Dimensione sketch: 1.804.781 byte (57% della partizione da 3 MB)
+
+## Novita' della v5.0
+
+- **STAT > GRAFICI**: storico degli ultimi 2 minuti di RAM, temperatura CPU, luce e segnale WiFi.
+- **DATA > METEO**: condizioni attuali e previsioni a 3 giorni (Open-Meteo, nessuna chiave API).
+  La posizione e' stimata dall'IP; si aggiorna da solo ogni 15 minuti, oppure tocca lo schermo.
+- **Nuova scheda GIOCO**: *Terminale* (trova la password: ogni tentativo dice quante lettere sono
+  al posto giusto, 4 tentativi) e *Serpente* (tocca sopra/sotto o a sinistra/destra della testa
+  per girare; il record resta salvato).
+- **Salvaschermo** a pioggia di codice con orologio, che abbassa la retroilluminazione (1/3/10 min o OFF).
+- **Luce automatica** tramite il sensore di luce della scheda.
+- **LED RGB di stato**: verde = WiFi connesso, blu = scansione o meteo, ambra = connessione in corso.
+- **Calibrazione touch** da CONFIG (se i tocchi risultano spostati).
+- Suoni non bloccanti (niente piu' scatti durante i bip), missioni salvate e completate in automatico,
+  avvio saltabile con un tocco. CONFIG ora ha due pagine (frecce in basso).
 
 ## Opzione A — un solo file, flasher dal browser (consigliata)
 

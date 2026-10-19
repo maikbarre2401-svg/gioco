@@ -13,12 +13,16 @@
     - Scheda: "ESP32 Dev Module"
     - Partition Scheme: "Huge APP (3MB No OTA/1MB SPIFFS)"   <-- OBBLIGATORIO (WiFi+BT sono grandi)
 
-  FUNZIONI:
-    STAT  : STATO (figura animata + sensori) | SISTEMA (info chip, rete) | CONFIG (tema, luminosita', suono, CRT, WiFi)
+  FUNZIONI (v5.0):
+    STAT  : STATO (figura animata + sensori) | SISTEMA (info chip, rete) | GRAFICI (storico sensori)
+            | CONFIG (2 pagine: tema, luminosita' manuale/automatica, suono, effetto olo, LED RGB,
+              salvaschermo, calibrazione touch, WiFi salvato, riavvio)
     INV   : ARMI | ATTREZZI | AIUTI
-    DATA  : ORA (orologio NTP) | MISSIONI | LOG eventi
+    DATA  : ORA (orologio NTP) | METEO (Open-Meteo, previsioni 3 giorni) | MISSIONI | LOG eventi
     MAP   : radar animato con reti WiFi e dispositivi Bluetooth reali (TUTTI | WIFI | BT)
     RADIO : WIFI (scansione + connessione con tastiera) | BLUETOOTH (scansione BLE)
+    GIOCO : TERMINALE (trova la password) | SERPENTE (record salvato)
+    Extra : salvaschermo, suoni non bloccanti, LED di stato, avvio saltabile con un tocco
 */
 
 #include <SPI.h>
@@ -26,6 +30,7 @@
 #include <XPT2046_Touchscreen.h>
 #include <WiFi.h>
 #include <Preferences.h>
+#include <HTTPClient.h>
 #include <BLEDevice.h>
 #include <BLEScan.h>
 #include <BLEAdvertisedDevice.h>
@@ -81,29 +86,38 @@ struct Config {
   int bright = 220;
   bool sound = true;
   bool crt = true;
+  bool autoBright = false;
+  bool led = true;
+  int saver = 2;                    // indice in SAVER_MIN
+  int tminx = TS_MINX, tmaxx = TS_MAXX, tminy = TS_MINY, tmaxy = TS_MAXY;
   String ssid, pass;
 } cfg;
 
 // ---------------- NAVIGAZIONE ----------------
-const char* TABS[5] = {"STAT", "INV", "DATA", "MAP", "RADIO"};
-const char* SUBS[5][3] = {
-  {"STATO", "SISTEMA", "CONFIG"},
-  {"ARMI", "ATTREZZI", "AIUTI"},
-  {"ORA", "MISSIONI", "LOG"},
-  {"TUTTI", "WIFI", "BT"},
-  {"WIFI", "BLUETOOTH", nullptr},
+#define NTABS 6
+#define TAB_W 53
+const char* TABS[NTABS] = {"STAT", "INV", "DATA", "MAP", "RADIO", "GIOCO"};
+const char* SUBS[NTABS][4] = {
+  {"STATO", "SISTEMA", "GRAFICI", "CONFIG"},
+  {"ARMI", "ATTREZZI", "AIUTI", nullptr},
+  {"ORA", "METEO", "MISSIONI", "LOG"},
+  {"TUTTI", "WIFI", "BT", nullptr},
+  {"WIFI", "BLUETOOTH", nullptr, nullptr},
+  {"TERMINALE", "SERPENTE", nullptr, nullptr},
 };
-const int SUBN[5] = {3, 3, 3, 3, 2};
-int tab = 0, sub[5] = {0, 0, 0, 0, 0};
-int subX0[3], subX1[3];
+const int SUBN[NTABS] = {4, 3, 4, 3, 2, 2};
+int tab = 0, sub[NTABS] = {0, 0, 0, 0, 0, 0};
+int subX0[4], subX1[4];
 
-enum Modal { M_NONE, M_KB, M_CONN, M_MSG };
+enum Modal { M_NONE, M_KB, M_CONN, M_MSG, M_CAL };
 Modal modal = M_NONE;
 String msgL1, msgL2;
 
 bool dirty = true;
 unsigned long lastFrame = 0, lastStats = 0;
 unsigned long glitchUntil = 0;   // disturbo al cambio scheda
+unsigned long lastInput = 0;     // ultimo tocco (per il salvaschermo)
+bool saverOn = false;
 uint8_t vigInset[240];            // angoli arrotondati del tubo catodico
 
 // ---------------- INVENTARIO ----------------
@@ -175,6 +189,80 @@ unsigned long kbFlashT = 0;
 struct KSpec { int x, w; const char* l; };
 KSpec KSPEC[5] = {{0, 62, "SHIFT"}, {64, 94, "SPAZIO"}, {160, 62, "CANC"}, {224, 46, "ESC"}, {272, 47, "OK"}};
 
+// ---------------- CONFIG (paginata) ----------------
+enum { CI_THEME, CI_BRIGHT, CI_AUTO, CI_SOUND, CI_CRT, CI_LED, CI_SAVER, CI_CAL, CI_WIFI, CI_SYS, CI_N };
+const char* CI_LBL[CI_N] = {"TEMA", "LUMINOSITA'", "LUCE AUTOMATICA", "SUONO", "EFFETTO OLO",
+                            "LED RGB", "SALVASCHERMO", "TOUCH", "WIFI SALVATO", "SISTEMA"};
+#define CFG_ROWS 5
+int cfgPage = 0;
+int blAuto = 160;                 // luminosita' calcolata dal sensore di luce
+
+// ---------------- SUONO E LED (PWM hardware, non bloccante) ----------------
+#define SPK_CH   0                // analogWrite usa i canali dal 15 in giu'
+#define LED_CH_R 2
+#define LED_CH_G 3
+#define LED_CH_B 4
+struct Note { uint16_t f, ms; };
+#define TONE_Q 32
+Note toneQ[TONE_Q];
+int toneHead = 0, toneLen = 0;
+unsigned long toneEnd = 0;
+bool toneOn = false;
+
+// ---------------- GRAFICI ----------------
+#define HIST 120
+uint8_t hist[4][HIST];
+int histN = 0, histPos = 0;
+
+// ---------------- METEO ----------------
+struct Weather { bool ok; char city[24]; float t, wind; int hum, code; int dCode[4]; float dMax[4], dMin[4]; char upd[6]; };
+Weather wx = {};
+volatile int wxState = 0;         // 0 attesa, 1 caricamento, 2 ok, 3 errore
+unsigned long wxLast = 0;
+float geoLat = NAN, geoLon = NAN;
+char geoCity[24] = "";
+portMUX_TYPE wxMux = portMUX_INITIALIZER_UNLOCKED;
+
+// ---------------- SALVASCHERMO ----------------
+const int SAVER_MIN[4] = {0, 1, 3, 10};
+const char* SAVER_LBL[4] = {"OFF", "1 MIN", "3 MIN", "10 MIN"};
+#define DROPS 54
+struct Drop { int16_t y; uint8_t sp, len; };
+Drop drops[DROPS];
+
+// ---------------- CALIBRAZIONE TOUCH ----------------
+int calStep = 0, calRaw[2][2];
+int rawX = 0, rawY = 0;
+
+// ---------------- GIOCO: TERMINALE ----------------
+const char* WORDS[] = {
+  "PIANO", "FUOCO", "TERRA", "PORTA", "RADIO", "CORDA", "MONTE", "FERRO", "VETRO", "CARTA",
+  "NOTTE", "PONTE", "CAMPO", "TORRE", "FORZA", "LEGNO", "SEGNO", "VENTO", "LAMPO", "TUONO",
+  "SPADA", "SCUDO", "BORSA", "CASCO", "ROCCA", "PORTO", "BANCO", "DENTE", "FANGO", "ZAINO",
+  "MAPPA", "BUSTA", "FIUME", "SERRA", "VALLE", "COLLE", "BOSCO", "PRATO", "SASSO", "BOMBA",
+  "TENDA", "FORNO", "ACQUA", "LATTA", "GRANO", "CARNE", "PESCE", "GATTO", "RATTO", "CORVO",
+};
+const int WORDS_N = sizeof(WORDS) / sizeof(WORDS[0]);
+#define TW_N 12
+int twW[TW_N];
+bool twUsed[TW_N];
+char twJunk[TW_N][2];
+int twAns = 0, twTries = 4, twLogN = 0, twState = 0;   // 0 in gioco, 1 vinto, 2 bloccato
+int twLogW[4], twLogL[4];
+unsigned twAddr = 0xF4A0;
+unsigned long twLockUntil = 0;
+
+// ---------------- GIOCO: SERPENTE ----------------
+#define SN_COLS 38
+#define SN_ROWS 18
+#define SN_X0 8
+#define SN_Y0 58
+#define SN_CELL 8
+int8_t snX[SN_COLS * SN_ROWS], snY[SN_COLS * SN_ROWS];
+int snLen = 0, snDx = 1, snDy = 0, snNdx = 1, snNdy = 0;
+int snFx = 0, snFy = 0, snScore = 0, snHi = 0, snState = 0;   // 0 pronto, 1 in corsa, 2 fine, 3 pausa
+unsigned long snLast = 0, snDeadT = 0;
+
 // Prototipi
 void startWifiScan();
 void startBtScan();
@@ -218,13 +306,32 @@ void addLog(const String& s) {
   dirty = true;
 }
 
-void click() {
-  if (!cfg.sound) return;
-  for (int i = 0; i < 12; i++) {
-    digitalWrite(SPK_PIN, HIGH); delayMicroseconds(180);
-    digitalWrite(SPK_PIN, LOW);  delayMicroseconds(180);
-  }
+void queueTone(uint16_t f, uint16_t ms) {
+  if (!cfg.sound || toneLen >= TONE_Q) return;
+  toneQ[(toneHead + toneLen) % TONE_Q] = {f, ms};
+  toneLen++;
 }
+
+// suona la coda di note senza mai bloccare il programma (f = 0 -> pausa)
+void pollSound() {
+  unsigned long now = millis();
+  if (toneOn && now < toneEnd) return;
+  if (toneLen == 0) {
+    if (toneOn) { ledcWriteTone(SPK_CH, 0); toneOn = false; }
+    return;
+  }
+  Note n = toneQ[toneHead];
+  toneHead = (toneHead + 1) % TONE_Q;
+  toneLen--;
+  ledcWriteTone(SPK_CH, n.f);
+  toneOn = true;
+  toneEnd = now + n.ms;
+}
+
+void click()  { queueTone(3200, 5); }
+void sndOk()  { queueTone(1320, 70); queueTone(1760, 70); queueTone(2640, 120); }
+void sndErr() { queueTone(330, 120); queueTone(0, 40); queueTone(220, 200); }
+void sndEat() { queueTone(1900, 25); queueTone(2500, 25); }
 
 bool inRect(int x, int y, int rx, int ry, int rw, int rh) {
   return x >= rx && x < rx + rw && y >= ry && y < ry + rh;
@@ -235,6 +342,13 @@ void saveConfig() {
   prefs.putInt("bright", cfg.bright);
   prefs.putBool("sound", cfg.sound);
   prefs.putBool("crt", cfg.crt);
+  prefs.putBool("auto", cfg.autoBright);
+  prefs.putBool("led", cfg.led);
+  prefs.putInt("saver", cfg.saver);
+  prefs.putInt("tminx", cfg.tminx);
+  prefs.putInt("tmaxx", cfg.tmaxx);
+  prefs.putInt("tminy", cfg.tminy);
+  prefs.putInt("tmaxy", cfg.tmaxy);
   prefs.putString("ssid", cfg.ssid);
   prefs.putString("pass", cfg.pass);
 }
@@ -244,8 +358,36 @@ void loadConfig() {
   cfg.bright = constrain(prefs.getInt("bright", 220), 20, 255);
   cfg.sound  = prefs.getBool("sound", true);
   cfg.crt    = prefs.getBool("crt", true);
+  cfg.autoBright = prefs.getBool("auto", false);
+  cfg.led    = prefs.getBool("led", true);
+  cfg.saver  = constrain(prefs.getInt("saver", 2), 0, 3);
+  cfg.tminx  = prefs.getInt("tminx", TS_MINX);
+  cfg.tmaxx  = prefs.getInt("tmaxx", TS_MAXX);
+  cfg.tminy  = prefs.getInt("tminy", TS_MINY);
+  cfg.tmaxy  = prefs.getInt("tmaxy", TS_MAXY);
+  if (cfg.tminx == cfg.tmaxx || cfg.tminy == cfg.tmaxy) {
+    cfg.tminx = TS_MINX; cfg.tmaxx = TS_MAXX; cfg.tminy = TS_MINY; cfg.tmaxy = TS_MAXY;
+  }
   cfg.ssid   = prefs.getString("ssid", "");
   cfg.pass   = prefs.getString("pass", "");
+  uint8_t q  = prefs.getUChar("quests", 1);
+  for (int i = 0; i < 5; i++) qDone[i] = (q >> i) & 1;
+  snHi       = prefs.getInt("snhi", 0);
+  blAuto     = cfg.bright;
+}
+
+void saveQuests() {
+  uint8_t q = 0;
+  for (int i = 0; i < 5; i++) if (qDone[i]) q |= 1 << i;
+  prefs.putUChar("quests", q);
+}
+
+void completeQuest(int i) {
+  if (qDone[i]) return;
+  qDone[i] = true;
+  saveQuests();
+  addLog("MISSIONE OK: " + String(QUESTS[i]).substring(0, 20));
+  sndOk();
 }
 
 void applyTheme() {
@@ -259,7 +401,13 @@ void applyTheme() {
   spr.createPalette(pal, 16);
 }
 
-void applyBrightness() { analogWrite(BL_PIN, cfg.bright); }
+int blTarget() { return cfg.autoBright ? blAuto : cfg.bright; }
+
+void applyBrightness() {
+  int b = blTarget();
+  if (saverOn) b = max(10, b / 5);       // in standby lo schermo si abbassa
+  analogWrite(BL_PIN, b);
+}
 
 // =================================================================
 //  PRIMITIVE GRAFICHE
@@ -332,16 +480,7 @@ void bgGrid() {
     for (int x = 10; x < 320; x += 20) spr.drawPixel(x, y, C_DIM2);
 }
 
-void chirp() {
-  if (!cfg.sound) return;
-  for (int f = 2600; f > 900; f -= 170) {
-    int half = 500000 / f;
-    for (int i = 0; i < 3; i++) {
-      digitalWrite(SPK_PIN, HIGH); delayMicroseconds(half);
-      digitalWrite(SPK_PIN, LOW);  delayMicroseconds(half);
-    }
-  }
-}
+void chirp() { for (int f = 2600; f > 900; f -= 280) queueTone(f, 7); }
 
 void initVignette() {
   const int R = 26;
@@ -404,6 +543,7 @@ static inline uint8_t brighten(uint8_t c) { return (c > 0 && c < 7) ? c + 1 : c;
 // Effetto monitor CRT: banda di refresh, rumore, disturbi, scanline, angoli curvi, sfarfallio
 // Effetto olografico: interlacciatura leggera, linea di scansione, glitch digitale al cambio scheda
 void present() {
+  pollSound();
   if (cfg.crt) {
     uint8_t* buf = (uint8_t*)spr.getPointer();
     unsigned long now = millis();
@@ -449,10 +589,9 @@ void present() {
 //  HEADER / SOTTOSCHEDE / FOOTER
 // =================================================================
 void drawHeader() {
-  for (int i = 0; i < 5; i++) {
-    int cx = i * 64 + 32;
+  for (int i = 0; i < NTABS; i++) {
+    int x0 = i * TAB_W + 2, x1 = x0 + TAB_W - 4, cx = (x0 + x1) / 2;
     if (i == tab) {
-      int x0 = i * 64 + 4, x1 = x0 + 56;
       spr.fillTriangle(x0 + 6, 3, x1, 3, x0, 20, C_MAIN);
       spr.fillTriangle(x1, 3, x1 - 6, 20, x0, 20, C_MAIN);
       txt(TABS[i], cx, 12, BG, MC_DATUM);
@@ -468,7 +607,7 @@ void drawHeader() {
 }
 
 void drawSubtabs() {
-  int n = SUBN[tab], gap = 20, tot = 0, w[3];
+  int n = SUBN[tab], gap = 18, tot = 0, w[4];
   for (int i = 0; i < n; i++) { w[i] = spr.textWidth(SUBS[tab][i], 2); tot += w[i]; }
   tot += gap * (n - 1);
   int x = 160 - tot / 2;
@@ -511,6 +650,17 @@ void updateStats() {
   sTemp = temperatureRead();
   sLight = constrain(100 - analogRead(LDR_PIN) * 100 / 4095, 0, 100);
   sSig = WiFi.status() == WL_CONNECTED ? constrain(map(WiFi.RSSI(), -100, -40, 0, 100), 0, 100) : 0;
+
+  uint8_t v[4] = {(uint8_t)sRam, (uint8_t)constrain((int)sTemp, 0, 100), (uint8_t)sLight, (uint8_t)sSig};
+  for (int k = 0; k < 4; k++) hist[k][histPos] = v[k];
+  histPos = (histPos + 1) % HIST;
+  if (histN < HIST) histN++;
+
+  if (cfg.autoBright) {
+    int target = map(sLight, 0, 100, 25, 255);
+    blAuto += (target - blAuto) / 3;     // transizione morbida
+    applyBrightness();
+  }
 }
 
 // Sopravvissuto in tuta con casco (disegno originale) + barre condizione con linee guida
@@ -640,28 +790,45 @@ void drawSistema() {
 }
 
 void drawConfig() {
-  const char* L[5] = {"TEMA", "LUMINOSITA'", "SUONO", "EFFETTO OLO", "WIFI SALVATO"};
-  for (int i = 0; i < 5; i++) {
-    int y = 50 + i * 32;
-    txt(L[i], 8, y + 13, C_MAIN, ML_DATUM);
-    spr.drawFastHLine(8, y + 28, 306, C_FAINT);
+  for (int r = 0; r < CFG_ROWS; r++) {
+    int id = cfgPage * CFG_ROWS + r;
+    if (id >= CI_N) break;
+    int y = 48 + r * 28, by = y + 2;
+    txt(CI_LBL[id], 8, y + 13, C_MAIN, ML_DATUM);
+    spr.drawFastHLine(8, y + 27, 306, C_FAINT);
+    switch (id) {
+      case CI_THEME:
+        arrowBtnH(176, by, 30, 22, true);
+        txt(THEMES[cfg.theme].name, 248, y + 13, C_HI, MC_DATUM);
+        arrowBtnH(290, by, 30, 22, false);
+        break;
+      case CI_BRIGHT:
+        button(176, by, 30, 22, "-");
+        segBar(212, y + 9, 74, 8, (blTarget() - 20) * 100 / 235, 8);
+        button(290, by, 30, 22, "+");
+        break;
+      case CI_AUTO:  button(230, by, 90, 22, cfg.autoBright ? "ON" : "OFF", cfg.autoBright); break;
+      case CI_SOUND: button(230, by, 90, 22, cfg.sound ? "ON" : "OFF", cfg.sound); break;
+      case CI_CRT:   button(230, by, 90, 22, cfg.crt ? "ON" : "OFF", cfg.crt); break;
+      case CI_LED:   button(230, by, 90, 22, cfg.led ? "ON" : "OFF", cfg.led); break;
+      case CI_SAVER:
+        arrowBtnH(176, by, 30, 22, true);
+        txt(SAVER_LBL[cfg.saver], 248, y + 13, C_HI, MC_DATUM);
+        arrowBtnH(290, by, 30, 22, false);
+        break;
+      case CI_CAL:   button(230, by, 90, 22, "CALIBRA"); break;
+      case CI_WIFI: {
+        String s = cfg.ssid.length() ? cfg.ssid.substring(0, 10) : String("-");
+        txt(s, 112, y + 13, C_DIM, ML_DATUM);
+        button(230, by, 90, 22, "DIMENTICA");
+      } break;
+      case CI_SYS:   button(230, by, 90, 22, "RIAVVIA"); break;
+    }
   }
-  int y = 50;
-  arrowBtnH(176, y, 30, 24, true);
-  txt(THEMES[cfg.theme].name, 248, y + 13, C_HI, MC_DATUM);
-  arrowBtnH(290, y, 30, 24, false);
-  y += 32;
-  button(176, y, 30, 24, "-");
-  segBar(212, y + 8, 74, 8, (cfg.bright - 20) * 100 / 235, 8);
-  button(290, y, 30, 24, "+");
-  y += 32;
-  button(230, y, 90, 24, cfg.sound ? "ON" : "OFF", cfg.sound);
-  y += 32;
-  button(230, y, 90, 24, cfg.crt ? "ON" : "OFF", cfg.crt);
-  y += 32;
-  String s = cfg.ssid.length() ? cfg.ssid.substring(0, 12) : String("-");
-  txt(s, 120, y + 13, C_DIM, ML_DATUM);
-  button(230, y, 90, 24, "DIMENTICA");
+  int pages = (CI_N + CFG_ROWS - 1) / CFG_ROWS;
+  arrowBtnH(4, 190, 40, 22, true);
+  txt("PAGINA " + String(cfgPage + 1) + "/" + String(pages), 160, 201, C_DIM, MC_DATUM);
+  arrowBtnH(276, 190, 40, 22, false);
 }
 
 // freccia sinistra/destra (per il tema)
@@ -930,6 +1097,8 @@ void checkWifiStatus() {
     if (c) {
       configTzTime(TZ_INFO, NTP1, NTP2);
       addLog("WIFI OK " + WiFi.localIP().toString());
+      completeQuest(1);
+      if (wxState != 1) wxState = 0;        // meteo subito alla connessione
     } else addLog("WIFI DISCONNESSO");
   }
 }
@@ -1005,7 +1174,7 @@ void checkBtDone() {
         if (bdevs[j].rssi > bdevs[i].rssi) { BDev t = bdevs[i]; bdevs[i] = bdevs[j]; bdevs[j] = t; }
     portEXIT_CRITICAL(&btMux);
     addLog("BT: " + String((int)bdevCount) + " dispositivi");
-    if (!qDone[2] && netCount > 0) qDone[2] = true;
+    if (netCount > 0) completeQuest(2);
   }
   was = btScanning;
 }
@@ -1082,21 +1251,603 @@ void drawModalBox() {
 }
 
 // =================================================================
+//  GRAFICI - storico sensori (ultimi 2 minuti)
+// =================================================================
+void drawGrafici() {
+  const char* L[4] = {"MEMORIA LIBERA", "TEMPERATURA CPU", "LUCE AMBIENTE", "SEGNALE WIFI"};
+  const char* U[4] = {"%", "C", "%", "%"};
+  for (int k = 0; k < 4; k++) {
+    int px = 4 + (k % 2) * 158, py = 48 + (k / 2) * 84, pw = 154, ph = 80;
+    chamfer(px, py, pw, ph, 6, C_DIM2);
+    txt(L[k], px + 6, py + 5, C_DIM, TL_DATUM, 1);
+    int gx = px + 6, gy = py + 18, gw = pw - 12, gh = ph - 32;
+    for (int i = 1; i < 4; i++) dotted(gx, gy + gh * i / 4, gx + gw, gy + gh * i / 4, C_FAINT);
+    if (histN == 0) { txt("IN ATTESA...", px + pw / 2, gy + gh / 2, C_DIM2, MC_DATUM, 1); continue; }
+    int lo = 100, hi = 0, prevX = -1, prevY = 0;
+    for (int i = 0; i < histN; i++) {
+      int v = hist[k][(histPos - histN + i + HIST) % HIST];
+      lo = min(lo, v); hi = max(hi, v);
+      int x = gx + (HIST - histN + i) * gw / (HIST - 1);
+      int y = gy + gh - v * gh / 100;
+      spr.drawFastVLine(x, y, gy + gh - y, C_FAINT);
+      if (prevX >= 0) spr.drawLine(prevX, prevY, x, y, C_MAIN);
+      prevX = x; prevY = y;
+    }
+    spr.fillCircle(prevX, prevY, 2, C_HI);
+    int last = hist[k][(histPos + HIST - 1) % HIST];
+    txtG(String(last) + U[k], px + pw - 6, py + 2, C_HI, TR_DATUM);
+    txt("MIN " + String(lo) + "   MAX " + String(hi), gx, py + ph - 11, C_DIM2, TL_DATUM, 1);
+  }
+}
+
+// =================================================================
+//  METEO - Open-Meteo (nessuna chiave API), posizione stimata dall'IP
+// =================================================================
+int wxIcon(int c) {
+  if (c == 0) return 0;
+  if (c <= 2) return 1;
+  if (c == 3) return 2;
+  if (c == 45 || c == 48) return 3;
+  if ((c >= 71 && c <= 77) || c == 85 || c == 86) return 5;
+  if (c >= 95) return 6;
+  if (c >= 51) return 4;
+  return 2;
+}
+
+const char* wxText(int c) {
+  if (c == 0) return "SERENO";
+  if (c == 1) return "PREVAL. SERENO";
+  if (c == 2) return "POCO NUVOLOSO";
+  if (c == 3) return "COPERTO";
+  if (c == 45 || c == 48) return "NEBBIA";
+  if (c >= 51 && c <= 57) return "PIOGGERELLA";
+  if (c >= 61 && c <= 67) return "PIOGGIA";
+  if (c >= 71 && c <= 77) return "NEVE";
+  if (c >= 80 && c <= 82) return "ROVESCI";
+  if (c == 85 || c == 86) return "ROVESCI DI NEVE";
+  if (c == 95) return "TEMPORALE";
+  if (c >= 96) return "TEMPORALE+GRANDINE";
+  return "--";
+}
+
+// nuvola: g = spessore aggiuntivo (per il bordo)
+void cloudShape(int x, int y, float s, int g, uint8_t c) {
+  spr.fillCircle(x - 11 * s, y + 3 * s, 8 * s + g, c);
+  spr.fillCircle(x + 1 * s, y - 4 * s, 11 * s + g, c);
+  spr.fillCircle(x + 13 * s, y + 3 * s, 8 * s + g, c);
+  spr.fillRect(x - 11 * s, y + 3 * s, 24 * s + 1, 8 * s + g + 1, c);
+}
+
+void sunShape(int x, int y, float s, uint8_t c) {
+  float rot = millis() / 2500.0;
+  spr.fillCircle(x, y, 8 * s, c);
+  for (int i = 0; i < 8; i++) {
+    float a = rot + i * PI / 4;
+    spr.drawLine(x + cos(a) * 12 * s, y + sin(a) * 12 * s, x + cos(a) * 17 * s, y + sin(a) * 17 * s, c);
+  }
+}
+
+void drawWxIcon(int x, int y, float s, int type) {
+  unsigned long t = millis();
+  int fall = (int)(14 * s) + 1;
+  switch (type) {
+    case 0: sunShape(x, y, s, C_HI); break;
+    case 1:
+      sunShape(x + 8 * s, y - 7 * s, s * 0.8, C_HI);
+      cloudShape(x - 2 * s, y + 5 * s, s * 0.85, 1, C_MAIN);
+      cloudShape(x - 2 * s, y + 5 * s, s * 0.85, 0, C_DARK);
+      break;
+    case 3:
+      for (int i = 0; i < 4; i++) {
+        int o = (int)(sin(t / 500.0 + i) * 3 * s);
+        spr.drawFastHLine(x - 18 * s + o, y - 9 * s + i * 6 * s, 36 * s, i % 2 ? C_MID : C_MAIN);
+      }
+      break;
+    default:
+      cloudShape(x, y - 4 * s, s, 1, C_MAIN);
+      cloudShape(x, y - 4 * s, s, 0, type == 6 ? C_DIM2 : C_DARK);
+      if (type == 4)
+        for (int i = 0; i < 5; i++) {
+          int dy = (t / 40 + i * 7) % fall, xx = x - 12 * s + i * 6 * s;
+          spr.drawLine(xx, y + 9 * s + dy, xx - 2, y + 9 * s + dy + 4 * s, C_HI);
+        }
+      if (type == 5)
+        for (int i = 0; i < 5; i++) {
+          int dy = (t / 70 + i * 5) % fall;
+          spr.fillCircle(x - 12 * s + i * 6 * s, y + 10 * s + dy, max(1, (int)(1.5 * s)), C_HI);
+        }
+      if (type == 6 && (t / 150) % 8 < 3) {
+        int ly = y + 6 * s;
+        spr.fillTriangle(x + 2 * s, ly, x - 5 * s, ly + 10 * s, x + 1 * s, ly + 9 * s, C_HI);
+        spr.fillTriangle(x + 1 * s, ly + 7 * s, x + 5 * s, ly + 8 * s, x - 3 * s, ly + 18 * s, C_HI);
+      }
+  }
+}
+
+String httpGet(const char* url) {
+  HTTPClient http;
+  http.setConnectTimeout(6000);
+  http.setTimeout(8000);
+  if (!http.begin(url)) return String();
+  int code = http.GET();
+  String body = code == 200 ? http.getString() : String();
+  http.end();
+  return body;
+}
+
+float jNum(const String& s, const char* key, int from) {
+  int i = s.indexOf(key, from);
+  return i < 0 ? NAN : atof(s.c_str() + i + strlen(key));
+}
+
+int jArr(const String& s, const char* key, int from, float* out, int n) {
+  int i = s.indexOf(key, from);
+  if (i < 0) return 0;
+  i = s.indexOf('[', i);
+  if (i < 0) return 0;
+  const char* p = s.c_str() + i + 1;
+  int k = 0;
+  while (k < n && *p && *p != ']') {
+    out[k++] = atof(p);
+    while (*p && *p != ',' && *p != ']') p++;
+    if (*p == ',') p++;
+  }
+  return k;
+}
+
+// legge una stringa JSON: key e' tipo "\"city\":" (tollera spazi prima delle virgolette)
+void jStr(const String& s, const char* key, char* out, int n) {
+  out[0] = 0;
+  int i = s.indexOf(key);
+  if (i < 0) return;
+  i += strlen(key);
+  while (i < (int)s.length() && (s[i] == ' ' || s[i] == '"')) i++;
+  int k = 0;
+  while (k < n - 1 && i < (int)s.length() && s[i] != '"') {
+    uint8_t c = s[i++];
+    if (c >= 32 && c < 127) out[k++] = toupper(c);
+    else if (c == 0xC3 && i < (int)s.length()) {       // vocali accentate UTF-8 -> lettera base
+      uint8_t b = (uint8_t)s[i++] & 0xDF;              // minuscole e maiuscole insieme
+      char m = b <= 0x85 ? 'A' : (b >= 0x88 && b <= 0x8B) ? 'E' : (b >= 0x8C && b <= 0x8F) ? 'I'
+             : (b >= 0x92 && b <= 0x96) ? 'O' : (b >= 0x99 && b <= 0x9C) ? 'U' : 0;
+      if (m) out[k++] = m;
+    }
+  }
+  out[k] = 0;
+}
+
+void wxTask(void*) {
+  Weather w = {};
+  bool good = false;
+  if (isnan(geoLat)) {                       // posizione approssimativa dall'IP
+    String g = httpGet("http://ip-api.com/json/?fields=status,city,lat,lon");
+    if (g.indexOf("\"success\"") >= 0) {
+      geoLat = jNum(g, "\"lat\":", 0);
+      geoLon = jNum(g, "\"lon\":", 0);
+      jStr(g, "\"city\":", geoCity, sizeof(geoCity));
+    } else {                                 // servizio di riserva (HTTPS)
+      g = httpGet("https://ipapi.co/json/");
+      geoLat = jNum(g, "\"latitude\":", 0);
+      geoLon = jNum(g, "\"longitude\":", 0);
+      jStr(g, "\"city\":", geoCity, sizeof(geoCity));
+    }
+  }
+  if (!isnan(geoLat) && !isnan(geoLon)) {
+    String r;
+    int c = -1, d = -1;
+    const char* proto[2] = {"http", "https"};  // prima HTTP (piu' leggero), poi HTTPS
+    for (int k = 0; k < 2 && (c < 0 || d < 0); k++) {
+      char url[330];
+      snprintf(url, sizeof(url),
+               "%s://api.open-meteo.com/v1/forecast?latitude=%.3f&longitude=%.3f"
+               "&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code"
+               "&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=4",
+               proto[k], geoLat, geoLon);
+      r = httpGet(url);
+      c = r.indexOf("\"current\":{");
+      d = r.indexOf("\"daily\":{");
+    }
+    if (c >= 0 && d >= 0) {
+      w.t = jNum(r, "\"temperature_2m\":", c);
+      w.hum = (int)jNum(r, "\"relative_humidity_2m\":", c);
+      w.wind = jNum(r, "\"wind_speed_10m\":", c);
+      w.code = (int)jNum(r, "\"weather_code\":", c);
+      float codes[4] = {0, 0, 0, 0};
+      jArr(r, "\"weather_code\":", d, codes, 4);
+      for (int i = 0; i < 4; i++) w.dCode[i] = (int)codes[i];
+      jArr(r, "\"temperature_2m_max\":", d, w.dMax, 4);
+      jArr(r, "\"temperature_2m_min\":", d, w.dMin, 4);
+      strncpy(w.city, geoCity, sizeof(w.city) - 1);
+      strncpy(w.upd, shortTime().c_str(), 5);
+      w.ok = !isnan(w.t);
+      good = w.ok;
+    }
+  }
+  if (good) {
+    portENTER_CRITICAL(&wxMux);
+    wx = w;
+    portEXIT_CRITICAL(&wxMux);
+  }
+  wxState = good ? 2 : 3;
+  vTaskDelete(NULL);
+}
+
+void startWeather() {
+  if (wxState == 1 || WiFi.status() != WL_CONNECTED) return;
+  wxState = 1;
+  wxLast = millis();
+  if (xTaskCreatePinnedToCore(wxTask, "meteo", 16384, NULL, 1, NULL, 0) != pdPASS) wxState = 3;
+}
+
+void pollWeather() {
+  static int was = 0;
+  int st = wxState;
+  if (st != was) {
+    if (st == 2) addLog("METEO AGGIORNATO");
+    else if (st == 3) addLog("METEO: ERRORE DI RICEZIONE");
+    was = st;
+  }
+  if (WiFi.status() != WL_CONNECTED || st == 1) return;
+  unsigned long iv = st == 3 ? 60000UL : 900000UL;
+  if (st == 0 || millis() - wxLast > iv) startWeather();
+}
+
+void drawMeteo() {
+  Weather w;
+  portENTER_CRITICAL(&wxMux);
+  w = wx;
+  portEXIT_CRITICAL(&wxMux);
+  bool wc = WiFi.status() == WL_CONNECTED;
+  if (!w.ok) {
+    if (wxState == 1) scanAnim(120, "CONTATTO STAZIONE METEO...");
+    else if (!wc) {
+      drawWxIcon(160, 86, 1.2, 2);
+      txt("STAZIONE METEO NON RAGGIUNGIBILE", 160, 140, C_MAIN, MC_DATUM);
+      txt("CONNETTI IL WIFI DA RADIO > WIFI", 160, 162, C_DIM, MC_DATUM);
+    } else {
+      txt(wxState == 3 ? "ERRORE DI RICEZIONE" : "IN ATTESA DATI", 160, 110, C_MAIN, MC_DATUM);
+      txt("TOCCA PER RIPROVARE", 160, 134, C_DIM, MC_DATUM);
+    }
+    return;
+  }
+  brackets(4, 48, 94, 92, 8, C_DIM);
+  drawWxIcon(51, 92, 1.4, wxIcon(w.code));
+  String tt = String((int)lroundf(w.t));
+  txtG(tt, 106, 52, C_HI, TL_DATUM, 7);
+  int tw = spr.textWidth(tt, 7);
+  spr.drawCircle(112 + tw, 58, 3, C_HI);
+  txt("C", 118 + tw, 54, C_HI, TL_DATUM, 4);
+  txt(w.city[0] ? String(w.city).substring(0, 14) : String("POSIZIONE IP"), 314, 50, C_DIM, TR_DATUM);
+  txt("UMIDITA' " + String(w.hum) + "%", 314, 70, C_MAIN, TR_DATUM);
+  txt("VENTO " + String((int)lroundf(w.wind)) + " KM/H", 314, 88, C_MAIN, TR_DATUM);
+  txtG(wxText(w.code), 106, 106, C_MAIN);
+  if (wxState == 1) { if ((millis() / 300) % 2) txt("AGGIORNAMENTO IN CORSO...", 106, 128, C_DIM, TL_DATUM, 1); }
+  else txt("AGG. " + String(w.upd) + "  //  TOCCA PER AGGIORNARE", 106, 128, C_DIM2, TL_DATUM, 1);
+
+  struct tm ti;
+  bool hasDay = getNow(ti);
+  for (int i = 0; i < 3; i++) {
+    int x = 4 + i * 106;
+    chamfer(x, 146, 100, 66, 6, i == 0 ? C_DIM : C_DIM2);
+    String dn = i == 0 ? String("OGGI") : hasDay ? String(GIORNI[(ti.tm_wday + i) % 7]).substring(0, 3) : "+" + String(i) + "G";
+    txt(dn, x + 8, 150, i == 0 ? C_HI : C_MAIN);
+    drawWxIcon(x + 28, 188, 0.6, wxIcon(w.dCode[i]));
+    txt(String((int)lroundf(w.dMax[i])), x + 94, 166, C_HI, TR_DATUM, 4);
+    txt(String((int)lroundf(w.dMin[i])), x + 94, 194, C_DIM, TR_DATUM);
+  }
+}
+
+// =================================================================
+//  GIOCO - TERMINALE (trova la password tra le parole)
+// =================================================================
+int likeness(const char* a, const char* b) {
+  int n = 0;
+  for (int i = 0; a[i] && b[i]; i++) if (a[i] == b[i]) n++;
+  return n;
+}
+
+void newTerminal() {
+  const char* J = "!@#$%&*<>?/|;:+=-_[]{}";
+  int jn = strlen(J);
+  for (int i = 0; i < TW_N; i++) {
+    int w;
+    bool dup;
+    do {
+      w = random(WORDS_N);
+      dup = false;
+      for (int j = 0; j < i; j++) if (twW[j] == w) dup = true;
+    } while (dup);
+    twW[i] = w;
+    twUsed[i] = false;
+    twJunk[i][0] = J[random(jn)];
+    twJunk[i][1] = J[random(jn)];
+  }
+  twAns = random(TW_N);
+  twTries = 4;
+  twLogN = 0;
+  twState = 0;
+  twAddr = (0xF000 + random(0x0F00)) & 0xFFF0;
+}
+
+void drawTerminal() {
+  txt("VX-26 TERMLINK // ACCESSO PROTETTO", 6, 48, C_DIM, TL_DATUM, 1);
+  txt("TENTATIVI", 214, 48, C_DIM, TL_DATUM, 1);
+  for (int i = 0; i < 4; i++) spr.fillRect(272 + i * 11, 48, 8, 8, i < twTries ? C_HI : C_DARK);
+  for (int i = 0; i < TW_N; i++) {
+    int x = 4 + (i / 6) * 104, y = 62 + (i % 6) * 21;
+    char ad[6];
+    snprintf(ad, sizeof(ad), "%04X", (unsigned)(twAddr + i * 12));
+    txt(ad, x, y + 5, C_DIM2, TL_DATUM, 1);
+    char j1[2] = {twJunk[i][0], 0}, j2[2] = {twJunk[i][1], 0};
+    const char* word = WORDS[twW[i]];
+    int cx = x + 27;
+    txt(j1, cx, y + 1, C_DIM2);
+    cx += spr.textWidth(j1, 2) + 1;
+    int ww = spr.textWidth(word, 2);
+    if (twState != 0 && i == twAns) {
+      spr.fillRect(cx - 1, y, ww + 2, 17, C_MAIN);
+      txt(word, cx, y + 1, BG);
+    } else txt(word, cx, y + 1, twUsed[i] ? C_DIM2 : C_MAIN);
+    txt(j2, cx + ww + 1, y + 1, C_DIM2);
+  }
+  chamfer(212, 60, 106, 152, 6, C_DIM2);
+  int ly = 66;
+  for (int i = 0; i < twLogN; i++) {
+    txt(String("> ") + WORDS[twW[twLogW[i]]], 218, ly, twLogW[i] == twAns ? C_HI : C_MAIN);
+    ly += 15;
+    txt("ESATTE " + String(twLogL[i]) + "/5", 228, ly, C_DIM, TL_DATUM, 1);
+    ly += 13;
+  }
+  if (twState == 0) {
+    if ((millis() / 400) % 2) txt(">_", 218, ly, C_HI);
+    txt("TOCCA UNA PAROLA: TROVA LA PASSWORD", 6, 196, C_DIM2, TL_DATUM, 1);
+  } else if (twState == 1) {
+    txtG("ACCESSO", 265, 184, C_HI, MC_DATUM);
+    txtG("CONSENTITO", 265, 200, C_HI, MC_DATUM);
+    txt("TOCCA PER UN NUOVO TERMINALE", 6, 196, C_DIM, TL_DATUM, 1);
+  } else {
+    long left = (long)twLockUntil - (long)millis();
+    if ((millis() / 300) % 2) txtG("BLOCCATO", 265, 184, C_HI, MC_DATUM);
+    if (left > 0) txt("SBLOCCO TRA " + String(left / 1000 + 1) + "s", 265, 202, C_MAIN, MC_DATUM, 1);
+    else txt("TOCCA = NUOVO", 265, 202, C_MAIN, MC_DATUM, 1);
+  }
+}
+
+void termTouch(int x, int y) {
+  if (twState == 1 || (twState == 2 && millis() > twLockUntil)) { newTerminal(); glitchUntil = millis() + 120; return; }
+  if (twState != 0 || x >= 212 || y < 60 || y >= 60 + 6 * 21) return;
+  int i = (x < 108 ? 0 : 6) + (y - 60) / 21;
+  if (i >= TW_N || twUsed[i]) return;
+  twUsed[i] = true;
+  twLogW[twLogN] = i;
+  twLogL[twLogN] = likeness(WORDS[twW[i]], WORDS[twW[twAns]]);
+  twLogN++;
+  if (i == twAns) {
+    twState = 1;
+    glitchUntil = millis() + 200;
+    sndOk();
+    addLog("TERMINALE: ACCESSO OTTENUTO");
+    completeQuest(3);
+  } else if (--twTries == 0) {
+    twState = 2;
+    twLockUntil = millis() + 10000;
+    glitchUntil = millis() + 300;
+    sndErr();
+    addLog("TERMINALE BLOCCATO");
+  } else queueTone(600, 60);
+}
+
+// =================================================================
+//  GIOCO - SERPENTE
+// =================================================================
+void snPlaceFood() {
+  for (int t = 0; t < 500; t++) {
+    int fx = random(SN_COLS), fy = random(SN_ROWS);
+    bool hit = false;
+    for (int i = 0; i < snLen; i++) if (snX[i] == fx && snY[i] == fy) { hit = true; break; }
+    if (!hit) { snFx = fx; snFy = fy; return; }
+  }
+}
+
+void snReset() {
+  snLen = 4;
+  for (int i = 0; i < snLen; i++) { snX[i] = 10 - i; snY[i] = SN_ROWS / 2; }
+  snDx = snNdx = 1;
+  snDy = snNdy = 0;
+  snScore = 0;
+  snPlaceFood();
+}
+
+void snStep() {
+  snDx = snNdx; snDy = snNdy;
+  int nx = snX[0] + snDx, ny = snY[0] + snDy;
+  bool dead = nx < 0 || ny < 0 || nx >= SN_COLS || ny >= SN_ROWS;
+  for (int i = 0; i < snLen - 1 && !dead; i++) if (snX[i] == nx && snY[i] == ny) dead = true;
+  if (dead) {
+    snState = 2;
+    snDeadT = millis();
+    glitchUntil = millis() + 220;
+    sndErr();
+    if (snScore > snHi) {
+      snHi = snScore;
+      prefs.putInt("snhi", snHi);
+      addLog("SERPENTE: RECORD " + String(snHi));
+    }
+    return;
+  }
+  bool eat = nx == snFx && ny == snFy;
+  if (eat && snLen < SN_COLS * SN_ROWS) snLen++;
+  memmove(snX + 1, snX, snLen - 1);
+  memmove(snY + 1, snY, snLen - 1);
+  snX[0] = nx; snY[0] = ny;
+  if (eat) { snScore++; sndEat(); snPlaceFood(); }
+}
+
+void snakeTouch(int x, int y) {
+  if (snState == 2 && millis() - snDeadT < 700) return;
+  if (snState == 0 || snState == 2) { snReset(); snState = 1; snLast = millis(); return; }
+  if (snState == 3) { snState = 1; snLast = millis(); return; }
+  int hx = SN_X0 + snX[0] * SN_CELL + 4, hy = SN_Y0 + snY[0] * SN_CELL + 4;
+  if (snDx != 0) { snNdx = 0; snNdy = y < hy ? -1 : 1; }
+  else           { snNdy = 0; snNdx = x < hx ? -1 : 1; }
+}
+
+void drawSnake() {
+  txt("PUNTI " + String(snScore), 8, 47, C_HI, TL_DATUM, 1);
+  txt("RECORD " + String(snHi), 312, 47, C_DIM, TR_DATUM, 1);
+  chamfer(SN_X0 - 3, SN_Y0 - 3, SN_COLS * SN_CELL + 6, SN_ROWS * SN_CELL + 6, 4, C_DIM);
+  for (int gy = 0; gy < SN_ROWS; gy += 2)
+    for (int gx = 0; gx < SN_COLS; gx += 2) spr.drawPixel(SN_X0 + gx * SN_CELL + 4, SN_Y0 + gy * SN_CELL + 4, C_FAINT);
+  int fx = SN_X0 + snFx * SN_CELL, fy = SN_Y0 + snFy * SN_CELL;
+  spr.fillRect(fx + 2, fy + 2, 4, 4, C_HI);
+  if ((millis() / 200) % 2) spr.drawRect(fx, fy, 8, 8, C_MAIN);
+  for (int i = snLen - 1; i >= 0; i--) {
+    int px = SN_X0 + snX[i] * SN_CELL, py = SN_Y0 + snY[i] * SN_CELL;
+    spr.fillRect(px + 1, py + 1, 6, 6, i == 0 ? C_HI : (i < snLen / 2 ? C_MAIN : C_MID));
+  }
+  if (snState != 1) {
+    chamferFill(70, 98, 180, 60, 8, BG);
+    chamfer(70, 98, 180, 60, 8, C_MAIN);
+    const char* t1 = snState == 0 ? "SERPENTE" : snState == 2 ? "GAME OVER" : "PAUSA";
+    txtG(t1, 160, 118, C_HI, MC_DATUM, 4);
+    if ((millis() / 500) % 2) txt(snState == 3 ? "TOCCA PER RIPRENDERE" : "TOCCA PER INIZIARE", 160, 146, C_DIM, MC_DATUM, 1);
+  }
+  txt("TOCCA SOPRA/SOTTO O A SX/DX DELLA TESTA", 160, 210, C_DIM2, MC_DATUM, 1);
+}
+
+// =================================================================
+//  SALVASCHERMO - pioggia di codice + orologio che si sposta
+// =================================================================
+void initSaver() {
+  for (int i = 0; i < DROPS; i++) {
+    drops[i].y = random(-240, 0);
+    drops[i].sp = random(2, 7);
+    drops[i].len = random(5, 16);
+  }
+}
+
+void drawSaver() {
+  static const char G[] = "0123456789ABCDEF<>#$%&*+=?";
+  unsigned long t = millis();
+  for (int i = 0; i < DROPS; i++) {
+    Drop& d = drops[i];
+    for (int k = 0; k < d.len; k++) {
+      int cy = d.y - k * 9;
+      if (cy < -8 || cy >= 240) continue;
+      uint32_t h = ((uint32_t)i * 2654435761u) ^ ((uint32_t)(cy / 9 + 64) * 40503u) ^ (t / 350);
+      char ch[2] = {G[h % (sizeof(G) - 1)], 0};
+      uint8_t c = k == 0 ? C_HI : k < 3 ? C_MAIN : k < d.len / 2 ? C_MID : k < d.len - 2 ? C_DIM : C_DIM2;
+      txt(ch, i * 6, cy, c, TL_DATUM, 1);
+    }
+    d.y += d.sp;
+    if (d.y - d.len * 9 > 240) { d.y = random(-60, 0); d.sp = random(2, 7); d.len = random(5, 16); }
+  }
+  struct tm ti;
+  String clk = getNow(ti) ? two(ti.tm_hour) + ":" + two(ti.tm_min) : uptimeStr().substring(0, 5);
+  int ox = 160 + (int)(sin(t / 7000.0) * 60), oy = 120 + (int)(sin(t / 5300.0) * 38);
+  chamferFill(ox - 90, oy - 40, 180, 80, 10, BG);
+  chamfer(ox - 90, oy - 40, 180, 80, 10, C_MAIN);
+  txtG(clk, ox, oy - 8, C_HI, MC_DATUM, 6);
+  txt("VX-26 IN STANDBY", ox, oy + 26, C_DIM, MC_DATUM, 1);
+}
+
+// =================================================================
+//  CALIBRAZIONE TOUCH
+// =================================================================
+const int CAL_PT[2][2] = {{24, 24}, {296, 216}};
+
+void startCalib() { calStep = 0; modal = M_CAL; }
+
+void drawCalib() {
+  txtG("CALIBRAZIONE TOUCH", 160, 100, C_HI, MC_DATUM);
+  txt("TOCCA IL CENTRO DEL MIRINO  " + String(calStep + 1) + "/2", 160, 122, C_MAIN, MC_DATUM);
+  txt("usa un pennino o la punta dell'unghia", 160, 142, C_DIM, MC_DATUM, 1);
+  int x = CAL_PT[calStep][0], y = CAL_PT[calStep][1];
+  spr.drawCircle(x, y, 6 + (millis() / 60) % 10, C_DIM);
+  spr.drawCircle(x, y, 5, C_HI);
+  spr.drawFastHLine(x - 14, y, 29, C_HI);
+  spr.drawFastVLine(x, y - 14, 29, C_HI);
+}
+
+void calTouch() {
+  calRaw[calStep][0] = rawX;
+  calRaw[calStep][1] = rawY;
+  if (++calStep < 2) return;
+  float kx = (calRaw[1][0] - calRaw[0][0]) / (float)(CAL_PT[1][0] - CAL_PT[0][0]);
+  float ky = (calRaw[1][1] - calRaw[0][1]) / (float)(CAL_PT[1][1] - CAL_PT[0][1]);
+  if (fabs(kx) < 4 || fabs(ky) < 4) {
+    msgL1 = "CALIBRAZIONE NON VALIDA";
+    msgL2 = "Riprova toccando i mirini";
+    modal = M_MSG;
+    sndErr();
+    return;
+  }
+  cfg.tminx = calRaw[0][0] - kx * CAL_PT[0][0];
+  cfg.tmaxx = cfg.tminx + kx * 320;
+  cfg.tminy = calRaw[0][1] - ky * CAL_PT[0][1];
+  cfg.tmaxy = cfg.tminy + ky * 240;
+  saveConfig();
+  msgL1 = "TOUCH CALIBRATO";
+  msgL2 = "Impostazioni salvate";
+  modal = M_MSG;
+  sndOk();
+  addLog("TOUCH CALIBRATO");
+}
+
+// =================================================================
+//  LED RGB DI STATO (attivo basso)
+// =================================================================
+void ledSetup() {
+  ledcSetup(LED_CH_R, 5000, 8); ledcAttachPin(LED_R, LED_CH_R);
+  ledcSetup(LED_CH_G, 5000, 8); ledcAttachPin(LED_G, LED_CH_G);
+  ledcSetup(LED_CH_B, 5000, 8); ledcAttachPin(LED_B, LED_CH_B);
+  ledRGB(0, 0, 0);
+}
+
+void ledRGB(int r, int g, int b) {
+  ledcWrite(LED_CH_R, 255 - constrain(r, 0, 255));
+  ledcWrite(LED_CH_G, 255 - constrain(g, 0, 255));
+  ledcWrite(LED_CH_B, 255 - constrain(b, 0, 255));
+}
+
+void updateLed() {
+  int r = 0, g = 0, b = 0;
+  if (cfg.led && !saverOn) {
+    unsigned long t = millis();
+    int br = 6 + (int)((sin(t / 650.0) * 0.5 + 0.5) * 40);
+    if (modal == M_CONN) { r = (t / 120) % 2 ? 70 : 0; g = r / 2; }
+    else if (wifiScanning || btScanning || wxState == 1) b = (t / 150) % 2 ? 60 : 4;
+    else if (WiFi.status() == WL_CONNECTED) g = br;
+    else r = br / 2;
+  }
+  ledRGB(r, g, b);
+}
+
+// =================================================================
 //  RENDER
 // =================================================================
 void drawContent() {
   switch (tab) {
-    case 0: if (sub[0] == 0) drawStato(); else if (sub[0] == 1) drawSistema(); else drawConfig(); break;
+    case 0:
+      if (sub[0] == 0) drawStato(); else if (sub[0] == 1) drawSistema();
+      else if (sub[0] == 2) drawGrafici(); else drawConfig();
+      break;
     case 1: drawInv(); break;
-    case 2: if (sub[2] == 0) drawOra(); else if (sub[2] == 1) drawMissioni(); else drawLog(); break;
+    case 2:
+      if (sub[2] == 0) drawOra(); else if (sub[2] == 1) drawMeteo();
+      else if (sub[2] == 2) drawMissioni(); else drawLog();
+      break;
     case 3: drawRadar(); break;
     case 4: if (sub[4] == 0) drawWifi(); else drawBt(); break;
+    case 5: if (sub[5] == 0) drawTerminal(); else drawSnake(); break;
   }
 }
 
 void render() {
   spr.fillSprite(BG);
-  if (modal == M_KB) drawKeyboard();
+  if (saverOn) drawSaver();
+  else if (modal == M_KB) drawKeyboard();
+  else if (modal == M_CAL) drawCalib();
   else {
     bgGrid();
     drawHeader();
@@ -1117,8 +1868,9 @@ bool getTouch(int& x, int& y) {
   if (now && !was) {
     was = true;
     TS_Point p = ts.getPoint();
-    x = constrain(map(p.x, TS_MINX, TS_MAXX, 0, 320), 0, 319);
-    y = constrain(map(p.y, TS_MINY, TS_MAXY, 0, 240), 0, 239);
+    rawX = p.x; rawY = p.y;
+    x = constrain(map(p.x, cfg.tminx, cfg.tmaxx, 0, 320), 0, 319);
+    y = constrain(map(p.y, cfg.tminy, cfg.tmaxy, 0, 240), 0, 239);
     return true;
   }
   if (!now) was = false;
@@ -1126,37 +1878,66 @@ bool getTouch(int& x, int& y) {
 }
 
 void touchConfig(int x, int y) {
-  if (y < 50 || y >= 210) return;
-  int row = (y - 50) / 32;
-  switch (row) {
-    case 0:
-      if (x >= 176 && x < 206) cfg.theme = (cfg.theme + THEME_N - 1) % THEME_N;
-      else if (x >= 290) cfg.theme = (cfg.theme + 1) % THEME_N;
+  int pages = (CI_N + CFG_ROWS - 1) / CFG_ROWS;
+  if (y >= 186 && y < 216) {
+    if (x < 60) cfgPage = (cfgPage + pages - 1) % pages;
+    else if (x >= 260) cfgPage = (cfgPage + 1) % pages;
+    return;
+  }
+  if (y < 48 || y >= 48 + CFG_ROWS * 28) return;
+  int id = cfgPage * CFG_ROWS + (y - 48) / 28;
+  if (id >= CI_N) return;
+  bool L = x >= 170 && x < 210, R = x >= 284, T = x >= 226;
+  switch (id) {
+    case CI_THEME:
+      if (L) cfg.theme = (cfg.theme + THEME_N - 1) % THEME_N;
+      else if (R) cfg.theme = (cfg.theme + 1) % THEME_N;
       else return;
       applyTheme(); break;
-    case 1:
-      if (x >= 176 && x < 206) cfg.bright = max(20, cfg.bright - 30);
-      else if (x >= 290) cfg.bright = min(255, cfg.bright + 30);
+    case CI_BRIGHT:
+      if (L) cfg.bright = max(20, blTarget() - 30);
+      else if (R) cfg.bright = min(255, blTarget() + 30);
       else return;
+      cfg.autoBright = false;
       applyBrightness(); break;
-    case 2: if (x >= 230) cfg.sound = !cfg.sound; else return; break;
-    case 3: if (x >= 230) cfg.crt = !cfg.crt; else return; break;
-    case 4:
-      if (x >= 230) { cfg.ssid = ""; cfg.pass = ""; WiFi.disconnect(); addLog("WIFI: credenziali cancellate"); }
+    case CI_AUTO:  if (!T) return; cfg.autoBright = !cfg.autoBright; blAuto = cfg.bright; applyBrightness(); break;
+    case CI_SOUND: if (!T) return; cfg.sound = !cfg.sound; break;
+    case CI_CRT:   if (!T) return; cfg.crt = !cfg.crt; break;
+    case CI_LED:   if (!T) return; cfg.led = !cfg.led; break;
+    case CI_SAVER:
+      if (L) cfg.saver = (cfg.saver + 3) % 4;
+      else if (R) cfg.saver = (cfg.saver + 1) % 4;
       else return;
       break;
+    case CI_CAL:   if (!T) return; startCalib(); return;
+    case CI_WIFI:
+      if (!T) return;
+      cfg.ssid = ""; cfg.pass = ""; WiFi.disconnect(); addLog("WIFI: credenziali cancellate");
+      break;
+    case CI_SYS:
+      if (!T) return;
+      saveConfig();
+      spr.fillSprite(BG);
+      txtG("RIAVVIO...", 160, 120, C_HI, MC_DATUM, 4);
+      present();
+      delay(600);
+      ESP.restart();
+      return;
   }
   saveConfig();
 }
 
 void onTouch(int x, int y) {
+  lastInput = millis();
+  if (saverOn) { saverOn = false; applyBrightness(); return; }   // il tocco sveglia e basta
   click();
+  if (modal == M_CAL) { calTouch(); return; }
   if (modal == M_KB)  { kbTouch(x, y); return; }
   if (modal == M_MSG) { modal = M_NONE; return; }
   if (modal == M_CONN) return;
 
   if (y < 24) {
-    int nt = constrain(x / 64, 0, 4);
+    int nt = constrain(x / TAB_W, 0, NTABS - 1);
     if (nt != tab) { tab = nt; glitchUntil = millis() + 160; chirp(); }
     return;
   }
@@ -1168,15 +1949,16 @@ void onTouch(int x, int y) {
 
   switch (tab) {
     case 0:
-      if (sub[0] == 2) touchConfig(x, y);
+      if (sub[0] == 3) touchConfig(x, y);
       break;
     case 1:
       if (x < 170 && y >= 50 && y < 50 + INV_N * 26) invSel[sub[1]] = (y - 50) / 26;
       break;
     case 2:
-      if (sub[2] == 1 && y >= 50 && y < 180) {
+      if (sub[2] == 1) startWeather();
+      else if (sub[2] == 2 && y >= 50 && y < 180) {
         int i = (y - 50) / 26;
-        if (i >= 0 && i < 5) qDone[i] = !qDone[i];
+        if (i >= 0 && i < 5) { qDone[i] = !qDone[i]; saveQuests(); }
       }
       break;
     case 3:
@@ -1202,6 +1984,9 @@ void onTouch(int x, int y) {
           if (i < n) btSel = (btSel == i) ? -1 : i;
         }
       }
+      break;
+    case 5:
+      if (sub[5] == 0) termTouch(x, y); else snakeTouch(x, y);
       break;
   }
 }
@@ -1230,11 +2015,17 @@ void drawHexLogo(int cx, int cy, int r, int edges, float rot) {
   }
 }
 
+bool bootSkip = false;
+bool skipBoot() {
+  if (!bootSkip && ts.tirqTouched() && ts.touched()) bootSkip = true;
+  return bootSkip;
+}
+
 void bootSequence() {
   // accensione: linea che si espande
-  for (int w = 4; w <= 320; w += 28) { spr.fillSprite(BG); spr.fillRect(160 - w / 2, 119, w, 2, C_HI); spr.pushSprite(0, 0); }
+  for (int w = 4; w <= 320 && !skipBoot(); w += 28) { spr.fillSprite(BG); spr.fillRect(160 - w / 2, 119, w, 2, C_HI); spr.pushSprite(0, 0); }
   // flusso dati
-  for (int f = 0; f < 22; f++) {
+  for (int f = 0; f < 22 && !skipBoot(); f++) {
     spr.fillSprite(BG);
     for (int r = 0; r < 14; r++) {
       char line[48];
@@ -1246,7 +2037,7 @@ void bootSequence() {
     present();
   }
   // logo
-  for (int f = 0; f < 56; f++) {
+  for (int f = 0; f < 56 && !skipBoot(); f++) {
     spr.fillSprite(BG);
     bgGrid();
     drawHexLogo(160, 80, 34, f / 4, f * 0.05);
@@ -1256,23 +2047,24 @@ void bootSequence() {
       txt("OPERATOR SYSTEM  //  2026", 160, 166, C_MAIN, MC_DATUM);
     }
     if (f > 40) txt("INTERFACCIA OLOGRAFICA PERSONALE", 160, 198, C_DIM, MC_DATUM, 1);
+    txt("TOCCA PER SALTARE", 160, 228, C_DIM2, MC_DATUM, 1);
     present();
   }
-  chirp();
+  if (!bootSkip) chirp();
   const char* lines[] = {
-    "VX-26 OPERATOR SYSTEM  v4.0",
+    "VX-26 OPERATOR SYSTEM  v5.0",
     "BUILD 2026.10 // CORE XTENSA LX6",
     "",
     "> MEMORIA",
     "> SENSORI",
     "> MODULO WIFI",
     "> MODULO BLUETOOTH",
-    "> INTERFACCIA OLOGRAFICA",
+    "> METEO // GIOCHI // OLOGRAFIA",
   };
   const int N = sizeof(lines) / sizeof(lines[0]);
-  for (int l = 0; l < N; l++) {
+  for (int l = 0; l < N && !skipBoot(); l++) {
     int len = strlen(lines[l]);
-    for (int c = 0; c <= len; c += 3) {
+    for (int c = 0; c <= len && !skipBoot(); c += 3) {
       spr.fillSprite(BG);
       for (int k = 0; k < l; k++) {
         txt(lines[k], 14, 12 + k * 20, C_MAIN);
@@ -1283,9 +2075,9 @@ void bootSequence() {
       spr.fillRect(16 + spr.textWidth(part, 2), 14 + l * 20, 7, 13, C_MAIN);
       present();
     }
-    click();
+    if (!bootSkip) click();
   }
-  for (int p = 0; p <= 100; p += 4) {
+  for (int p = 0; p <= 100 && !skipBoot(); p += 4) {
     spr.fillRect(0, 178, 320, 62, BG);
     chamfer(14, 184, 292, 18, 5, C_MAIN);
     segBar(20, 189, 282, 8, p, 28);
@@ -1293,7 +2085,7 @@ void bootSequence() {
     present();
   }
   glitchUntil = millis() + 200;
-  for (int f = 0; f < 20; f++) {
+  for (int f = 0; f < 20 && !skipBoot(); f++) {
     spr.fillSprite(BG);
     bgGrid();
     brackets(30, 80, 260, 80, 14, C_MAIN);
@@ -1301,14 +2093,16 @@ void bootSequence() {
     txt("BENVENUTO, OPERATORE", 160, 140, C_MAIN, MC_DATUM);
     present();
   }
-  delay(400);
+  if (!bootSkip) delay(400);
+  while (ts.touched()) delay(10);      // aspetta che il dito si sollevi
 }
 
 void setup() {
   Serial.begin(115200);
-  pinMode(LED_R, OUTPUT); pinMode(LED_G, OUTPUT); pinMode(LED_B, OUTPUT);
-  digitalWrite(LED_R, HIGH); digitalWrite(LED_G, HIGH); digitalWrite(LED_B, HIGH);  // LED RGB spento
-  pinMode(SPK_PIN, OUTPUT);
+  ledSetup();                                          // LED RGB spento
+  ledcSetup(SPK_CH, 2000, 10);
+  ledcAttachPin(SPK_PIN, SPK_CH);
+  ledcWrite(SPK_CH, 0);
   analogSetPinAttenuation(LDR_PIN, ADC_0db);
 
   prefs.begin("retroterm", false);
@@ -1335,10 +2129,13 @@ void setup() {
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
   randomSeed(analogRead(LDR_PIN) ^ micros());
+  newTerminal();
+  snReset();
 
   bootSequence();
   updateStats();
   addLog("SISTEMA AVVIATO");
+  lastInput = millis();
 
   if (cfg.ssid.length()) {
     WiFi.begin(cfg.ssid.c_str(), cfg.pass.c_str());
@@ -1350,16 +2147,36 @@ void loop() {
   int x, y;
   if (getTouch(x, y)) { onTouch(x, y); dirty = true; }
 
+  pollSound();
   pollWifiScan();
   handleConnecting();
   checkWifiStatus();
   checkBtDone();
+  pollWeather();
 
   unsigned long now = millis();
   if (now - lastStats >= 1000) { lastStats = now; updateStats(); }
 
-  bool anim = cfg.crt || tab == 3 || (tab == 0 && sub[0] == 0) || tab == 1 ||
-              wifiScanning || btScanning || modal != M_NONE;
+  // serpente: avanza solo se visibile, altrimenti va in pausa
+  if (snState == 1) {
+    if (!(tab == 5 && sub[5] == 1) || modal != M_NONE) snState = 3;
+    else if (now - snLast >= (unsigned long)max(55, 130 - snScore * 3)) { snLast = now; snStep(); dirty = true; }
+  }
+
+  // salvaschermo
+  int smin = SAVER_MIN[cfg.saver];
+  if (!saverOn && smin && modal == M_NONE && snState != 1 && !wifiScanning && !btScanning &&
+      now - lastInput > (unsigned long)smin * 60000UL) {
+    saverOn = true;
+    initSaver();
+    applyBrightness();
+  }
+
+  static unsigned long lastLed = 0;
+  if (now - lastLed >= 30) { lastLed = now; updateLed(); }
+
+  bool anim = saverOn || cfg.crt || tab == 1 || tab == 3 || tab == 5 || (tab == 0 && sub[0] == 0) ||
+              (tab == 2 && sub[2] == 1) || wifiScanning || btScanning || wxState == 1 || modal != M_NONE;
   unsigned long iv = anim ? 40 : 250;
   if (dirty || now - lastFrame >= iv) {
     lastFrame = now;
