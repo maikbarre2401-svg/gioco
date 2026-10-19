@@ -21,15 +21,20 @@ Dimensione sketch: 1.804.885 byte (57% della partizione da 3 MB)
 
 ## Opzione A — un solo file, flasher dal browser (consigliata)
 
-File: `VX26_Operator_FULL_0x0.bin` (immagine completa: bootloader + tabella partizioni + boot_app0 + app)
+File: `VX26_Operator_FULL_0x1000.bin` (immagine completa: bootloader + tabella partizioni + boot_app0 + app,
+pensata per l'indirizzo **0x1000**, che è quello già proposto da esptool-js)
 
 1. Apri **https://espressif.github.io/esptool-js/** con Chrome o Edge (Firefox e Safari non supportano la Web Serial).
-2. Collega la scheda via USB e premi **Connect**, poi scegli la porta COM.
-3. In "Flash Address" lascia **0x0** e seleziona `VX26_Operator_FULL_0x0.bin`.
-4. Premi **Program**. Se appare "Connecting..." senza avanzare, tieni premuto **BOOT** sulla scheda.
-5. A fine scrittura premi il tasto **RST** (o scollega e ricollega l'USB).
+2. Collega la scheda via USB, imposta Baudrate **460800** e premi **Connect**, poi scegli la porta COM.
+   Se appare "Connecting..." senza avanzare, tieni premuto **BOOT** sulla scheda.
+3. Premi **Erase Flash** e aspetta che finisca (cancella anche i resti di versioni vecchie).
+4. In "Flash Address" lascia **0x1000** e seleziona `VX26_Operator_FULL_0x1000.bin`
+   (attenzione a non prendere un file vecchio dalla cartella Download).
+5. Premi **Program**, poi a fine scrittura premi **RST** (o scollega e ricollega l'USB).
 
-## Opzione B — esptool da riga di comando
+## Opzione B — immagine per 0x0 / esptool da riga di comando
+
+`VX26_Operator_FULL_0x0.bin` è la stessa immagine con 4 KB vuoti davanti: va scritta **solo a 0x0**.
 
 ```
 pip install esptool
@@ -59,8 +64,10 @@ Se aggiorni un firmware già installato e vuoi cancellare le impostazioni salvat
 ## Note
 
 - Il driver USB **CH340** serve comunque per far comparire la porta COM in Windows.
-- Lo `0x0` dell'opzione A funziona perché l'immagine è "merged": contiene già il
-  bootloader all'offset giusto.
+- **Ogni file va scritto al suo indirizzo**, quello scritto nel nome. Se si scrive
+  `FULL_0x0.bin` a 0x1000 il bootloader finisce nel posto sbagliato: la scheda non si avvia
+  e lo schermo resta **nero** (sul monitor seriale a 115200 si vede `invalid header: 0xffffffff`
+  in ciclo). Si risolve rifacendo il flash con il file e l'indirizzo giusti.
 - Se lo schermo resta bianco o con i colori invertiti, non è un problema di flash:
   è la variante del controller. In `sketch/User_Setup.h` sostituisci
   `ILI9341_2_DRIVER` con `ILI9341_DRIVER` e ricompila.
