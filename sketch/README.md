@@ -1,6 +1,6 @@
 # Sorgenti usati per il firmware in `../firmware/`
 
-- `VX26_Operator.ino` — versione **6.0** (vedi le novita' in `../firmware/README.md`).
+- `VX26_Operator.ino` — versione **6.1** (vedi le novita' in `../firmware/README.md`).
   Rispetto all'originale contiene anche la correzione `getCpuFreqMHz()` →
   `getCpuFrequencyMhz()`, che nel core arduino-esp32 2.x bloccava la compilazione.
   Non servono librerie in piu': `HTTPClient` (meteo), `WebServer` ed `ESPmDNS` (pannello web)

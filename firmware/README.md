@@ -1,8 +1,28 @@
-# VX26 Operator v6.0 — firmware precompilato (ESP32 Cheap Yellow Display)
+# VX26 Operator v6.1 — firmware precompilato (ESP32 Cheap Yellow Display)
 
 Compilato con: **arduino-esp32 2.0.17**, TFT_eSPI 2.5.43, XPT2046_Touchscreen 1.4
 Scheda: **ESP32 Dev Module**, Partition Scheme: **Huge APP (3MB No OTA / 1MB SPIFFS)**
-Dimensione sketch: 1.887.765 byte (60% della partizione da 3 MB)
+Dimensione sketch: 1.902.953 byte (60% della partizione da 3 MB)
+
+## Novita' della v6.1 — niente piu' contenuti finti
+
+- **Nuova scheda NET** al posto dell'inventario inventato:
+  - **PING**: 20 ping ICMP veri verso il router, 1.1.1.1, 8.8.8.8 o google.com, con grafico,
+    minimo/medio/massimo e pacchetti persi;
+  - **VELOCITA'**: test di download reale (speedtest.tele2.net, in alternativa Cloudflare)
+    con Mbit/s in tempo reale e media. Il limite e' la scheda stessa, circa 20 Mbit/s;
+  - **IP**: IP locale con subnet, router, DNS, rete e canale, IP pubblico, provider e citta'.
+- **OBIETTIVI** al posto delle missioni inventate: 8 obiettivi che si spuntano solo quando li
+  raggiungi davvero (connettere il WiFi, scansionare, trovare 5 dispositivi BT, violare il
+  terminale, 20 punti a Serpente, 3 ondate a Difesa, aprire il pannello, ricevere un messaggio).
+- **Avvio con autodiagnosi vera**: i byte mostrati sono letti dalla memoria flash (il
+  bootloader), e al posto dei finti "[ OK ]" ci sono i valori misurati: RAM libera, flash,
+  dimensione dell'app, temperatura CPU, sensore di luce, MAC, rete salvata. Lo stesso
+  rapporto viene stampato sul monitor seriale (115200 baud).
+- **STATO**: le barre attorno alla figura ora sono valori veri (CPU, RAM, WiFi, luce,
+  spazio dell'app, esperienza) con la loro etichetta.
+- **Radar**: la distanza dal centro e' il segnale e l'angolo e' il canale WiFi. La scheda non
+  puo' misurare la direzione da cui arriva un segnale, quindi non la inventa.
 
 ## Novita' della v6.0
 

@@ -13,14 +13,15 @@
     - Scheda: "ESP32 Dev Module"
     - Partition Scheme: "Huge APP (3MB No OTA/1MB SPIFFS)"   <-- OBBLIGATORIO (WiFi+BT sono grandi)
 
-  FUNZIONI (v6.0):
+  FUNZIONI (v6.1 - tutto con dati reali):
     STAT  : STATO (figura animata + sensori + livello) | SISTEMA (info chip, rete) | GRAFICI (storico sensori)
             | CONFIG (2 pagine: tema, luminosita' manuale/automatica, suono, effetto olo, LED RGB,
               salvaschermo, calibrazione touch, WiFi salvato, riavvio)
-    INV   : ARMI | ATTREZZI | AIUTI
+    NET   : PING (ICMP vero verso router, 1.1.1.1, 8.8.8.8, google.com) | VELOCITA' (download reale)
+            | IP (locale, router, DNS, IP pubblico e provider)
     DATA  : ORA (orologio NTP) | METEO (Open-Meteo, previsioni 3 giorni) | TIMER (conto alla rovescia
-            e cronometro) | MISSIONI | LOG eventi
-    MAP   : radar animato con reti WiFi e dispositivi Bluetooth reali (TUTTI | WIFI | BT)
+            e cronometro) | OBIETTIVI (si completano con azioni reali) | LOG eventi
+    MAP   : radar con reti WiFi e dispositivi Bluetooth reali (distanza = segnale, angolo = canale)
     RADIO : WIFI (scansione + connessione con tastiera) | BLUETOOTH (scansione BLE)
             | CANALI (analizzatore dei canali WiFi) | LINK (pannello web + hotspot + codice QR)
     GIOCO : TERMINALE (trova la password) | SERPENTE | DIFESA (difendi i rifugi dai missili)
@@ -36,6 +37,7 @@
 #include <HTTPClient.h>
 #include <WebServer.h>
 #include <ESPmDNS.h>
+#include "ping/ping_sock.h"
 #include <BLEDevice.h>
 #include <BLEScan.h>
 #include <BLEAdvertisedDevice.h>
@@ -102,11 +104,11 @@ struct Config {
 // ---------------- NAVIGAZIONE ----------------
 #define NTABS 6
 #define TAB_W 53
-const char* TABS[NTABS] = {"STAT", "INV", "DATA", "MAP", "RADIO", "GIOCO"};
+const char* TABS[NTABS] = {"STAT", "NET", "DATA", "MAP", "RADIO", "GIOCO"};
 const char* SUBS[NTABS][5] = {
   {"STATO", "SISTEMA", "GRAFICI", "CONFIG", nullptr},
-  {"ARMI", "ATTREZZI", "AIUTI", nullptr, nullptr},
-  {"ORA", "METEO", "TIMER", "MISSIONI", "LOG"},
+  {"PING", "VELOCITA'", "IP", nullptr, nullptr},
+  {"ORA", "METEO", "TIMER", "OBIETTIVI", "LOG"},
   {"TUTTI", "WIFI", "BT", nullptr, nullptr},
   {"WIFI", "BLUETOOTH", "CANALI", "LINK", nullptr},
   {"TERMINALE", "SERPENTE", "DIFESA", nullptr, nullptr},
@@ -133,37 +135,30 @@ unsigned long lastInput = 0;     // ultimo tocco (per il salvaschermo)
 bool saverOn = false;
 uint8_t vigInset[240];            // angoli arrotondati del tubo catodico
 
-// ---------------- INVENTARIO ----------------
-struct Item { const char* name; float w; int v; const char* d1; const char* d2; };
-Item ARMI[] = {
-  {"Tubo di piombo", 3.0,   8, "Pesante e",      "affidabile."},
-  {"Fionda",         0.5,   5, "Munizioni:",     "sassi. Tanti."},
-  {"Pistola laser",  2.0, 120, "Cella al 60%.",  "Non guardare."},
-  {"Mazza chiodata", 4.0,  25, "Fatta in casa.", "Con amore."},
-  {"Coltello",       0.5,  12, "Taglia anche",   "il pane."},
-};
-Item ATTREZZI[] = {
-  {"Nastro adesivo", 0.2, 12, "Ripara tutto.",  "Quasi."},
-  {"Chiave inglese", 2.0, 15, "Arma o utensile","a seconda."},
-  {"Cella energia",  0.3, 30, "Carica: 87%",    "Non leccare."},
-  {"Parti radio",    0.8, 22, "Utili per il",   "trasmettitore."},
-  {"Torcia",         0.6, 18, "Batteria quasi", "scarica."},
-};
-Item AIUTI[] = {
-  {"Medkit",          0.5, 40, "Ripristina la", "salute."},
-  {"Fagioli in latta",1.0,  5, "Scaduti nel",   "2031. Forse."},
-  {"Acqua pulita",    1.0, 20, "Rara come",     "l'oro."},
-  {"Antiradiazioni",  0.1, 60, "Sapore di",     "metallo."},
-  {"Caffe' solubile", 0.2, 10, "Per i turni",   "di notte."},
-};
-Item* INV[3] = {ARMI, ATTREZZI, AIUTI};
-const int INV_N = 5;
-int invSel[3] = {0, 0, 0};
+// ---------------- NET (strumenti di rete reali) ----------------
+const char* PING_LBL[4] = {"ROUTER", "1.1.1.1", "8.8.8.8", "GOOGLE.COM"};
+const char* PING_HOST[4] = {"", "1.1.1.1", "8.8.8.8", "google.com"};
+#define PING_N 20
+int pingSel = 0;
+volatile int pingRtt[PING_N];
+volatile int pingCount = 0, pingState = 0;     // stato: 0 fermo, 1 in corso, 2 finito, 3 errore
+volatile char pingIp[16] = "";
+#define SP_N 40
+float spHist[SP_N];
+volatile int spHistN = 0, spState = 0;
+volatile float spNow = 0, spAvg = 0;
+volatile uint32_t spBytes = 0, spMs = 0;
+volatile char spHost[16] = "";
+volatile int ipState = 0;
+volatile char ipPub[20] = "", ipIsp[28] = "", ipLoc[48] = "";
 
-// ---------------- MISSIONI / LOG ----------------
-const char* QUESTS[5] = {"Trovare acqua pulita", "Riparare la radio", "Mappare le reti vicine",
-                         "Contattare altri sopravvissuti", "Tornare al rifugio"};
-bool qDone[5] = {true, false, false, false, false};
+// ---------------- OBIETTIVI (si completano solo con azioni reali) / LOG ----------------
+#define OBJ_N 8
+const char* QUESTS[OBJ_N] = {"Connettersi a una rete WiFi", "Scansionare le reti WiFi", "Trovare 5 dispositivi Bluetooth",
+                             "Violare il terminale", "Fare 20 punti a Serpente", "Superare 3 ondate a Difesa",
+                             "Aprire il pannello web", "Ricevere un messaggio dal telefono"};
+enum { Q_WIFI, Q_SCAN, Q_BT, Q_TERM, Q_SNAKE, Q_DIFESA, Q_WEB, Q_MSG };
+bool qDone[OBJ_N];
 String logs[8];
 int logN = 0;
 
@@ -429,8 +424,8 @@ void loadConfig() {
   }
   cfg.ssid   = prefs.getString("ssid", "");
   cfg.pass   = prefs.getString("pass", "");
-  uint8_t q  = prefs.getUChar("quests", 1);
-  for (int i = 0; i < 5; i++) qDone[i] = (q >> i) & 1;
+  uint8_t q  = prefs.getUChar("obj", 0);
+  for (int i = 0; i < OBJ_N; i++) qDone[i] = (q >> i) & 1;
   snHi       = prefs.getInt("snhi", 0);
   dfHi       = prefs.getInt("dfhi", 0);
   xp         = prefs.getLong("xp", 0);
@@ -439,15 +434,15 @@ void loadConfig() {
 
 void saveQuests() {
   uint8_t q = 0;
-  for (int i = 0; i < 5; i++) if (qDone[i]) q |= 1 << i;
-  prefs.putUChar("quests", q);
+  for (int i = 0; i < OBJ_N; i++) if (qDone[i]) q |= 1 << i;
+  prefs.putUChar("obj", q);
 }
 
 void completeQuest(int i) {
   if (qDone[i]) return;
   qDone[i] = true;
   saveQuests();
-  addLog("MISSIONE OK: " + String(QUESTS[i]).substring(0, 20));
+  addLog("OBIETTIVO: " + String(QUESTS[i]).substring(0, 22));
   sndOk();
   addXp(100);
 }
@@ -802,14 +797,21 @@ void drawFigure(int cx, int cy) {
   spr.fillRoundRect(cx + 4, cy + 37 - b, 14, 7, 2, C_MAIN);
 
   // barre condizione: posizione barra, punto dell'arto collegato, valore
+  // barre: CPU (temperatura), RAM libera, segnale WiFi, luce, spazio app usato, esperienza del livello
+  int lv = levelOf(xp);
+  int real[6] = {constrain((int)sTemp, 0, 100), sRam, sSig, sLight,
+                 (int)((uint64_t)ESP.getSketchSize() * 100 / max(1u, ESP.getSketchSize() + ESP.getFreeSketchSpace())),
+                 (int)((xp - xpFor(lv)) * 100 / max(1L, xpFor(lv + 1) - xpFor(lv)))};
+  static const char* BL[6] = {"CPU", "RAM", "WIFI", "LUCE", "APP", "XP"};
   int bars[6][5] = {
-    {cx - 12, hy - 30, cx,      hy - 18,      22},
-    {cx - 64, ty + 14, cx - 30, ty + 20 + a,  18},
-    {cx + 40, ty + 14, cx + 30, ty + 20 - a,  22},
-    {cx - 60, cy + 24, cx - 13, cy + 22,      14},
-    {cx + 36, cy + 24, cx + 13, cy + 22,      20},
-    {cx - 12, cy + 52, cx,      ty + 36,      22},
+    {cx - 12, hy - 30, cx,      hy - 18,      0},
+    {cx - 64, ty + 14, cx - 30, ty + 20 + a,  0},
+    {cx + 40, ty + 14, cx + 30, ty + 20 - a,  0},
+    {cx - 60, cy + 24, cx - 13, cy + 22,      0},
+    {cx + 36, cy + 24, cx + 13, cy + 22,      0},
+    {cx - 12, cy + 52, cx,      ty + 36,      0},
   };
+  for (int i = 0; i < 6; i++) bars[i][4] = constrain(real[i], 0, 100) * 22 / 100;
   // piattaforma olografica e scansione
   spr.drawEllipse(cx, cy + 47 - b, 34, 6, C_MID);
   spr.drawEllipse(cx, cy + 47 - b, 24, 4, C_DIM2);
@@ -821,6 +823,9 @@ void drawFigure(int cx, int cy) {
     int bx = bars[i][0], by = bars[i][1];
     spr.drawRect(bx, by, 24, 5, C_DIM);
     spr.fillRect(bx + 1, by + 1, bars[i][4], 3, C_MAIN);
+    if (i == 0) txt(BL[i], bx + 28, by - 1, C_DIM, TL_DATUM, 1);
+    else if (i == 5) txt(BL[i], bx - 4, by - 1, C_DIM, TR_DATUM, 1);
+    else txt(BL[i], bx, by - 9, C_DIM, TL_DATUM, 1);
     if (i == 1 || i == 3) dotted(bx + 25, by + 2, bars[i][2], bars[i][3], C_DIM2);
     if (i == 2 || i == 4) dotted(bx - 2, by + 2, bars[i][2], bars[i][3], C_DIM2);
   }
@@ -925,41 +930,6 @@ void arrowBtnH(int x, int y, int w, int h, bool left) {
 }
 
 // =================================================================
-//  INV
-// =================================================================
-void drawInv() {
-  int c = sub[1];
-  Item* list = INV[c];
-  for (int i = 0; i < INV_N; i++) {
-    int y = 50 + i * 26;
-    bool s = (i == invSel[c]);
-    if (s) {
-      spr.fillRect(4, y, 164, 22, C_MAIN);
-      txt(list[i].name, 10, y + 12, BG, ML_DATUM);
-    } else {
-      txt(list[i].name, 10, y + 12, C_MAIN, ML_DATUM);
-    }
-  }
-  Item& it = list[invSel[c]];
-  chamfer(176, 48, 140, 164, 8, C_DIM);
-  txt("PESO", 184, 56, C_DIM);
-  txt("VALORE", 184, 76, C_DIM);
-  txt(String(it.w, 1), 308, 56, C_HI, TR_DATUM);
-  txt(String(it.v), 308, 76, C_HI, TR_DATUM);
-  spr.drawFastHLine(182, 98, 128, C_DIM2);
-  txt(it.d1, 184, 106, C_MAIN);
-  txt(it.d2, 184, 124, C_MAIN);
-  // icona generica animata
-  int bx = 224, by = 150, k = (millis() / 150) % 44;
-  brackets(bx - 4, by - 4, 52, 52, 8, C_MAIN);
-  spr.drawCircle(bx + 22, by + 22, 16, C_DIM);
-  spr.drawCircle(bx + 22, by + 22, 6, C_MAIN);
-  spr.drawLine(bx, by + 22, bx + 43, by + 22, C_DIM2);
-  spr.drawLine(bx + 22, by, bx + 22, by + 43, C_DIM2);
-  spr.drawFastHLine(bx + 1, by + k, 42, C_MID);
-}
-
-// =================================================================
 //  DATA
 // =================================================================
 const char* GIORNI[7] = {"DOMENICA", "LUNEDI'", "MARTEDI'", "MERCOLEDI'", "GIOVEDI'", "VENERDI'", "SABATO"};
@@ -981,15 +951,14 @@ void drawOra() {
 
 void drawMissioni() {
   int done = 0;
-  for (int i = 0; i < 5; i++) {
-    int y = 52 + i * 26;
-    spr.drawRect(10, y, 14, 14, C_MAIN);
-    if (qDone[i]) { spr.fillRect(13, y + 3, 8, 8, C_HI); done++; }
-    txt(QUESTS[i], 34, y + 7, qDone[i] ? C_DIM2 : C_MAIN, ML_DATUM);
-    if (qDone[i]) spr.drawFastHLine(34, y + 8, spr.textWidth(QUESTS[i], 2), C_DIM2);
+  for (int i = 0; i < OBJ_N; i++) {
+    int y = 47 + i * 17;
+    spr.drawRect(8, y + 2, 12, 12, qDone[i] ? C_MAIN : C_DIM);
+    if (qDone[i]) { spr.fillRect(11, y + 5, 6, 6, C_HI); done++; }
+    txt(QUESTS[i], 28, y, qDone[i] ? C_DIM : C_MAIN);
   }
-  txt("COMPLETATE " + String(done) + "/5", 10, 190, C_DIM);
-  segBar(150, 194, 166, 8, done * 20, 10);
+  txt("COMPLETATI " + String(done) + "/" + String(OBJ_N) + "  (+100 XP L'UNO)", 8, 190, C_DIM, TL_DATUM, 1);
+  segBar(8, 202, 306, 8, done * 100 / OBJ_N, 16);
 }
 
 void drawLog() {
@@ -1022,9 +991,13 @@ void drawRadar() {
     spr.drawLine(cx, cy, cx + cos(a) * R, cy + sin(a) * R, trail[k]);
   }
 
-  auto plot = [&](const char* key, int rssi, bool isBt, const String& label) {
+  for (int ch = 1; ch <= 13; ch += 5) {
+    float ca = ((ch - 1) * 360.0f / 13 - 90) * DEG_TO_RAD;
+    txt("C" + String(ch), cx + cos(ca) * (R - 9), cy + sin(ca) * (R - 9), C_DIM, MC_DATUM, 1);
+  }
+  auto plot = [&](const char* key, int rssi, bool isBt, const String& label, int ch) {
     uint32_t h = hashStr(key);
-    float a = (h % 360) * DEG_TO_RAD;
+    float a = ch > 0 ? ((ch - 1) * 360.0f / 13 - 90 + (int)(h % 17) - 8) * DEG_TO_RAD : (h % 360) * DEG_TO_RAD;
     int d = map(constrain(rssi, -95, -35), -35, -95, 12, R - 4);
     int x = cx + cos(a) * d, y = cy + sin(a) * d;
     float behind = sw - a;
@@ -1035,7 +1008,7 @@ void drawRadar() {
     if (behind < 0.9) txt(label.substring(0, 10), x + 5, y - 4, C_MAIN, TL_DATUM, 1);
   };
 
-  if (f != 2) for (int i = 0; i < netCount; i++) plot(nets[i].ssid.c_str(), nets[i].rssi, false, nets[i].ssid);
+  if (f != 2) for (int i = 0; i < netCount; i++) plot(nets[i].ssid.c_str(), nets[i].rssi, false, nets[i].ssid, constrain(nets[i].ch, 1, 13));
   if (f != 1) {
     static BDev snap[MAXBT];
     int n;
@@ -1043,7 +1016,7 @@ void drawRadar() {
     n = bdevCount;
     memcpy(snap, bdevs, sizeof(BDev) * n);
     portEXIT_CRITICAL(&btMux);
-    for (int i = 0; i < n; i++) plot(snap[i].addr, snap[i].rssi, true, String(snap[i].name[0] ? snap[i].name : snap[i].addr));
+    for (int i = 0; i < n; i++) plot(snap[i].addr, snap[i].rssi, true, String(snap[i].name[0] ? snap[i].name : snap[i].addr), 0);
   }
 
   txt("RETI WIFI", 6, 50, C_DIM);
@@ -1052,6 +1025,7 @@ void drawRadar() {
   txt(String((int)bdevCount), 6, 114, C_HI, TL_DATUM, 4);
   spr.fillRect(8, 152, 5, 5, C_MAIN); txt("WIFI", 20, 148, C_MAIN);
   spr.fillTriangle(10, 166, 7, 172, 13, 172, C_MAIN); txt("BT", 20, 162, C_MAIN);
+  txt("ANGOLO = CANALE", 6, 178, C_DIM2, TL_DATUM, 1);
   bool sc = wifiScanning || btScanning;
   button(6, 190, 84, 22, sc ? "SCAN..." : "SCAN", sc && (millis() / 300) % 2);
   if (netCount == 0 && bdevCount == 0 && !sc) txt("PREMI SCAN", cx, cy + 30, C_DIM, MC_DATUM, 1);
@@ -1144,6 +1118,7 @@ void pollWifiScan() {
   netScroll = 0;
   addLog("WIFI: " + String(n) + " reti trovate");
   addXp(5);
+  completeQuest(Q_SCAN);
 }
 
 void startConnect(const String& ssid, const String& pass) {
@@ -1184,7 +1159,7 @@ void checkWifiStatus() {
       configTzTime(TZ_INFO, NTP1, NTP2);
       if (!mdnsOn && MDNS.begin(MDNS_NAME)) { MDNS.addService("http", "tcp", 80); mdnsOn = true; }
       addLog("WIFI OK " + WiFi.localIP().toString());
-      completeQuest(1);
+      completeQuest(Q_WIFI);
       if (wxState != 1) wxState = 0;        // meteo subito alla connessione
     } else addLog("WIFI DISCONNESSO");
   }
@@ -1262,7 +1237,7 @@ void checkBtDone() {
     portEXIT_CRITICAL(&btMux);
     addLog("BT: " + String((int)bdevCount) + " dispositivi");
     addXp(5);
-    if (netCount > 0) completeQuest(2);
+    if (bdevCount >= 5) completeQuest(Q_BT);
   }
   was = btScanning;
 }
@@ -1735,7 +1710,7 @@ void termTouch(int x, int y) {
     glitchUntil = millis() + 200;
     sndOk();
     addLog("TERMINALE: ACCESSO OTTENUTO");
-    completeQuest(3);
+    completeQuest(Q_TERM);
     addXp(60);
   } else if (--twTries == 0) {
     twState = 2;
@@ -1790,7 +1765,7 @@ void snStep() {
   memmove(snX + 1, snX, snLen - 1);
   memmove(snY + 1, snY, snLen - 1);
   snX[0] = nx; snY[0] = ny;
-  if (eat) { snScore++; sndEat(); snPlaceFood(); }
+  if (eat) { snScore++; sndEat(); snPlaceFood(); if (snScore >= 20) completeQuest(Q_SNAKE); }
 }
 
 void snakeTouch(int x, int y) {
@@ -2324,7 +2299,7 @@ small{opacity:.6}</style></head><body><main id="m"><h1><span>VX-26 // LINK</span
 <div class="row"><span>LUCE</span><input type="range" id="luce" min="20" max="255"></div>
 <small>VX-26 Operator v6.0 - pannello locale, nessun dato esce dalla tua rete.</small></main><script>
 const $=i=>document.getElementById(i);let live=1,S={};
-const T=['STAT','INV','DATA','MAP','RADIO','GIOCO'];
+const T=['STAT','NET','DATA','MAP','RADIO','GIOCO'];
 T.forEach((t,i)=>{const b=document.createElement('button');b.textContent=t;b.onclick=()=>fetch('/api/vai?tab='+i).then(st);$('tabs').appendChild(b)});
 function shot(){if(!live)return;const n=new Image();n.onload=()=>{$('s').src=n.src;setTimeout(shot,250)};
 n.onerror=()=>setTimeout(shot,1500);n.src='/screen.bmp?t='+Date.now()}
@@ -2490,12 +2465,13 @@ void webMsg() {
   for (int i = 0; i < 3; i++) { queueTone(1800, 50); queueTone(0, 40); }
   queueTone(2600, 160);
   addLog("MSG RICEVUTO VIA LINK");
+  completeQuest(Q_MSG);
   addXp(5);
   web.send(200, "text/plain", "ok");
 }
 
 void webBegin() {
-  web.on("/", []() { webNote(); web.send_P(200, "text/html", PAGE); });
+  web.on("/", []() { webNote(); web.send_P(200, "text/html", PAGE); completeQuest(Q_WEB); });
   web.on("/screen.bmp", webScreen);
   web.on("/api/stato", webStato);
   web.on("/api/tap", webTap);
@@ -2625,6 +2601,7 @@ void dfStep() {
     dfState = 4;
     dfStateT = millis();
     sndOk();
+    if (dfWave >= 3) completeQuest(Q_DIFESA);
   }
 }
 
@@ -2717,6 +2694,228 @@ void drawDifesa() {
 }
 
 // =================================================================
+//  NET - strumenti di rete reali: ping ICMP, test di velocita', IP
+// =================================================================
+void pingOk(esp_ping_handle_t h, void*) {
+  uint32_t t = 0;
+  esp_ping_get_profile(h, ESP_PING_PROF_TIMEGAP, &t, sizeof(t));
+  if (pingCount < PING_N) { pingRtt[pingCount] = (int)t; pingCount++; }
+}
+void pingLost(esp_ping_handle_t, void*) { if (pingCount < PING_N) { pingRtt[pingCount] = -1; pingCount++; } }
+void pingEnd(esp_ping_handle_t h, void*) { esp_ping_delete_session(h); pingState = 2; }
+
+void pingTask(void*) {
+  IPAddress ip;
+  bool ok = pingSel == 0 ? (ip = WiFi.gatewayIP(), true) : WiFi.hostByName(PING_HOST[pingSel], ip) == 1;
+  if (ok && (uint32_t)ip != 0) {
+    snprintf((char*)pingIp, sizeof(pingIp), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+    esp_ping_config_t c = ESP_PING_DEFAULT_CONFIG();
+    IP_ADDR4(&c.target_addr, ip[0], ip[1], ip[2], ip[3]);
+    c.count = PING_N;
+    c.interval_ms = 500;
+    c.timeout_ms = 1000;
+    esp_ping_callbacks_t cb = {};
+    cb.on_ping_success = pingOk;
+    cb.on_ping_timeout = pingLost;
+    cb.on_ping_end = pingEnd;
+    esp_ping_handle_t h;
+    if (esp_ping_new_session(&c, &cb, &h) == ESP_OK) {
+      if (esp_ping_start(h) == ESP_OK) { vTaskDelete(NULL); return; }
+      esp_ping_delete_session(h);
+    }
+  }
+  pingState = 3;
+  vTaskDelete(NULL);
+}
+
+void startPing() {
+  if (pingState == 1 || WiFi.status() != WL_CONNECTED) return;
+  pingCount = 0;
+  pingIp[0] = 0;
+  pingState = 1;
+  if (xTaskCreatePinnedToCore(pingTask, "ping", 4096, NULL, 1, NULL, 0) != pdPASS) pingState = 3;
+  else addLog("PING " + String(PING_LBL[pingSel]));
+}
+
+void drawPing() {
+  bool wc = WiFi.status() == WL_CONNECTED;
+  for (int i = 0; i < 4; i++) button(4, 48 + i * 28, 96, 24, PING_LBL[i], i == pingSel);
+  const int gx = 110, gy = 52, gw = 200, gh = 80;
+  int n = pingCount, mx = 0, mn = 1 << 30, sum = 0, ok = 0;
+  for (int i = 0; i < n; i++) {
+    int v = pingRtt[i];
+    if (v >= 0) { mx = max(mx, v); mn = min(mn, v); sum += v; ok++; }
+  }
+  int top = mx < 50 ? 50 : mx < 100 ? 100 : mx < 250 ? 250 : mx < 500 ? 500 : 1000;
+  dotted(gx, gy, gx + gw, gy, C_FAINT);
+  dotted(gx, gy + gh / 2, gx + gw, gy + gh / 2, C_FAINT);
+  spr.drawFastHLine(gx, gy + gh, gw, C_DIM);
+  txt(String(top) + " ms", gx + gw, gy - 2, C_DIM2, BR_DATUM, 1);
+  for (int i = 0; i < n; i++) {
+    int x = gx + i * (gw / PING_N), v = pingRtt[i];
+    if (v < 0) {
+      spr.drawLine(x + 2, gy + gh - 9, x + 7, gy + gh - 4, C_HI);
+      spr.drawLine(x + 2, gy + gh - 4, x + 7, gy + gh - 9, C_HI);
+    } else {
+      int h = constrain(v * gh / top, 1, gh);
+      spr.fillRect(x + 1, gy + gh - h, gw / PING_N - 2, h, i == n - 1 ? C_HI : C_MAIN);
+    }
+  }
+  if (n == 0 && pingState != 1) txt(wc ? "SCEGLI UN BERSAGLIO E AVVIA" : "CONNETTI IL WIFI", gx + gw / 2, gy + gh / 2, C_DIM, MC_DATUM, 1);
+  if (n > 0) {
+    int last = pingRtt[n - 1];
+    txt("ULTIMO", gx, 140, C_DIM, TL_DATUM, 1);
+    txtG(last >= 0 ? String(last) + " ms" : String("PERSO"), gx, 152, C_HI, TL_DATUM, 4);
+    txt("MIN " + (ok ? String(mn) : String("-")) + "  MAX " + (ok ? String(mx) : String("-")), 314, 142, C_MAIN, TR_DATUM, 1);
+    txt("MEDIA " + (ok ? String(sum / ok) + " ms" : String("-")), 314, 156, C_MAIN, TR_DATUM, 1);
+    txt("PERSI " + String(n - ok) + "/" + String(n), 314, 170, n - ok ? C_HI : C_MAIN, TR_DATUM, 1);
+  }
+  button(4, 190, 96, 22, pingState == 1 ? "IN CORSO" : "AVVIA", pingState == 1 && (millis() / 300) % 2);
+  String st;
+  if (!wc) st = "SERVE IL WIFI";
+  else if (pingState == 1) st = pingIp[0] ? "PING " + String((const char*)pingIp) : String("RISOLVO IL NOME...");
+  else if (pingState == 3) st = "ERRORE: BERSAGLIO NON RAGGIUNGIBILE";
+  else if (pingState == 2 && ok) { int a = sum / ok; st = a < 30 ? "LINEA OTTIMA" : a < 80 ? "LINEA BUONA" : a < 200 ? "LINEA LENTA" : "LINEA PESSIMA"; }
+  else if (pingState == 2) st = "NESSUNA RISPOSTA";
+  else st = "20 PING ICMP VERI";
+  txt(st, 210, 201, pingState == 3 ? C_HI : C_DIM, MC_DATUM, 1);
+}
+
+void speedTask(void*) {
+  static uint8_t buf[4096];
+  const char* urls[2] = {"http://speedtest.tele2.net/10MB.zip", "https://speed.cloudflare.com/__down?bytes=25000000"};
+  const char* names[2] = {"TELE2", "CLOUDFLARE"};
+  bool done = false;
+  for (int k = 0; k < 2 && !done; k++) {
+    HTTPClient http;
+    http.setConnectTimeout(6000);
+    http.setTimeout(6000);
+    if (!http.begin(urls[k])) continue;
+    if (http.GET() != 200) { http.end(); continue; }
+    strncpy((char*)spHost, names[k], sizeof(spHost) - 1);
+    WiFiClient* s = http.getStreamPtr();
+    uint32_t t0 = millis(), last = t0, lastB = 0, tot = 0;
+    while (millis() - t0 < 10000 && (s->connected() || s->available())) {
+      int a = s->available();
+      if (a > 0) { int c = s->read(buf, min(a, (int)sizeof(buf))); if (c > 0) tot += c; }
+      else delay(1);
+      uint32_t now = millis();
+      if (now - last >= 250) {
+        float v = (tot - lastB) * 8.0f / ((now - last) * 1000.0f);
+        spNow = v;
+        spBytes = tot;
+        spMs = now - t0;
+        spAvg = tot * 8.0f / ((now - t0) * 1000.0f);
+        if (spHistN < SP_N) { spHist[spHistN] = v; spHistN++; }
+        last = now;
+        lastB = tot;
+      }
+    }
+    uint32_t el = max(1UL, (unsigned long)(millis() - t0));
+    http.end();
+    if (tot > 100000) { spBytes = tot; spMs = el; spAvg = tot * 8.0f / (el * 1000.0f); done = true; }
+  }
+  spState = done ? 2 : 3;
+  vTaskDelete(NULL);
+}
+
+void startSpeed() {
+  if (spState == 1 || WiFi.status() != WL_CONNECTED) return;
+  spNow = spAvg = 0;
+  spBytes = spMs = 0;
+  spHistN = 0;
+  spHost[0] = 0;
+  spState = 1;
+  if (xTaskCreatePinnedToCore(speedTask, "speed", 16384, NULL, 1, NULL, 0) != pdPASS) spState = 3;
+  else addLog("TEST VELOCITA' AVVIATO");
+}
+
+void drawSpeed() {
+  bool wc = WiFi.status() == WL_CONNECTED;
+  float v = spState == 1 ? spNow : spAvg;
+  ring(64, 110, 54, (int)min(100.0f, v * 4));                 // scala 0-25 Mbit/s
+  txtG(String(v, v < 10 ? 1 : 0), 64, 104, C_HI, MC_DATUM, 4);
+  txt("Mbit/s", 64, 126, C_DIM, MC_DATUM, 1);
+  txt(spState == 1 ? "IN TEMPO REALE" : spState == 2 ? "MEDIA" : "", 64, 168, C_DIM, MC_DATUM, 1);
+  const int gx = 130, gy = 52, gw = 184, gh = 70;
+  float mx = 5;
+  for (int i = 0; i < spHistN; i++) mx = max(mx, spHist[i]);
+  dotted(gx, gy, gx + gw, gy, C_FAINT);
+  spr.drawFastHLine(gx, gy + gh, gw, C_DIM);
+  txt(String(mx, 0) + " Mbit/s", gx + gw, gy - 2, C_DIM2, BR_DATUM, 1);
+  int px = -1, py = 0;
+  for (int i = 0; i < spHistN; i++) {
+    int x = gx + i * gw / (SP_N - 1), y = gy + gh - (int)(spHist[i] * gh / mx);
+    spr.drawFastVLine(x, y, gy + gh - y, C_FAINT);
+    if (px >= 0) spr.drawLine(px, py, x, y, C_MAIN);
+    px = x; py = y;
+  }
+  if (spState == 0) txt(wc ? "PREMI AVVIA TEST" : "CONNETTI IL WIFI", gx + gw / 2, gy + gh / 2, C_DIM, MC_DATUM, 1);
+  if (spBytes) {
+    txt("SCARICATI " + String(spBytes / 1048576.0f, 1) + " MB IN " + String(spMs / 1000.0f, 1) + " s", gx, 132, C_MAIN, TL_DATUM, 1);
+    txt("SERVER " + String((const char*)spHost), gx, 146, C_DIM, TL_DATUM, 1);
+  }
+  if (spState == 2) txtG("MEDIA " + String((float)spAvg, 1) + " Mbit/s", gx, 160, C_HI);
+  if (spState == 3) txt("ERRORE: SERVER NON RAGGIUNGIBILE", gx, 160, C_HI, TL_DATUM, 1);
+  button(4, 190, 120, 22, spState == 1 ? "IN CORSO" : "AVVIA TEST", spState == 1 && (millis() / 300) % 2);
+  txt("DOWNLOAD VERO DA INTERNET", 222, 196, C_DIM2, MC_DATUM, 1);
+  txt("LIMITE DELLA SCHEDA ~20 Mbit/s", 222, 207, C_DIM2, MC_DATUM, 1);
+}
+
+void ipTask(void*) {
+  String g = httpGet("http://ip-api.com/json/?fields=status,query,isp,city,country");
+  if (g.indexOf("\"success\"") >= 0) {
+    char city[24], country[24];
+    jStr(g, "\"query\":", (char*)ipPub, sizeof(ipPub));
+    jStr(g, "\"isp\":", (char*)ipIsp, sizeof(ipIsp));
+    jStr(g, "\"city\":", city, sizeof(city));
+    jStr(g, "\"country\":", country, sizeof(country));
+    snprintf((char*)ipLoc, sizeof(ipLoc), "%s, %s", city, country);
+    ipState = 2;
+  } else ipState = 3;
+  vTaskDelete(NULL);
+}
+
+void startIp() {
+  if (ipState == 1 || WiFi.status() != WL_CONNECTED) return;
+  ipState = 1;
+  if (xTaskCreatePinnedToCore(ipTask, "ip", 12288, NULL, 1, NULL, 0) != pdPASS) ipState = 3;
+}
+
+void drawIp() {
+  bool wc = WiFi.status() == WL_CONNECTED;
+  String L[7] = {"IP LOCALE", "ROUTER", "DNS", "RETE", "IP PUBBLICO", "PROVIDER", "LUOGO"};
+  String V[7];
+  if (wc) {
+    V[0] = WiFi.localIP().toString() + " /" + String(__builtin_popcount((uint32_t)WiFi.subnetMask()));
+    V[1] = WiFi.gatewayIP().toString();
+    V[2] = WiFi.dnsIP().toString();
+    V[3] = WiFi.SSID().substring(0, 16) + "  C" + String(WiFi.channel());
+  } else for (int i = 0; i < 4; i++) V[i] = "-";
+  String wait = ipState == 1 ? "VERIFICA..." : ipState == 3 ? "ERRORE" : "-";
+  V[4] = ipState == 2 ? String((const char*)ipPub) : wait;
+  V[5] = ipState == 2 ? String((const char*)ipIsp).substring(0, 24) : String("-");
+  V[6] = ipState == 2 ? String((const char*)ipLoc).substring(0, 26) : String("-");
+  for (int i = 0; i < 7; i++) {
+    int y = 47 + i * 19;
+    txt(L[i], 8, y, i < 4 ? C_DIM : C_MID);
+    txt(V[i], 314, y, C_MAIN, TR_DATUM);
+    spr.drawFastHLine(8, y + 17, 306, C_FAINT);
+  }
+  button(4, 190, 150, 22, ipState == 1 ? "VERIFICA..." : "VERIFICA IP", ipState == 1 && (millis() / 300) % 2);
+  txt(wc ? "IP PUBBLICO DA ip-api.com" : "CONNETTI IL WIFI", 238, 201, C_DIM2, MC_DATUM, 1);
+}
+
+void netTouch(int x, int y) {
+  if (sub[1] == 0) {
+    if (x < 104 && y >= 48 && y < 160 && pingState != 1) pingSel = (y - 48) / 28;
+    else if (inRect(x, y, 0, 186, 104, 30)) startPing();
+  } else if (sub[1] == 1) {
+    if (inRect(x, y, 0, 186, 128, 30)) startSpeed();
+  } else if (inRect(x, y, 0, 186, 158, 30)) startIp();
+}
+
+// =================================================================
 //  LED RGB DI STATO (attivo basso)
 // =================================================================
 void ledSetup() {
@@ -2740,7 +2939,7 @@ void updateLed() {
     if (tmAlarm) r = (t / 150) % 2 ? 120 : 0;
     else if (modal == M_RX) { g = br; b = br; }
     else if (modal == M_CONN) { r = (t / 120) % 2 ? 70 : 0; g = r / 2; }
-    else if (wifiScanning || btScanning || wxState == 1) b = (t / 150) % 2 ? 60 : 4;
+    else if (wifiScanning || btScanning || wxState == 1 || pingState == 1 || spState == 1 || ipState == 1) b = (t / 150) % 2 ? 60 : 4;
     else if (WiFi.status() == WL_CONNECTED) g = br;
     else r = br / 2;
   }
@@ -2756,7 +2955,7 @@ void drawContent() {
       if (sub[0] == 0) drawStato(); else if (sub[0] == 1) drawSistema();
       else if (sub[0] == 2) drawGrafici(); else drawConfig();
       break;
-    case 1: drawInv(); break;
+    case 1: if (sub[1] == 0) drawPing(); else if (sub[1] == 1) drawSpeed(); else drawIp(); break;
     case 2:
       if (sub[2] == S_ORA) drawOra(); else if (sub[2] == S_METEO) drawMeteo();
       else if (sub[2] == S_TIMER) drawTimer();
@@ -2887,16 +3086,11 @@ void onTouch(int x, int y) {
     case 0:
       if (sub[0] == 3) touchConfig(x, y);
       break;
-    case 1:
-      if (x < 170 && y >= 50 && y < 50 + INV_N * 26) invSel[sub[1]] = (y - 50) / 26;
-      break;
+    case 1: netTouch(x, y); break;
     case 2:
       if (sub[2] == S_METEO) startWeather();
       else if (sub[2] == S_TIMER) timerTouch(x, y);
-      else if (sub[2] == S_MISSIONI && y >= 50 && y < 180) {
-        int i = (y - 50) / 26;
-        if (i >= 0 && i < 5) { qDone[i] = !qDone[i]; saveQuests(); }
-      }
+
       break;
     case 3:
       if (inRect(x, y, 6, 186, 90, 28)) { startWifiScan(); startBtScan(); }
@@ -2964,16 +3158,20 @@ bool skipBoot() {
 void bootSequence() {
   // accensione: linea che si espande
   for (int w = 4; w <= 320 && !skipBoot(); w += 28) { spr.fillSprite(BG); spr.fillRect(160 - w / 2, 119, w, 2, C_HI); spr.pushSprite(0, 0); }
-  // flusso dati
+  // byte veri della memoria flash (il bootloader parte da 0x1000)
+  static uint32_t fl[128];
+  if (!ESP.flashRead(0x1000, fl, sizeof(fl))) memset(fl, 0, sizeof(fl));
+  const uint8_t* fb = (const uint8_t*)fl;
   for (int f = 0; f < 22 && !skipBoot(); f++) {
     spr.fillSprite(BG);
     for (int r = 0; r < 14; r++) {
+      int o = (f * 2 + r) * 8;
       char line[48];
-      snprintf(line, sizeof(line), "%04X  %02X %02X %02X %02X %02X %02X %02X %02X", (unsigned)((f + r) * 16) & 0xFFFF,
-               (int)random(256), (int)random(256), (int)random(256), (int)random(256),
-               (int)random(256), (int)random(256), (int)random(256), (int)random(256));
+      snprintf(line, sizeof(line), "%05X  %02X %02X %02X %02X %02X %02X %02X %02X", 0x1000 + o,
+               fb[o], fb[o + 1], fb[o + 2], fb[o + 3], fb[o + 4], fb[o + 5], fb[o + 6], fb[o + 7]);
       txt(line, 8, 4 + r * 15, r == 13 ? C_HI : C_DIM2);
     }
+    txt("FLASH", 312, 4, C_DIM, TR_DATUM, 1);
     present();
   }
   // logo
@@ -2991,47 +3189,50 @@ void bootSequence() {
     present();
   }
   if (!bootSkip) chirp();
-  const char* lines[] = {
-    "VX-26 OPERATOR SYSTEM  v6.0",
-    "BUILD 2026.10 // CORE XTENSA LX6",
-    "",
-    "> MEMORIA",
-    "> SENSORI",
-    "> MODULO WIFI",
-    "> MODULO BLUETOOTH",
-    "> VX-LINK // PANNELLO WEB",
-    "> METEO // GIOCHI // OLOGRAFIA",
-  };
-  const int N = sizeof(lines) / sizeof(lines[0]);
+  // autodiagnosi: ogni riga mostra un valore misurato adesso (stampato anche sulla seriale)
+  updateStats();
+  uint8_t mac[6];
+  WiFi.macAddress(mac);
+  char macS[20];
+  snprintf(macS, sizeof(macS), "%02X:%02X:%02X", mac[3], mac[4], mac[5]);
+  String chip = String(ESP.getChipModel()) + " r" + String(ESP.getChipRevision()) + " // " +
+                String(ESP.getChipCores()) + " CORE " + String(getCpuFrequencyMhz()) + " MHZ";
+  const int N = 10;
+  String lines[N] = {"VX-26 OPERATOR SYSTEM  v6.1", chip, "",
+                     "> RAM LIBERA", "> FLASH", "> APP", "> TEMPERATURA CPU", "> SENSORE LUCE", "> WIFI MAC", "> RETE SALVATA"};
+  String vals[N] = {"", "", "",
+                    String(ESP.getFreeHeap() / 1024) + " KB",
+                    String(ESP.getFlashChipSize() / 1048576) + " MB",
+                    String(ESP.getSketchSize() / 1024) + " KB",
+                    String((int)sTemp) + " C",
+                    String(sLight) + "%",
+                    String(macS),
+                    cfg.ssid.length() ? cfg.ssid.substring(0, 12) : String("NESSUNA")};
+  Serial.println();
+  for (int l = 0; l < N; l++) if (lines[l].length()) Serial.println(lines[l] + (vals[l].length() ? "  " + vals[l] : String("")));
   for (int l = 0; l < N && !skipBoot(); l++) {
-    int len = strlen(lines[l]);
+    int len = lines[l].length();
     for (int c = 0; c <= len && !skipBoot(); c += 3) {
       spr.fillSprite(BG);
       for (int k = 0; k < l; k++) {
         txt(lines[k], 14, 10 + k * 18, C_MAIN);
-        if (k >= 3) txt("[ OK ]", 306, 10 + k * 18, C_HI, TR_DATUM);
+        if (vals[k].length()) txt(vals[k], 306, 10 + k * 18, C_HI, TR_DATUM);
       }
-      String part = String(lines[l]).substring(0, c);
+      String part = lines[l].substring(0, c);
       txtG(part, 14, 10 + l * 18, C_HI);
       spr.fillRect(16 + spr.textWidth(part, 2), 12 + l * 18, 7, 13, C_MAIN);
       present();
     }
     if (!bootSkip) click();
   }
-  for (int p = 0; p <= 100 && !skipBoot(); p += 4) {
-    spr.fillRect(0, 178, 320, 62, BG);
-    chamfer(14, 184, 292, 18, 5, C_MAIN);
-    segBar(20, 189, 282, 8, p, 28);
-    txt("CARICAMENTO " + String(p) + "%", 160, 216, C_DIM, MC_DATUM);
-    present();
-  }
+  if (!bootSkip) delay(500);
   glitchUntil = millis() + 200;
   for (int f = 0; f < 20 && !skipBoot(); f++) {
     spr.fillSprite(BG);
     bgGrid();
     brackets(30, 80, 260, 80, 14, C_MAIN);
-    txtG("ACCESSO CONSENTITO", 160, 112, C_HI, MC_DATUM, 4);
-    txt("BENVENUTO, OPERATORE", 160, 140, C_MAIN, MC_DATUM);
+    txtG("SISTEMA PRONTO", 160, 112, C_HI, MC_DATUM, 4);
+    txt("OPERATORE LIVELLO " + String(levelOf(xp)), 160, 140, C_MAIN, MC_DATUM);
     present();
   }
   if (!bootSkip) delay(400);
@@ -3099,6 +3300,7 @@ void loop() {
   pollWeather();
   pollTimer();
   web.handleClient();
+  if (tab == 1 && sub[1] == 2 && ipState == 0 && WiFi.status() == WL_CONNECTED) startIp();   // IP pubblico alla prima visita
 
   unsigned long now = millis();
   if (now - lastStats >= 1000) { lastStats = now; updateStats(); }
