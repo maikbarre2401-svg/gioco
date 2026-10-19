@@ -1,6 +1,7 @@
 /*
   ================================================================
    VX-26 OPERATOR - Interfaccia HUD futuristica stile post-apocalittico (2026)
+   CREATOR: MAIKGOST
    Scheda: ESP32-2432S028R "Cheap Yellow Display" (320x240 + touch)
   ================================================================
 
@@ -11,22 +12,24 @@
 
   IMPOSTAZIONI SCHEDA (menu Strumenti):
     - Scheda: "ESP32 Dev Module"
-    - Partition Scheme: "Huge APP (3MB No OTA/1MB SPIFFS)"   <-- OBBLIGATORIO (WiFi+BT sono grandi)
+    - Partizioni: il file partitions.csv nella cartella dello sketch (2 x 1,9 MB per
+      l'aggiornamento dal telefono) viene usato in automatico da Arduino IDE
 
-  FUNZIONI (v6.1 - tutto con dati reali):
+  FUNZIONI (v7.0 - tutto con dati reali):
     STAT  : STATO (figura animata + sensori + livello) | SISTEMA (info chip, rete) | GRAFICI (storico sensori)
             | CONFIG (2 pagine: tema, luminosita' manuale/automatica, suono, effetto olo, LED RGB,
               salvaschermo, calibrazione touch, WiFi salvato, riavvio)
     NET   : PING (ICMP vero verso router, 1.1.1.1, 8.8.8.8, google.com) | VELOCITA' (download reale)
             | IP (locale, router, DNS, IP pubblico e provider)
     DATA  : ORA (orologio NTP) | METEO (Open-Meteo, previsioni 3 giorni) | TIMER (conto alla rovescia
-            e cronometro) | OBIETTIVI (si completano con azioni reali) | LOG eventi
+            e cronometro e sveglia) | OBIETTIVI (si completano con azioni reali) | LOG eventi
     MAP   : radar con reti WiFi e dispositivi Bluetooth reali (distanza = segnale, angolo = canale)
     RADIO : WIFI (scansione + connessione con tastiera) | BLUETOOTH (scansione BLE)
             | CANALI (analizzatore dei canali WiFi) | LINK (pannello web + hotspot + codice QR)
     GIOCO : TERMINALE (trova la password) | SERPENTE | DIFESA (difendi i rifugi dai missili)
     Extra : livelli ed esperienza, pannello web con schermo dal vivo e tocco a distanza,
-            messaggi dal telefono, salvaschermo, suoni non bloccanti, LED di stato
+            messaggi, grafici, WiFi e aggiornamento firmware dal telefono (protetti da PIN),
+            riconnessione WiFi automatica, salvaschermo, suoni non bloccanti, LED di stato
 */
 
 #include <SPI.h>
@@ -37,6 +40,7 @@
 #include <HTTPClient.h>
 #include <WebServer.h>
 #include <ESPmDNS.h>
+#include <Update.h>
 #include "ping/ping_sock.h"
 #include <BLEDevice.h>
 #include <BLEScan.h>
@@ -275,7 +279,10 @@ unsigned long snLast = 0, snDeadT = 0;
 long xp = 0;
 
 // ---------------- TIMER / CRONOMETRO ----------------
-int tmMode = 0;                   // 0 conto alla rovescia, 1 cronometro
+int tmMode = 0;                   // 0 conto alla rovescia, 1 cronometro, 2 sveglia
+int alH = 7, alM = 0;             // sveglia (ora reale da NTP)
+bool alOn = false;
+long alLastMin = -1;
 long tmSet = 300000;              // durata impostata (ms)
 long tmLeft = 300000;             // tempo rimasto quando e' fermo
 unsigned long tmStart = 0;        // millis() all'avvio
@@ -291,6 +298,12 @@ int crLapN = 0;
 #define AP_SSID "VX26-OPERATOR"
 #define AP_PASS "vx26-2026"
 #define MDNS_NAME "vx26"
+#define CREATOR "MAIKGOST"
+#define FW_VER "7.0"
+int pinCode = 0;                  // PIN mostrato sulla scheda per WiFi e aggiornamenti dal web
+int pinFails = 0;
+int otaState = 0;                 // 0 niente, 1 in corso, 2 ok, 3 errore, 4 PIN errato
+uint32_t otaSize = 0, otaDone = 0;
 WebServer web(80);
 bool mdnsOn = false;
 int qrShowWifi = 0;               // 0 = indirizzo del pannello, 1 = credenziali hotspot
@@ -398,6 +411,9 @@ void saveConfig() {
   prefs.putBool("led", cfg.led);
   prefs.putInt("saver", cfg.saver);
   prefs.putBool("ap", cfg.ap);
+  prefs.putInt("alH", alH);
+  prefs.putInt("alM", alM);
+  prefs.putBool("alOn", alOn);
   prefs.putInt("tminx", cfg.tminx);
   prefs.putInt("tmaxx", cfg.tmaxx);
   prefs.putInt("tminy", cfg.tminy);
@@ -428,6 +444,9 @@ void loadConfig() {
   for (int i = 0; i < OBJ_N; i++) qDone[i] = (q >> i) & 1;
   snHi       = prefs.getInt("snhi", 0);
   dfHi       = prefs.getInt("dfhi", 0);
+  alH        = constrain(prefs.getInt("alH", 7), 0, 23);
+  alM        = constrain(prefs.getInt("alM", 0), 0, 59);
+  alOn       = prefs.getBool("alOn", false);
   xp         = prefs.getLong("xp", 0);
   blAuto     = cfg.bright;
 }
@@ -859,8 +878,9 @@ void drawStato() {
 
 void drawSistema() {
   bool wc = WiFi.status() == WL_CONNECTED;
-  String L[9] = {"CHIP", "CPU", "FLASH", "RAM LIBERA", "RAM MINIMA", "MAC", "IP", "RETE", "SDK"};
-  String V[9] = {
+  String L[10] = {"CREATOR", "CHIP", "CPU", "FLASH", "RAM LIBERA", "RAM MINIMA", "MAC", "IP", "RETE", "FIRMWARE"};
+  String V[10] = {
+    CREATOR,
     String(ESP.getChipModel()) + " r" + String(ESP.getChipRevision()),
     String(ESP.getChipCores()) + " core @ " + String(getCpuFrequencyMhz()) + "MHz",
     String(ESP.getFlashChipSize() / 1048576) + " MB",
@@ -869,12 +889,13 @@ void drawSistema() {
     WiFi.macAddress(),
     wc ? WiFi.localIP().toString() : String("-"),
     wc ? WiFi.SSID().substring(0, 16) + " " + String(WiFi.RSSI()) : String("non connesso"),
-    String(ESP.getSdkVersion()).substring(0, 18),
+    "v" FW_VER "  SDK " + String(ESP.getSdkVersion()).substring(0, 10),
   };
-  for (int i = 0; i < 9; i++) {
-    int y = 47 + i * 18;
+  for (int i = 0; i < 10; i++) {
+    int y = 46 + i * 17;
     txt(L[i], 8, y, C_DIM);
-    txt(V[i], 314, y, C_MAIN, TR_DATUM);
+    if (i == 0) txtG(V[i], 314, y, C_HI, TR_DATUM);
+    else txt(V[i], 314, y, C_MAIN, TR_DATUM);
     spr.drawFastHLine(8, y + 16, 306, C_FAINT);
   }
 }
@@ -1163,6 +1184,16 @@ void checkWifiStatus() {
       if (wxState != 1) wxState = 0;        // meteo subito alla connessione
     } else addLog("WIFI DISCONNESSO");
   }
+}
+
+// se la rete salvata cade, riprova da sola ogni 45 secondi
+void keepWifi() {
+  static unsigned long last = 0;
+  if (!cfg.ssid.length() || WiFi.status() == WL_CONNECTED || modal == M_CONN || modal == M_KB || wifiScanning) { last = millis(); return; }
+  if (millis() - last < 45000) return;
+  last = millis();
+  WiFi.begin(cfg.ssid.c_str(), cfg.pass.c_str());
+  addLog("WIFI: nuovo tentativo");
 }
 
 void selectNet(int i) {
@@ -1833,7 +1864,7 @@ void drawSaver() {
   chamferFill(ox - 90, oy - 40, 180, 80, 10, BG);
   chamfer(ox - 90, oy - 40, 180, 80, 10, C_MAIN);
   txtG(clk, ox, oy - 8, C_HI, MC_DATUM, 6);
-  txt("VX-26 IN STANDBY", ox, oy + 26, C_DIM, MC_DATUM, 1);
+  txt("VX-26 // " CREATOR, ox, oy + 26, C_DIM, MC_DATUM, 1);
 }
 
 // =================================================================
@@ -2044,7 +2075,28 @@ String mmss(long ms, bool up) {
 
 String crStr(long ms) { return mmss(ms, false) + "." + two((ms / 10) % 100); }
 
+// minuti che mancano alla sveglia (-1 se l'ora non e' ancora nota)
+long alarmIn() {
+  struct tm ti;
+  if (!getNow(ti)) return -1;
+  long now = ti.tm_hour * 60 + ti.tm_min, at = alH * 60 + alM;
+  return (at - now + 1440) % 1440;
+}
+
 void pollTimer() {
+  struct tm ti;
+  if (alOn && getNow(ti) && ti.tm_hour == alH && ti.tm_min == alM) {
+    long key = ti.tm_yday * 1440L + alH * 60 + alM;
+    if (key != alLastMin) {
+      alLastMin = key;
+      tmAlarm = true;
+      tmAlarmT = millis();
+      lastInput = millis();
+      if (saverOn) { saverOn = false; applyBrightness(); }
+      if (modal == M_NONE) { msgL1 = "SVEGLIA " + two(alH) + ":" + two(alM); msgL2 = "Tocca per spegnere"; modal = M_MSG; }
+      addLog("SVEGLIA " + two(alH) + ":" + two(alM));
+    }
+  }
   if (tmRun && timerLeft() == 0) {
     tmRun = false;
     tmLeft = 0;
@@ -2067,9 +2119,23 @@ void pollTimer() {
 }
 
 void drawTimer() {
-  button(60, 48, 96, 20, "TIMER", tmMode == 0);
-  button(164, 48, 96, 20, "CRONO", tmMode == 1);
-  if (tmMode == 0) {
+  button(8, 48, 96, 20, "TIMER", tmMode == 0);
+  button(112, 48, 96, 20, "CRONO", tmMode == 1);
+  button(216, 48, 96, 20, "SVEGLIA", tmMode == 2);
+  if (tmMode == 2) {
+    if (!(tmAlarm && (millis() / 250) % 2)) txtG(two(alH) + ":" + two(alM), 160, 104, alOn ? C_HI : C_DIM, MC_DATUM, 7);
+    long m = alarmIn();
+    String st = !alOn ? String("SVEGLIA SPENTA") : m < 0 ? String("SERVE L'ORA: CONNETTI IL WIFI")
+              : "SUONA TRA " + String(m / 60) + "h " + two(m % 60) + "m";
+    if (tmAlarm) txtG("SVEGLIA! TOCCA PER SPEGNERE", 160, 150, C_HI, MC_DATUM);
+    else txtG(st, 160, 150, alOn ? C_MAIN : C_DIM, MC_DATUM);
+    txt("OGNI GIORNO, ANCHE CON IL SALVASCHERMO", 160, 170, C_DIM2, MC_DATUM, 1);
+    button(4, 190, 50, 22, "H-");
+    button(58, 190, 50, 22, "H+");
+    button(112, 190, 50, 22, "M-");
+    button(166, 190, 50, 22, "M+");
+    button(220, 190, 96, 22, alOn ? "ATTIVA" : "SPENTA", alOn);
+  } else if (tmMode == 0) {
     long l = timerLeft();
     if (!(tmAlarm && (millis() / 250) % 2)) txtG(mmss(l, true), 160, 104, C_HI, MC_DATUM, 7);
     segBar(40, 140, 240, 8, tmSet > 0 ? (int)(l * 100 / tmSet) : 0, 24);
@@ -2100,11 +2166,20 @@ void drawTimer() {
 
 void timerTouch(int x, int y) {
   if (y >= 44 && y < 72) {
-    if (x >= 56 && x < 160) tmMode = 0;
-    else if (x >= 160 && x < 264) tmMode = 1;
+    tmMode = x < 108 ? 0 : x < 212 ? 1 : 2;
     return;
   }
   if (y < 186 || y >= 216) return;
+  if (tmMode == 2) {
+    if (x < 56) alH = (alH + 23) % 24;
+    else if (x < 110) alH = (alH + 1) % 24;
+    else if (x < 164) alM = (alM + 55) % 60;
+    else if (x < 218) alM = (alM + 5) % 60;
+    else { alOn = !alOn; if (alOn) addLog("SVEGLIA ATTIVA " + two(alH) + ":" + two(alM)); }
+    alLastMin = -1;
+    saveConfig();
+    return;
+  }
   if (tmMode == 0) {
     long d = 0;
     if (x < 56) d = -60000;
@@ -2252,8 +2327,9 @@ void drawLink() {
   } else txt("rete propria " AP_SSID, rx, 124, C_DIM2, TL_DATUM, 1);
   spr.drawFastHLine(rx, 161, 316 - rx, C_FAINT);
   String last = webHits ? String((millis() - webLastHit) / 1000) + "s FA" : String("MAI");
-  txt("RICHIESTE " + String(webHits), rx, 166, C_DIM, TL_DATUM, 1);
-  txt("ULTIMA " + last, rx, 177, webHits && millis() - webLastHit < 3000 ? C_HI : C_DIM, TL_DATUM, 1);
+  txt("RICHIESTE " + String(webHits) + "  ULTIMA " + last, rx, 166, webHits && millis() - webLastHit < 3000 ? C_HI : C_DIM, TL_DATUM, 1);
+  txt("PIN WEB", rx, 177, C_DIM, TL_DATUM, 1);
+  txtG(String(pinCode), rx + 48, 174, C_HI);
 
   if (cfg.ap) button(4, 190, 148, 22, wifiQr ? "QR: HOTSPOT" : "QR: PANNELLO");
   else { txt("INQUADRA IL QR", 74, 196, C_DIM2, MC_DATUM, 1); txt("COL TELEFONO", 74, 207, C_DIM2, MC_DATUM, 1); }
@@ -2294,10 +2370,19 @@ small{opacity:.6}</style></head><body><main id="m"><h1><span>VX-26 // LINK</span
 <h2>STATO</h2><div class="g" id="st"></div>
 <h2>TRASMETTI UN MESSAGGIO</h2><div class="row"><input type="text" id="msg" maxlength="96" placeholder="Scrivi qui...">
 <button id="send">INVIA</button></div>
+<h2>STORICO SENSORI (2 MINUTI)</h2><canvas id="ch" height="130" style="width:100%;border:1px solid color-mix(in srgb,var(--c) 40%,transparent);border-radius:4px"></canvas>
+<div class="row" id="leg"></div>
 <h2>CONTROLLI</h2><div class="row"><select id="tema"></select><button id="suono">SUONO</button>
 <button id="olo">OLO</button><button id="led">LED</button></div>
 <div class="row"><span>LUCE</span><input type="range" id="luce" min="20" max="255"></div>
-<small>VX-26 Operator v6.0 - pannello locale, nessun dato esce dalla tua rete.</small></main><script>
+<h2>RETE WIFI DELLA SCHEDA</h2><div class="row"><button id="cerca">CERCA RETI</button><select id="reti" style="flex:1;min-width:0"></select></div>
+<div class="row"><input type="password" id="pw" placeholder="Password WiFi" style="flex:1;min-width:0">
+<input type="text" id="pin1" inputmode="numeric" maxlength="4" placeholder="PIN" style="flex:0 0 70px;width:70px"><button id="conn">CONNETTI</button></div>
+<small id="wmsg">Il PIN si legge sulla scheda in RADIO &gt; LINK.</small>
+<h2>AGGIORNA FIRMWARE (SENZA CAVO)</h2><div class="row"><input type="file" id="fw" accept=".bin" style="flex:1;min-width:0">
+<input type="text" id="pin2" inputmode="numeric" maxlength="4" placeholder="PIN" style="flex:0 0 70px;width:70px"><button id="up">AGGIORNA</button></div>
+<div class="bar"><i id="upb" style="width:0"></i></div><small id="umsg">Usa il file VX26_Operator_APP_0x10000.bin di una versione nuova.</small>
+<p><small>VX-26 Operator v7.0 // creator MAIKGOST - pannello locale, nessun dato esce dalla tua rete.</small></p></main><script>
 const $=i=>document.getElementById(i);let live=1,S={};
 const T=['STAT','NET','DATA','MAP','RADIO','GIOCO'];
 T.forEach((t,i)=>{const b=document.createElement('button');b.textContent=t;b.onclick=()=>fetch('/api/vai?tab='+i).then(st);$('tabs').appendChild(b)});
@@ -2314,7 +2399,7 @@ $('st').innerHTML=k('LIVELLO',d.liv+' <small>'+d.xp+' XP</small>',lp)+k('MEMORIA
 k('CPU',d.temp+' C',Math.min(100,d.temp))+k('LUCE AMBIENTE',d.luce+'%',d.luce)+
 k('WIFI',d.wifi?d.ssid+' <small>'+d.rssi+' dBm</small>':'non connesso')+k('HOTSPOT',d.ap?'attivo, '+d.apClienti+' client':'spento')+
 k('METEO',d.meteo?d.t+' C '+d.cond+' <small>'+d.citta+'</small>':'--')+k('ACCESO DA',d.up)+
-k('TIMER',d.timer+(d.timerOn?' <small>in corso</small>':''))+k('RADAR',d.reti+' reti, '+d.bt+' BT');
+k('TIMER',d.timer+(d.timerOn?' <small>in corso</small>':''))+k('SVEGLIA',d.sveglia)+k('RADAR',d.reti+' reti, '+d.bt+' BT');
 if(!$('tema').options.length)d.temi.forEach((t,i)=>$('tema').add(new Option(t,i)));
 $('tema').value=d.tema;$('luce').value=d.luminosita;
 [['suono',d.suono],['olo',d.olo],['led',d.led]].forEach(([i,v])=>$(i).classList.toggle('on',!!v));
@@ -2325,6 +2410,22 @@ $('tema').onchange=e=>set('tema='+e.target.value);$('luce').onchange=e=>set('luc
 $('send').onclick=()=>{const t=$('msg').value.trim();if(!t)return;fetch('/api/msg?t='+encodeURIComponent(t))
 .then(r=>{$('msg').value='';$('msg').placeholder=r.ok?'Inviato!':'Schermo occupato, riprova'})};
 $('msg').onkeydown=e=>{if(e.key=='Enter')$('send').click()};
+const C=['RAM','CPU','LUCE','WIFI'],A=[1,.7,.45,.25];
+function sto(){fetch('/api/storico').then(r=>r.json()).then(d=>{const c=$('ch'),w=c.width=c.clientWidth,h=c.height,x=c.getContext('2d'),
+col=getComputedStyle(document.documentElement).getPropertyValue('--c');x.clearRect(0,0,w,h);
+d.forEach((a,k)=>{x.globalAlpha=A[k];x.strokeStyle=col;x.lineWidth=2;x.beginPath();a.forEach((v,i)=>{const px=i*(w-1)/119,py=h-4-v*(h-8)/100;i?x.lineTo(px,py):x.moveTo(px,py)});x.stroke()});
+$('leg').innerHTML=C.map((n,k)=>'<small style="opacity:'+A[k]+'">'+n+' '+(d[k].length?d[k][d[k].length-1]:'-')+'</small>').join(' ')})}
+function reti(){fetch('/api/reti').then(r=>r.json()).then(l=>{const s=$('reti');s.innerHTML='';
+l.forEach(n=>s.add(new Option((n.lock?'[x] ':'')+n.ssid+'  '+n.rssi+' dBm',n.ssid)));$('wmsg').textContent=l.length+' reti trovate'})}
+$('cerca').onclick=()=>{$('wmsg').textContent='Scansione in corso...';fetch('/api/reti?scan=1').then(()=>setTimeout(reti,5000))};
+$('conn').onclick=()=>fetch('/api/wifi?pin='+$('pin1').value+'&ssid='+encodeURIComponent($('reti').value)+'&pass='+encodeURIComponent($('pw').value))
+.then(r=>r.text()).then(t=>$('wmsg').textContent=t);
+$('up').onclick=()=>{const f=$('fw').files[0];if(!f){$('umsg').textContent='Scegli prima il file .bin';return}
+const q=new XMLHttpRequest();q.open('POST','/update?pin='+$('pin2').value+'&size='+f.size);
+q.upload.onprogress=e=>{$('upb').style.width=(e.loaded*100/e.total)+'%'};
+q.onload=()=>{$('umsg').textContent=q.status==200?'Aggiornato! La scheda si riavvia, ricarica tra 15 secondi.':'Errore: '+q.responseText};
+q.onerror=()=>{$('umsg').textContent='Connessione interrotta'};const fd=new FormData();fd.append('fw',f);q.send(fd);$('umsg').textContent='Invio in corso...'};
+reti();sto();setInterval(sto,5000);
 shot();st();setInterval(st,2000);
 </script></body></html>)rawliteral";
 
@@ -2384,7 +2485,7 @@ void webStato() {
   snprintf(col, sizeof(col), "#%02x%02x%02x", t.r, t.g, t.b);
   String temi;
   for (int i = 0; i < THEME_N; i++) temi += String(i ? "," : "") + "\"" + THEMES[i].name + "\"";
-  String j = "{\"ver\":\"6.0\",\"up\":\"" + uptimeStr() + "\",\"ram\":" + String(sRam) + ",\"temp\":" + String((int)sTemp) +
+  String j = "{\"ver\":\"" FW_VER "\",\"creator\":\"" CREATOR "\",\"up\":\"" + uptimeStr() + "\",\"ram\":" + String(sRam) + ",\"temp\":" + String((int)sTemp) +
              ",\"luce\":" + String(sLight) + ",\"wifi\":" + (wc ? "true" : "false") + ",\"ssid\":\"" + jsonEsc(wc ? WiFi.SSID() : String("")) +
              "\",\"rssi\":" + String(wc ? WiFi.RSSI() : 0) + ",\"ap\":" + (cfg.ap ? "true" : "false") +
              ",\"apClienti\":" + String(cfg.ap ? WiFi.softAPgetStationNum() : 0) + ",\"liv\":" + String(lv) +
@@ -2394,7 +2495,8 @@ void webStato() {
              ",\"meteo\":" + (w.ok ? "true" : "false") + ",\"t\":" + String((int)lroundf(w.ok ? w.t : 0)) +
              ",\"citta\":\"" + jsonEsc(w.city) + "\",\"cond\":\"" + (w.ok ? wxText(w.code) : "") + "\",\"tab\":" + String(tab) +
              ",\"sub\":" + String(sub[tab]) + ",\"reti\":" + String(netCount) + ",\"bt\":" + String((int)bdevCount) +
-             ",\"timer\":\"" + (tmMode == 1 ? crStr(cronoNow()) : mmss(timerLeft(), true)) + "\",\"timerOn\":" + (tmRun || crRun ? "true" : "false") + "}";
+             ",\"timer\":\"" + (tmMode == 1 ? crStr(cronoNow()) : mmss(timerLeft(), true)) + "\",\"timerOn\":" + (tmRun || crRun ? "true" : "false") +
+             ",\"sveglia\":\"" + (alOn ? two(alH) + ":" + two(alM) : String("spenta")) + "\"}";
   web.sendHeader("Cache-Control", "no-store");
   web.send(200, "application/json", j);
 }
@@ -2470,6 +2572,100 @@ void webMsg() {
   web.send(200, "text/plain", "ok");
 }
 
+void webStorico() {
+  webNote();
+  String j = "[";
+  for (int k = 0; k < 4; k++) {
+    j += k ? ",[" : "[";
+    for (int i = 0; i < histN; i++) j += String(i ? "," : "") + String(hist[k][(histPos - histN + i + HIST) % HIST]);
+    j += "]";
+  }
+  web.send(200, "application/json", j + "]");
+}
+
+void webReti() {
+  webNote();
+  if (web.arg("scan") == "1") startWifiScan();
+  String j = "[";
+  for (int i = 0; i < netCount; i++)
+    j += String(i ? "," : "") + "{\"ssid\":\"" + jsonEsc(nets[i].ssid) + "\",\"rssi\":" + String(nets[i].rssi) +
+         ",\"ch\":" + String(nets[i].ch) + ",\"lock\":" + (nets[i].enc ? "true" : "false") + "}";
+  web.send(200, "application/json", j + "]");
+}
+
+// PIN corretto? Dopo 5 errori il PIN cambia, cosi' non si puo' indovinare per tentativi
+bool pinOk() {
+  if (web.arg("pin").toInt() == pinCode) { pinFails = 0; return true; }
+  if (++pinFails >= 5) { pinCode = 1000 + esp_random() % 9000; pinFails = 0; addLog("PIN CAMBIATO (TROPPI ERRORI)"); }
+  return false;
+}
+
+void webWifi() {
+  webNote();
+  if (!pinOk()) { web.send(403, "text/plain", "PIN errato: leggilo sulla scheda in RADIO > LINK"); return; }
+  String ss = web.arg("ssid");
+  if (!ss.length()) { web.send(400, "text/plain", "Scegli una rete"); return; }
+  if (modal == M_KB || modal == M_MSG || modal == M_RX) modal = M_NONE;
+  if (modal != M_NONE) { web.send(409, "text/plain", "La scheda e' occupata, riprova"); return; }
+  wakeUp();
+  startConnect(ss, web.arg("pass"));
+  addLog("WIFI DAL PANNELLO: " + ss.substring(0, 14));
+  web.send(200, "text/plain", "Connessione a " + ss + " avviata: guarda la scheda");
+}
+
+void drawOta() {
+  spr.fillSprite(BG);
+  bgGrid();
+  brackets(20, 50, 280, 140, 14, C_MAIN);
+  txtG("AGGIORNAMENTO FIRMWARE", 160, 78, C_HI, MC_DATUM);
+  int pct = otaSize ? (int)((uint64_t)otaDone * 100 / otaSize) : 0;
+  segBar(40, 104, 240, 12, pct, 24);
+  txtG(String(pct) + "%", 160, 136, C_HI, MC_DATUM, 4);
+  txt(String(otaDone / 1024) + " / " + String(otaSize / 1024) + " KB", 160, 160, C_MAIN, MC_DATUM);
+  txt("NON SPEGNERE LA SCHEDA", 160, 178, C_DIM, MC_DATUM, 1);
+  present();
+}
+
+void webUpload() {
+  HTTPUpload& u = web.upload();
+  if (u.status == UPLOAD_FILE_START) {
+    otaDone = 0;
+    otaSize = web.arg("size").toInt();
+    if (!pinOk()) { otaState = 4; return; }
+    otaState = Update.begin(otaSize ? otaSize : UPDATE_SIZE_UNKNOWN) ? 1 : 3;
+    if (otaState == 1) { addLog("AGGIORNAMENTO AVVIATO"); if (saverOn) { saverOn = false; applyBrightness(); } drawOta(); }
+  } else if (u.status == UPLOAD_FILE_WRITE && otaState == 1) {
+    if (Update.write(u.buf, u.currentSize) != u.currentSize) { otaState = 3; Update.abort(); return; }
+    uint32_t before = otaDone;
+    otaDone += u.currentSize;
+    if (otaDone / 32768 != before / 32768) drawOta();
+  } else if (u.status == UPLOAD_FILE_END && otaState == 1) {
+    otaState = Update.end(true) ? 2 : 3;
+  } else if (u.status == UPLOAD_FILE_ABORTED && otaState == 1) {
+    Update.abort();
+    otaState = 3;
+  }
+}
+
+void webUpdateDone() {
+  webNote();
+  if (otaState == 2) {
+    web.send(200, "text/plain", "OK");
+    addLog("AGGIORNATO, RIAVVIO");
+    spr.fillSprite(BG);
+    txtG("AGGIORNATO", 160, 104, C_HI, MC_DATUM, 4);
+    txt("RIAVVIO IN CORSO...", 160, 136, C_MAIN, MC_DATUM);
+    present();
+    delay(1200);
+    ESP.restart();
+  }
+  int st = otaState;
+  otaState = 0;
+  dirty = true;
+  if (st == 4) web.send(403, "text/plain", "PIN errato: leggilo sulla scheda in RADIO > LINK");
+  else web.send(500, "text/plain", String("aggiornamento fallito: ") + Update.errorString());
+}
+
 void webBegin() {
   web.on("/", []() { webNote(); web.send_P(200, "text/html", PAGE); completeQuest(Q_WEB); });
   web.on("/screen.bmp", webScreen);
@@ -2478,6 +2674,10 @@ void webBegin() {
   web.on("/api/vai", webVai);
   web.on("/api/set", webSet);
   web.on("/api/msg", webMsg);
+  web.on("/api/storico", webStorico);
+  web.on("/api/reti", webReti);
+  web.on("/api/wifi", webWifi);
+  web.on("/update", HTTP_POST, webUpdateDone, webUpload);
   web.onNotFound([]() { web.send(404, "text/plain", "VX-26: pagina non trovata"); });
   web.begin();
 }
@@ -3182,9 +3382,9 @@ void bootSequence() {
     if (f == 26) glitchUntil = millis() + 180;
     if (f > 26) {
       txtG("VX-26", 160, 140, C_HI, MC_DATUM, 4);
-      txt("OPERATOR SYSTEM  //  2026", 160, 166, C_MAIN, MC_DATUM);
+      txt("OPERATOR SYSTEM  //  v" FW_VER, 160, 166, C_MAIN, MC_DATUM);
     }
-    if (f > 40) txt("INTERFACCIA OLOGRAFICA PERSONALE", 160, 198, C_DIM, MC_DATUM, 1);
+    if (f > 34) txtG("CREATOR: " CREATOR, 160, 196, f > 40 ? C_HI : C_MID, MC_DATUM);
     txt("TOCCA PER SALTARE", 160, 228, C_DIM2, MC_DATUM, 1);
     present();
   }
@@ -3198,7 +3398,7 @@ void bootSequence() {
   String chip = String(ESP.getChipModel()) + " r" + String(ESP.getChipRevision()) + " // " +
                 String(ESP.getChipCores()) + " CORE " + String(getCpuFrequencyMhz()) + " MHZ";
   const int N = 10;
-  String lines[N] = {"VX-26 OPERATOR SYSTEM  v6.1", chip, "",
+  String lines[N] = {"VX-26 OPERATOR SYSTEM  v" FW_VER, chip, "CREATOR: " CREATOR,
                      "> RAM LIBERA", "> FLASH", "> APP", "> TEMPERATURA CPU", "> SENSORE LUCE", "> WIFI MAC", "> RETE SALVATA"};
   String vals[N] = {"", "", "",
                     String(ESP.getFreeHeap() / 1024) + " KB",
@@ -3232,7 +3432,8 @@ void bootSequence() {
     bgGrid();
     brackets(30, 80, 260, 80, 14, C_MAIN);
     txtG("SISTEMA PRONTO", 160, 112, C_HI, MC_DATUM, 4);
-    txt("OPERATORE LIVELLO " + String(levelOf(xp)), 160, 140, C_MAIN, MC_DATUM);
+    txt("OPERATORE LIVELLO " + String(levelOf(xp)), 160, 136, C_MAIN, MC_DATUM);
+    txt("CREATOR: " CREATOR, 160, 152, C_DIM, MC_DATUM, 1);
     present();
   }
   if (!bootSkip) delay(400);
@@ -3270,6 +3471,7 @@ void setup() {
 
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
+  pinCode = 1000 + esp_random() % 9000;
   if (cfg.ap) applyAp();
   webBegin();
   randomSeed(analogRead(LDR_PIN) ^ micros());
@@ -3299,6 +3501,7 @@ void loop() {
   checkBtDone();
   pollWeather();
   pollTimer();
+  keepWifi();
   web.handleClient();
   if (tab == 1 && sub[1] == 2 && ipState == 0 && WiFi.status() == WL_CONNECTED) startIp();   // IP pubblico alla prima visita
 
