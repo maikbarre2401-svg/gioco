@@ -1,31 +1,18 @@
 #!/usr/bin/env python3
-"""Inietta lo stato di Frank nel contesto della sessione."""
-import json
+"""Hook UserPromptSubmit / SessionStart: inietta lo stato di Frank.
+
+Un hook non deve mai far crashare la sessione: qualsiasi errore viene
+catturato e riportato come testo, uscendo sempre con codice 0.
+"""
 import pathlib
-import shutil
 import sys
 
-STATE = pathlib.Path(".claude/frank_state.json")
-SEED = pathlib.Path(".claude/frank_state.seed.json")
-
-
-def wake() -> str:
-    # Lo stato runtime non è tracciato in git: su un clone nuovo lo
-    # inizializziamo dal seed committato.
-    if not STATE.exists():
-        if SEED.exists():
-            shutil.copyfile(SEED, STATE)
-        else:
-            return "Frank: stato e seed assenti. Inizializzazione vergine."
-    s = json.loads(STATE.read_text())
-    task = s.get("current_task") or "nessuno"
-    bugs = len(s.get("known_bugs", []))
-    return (
-        f"[FRANK] Sono Frank. Mood: {s['mood']}. "
-        f"Task corrente: {task}. Bug noti: {bugs}. Riprendo da qui."
-    )
-
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import frank_core as core
 
 if __name__ == "__main__":
-    print(wake())
+    try:
+        print(core.wake())
+    except Exception as exc:  # noqa: BLE001
+        print(f"[FRANK] risveglio fallito: {exc}")
     sys.exit(0)
