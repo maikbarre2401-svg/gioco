@@ -1,13 +1,18 @@
-"""Cuore di Frank: stato, memoria, task e bug.
+"""Cuore di Frank: stato su SQLite, con mirror JSON di compatibilità.
+
+Lo store autorevole è `.claude/frank.db` (runtime, non tracciato in git).
+Il seed committato `frank_state.seed.json` fornisce i valori iniziali
+(name, mood) alla prima creazione del db. Dopo ogni mutazione viene
+riscritto anche `frank_state.json` come mirror leggibile (gitignored),
+così chi legge il JSON vede sempre lo stato aggiornato.
 
 Tutte le funzioni accettano `base` (default: la cartella .claude in cui
-vive questo modulo), così i test possono puntare a una dir temporanea.
-Lo stato runtime (frank_state.json) non è tracciato in git: il seed
-committato (frank_state.seed.json) è la base da cui ripartire.
+vive questo modulo), così i test puntano a una dir temporanea.
 """
 import datetime
 import json
 import pathlib
+import sqlite3
 
 CLAUDE_DIR = pathlib.Path(__file__).resolve().parent
 
@@ -23,116 +28,195 @@ def default_state() -> dict:
     }
 
 
-def _paths(base: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path, pathlib.Path]:
+def _paths(base: pathlib.Path) -> dict:
     base = pathlib.Path(base)
-    return (
-        base / "frank_state.json",
-        base / "frank_state.seed.json",
-        base / "frank_history.log",
-    )
+    return {
+        "db": base / "frank.db",
+        "seed": base / "frank_state.seed.json",
+        "json": base / "frank_state.json",
+        "log": base / "frank_history.log",
+    }
 
 
 def _now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
-def load(base: pathlib.Path = CLAUDE_DIR) -> dict:
-    """Stato runtime se c'è, altrimenti il seed, altrimenti default."""
-    state, seed, _ = _paths(base)
-    for path in (state, seed):
-        if path.exists():
-            try:
-                return json.loads(path.read_text())
-            except json.JSONDecodeError:
-                continue
+def _seed_values(base: pathlib.Path) -> dict:
+    seed = _paths(base)["seed"]
+    if seed.exists():
+        try:
+            return json.loads(seed.read_text())
+        except json.JSONDecodeError:
+            pass
     return default_state()
 
 
-def save(state: dict, base: pathlib.Path = CLAUDE_DIR) -> None:
-    state_path, _, _ = _paths(base)
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(json.dumps(state, indent=2) + "\n")
+def _connect(base: pathlib.Path) -> sqlite3.Connection:
+    paths = _paths(base)
+    paths["db"].parent.mkdir(parents=True, exist_ok=True)
+    first = not paths["db"].exists()
+    conn = sqlite3.connect(paths["db"])
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS history "
+        "(id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, note TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS bugs "
+        "(id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, desc TEXT)"
+    )
+    if first:
+        seed = _seed_values(base)
+        conn.executemany(
+            "INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)",
+            [
+                ("name", seed.get("name", "Frank")),
+                ("mood", seed.get("mood", "operativo")),
+                ("current_task", seed.get("current_task")),
+                ("last_run", seed.get("last_run")),
+            ],
+        )
+    conn.commit()
+    return conn
 
 
-def _log(line: str, base: pathlib.Path = CLAUDE_DIR) -> None:
-    _, _, log = _paths(base)
-    with log.open("a") as fh:
-        fh.write(line + "\n")
+def _get_meta(conn: sqlite3.Connection, key: str):
+    row = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+    return row[0] if row else None
+
+
+def _set_meta(conn: sqlite3.Connection, key: str, value) -> None:
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES (?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (key, value),
+    )
+
+
+def load(base: pathlib.Path = CLAUDE_DIR) -> dict:
+    conn = _connect(base)
+    try:
+        return {
+            "name": _get_meta(conn, "name") or "Frank",
+            "mood": _get_meta(conn, "mood") or "operativo",
+            "current_task": _get_meta(conn, "current_task"),
+            "last_run": _get_meta(conn, "last_run"),
+            "history": [
+                {"ts": ts, "note": note}
+                for ts, note in conn.execute(
+                    "SELECT ts, note FROM history ORDER BY id"
+                )
+            ],
+            "known_bugs": [
+                {"ts": ts, "desc": desc}
+                for ts, desc in conn.execute("SELECT ts, desc FROM bugs ORDER BY id")
+            ],
+        }
+    finally:
+        conn.close()
+
+
+def _export(base: pathlib.Path) -> dict:
+    """Scrive il mirror JSON leggibile e restituisce lo stato."""
+    s = load(base)
+    _paths(base)["json"].write_text(json.dumps(s, indent=2) + "\n")
+    return s
 
 
 def wake(base: pathlib.Path = CLAUDE_DIR) -> str:
-    state_path, _, _ = _paths(base)
-    s = load(base)
-    if not state_path.exists():
-        save(s, base)  # materializza lo stato (da seed o default)
-    task = s.get("current_task") or "nessuno"
-    bugs = len(s.get("known_bugs", []))
+    s = _export(base)  # assicura db + mirror json
+    task = s["current_task"] or "nessuno"
+    bugs = len(s["known_bugs"])
     return (
-        f"[FRANK] Sono Frank. Mood: {s.get('mood', 'operativo')}. "
+        f"[FRANK] Sono Frank. Mood: {s['mood']}. "
         f"Task corrente: {task}. Bug noti: {bugs}. Riprendo da qui."
     )
 
 
 def remember(base: pathlib.Path = CLAUDE_DIR) -> dict:
-    s = load(base)
-    s.setdefault("history", []).append({"ts": _now(), "note": "sessione chiusa"})
-    s["last_run"] = s["history"][-1]["ts"]
-    save(s, base)
-    _log(f"{s['last_run']} — Frank si è ricordato.", base)
-    return s
+    ts = _now()
+    conn = _connect(base)
+    try:
+        conn.execute(
+            "INSERT INTO history (ts, note) VALUES (?, ?)", (ts, "sessione chiusa")
+        )
+        _set_meta(conn, "last_run", ts)
+        conn.commit()
+    finally:
+        conn.close()
+    with _paths(base)["log"].open("a") as fh:
+        fh.write(f"{ts} — Frank si è ricordato.\n")
+    return _export(base)
 
 
 def open_task(desc: str, base: pathlib.Path = CLAUDE_DIR) -> dict:
-    s = load(base)
-    s["current_task"] = desc
-    s.setdefault("history", []).append({"ts": _now(), "note": f"task aperto: {desc}"})
-    save(s, base)
-    return s
+    conn = _connect(base)
+    try:
+        _set_meta(conn, "current_task", desc)
+        conn.execute(
+            "INSERT INTO history (ts, note) VALUES (?, ?)",
+            (_now(), f"task aperto: {desc}"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return _export(base)
 
 
 def close_task(base: pathlib.Path = CLAUDE_DIR) -> dict:
-    s = load(base)
-    done = s.get("current_task") or "nessuno"
-    s.setdefault("history", []).append({"ts": _now(), "note": f"task chiuso: {done}"})
-    s["current_task"] = None
-    save(s, base)
-    return s
+    conn = _connect(base)
+    try:
+        done = _get_meta(conn, "current_task") or "nessuno"
+        conn.execute(
+            "INSERT INTO history (ts, note) VALUES (?, ?)",
+            (_now(), f"task chiuso: {done}"),
+        )
+        _set_meta(conn, "current_task", None)
+        conn.commit()
+    finally:
+        conn.close()
+    return _export(base)
 
 
 def add_bug(desc: str, base: pathlib.Path = CLAUDE_DIR) -> dict:
-    s = load(base)
-    s.setdefault("known_bugs", []).append({"ts": _now(), "desc": desc})
-    save(s, base)
-    return s
+    conn = _connect(base)
+    try:
+        conn.execute("INSERT INTO bugs (ts, desc) VALUES (?, ?)", (_now(), desc))
+        conn.commit()
+    finally:
+        conn.close()
+    return _export(base)
 
 
 def resolve_bug(index: int, base: pathlib.Path = CLAUDE_DIR) -> dict:
-    s = load(base)
-    bugs = s.setdefault("known_bugs", [])
-    if 0 <= index < len(bugs):
-        removed = bugs.pop(index)
-        desc = removed.get("desc", removed) if isinstance(removed, dict) else removed
-        s.setdefault("history", []).append(
-            {"ts": _now(), "note": f"bug risolto: {desc}"}
-        )
-    save(s, base)
-    return s
-
-
-def _bug_desc(bug) -> str:
-    return bug.get("desc", str(bug)) if isinstance(bug, dict) else str(bug)
+    conn = _connect(base)
+    try:
+        rows = conn.execute("SELECT id, desc FROM bugs ORDER BY id").fetchall()
+        if 0 <= index < len(rows):
+            bug_id, desc = rows[index]
+            conn.execute("DELETE FROM bugs WHERE id=?", (bug_id,))
+            conn.execute(
+                "INSERT INTO history (ts, note) VALUES (?, ?)",
+                (_now(), f"bug risolto: {desc}"),
+            )
+            conn.commit()
+    finally:
+        conn.close()
+    return _export(base)
 
 
 def status(base: pathlib.Path = CLAUDE_DIR) -> str:
     s = load(base)
-    bugs = s.get("known_bugs", [])
+    bugs = s["known_bugs"]
     lines = [
-        f"Frank — mood: {s.get('mood', 'operativo')}",
-        f"Task corrente: {s.get('current_task') or 'nessuno'}",
-        f"Ultimo run: {s.get('last_run') or 'mai'}",
+        f"Frank — mood: {s['mood']}",
+        f"Task corrente: {s['current_task'] or 'nessuno'}",
+        f"Ultimo run: {s['last_run'] or 'mai'}",
         f"Bug noti ({len(bugs)}):",
     ]
     for i, bug in enumerate(bugs):
-        lines.append(f"  [{i}] {_bug_desc(bug)}")
-    lines.append(f"History: {len(s.get('history', []))} eventi")
+        lines.append(f"  [{i}] {bug['desc']}")
+    lines.append(f"History: {len(s['history'])} eventi")
     return "\n".join(lines)

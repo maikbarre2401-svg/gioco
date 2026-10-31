@@ -2,3 +2,9 @@
 # Il seed vergine (frank_state.seed.json) resta tracciato.
 frank_state.json
 frank_history.log
+
+# Store SQLite runtime
+frank.db
+frank.db-wal
+frank.db-shm
+frank.db-journal

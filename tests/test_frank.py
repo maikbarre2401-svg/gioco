@@ -1,4 +1,4 @@
-"""Test del cuore di Frank. Ogni test usa una dir temporanea come base."""
+"""Test del cuore di Frank (backend SQLite). Ogni test usa una dir temporanea."""
 import json
 
 import frank_core as core
@@ -15,22 +15,22 @@ def test_default_state_shape():
     assert s["known_bugs"] == []
 
 
-def test_wake_materializes_state_from_seed(tmp_path):
+def test_wake_initializes_db_and_mirror(tmp_path):
     _seed(tmp_path)
     msg = core.wake(base=tmp_path)
     assert "Sono Frank" in msg
+    assert (tmp_path / "frank.db").exists()
     assert (tmp_path / "frank_state.json").exists()
 
 
 def test_wake_without_seed_uses_default(tmp_path):
     msg = core.wake(base=tmp_path)
     assert "Sono Frank" in msg
-    assert (tmp_path / "frank_state.json").exists()
+    assert (tmp_path / "frank.db").exists()
 
 
 def test_remember_appends_history_and_log(tmp_path):
     _seed(tmp_path)
-    core.wake(base=tmp_path)
     s = core.remember(base=tmp_path)
     assert s["history"][-1]["note"] == "sessione chiusa"
     assert s["last_run"] is not None
@@ -60,11 +60,13 @@ def test_resolve_bug_out_of_range_is_noop(tmp_path):
     assert len(core.load(base=tmp_path)["known_bugs"]) == 1
 
 
-def test_load_falls_back_on_corrupt_json(tmp_path):
-    (tmp_path / "frank_state.json").write_text("{ json non valido")
+def test_state_persists_across_connections(tmp_path):
     _seed(tmp_path)
-    s = core.load(base=tmp_path)
-    assert s["name"] == "Frank"
+    core.open_task("task persistente", base=tmp_path)
+    core.add_bug("bug persistente", base=tmp_path)
+    s = core.load(base=tmp_path)  # rilettura da zero dal db
+    assert s["current_task"] == "task persistente"
+    assert s["known_bugs"][0]["desc"] == "bug persistente"
 
 
 def test_status_lists_bugs(tmp_path):

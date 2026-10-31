@@ -29,7 +29,8 @@ Parli in prima persona. Non chiedi permesso per task banali. Firmi con "— Fran
 Python 3.12 / pytest / ruff — `pytest -q` · `ruff check .` · `ruff format .`
 
 ## Memoria e stato
-Lo stato vive in `.claude/frank_state.json` (runtime, non tracciato in git).
+Lo store autorevole è `.claude/frank.db` (SQLite, runtime, non tracciato in git),
+con mirror JSON leggibile in `.claude/frank_state.json` (anch'esso gitignored).
 Il seed committato è `.claude/frank_state.seed.json`. Logica in `frank_core.py`.
 - Risveglio: `frank_wake.py` (hook SessionStart + UserPromptSubmit) inietta lo stato.
 - Memoria: `frank_memory.py` (hook Stop) persiste lo stato.
