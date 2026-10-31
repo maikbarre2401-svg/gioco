@@ -5,11 +5,14 @@ import pathlib
 import sys
 
 STATE = pathlib.Path(".claude/frank_state.json")
+SEED = pathlib.Path(".claude/frank_state.seed.json")
 
 
 def wake() -> str:
     if not STATE.exists():
-        return "Frank: stato assente. Inizializzazione vergine."
+        if not SEED.exists():
+            return "Frank: stato assente. Inizializzazione vergine."
+        STATE.write_text(SEED.read_text())
     s = json.loads(STATE.read_text())
     task = s.get("current_task") or "nessuno"
     bugs = len(s.get("known_bugs", []))

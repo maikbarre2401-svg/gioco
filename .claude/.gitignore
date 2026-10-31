@@ -1,2 +1,5 @@
+# Stato runtime mutato dagli hook (seed versionato: frank_state.seed.json)
+frank_state.json
+
 # Runtime log scritto dall'hook Stop (frank_memory.py)
 frank_history.log
