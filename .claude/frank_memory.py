@@ -5,11 +5,19 @@ import json
 import pathlib
 
 STATE = pathlib.Path(".claude/frank_state.json")
+SEED = pathlib.Path(".claude/frank_state.seed.json")
 LOG = pathlib.Path(".claude/frank_history.log")
 
 
+def _load() -> dict:
+    for path in (STATE, SEED):
+        if path.exists():
+            return json.loads(path.read_text())
+    return {}
+
+
 def remember() -> None:
-    s = json.loads(STATE.read_text()) if STATE.exists() else {}
+    s = _load()
     s.setdefault("history", []).append(
         {
             "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),

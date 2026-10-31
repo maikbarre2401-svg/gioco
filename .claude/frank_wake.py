@@ -2,14 +2,21 @@
 """Inietta lo stato di Frank nel contesto della sessione."""
 import json
 import pathlib
+import shutil
 import sys
 
 STATE = pathlib.Path(".claude/frank_state.json")
+SEED = pathlib.Path(".claude/frank_state.seed.json")
 
 
 def wake() -> str:
+    # Lo stato runtime non è tracciato in git: su un clone nuovo lo
+    # inizializziamo dal seed committato.
     if not STATE.exists():
-        return "Frank: stato assente. Inizializzazione vergine."
+        if SEED.exists():
+            shutil.copyfile(SEED, STATE)
+        else:
+            return "Frank: stato e seed assenti. Inizializzazione vergine."
     s = json.loads(STATE.read_text())
     task = s.get("current_task") or "nessuno"
     bugs = len(s.get("known_bugs", []))
