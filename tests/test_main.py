@@ -10,9 +10,11 @@ from main import (
     choose_size,
     cover_tex_coords,
     format_duration,
+    java_bytes,
     media_filename,
     orientation_hint,
     rotated_size,
+    stream_texts,
     surface_rotation_to_degrees,
 )
 
@@ -148,3 +150,38 @@ def test_recording_badge_shows_elapsed_time():
     assert badge.time_label.text == "01:15"
     badge.hide()
     assert badge.opacity == 0
+
+
+def test_java_bytes_accepts_bytes_and_signed_lists():
+    assert java_bytes(b"\xff\x00") == b"\xff\x00"
+    assert java_bytes(bytearray(b"ab")) == b"ab"
+    assert java_bytes([-1, 0, 127, -128]) == b"\xff\x00\x7f\x80"
+
+
+def test_java_bytes_uses_tostring():
+    class FakeByteArray:
+        def tostring(self):
+            return b"jpeg"
+
+    assert java_bytes(FakeByteArray()) == b"jpeg"
+
+
+def test_stream_texts_with_ip():
+    title, big, detail, compact = stream_texts("192.168.1.23", 8080, 0, None)
+    assert title == "Apri dal PC"
+    assert big == "192.168.1.23"
+    assert detail == "http://192.168.1.23:8080/  ·  nessuno spettatore"
+    assert compact == "192.168.1.23:8080  ·  nessuno spettatore"
+
+
+def test_stream_texts_counts_viewers():
+    assert stream_texts("10.0.0.5", 8081, 2, None)[3] == "10.0.0.5:8081  ·  spettatori: 2"
+
+
+def test_stream_texts_without_network():
+    assert stream_texts(None, 8080, 0, None)[1] == "Wi-Fi assente"
+
+
+def test_stream_texts_with_server_error():
+    title, big, detail, _ = stream_texts("10.0.0.5", None, 0, "porte occupate")
+    assert (title, big, detail) == ("Server non avviato", "Errore", "porte occupate")
