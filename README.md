@@ -47,9 +47,21 @@ di normalizzazione è **uno per tratta**, quindi niente pumping.
 righe nascono `pending` e diventano `done` / `empty` / `error` / `nostt`: le tratte in sospeso
 vengono riprese al riavvio e se whisper non c'è l'audio resta comunque ascoltabile.
 
+**Interfaccia.** I mezzi sono modelli 3D con lampeggiante, alone a terra e un'etichetta
+che segue il veicolo con il tempo dall'ultima trasmissione. La dimensione è costante sullo
+schermo (~11 px): a mappa larga non spariscono, a mappa stretta tornano a misura reale
+invece di diventare autobus sopra i palazzi. Ogni unità lascia una scia degli ultimi
+passaggi, ogni chiamata nuova fa un anello che si espande sul punto. Il pannello *unità in
+onda* elenca chi ha parlato negli ultimi 5 minuti: un clic la insegue con la telecamera,
+un altro la libera. Il tasto **AUTO** inquadra da sola le chiamate nuove, ma sta zitta per
+25 secondi dopo che hai mosso tu la mappa. Nel feed ogni riga mostra durata, livello del
+segnale e quattro barrette di confidenza della trascrizione; un clic vola sul punto e
+riproduce l'audio.
+
 **Mappa.** La base è uno stile scuro disegnato sulle tile **vettoriali** di OpenFreeMap:
 nessuna API key, stesso fornitore degli edifici 3D. (Le raster di CARTO oggi rispondono con
-tile "API KEY REQUIRED".) Se OpenFreeMap non risponde entro qualche secondo entra da sola una
+tile "API KEY REQUIRED".) Strade su tre livelli con bordo, aree verdi, acqua, ferrovie,
+etichette di vie e quartieri, edifici estrusi sotto le etichette. Se OpenFreeMap non risponde entro qualche secondo entra da sola una
 base OSM scurita. Con `--basemap osm`, o `basemap` in `guardia.json` impostato a un tuo
 template raster (`https://.../{z}/{x}/{y}.png`), si usa direttamente quella.
 

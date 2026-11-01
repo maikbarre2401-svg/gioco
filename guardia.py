@@ -1409,108 +1409,130 @@ HTML = """<!doctype html><html><head><meta charset="utf-8">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-body{margin:0;background:#0b0f14;color:#e8eef6;font:14px system-ui,sans-serif;display:flex;flex-direction:column;height:100dvh}
-header{display:flex;justify-content:space-between;align-items:center;padding:11px 14px;border-bottom:1px solid #1e2833;z-index:3}
+body{margin:0;background:#060a0f;color:#e8eef6;font:14px system-ui,sans-serif;display:flex;flex-direction:column;height:100dvh}
+header{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 13px;border-bottom:1px solid #1a2330;z-index:3}
 h1{margin:0;font-size:12px;letter-spacing:.14em;font-weight:800}
-.sub{font-size:10px;color:#7d8b9c;margin-top:2px}
-.live{font-size:9px;font-weight:800;background:#b91c1c;color:#fff;padding:4px 9px;border-radius:99px;animation:pulse 1.6s infinite}
-.live.off{background:#334155;animation:none}
+.sub{font-size:10px;color:#7d8b9c;margin-top:3px;display:flex;align-items:center;gap:7px}
+.hr{display:flex;align-items:center;gap:8px}
+.tg{font:800 9px system-ui;letter-spacing:.1em;background:#121b26;color:#5d6b7c;border:1px solid #223042;
+padding:5px 9px;border-radius:99px;cursor:pointer}
+.tg.on{background:#12304a;color:#7fc4ff;border-color:#1d5b8a}
+.live{font-size:9px;font-weight:800;background:#b91c1c;color:#fff;padding:5px 9px;border-radius:99px;animation:pulse 1.6s infinite}
+.live.off{background:#2b3645;animation:none}
 @keyframes pulse{50%{opacity:.45}}
+.seg{display:none;align-items:center;gap:5px;background:#16263a;border:1px solid #1d5b8a;color:#7fc4ff;
+font-weight:800;padding:2px 7px;border-radius:99px;cursor:pointer}
+.seg.on{display:inline-flex}
 #wrap{flex:1;position:relative;min-height:240px}
 #m{position:absolute;inset:0}
-#leg{position:absolute;left:10px;bottom:10px;z-index:2;background:rgba(11,15,20,.78);
-border:1px solid #1e2833;border-radius:10px;padding:8px 10px;font-size:10.5px;backdrop-filter:blur(6px)}
-#leg b{display:block;font-size:9px;letter-spacing:.1em;color:#7d8b9c;margin-bottom:4px}
-#leg span{display:inline-flex;align-items:center;gap:5px;margin-right:9px}
-.dot{width:9px;height:9px;border-radius:2px;display:inline-block}
-#feed{max-height:34vh;overflow:auto;border-top:1px solid #1e2833}
-.row{display:flex;gap:9px;padding:9px 13px;border-bottom:1px solid #1e2833;font-size:12px;cursor:pointer}
-.row:active{background:#111823}
-.t{color:#7d8b9c;font-size:10.5px}
+#hud{position:absolute;left:10px;bottom:10px;z-index:2;background:rgba(7,11,16,.82);border:1px solid #1a2330;
+border-radius:11px;padding:7px;min-width:168px;backdrop-filter:blur(7px)}
+#hud b{display:block;font-size:9px;letter-spacing:.11em;color:#64748b;margin:2px 4px 5px}
+.ur{display:flex;align-items:center;gap:7px;padding:4px 5px;border-radius:7px;cursor:pointer;font-size:11px}
+.ur:hover{background:#111a24}
+.ur.on{background:#16263a}
+.ud{width:8px;height:8px;border-radius:2px;flex:none}
+.un{font-weight:800;min-width:30px}
+.up{color:#14b8a6;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:92px}
+.ua{color:#64748b;margin-left:auto;font-variant-numeric:tabular-nums}
+.vuoto{color:#475569;font-size:10.5px;padding:3px 5px}
+.chip{display:flex;align-items:center;gap:5px;font:800 10px/1 system-ui;color:#e8eef6;background:rgba(7,11,16,.85);
+border:1px solid #223042;border-left-width:3px;padding:3px 6px;border-radius:6px;white-space:nowrap;
+box-shadow:0 2px 12px rgba(0,0,0,.65);pointer-events:none}
+.chip i{font-style:normal;color:#64748b;font-weight:600;font-variant-numeric:tabular-nums}
+#feed{max-height:33vh;overflow:auto;border-top:1px solid #1a2330}
+.row{display:flex;gap:9px;padding:9px 13px;border-bottom:1px solid #141d28;font-size:12px;cursor:pointer}
+.row:hover{background:#0b131c}
+.row.nuova{animation:entra .5s}
+@keyframes entra{from{background:#16263a}}
+.t{color:#64748b;font-size:10.5px}
 .u{font-weight:800;font-size:10.5px;min-width:38px}
 .p{color:#14b8a6;font-size:10px;margin-top:3px}
-.q{color:#7d8b9c;font-style:italic}
-.maplibregl-ctrl-group{background:#121a24!important}
+.q{color:#64748b;font-style:italic}
+.sig{display:inline-flex;gap:1px;vertical-align:-1px;margin-left:5px}
+.sig i{width:2px;background:#334155;border-radius:1px}
+.sig i.on{background:#22c55e}
+.maplibregl-ctrl-group{background:#101823!important}
 .maplibregl-ctrl button{filter:invert(1) hue-rotate(180deg)}
+.maplibregl-ctrl-attrib{font-size:9px!important}
 </style></head><body>
-<header><div><h1>SALA OPERATIVA 3D</h1><div class="sub" id="sub">connessione...</div></div>
-<div class="live" id="live">LIVE</div></header>
+<header>
+<div><h1>SALA OPERATIVA 3D</h1>
+<div class="sub"><span id="sub">connessione...</span><span class="seg" id="seg"></span></div></div>
+<div class="hr"><button class="tg on" id="auto" title="inquadra da sola le chiamate nuove">AUTO</button>
+<div class="live" id="live">LIVE</div></div>
+</header>
 <div id="wrap"><div id="m"></div>
-<div id="leg"><b>UNIT&Agrave;</b>
-<span><i class="dot" style="background:#2563eb"></i>CC</span>
-<span><i class="dot" style="background:#dc2626"></i>PS</span>
-<span><i class="dot" style="background:#16a34a"></i>PL</span>
-<span><i class="dot" style="background:#d97706"></i>VVF</span>
-<span><i class="dot" style="background:#d97706;border-radius:50%"></i>elicottero</span>
-</div></div>
+<div id="hud"><b>UNIT&Agrave; IN ONDA</b><div id="ulist"><div class="vuoto">nessuna unit&agrave;</div></div></div>
+</div>
 <div id="feed"></div>
 <script>
 const CFG=__GUARDIA_CFG__;
 const QS=CFG.token?('?t='+encodeURIComponent(CFG.token)):'';
 const COL={CC:0x2563eb,PS:0xdc2626,PL:0x16a34a,VVF:0xd97706};
 const COLW={CC:'#2563eb',PS:'#dc2626',PL:'#16a34a',VVF:'#d97706'};
-const SCAR=5, SHELI=5;
+const col=u=>COLW[u]||'#6ea8ff';
+const col3=u=>COL[u]||0x6ea8ff;
 
-// Base scura disegnata sulle tile VETTORIALI di OpenFreeMap: nessuna API key e stesso
+// ───────── base scura sulle tile VETTORIALI di OpenFreeMap: nessuna API key, stesso
 // fornitore degli edifici 3D. (Le raster CARTO ora rispondono "API KEY REQUIRED".)
-// Con basemap="osm" o un template raster proprio si usa invece una base a immagini.
 const OFM='https://tiles.openfreemap.org';
 const ATTR='&copy; OpenStreetMap &middot; OpenFreeMap';
 const LW=(a,b)=>['interpolate',['exponential',1.5],['zoom'],10,a,18,b];
 const IS=(...c)=>['match',['get','class'],c,true,false];
 const FONT=['Noto Sans Regular'];
+const VIA=(id,f,mz,c,w)=>({id:id,source:'ofm','source-layer':'transportation',type:'line',minzoom:mz,
+  filter:f,layout:{'line-cap':'round','line-join':'round'},paint:{'line-color':c,'line-width':w}});
+const MIN=['!',IS('motorway','trunk','primary','secondary','tertiary','rail','transit')];
+const SEC=IS('secondary','tertiary'), MAIN=IS('motorway','trunk','primary');
 const DARK={version:8,glyphs:OFM+'/fonts/{fontstack}/{range}.pbf',
+  light:{anchor:'viewport',color:'#dce9ff',intensity:.35,position:[1.3,200,35]},
   sources:{ofm:{type:'vector',url:OFM+'/planet',attribution:ATTR}},
   layers:[
-    {id:'bg',type:'background',paint:{'background-color':'#070a0e'}},
+    {id:'bg',type:'background',paint:{'background-color':'#060a0f'}},
+    {id:'uso',source:'ofm','source-layer':'landuse',type:'fill',
+     paint:{'fill-color':['match',['get','class'],'residential','#0b1119','industrial','#0f1117','#0a1015'],
+            'fill-opacity':.55}},
     {id:'verde',source:'ofm','source-layer':'landcover',type:'fill',
-     paint:{'fill-color':'#0d1a15','fill-opacity':.7}},
-    {id:'parco',source:'ofm','source-layer':'park',type:'fill',
-     paint:{'fill-color':'#0d1a15','fill-opacity':.5}},
-    {id:'acqua',source:'ofm','source-layer':'water',type:'fill',paint:{'fill-color':'#09243a'}},
-    {id:'fiume',source:'ofm','source-layer':'waterway',type:'line',
-     paint:{'line-color':'#09243a','line-width':LW(.6,4)}},
-    {id:'strada-min',source:'ofm','source-layer':'transportation',type:'line',minzoom:12,
-     filter:['!',IS('motorway','trunk','primary','secondary','tertiary')],
-     paint:{'line-color':'#19222d','line-width':LW(.4,5)}},
-    {id:'strada-sec',source:'ofm','source-layer':'transportation',type:'line',minzoom:9,
-     filter:IS('secondary','tertiary'),
-     paint:{'line-color':'#222e3c','line-width':LW(.7,7)}},
-    {id:'strada-main',source:'ofm','source-layer':'transportation',type:'line',
-     filter:IS('motorway','trunk','primary'),
-     paint:{'line-color':'#2d3c4e','line-width':LW(1,11)}},
-    {id:'confine',source:'ofm','source-layer':'boundary',type:'line',
-     filter:['<=',['get','admin_level'],6],
-     paint:{'line-color':'#2b3a4a','line-dasharray':[2,2],'line-width':1}},
+     paint:{'fill-color':'#0c1a14','fill-opacity':.65}},
+    {id:'parco',source:'ofm','source-layer':'park',type:'fill',paint:{'fill-color':'#0c1a14','fill-opacity':.45}},
+    {id:'acqua',source:'ofm','source-layer':'water',type:'fill',paint:{'fill-color':'#07203a'}},
+    {id:'fiume',source:'ofm','source-layer':'waterway',type:'line',paint:{'line-color':'#07203a','line-width':LW(.6,4)}},
+    VIA('min-b',MIN,12,'#0a1017',LW(.9,8)),  VIA('min',MIN,12,'#1a2430',LW(.35,5)),
+    VIA('sec-b',SEC,9,'#0a1017',LW(1.4,11)), VIA('sec',SEC,9,'#27384a',LW(.7,7.5)),
+    VIA('main-b',MAIN,5,'#0a1017',LW(1.9,16)),VIA('main',MAIN,5,'#38506b',LW(1,11)),
+    {id:'ferrovia',source:'ofm','source-layer':'transportation',type:'line',minzoom:11,
+     filter:IS('rail','transit'),
+     paint:{'line-color':'#2a3444','line-width':LW(.4,2),'line-dasharray':[3,2.5]}},
+    {id:'confine',source:'ofm','source-layer':'boundary',type:'line',filter:['<=',['get','admin_level'],6],
+     paint:{'line-color':'#28384a','line-dasharray':[2,2],'line-width':1}},
     {id:'nome-strada',source:'ofm','source-layer':'transportation_name',type:'symbol',minzoom:14,
-     layout:{'text-field':['get','name'],'text-font':FONT,'text-size':11,
-             'symbol-placement':'line'},
-     paint:{'text-color':'#6f8296','text-halo-color':'#070a0e','text-halo-width':1.2}},
+     layout:{'text-field':['get','name'],'text-font':FONT,'text-size':11,'symbol-placement':'line'},
+     paint:{'text-color':'#718599','text-halo-color':'#060a0f','text-halo-width':1.3}},
     {id:'nome-luogo',source:'ofm','source-layer':'place',type:'symbol',
      filter:['match',['get','class'],['city','town','suburb','neighbourhood'],true,false],
-     layout:{'text-field':['get','name'],'text-font':FONT,'text-letter-spacing':.08,
-             'text-transform':'uppercase',
+     layout:{'text-field':['get','name'],'text-font':FONT,'text-letter-spacing':.08,'text-transform':'uppercase',
              'text-size':['match',['get','class'],'city',15,'town',13,11]},
-     paint:{'text-color':'#9fb3c8','text-halo-color':'#070a0e','text-halo-width':1.4}}
+     paint:{'text-color':'#9fb3c8','text-halo-color':'#060a0f','text-halo-width':1.5}}
   ]};
 function rasterStyle(tpl){
   const t=(tpl==='osm')?['https://tile.openstreetmap.org/{z}/{x}/{y}.png']:[tpl];
   return {version:8,sources:{r:{type:'raster',tileSize:256,tiles:t,attribution:ATTR}},
-    layers:[{id:'bg',type:'background',paint:{'background-color':'#070a0e'}},
-            {id:'r',type:'raster',source:'r'}]};
+    layers:[{id:'bg',type:'background',paint:{'background-color':'#060a0f'}},{id:'r',type:'raster',source:'r'}]};
 }
 const BM=CFG.basemap||'vector';
 const map=new maplibregl.Map({container:'m',center:[CFG.lon,CFG.lat],zoom:CFG.zoom,
-  pitch:58,bearing:-18,maxPitch:82,antialias:true,
-  style:(BM==='vector')?DARK:rasterStyle(BM)});
+  pitch:56,bearing:-18,maxPitch:82,antialias:true,style:(BM==='vector')?DARK:rasterStyle(BM)});
 map.addControl(new maplibregl.NavigationControl({visualizePitch:true}),'top-right');
-// l'attribuzione la aggiunge gia' MapLibre da sola: una seconda darebbe il badge doppio
-map.on('error',()=>{});   // ignora errori di sorgenti opzionali (es. etichette senza glifi)
+map.on('error',()=>{});   // l'attribuzione la mette gia' MapLibre; gli errori di tile non fermano nulla
 
-// ───────── modelli 3D con Three.js (custom layer, condivide il contesto di MapLibre)
+// ───────── modelli 3D (Three.js su custom layer, condivide il contesto GL di MapLibre)
 const V={cars:new Map(),helis:new Map(),scene:null,renderer:null,camera:null};
 let useThree=(typeof THREE!=='undefined');
-
+// Scala adattiva: il veicolo occupa sempre ~11 pixel sullo schermo, non una misura fissa
+// in metri. Con un fattore fisso (era 5x) a zoom stretto spariva e a zoom largo diventava
+// un autobus sopra i palazzi; da 18.1 in su e' a misura reale.
+function scalaV(min){ return Math.min(26,Math.max(min,Math.pow(2,18.1-map.getZoom()))); }
 function baseMatrix(lng,lat,alt,s){
   const c=maplibregl.MercatorCoordinate.fromLngLat([lng,lat],alt||0);
   const sc=c.meterInMercatorCoordinateUnits()*s;
@@ -1520,48 +1542,48 @@ function baseMatrix(lng,lat,alt,s){
 }
 function buildCar(hex,truck){
   const g=new THREE.Group();
-  const L=truck?7:4.8,H=truck?1.7:0.9,W=truck?2.4:2.2;
+  const L=truck?7:4.6,H=truck?1.8:.92,W=truck?2.4:1.9;
   const body=new THREE.Mesh(new THREE.BoxGeometry(W,H,L),
-    new THREE.MeshStandardMaterial({color:hex,metalness:.3,roughness:.5}));
-  body.position.y=0.55+H/2; g.add(body);
-  const cab=new THREE.Mesh(new THREE.BoxGeometry(W*.92,.7,truck?2.6:2.2),
-    new THREE.MeshStandardMaterial({color:0x0b0f14,metalness:.1,roughness:.25}));
-  cab.position.set(0,0.55+H+0.35,truck?L*.22:-0.25); g.add(cab);
-  const bar=new THREE.Mesh(new THREE.BoxGeometry(W*.62,.24,.5),
-    new THREE.MeshStandardMaterial({color:0xffffff,emissive:0x3366ff,emissiveIntensity:1.4}));
-  bar.position.set(0,0.55+H+0.78,truck?L*.22:0); g.add(bar); g.userData.bar=bar;
-  const halo=new THREE.Mesh(new THREE.CircleGeometry(4,28),
-    new THREE.MeshBasicMaterial({color:hex,transparent:true,opacity:.3,depthWrite:false}));
-  halo.rotation.x=-Math.PI/2; halo.position.y=.04; g.add(halo);
-  const wm=new THREE.MeshStandardMaterial({color:0x0a0a0a});
+    new THREE.MeshStandardMaterial({color:hex,metalness:.35,roughness:.45}));
+  body.position.y=.5+H/2; g.add(body);
+  const cab=new THREE.Mesh(new THREE.BoxGeometry(W*.9,.66,truck?2.5:2),
+    new THREE.MeshStandardMaterial({color:0x070b10,metalness:.1,roughness:.2}));
+  cab.position.set(0,.5+H+.3,truck?L*.2:-.2); g.add(cab);
+  const bar=new THREE.Mesh(new THREE.BoxGeometry(W*.66,.2,.42),
+    new THREE.MeshStandardMaterial({color:0xffffff,emissive:0x3366ff,emissiveIntensity:1.6}));
+  bar.position.set(0,.5+H+.7,truck?L*.2:0); g.add(bar); g.userData.bar=bar;
+  const alone=new THREE.Mesh(new THREE.RingGeometry(2.6,3.4,32),
+    new THREE.MeshBasicMaterial({color:hex,transparent:true,opacity:.35,depthWrite:false,side:THREE.DoubleSide}));
+  alone.rotation.x=-Math.PI/2; alone.position.y=.05; g.add(alone); g.userData.alone=alone;
+  const wm=new THREE.MeshStandardMaterial({color:0x08080a});
   [[W/2,L*.3],[-W/2,L*.3],[W/2,-L*.3],[-W/2,-L*.3]].forEach(p=>{
-    const w=new THREE.Mesh(new THREE.CylinderGeometry(.5,.5,.32,14),wm);
-    w.rotation.z=Math.PI/2; w.position.set(p[0],.5,p[1]); g.add(w);});
+    const w=new THREE.Mesh(new THREE.CylinderGeometry(.42,.42,.28,12),wm);
+    w.rotation.z=Math.PI/2; w.position.set(p[0],.45,p[1]); g.add(w);});
   return g;
 }
 function buildHeli(){
   const g=new THREE.Group();
   const mat=new THREE.MeshStandardMaterial({color:0xd97706,metalness:.45,roughness:.5});
-  const body=new THREE.Mesh(new THREE.SphereGeometry(2,18,12),mat);
-  body.scale.set(1,.9,1.6); body.position.y=2.2; g.add(body);
-  const boom=new THREE.Mesh(new THREE.CylinderGeometry(.42,.24,6,14),mat);
-  boom.rotation.x=Math.PI/2; boom.position.set(0,2.6,-4.3); g.add(boom);
-  const tail=new THREE.Mesh(new THREE.BoxGeometry(.2,1.6,.5),mat); tail.position.set(0,2.9,-7); g.add(tail);
-  const rotor=new THREE.Group(); rotor.position.y=3.8;
-  const bm=new THREE.MeshStandardMaterial({color:0x1a1a1a});
-  const b1=new THREE.Mesh(new THREE.BoxGeometry(12,.12,.6),bm); rotor.add(b1);
+  const body=new THREE.Mesh(new THREE.SphereGeometry(1.7,18,12),mat);
+  body.scale.set(1,.9,1.6); body.position.y=1.9; g.add(body);
+  const boom=new THREE.Mesh(new THREE.CylinderGeometry(.34,.2,5.2,12),mat);
+  boom.rotation.x=Math.PI/2; boom.position.set(0,2.2,-3.7); g.add(boom);
+  const tail=new THREE.Mesh(new THREE.BoxGeometry(.18,1.4,.44),mat); tail.position.set(0,2.5,-6); g.add(tail);
+  const rotor=new THREE.Group(); rotor.position.y=3.3;
+  const bm=new THREE.MeshStandardMaterial({color:0x14161a});
+  const b1=new THREE.Mesh(new THREE.BoxGeometry(11,.1,.5),bm); rotor.add(b1);
   const b2=b1.clone(); b2.rotation.y=Math.PI/2; rotor.add(b2);
   g.add(rotor); g.userData.rotor=rotor;
-  const sm=new THREE.MeshStandardMaterial({color:0x0a0a0a});
-  [-1.4,1.4].forEach(sx=>{const s=new THREE.Mesh(new THREE.BoxGeometry(.2,.2,5),sm);
+  const sm=new THREE.MeshStandardMaterial({color:0x08080a});
+  [-1.2,1.2].forEach(sx=>{const s=new THREE.Mesh(new THREE.BoxGeometry(.16,.16,4.4),sm);
     s.position.set(sx,.2,0); g.add(s);});
   return g;
 }
 const layer3d={id:'vehicles',type:'custom',renderingMode:'3d',
   onAdd(m,gl){
     V.camera=new THREE.Camera(); V.scene=new THREE.Scene();
-    V.scene.add(new THREE.AmbientLight(0xffffff,.95));
-    const d=new THREE.DirectionalLight(0xffffff,.65); d.position.set(.4,-1,.8); V.scene.add(d);
+    V.scene.add(new THREE.AmbientLight(0xffffff,.9));
+    const d=new THREE.DirectionalLight(0xdce9ff,.7); d.position.set(.4,-1,.8); V.scene.add(d);
     V.renderer=new THREE.WebGLRenderer({canvas:m.getCanvas(),context:gl,antialias:true});
     V.renderer.autoClear=false;
   },
@@ -1570,16 +1592,15 @@ const layer3d={id:'vehicles',type:'custom',renderingMode:'3d',
     if(a&&!Array.isArray(a)) a=(a.defaultProjectionData&&a.defaultProjectionData.mainMatrix)||a;
     animate();
     V.camera.projectionMatrix=new THREE.Matrix4().fromArray(a);
-    V.renderer.resetState();
-    V.renderer.render(V.scene,V.camera);
-    map.triggerRepaint();
+    V.renderer.resetState(); V.renderer.render(V.scene,V.camera); map.triggerRepaint();
   }};
 function addCar(u){
   const outer=new THREE.Group(); outer.matrixAutoUpdate=false;
   const inner=new THREE.Group();
-  const model=buildCar(COL[u.unit]||0x6ea8ff,u.unit==='VVF');
+  const model=buildCar(col3(u.unit),u.unit==='VVF');
   inner.add(model); outer.add(inner); V.scene.add(outer);
-  const v={outer,inner,bar:model.userData.bar,lng:u.lon,lat:u.lat,tlng:u.lon,tlat:u.lat,heading:0};
+  const v={outer,inner,bar:model.userData.bar,alone:model.userData.alone,
+           lng:u.lon,lat:u.lat,tlng:u.lon,tlat:u.lat,heading:0};
   V.cars.set(u.unit,v); return v;
 }
 function addHeli(a){
@@ -1589,18 +1610,21 @@ function addHeli(a){
   V.helis.set(a.hex,v); return v;
 }
 function animate(){
-  const t=Date.now();
-  V.cars.forEach(v=>{
+  const t=Date.now(), s=scalaV(1), sh=scalaV(1)*.62;
+  V.cars.forEach((v,k)=>{
     v.lng+=(v.tlng-v.lng)*.12; v.lat+=(v.tlat-v.lat)*.12;
     const dx=v.tlng-v.lng, dy=v.tlat-v.lat;
     if(Math.hypot(dx,dy)>1e-6) v.heading=Math.atan2(dx,dy);
     v.inner.rotation.y=v.heading;
-    v.outer.matrix.copy(baseMatrix(v.lng,v.lat,0,SCAR)); v.outer.matrixWorldNeedsUpdate=true;
+    v.outer.matrix.copy(baseMatrix(v.lng,v.lat,0,s)); v.outer.matrixWorldNeedsUpdate=true;
     if(v.bar){const on=(t%700)<350; v.bar.material.emissive.setHex(on?0x3366ff:0xff2b2b);}
+    if(v.alone){const p=1+.12*Math.sin(t/260); v.alone.scale.set(p,p,p);
+      v.alone.material.opacity=.22+.14*Math.sin(t/260);}
+    const c=chips.get(k); if(c) c.setLngLat([v.lng,v.lat]);
   });
   V.helis.forEach(v=>{
     v.lng+=(v.tlng-v.lng)*.1; v.lat+=(v.tlat-v.lat)*.1;
-    v.outer.matrix.copy(baseMatrix(v.lng,v.lat,v.alt,SHELI)); v.outer.matrixWorldNeedsUpdate=true;
+    v.outer.matrix.copy(baseMatrix(v.lng,v.lat,v.alt,sh)); v.outer.matrixWorldNeedsUpdate=true;
     if(v.rotor) v.rotor.rotation.y+=.7;
   });
 }
@@ -1611,26 +1635,70 @@ function applyThree(d){
   V.cars.forEach((v,k)=>{if(!su.has(k)){V.scene.remove(v.outer);V.cars.delete(k);}});
   const sa=new Set();
   d.air.forEach(a=>{if(a.lat==null||a.lon==null)return; sa.add(a.hex);
-    const v=V.helis.get(a.hex)||addHeli(a); v.tlng=a.lon; v.tlat=a.lat;
-    v.alt=Math.min(a.alt||120,300);});
+    const v=V.helis.get(a.hex)||addHeli(a); v.tlng=a.lon; v.tlat=a.lat; v.alt=Math.min(a.alt||120,300);});
   V.helis.forEach((v,k)=>{if(!sa.has(k)){V.scene.remove(v.outer);V.helis.delete(k);}});
 }
-// ───────── fallback: marker DOM 2D se Three.js non è disponibile
+// fallback 2D se Three.js non c'e'
 const DM=new Map(),DH=new Map();
 function applyDOM(d){
   d.units.forEach(u=>{if(u.lat==null)return; let m=DM.get(u.unit);
-    if(!m){m=new maplibregl.Marker({color:COLW[u.unit]||'#6ea8ff'}).setLngLat([u.lon,u.lat]).addTo(map);DM.set(u.unit,m);}
-    m.setLngLat([u.lon,u.lat]); m.getElement().style.opacity=Math.max(.25,1-u.age/300);});
+    if(!m){m=new maplibregl.Marker({color:col(u.unit)}).setLngLat([u.lon,u.lat]).addTo(map);DM.set(u.unit,m);}
+    m.setLngLat([u.lon,u.lat]); m.getElement().style.opacity=Math.max(.3,1-u.age/300);});
   d.air.forEach(a=>{if(a.lat==null)return; let m=DH.get(a.hex);
     if(!m){m=new maplibregl.Marker({color:'#d97706'}).setLngLat([a.lon,a.lat]).addTo(map);DH.set(a.hex,m);}
     m.setLngLat([a.lon,a.lat]);});
 }
+
+// ───────── etichette, scie e anelli di chiamata
+const chips=new Map(), storico=new Map();
+let pings=[], pingVuoto=true;
+function chip(u){
+  let c=chips.get(u.unit);
+  if(!c){
+    const el=document.createElement('div'); el.className='chip';
+    el.style.borderLeftColor=col(u.unit);
+    el.innerHTML='<span></span><i></i>';
+    c=new maplibregl.Marker({element:el,anchor:'bottom',offset:[0,-18]})
+        .setLngLat([u.lon,u.lat]).addTo(map);   // sopra il mezzo, non addosso
+    chips.set(u.unit,c);
+  }
+  const el=c.getElement();
+  el.firstChild.textContent=u.unit;
+  el.lastChild.textContent=u.age<60?(u.age|0)+'s':((u.age/60)|0)+'m';
+  el.style.opacity=Math.max(.35,1-u.age/320);
+  return c;
+}
+function traccia(u){
+  const s=storico.get(u.unit)||[];
+  const l=s[s.length-1];
+  if(!l||Math.abs(l[0]-u.lon)>1e-6||Math.abs(l[1]-u.lat)>1e-6){s.push([u.lon,u.lat]); if(s.length>14)s.shift();}
+  storico.set(u.unit,s);
+}
+function scie(){
+  const f=[];
+  storico.forEach((s,u)=>{if(s.length>1)f.push({type:'Feature',properties:{c:col(u)},
+    geometry:{type:'LineString',coordinates:s}});});
+  const src=map.getSource('tracce'); if(src) src.setData({type:'FeatureCollection',features:f});
+}
+function animaPing(){
+  const src=map.getSource('ping'); if(!src) return;
+  const t=performance.now();
+  pings=pings.filter(p=>t-p.t0<2600);
+  if(!pings.length){ if(!pingVuoto){src.setData({type:'FeatureCollection',features:[]}); pingVuoto=true;} return; }
+  pingVuoto=false;
+  src.setData({type:'FeatureCollection',features:pings.map(p=>{
+    const k=(t-p.t0)/2600;
+    return {type:'Feature',properties:{r:7+k*46,o:Math.max(0,.85-k),c:p.c},
+            geometry:{type:'Point',coordinates:[p.lon,p.lat]}};})});
+}
+setInterval(animaPing,70);
+
 const B3D={id:'b3d',source:'ofm','source-layer':'building',type:'fill-extrusion',minzoom:14,
   paint:{'fill-extrusion-color':['interpolate',['linear'],['coalesce',['get','render_height'],10],
-    0,'#182233',60,'#243550',180,'#33496d'],
+    0,'#141d2a',40,'#1d2b40',120,'#2a3f5c',250,'#375178'],
     'fill-extrusion-height':['coalesce',['get','render_height'],8],
     'fill-extrusion-base':['coalesce',['get','render_min_height'],0],
-    'fill-extrusion-opacity':.82}};
+    'fill-extrusion-vertical-gradient':true,'fill-extrusion-opacity':.9}};
 
 // I livelli NON si agganciano all'evento 'load': MapLibre lo emette solo quando anche le
 // sorgenti hanno risposto, quindi con le tile lente o irraggiungibili non arriverebbe mai
@@ -1638,36 +1706,43 @@ const B3D={id:'b3d',source:'ofm','source-layer':'building',type:'fill-extrusion'
 let avviata=false;
 function avvia(){
   if(avviata) return;
+  let pre;
   try{
-    if(!map.getSource('ofm'))
-      map.addSource('ofm',{type:'vector',url:OFM+'/planet',attribution:ATTR});
+    if(!map.getSource('ofm')) map.addSource('ofm',{type:'vector',url:OFM+'/planet',attribution:ATTR});
+    pre=((map.getStyle().layers||[]).find(l=>l.type==='symbol')||{}).id;
+    if(!map.getLayer('b3d')) map.addLayer(B3D,pre);          // edifici sotto le etichette
   }catch(e){}
   try{
-    if(!map.getLayer('b3d')){
-      const sym=(map.getStyle().layers||[]).find(l=>l.type==='symbol');
-      map.addLayer(B3D,sym&&sym.id);      // gli edifici stanno sotto le etichette
-    }
+    if(!map.getSource('tracce')) map.addSource('tracce',{type:'geojson',
+      data:{type:'FeatureCollection',features:[]}});
+    if(!map.getLayer('tracce')) map.addLayer({id:'tracce',type:'line',source:'tracce',
+      layout:{'line-cap':'round','line-join':'round'},
+      paint:{'line-color':['get','c'],'line-width':2,'line-opacity':.5,'line-dasharray':[1,1.7]}},pre);
+    if(!map.getSource('ping')) map.addSource('ping',{type:'geojson',
+      data:{type:'FeatureCollection',features:[]}});
+    if(!map.getLayer('ping')) map.addLayer({id:'ping',type:'circle',source:'ping',
+      paint:{'circle-radius':['get','r'],'circle-color':['get','c'],'circle-opacity':.07,
+             'circle-stroke-color':['get','c'],'circle-stroke-width':2,
+             'circle-stroke-opacity':['get','o']}},pre);
   }catch(e){}
   if(useThree){
     try{ if(!map.getLayer('vehicles')) map.addLayer(layer3d); }
-    catch(e){ return; }                   // stile non ancora pronto: si riprova
+    catch(e){ return; }                 // stile non ancora pronto: si riprova
   }
   avviata=true;
 }
-map.on('load',avvia);
-map.on('styledata',avvia);
-const riprova=setInterval(()=>{ avvia(); if(avviata) clearInterval(riprova); },600);
+map.on('load',avvia); map.on('styledata',avvia);
+const riprova=setInterval(()=>{avvia(); if(avviata) clearInterval(riprova);},600);
 
 // Se OpenFreeMap non risponde si resterebbe su uno sfondo nero: base di riserva OSM,
 // scurita e desaturata per non sfondare il tema.
 let controllo=false;
 function riserva(){
   try{
-    if(map.getSource('osmfb')) return;
-    if(map.isSourceLoaded('ofm')) return;     // un errore isolato su una tile: non cambio base
+    if(map.getSource('osmfb')||map.isSourceLoaded('ofm')) return;
     map.addSource('osmfb',{type:'raster',tileSize:256,attribution:ATTR,
       tiles:['https://tile.openstreetmap.org/{z}/{x}/{y}.png']});
-    const sotto=map.getLayer('verde')?'verde':(map.getLayer('b3d')?'b3d':undefined);
+    const sotto=map.getLayer('uso')?'uso':(map.getLayer('b3d')?'b3d':undefined);
     map.addLayer({id:'osmfb',type:'raster',source:'osmfb',
       paint:{'raster-opacity':.6,'raster-saturation':-.85,'raster-brightness-max':.5}},sotto);
     console.warn('OpenFreeMap non raggiungibile: uso la base di riserva OSM');
@@ -1675,37 +1750,81 @@ function riserva(){
 }
 map.on('error',e=>{
   // una sorgente vettoriale irraggiungibile emette UN solo errore (il TileJSON): non si
-  // puo' contare gli errori, si guarda se dopo qualche secondo la sorgente e' viva
-  if(BM!=='vector' || !e || e.sourceId!=='ofm' || controllo) return;
-  controllo=true;
-  setTimeout(riserva,5000);
+  // possono contare gli errori, si guarda se dopo qualche secondo la sorgente e' viva
+  if(BM!=='vector'||!e||e.sourceId!=='ofm'||controllo) return;
+  controllo=true; setTimeout(riserva,5000);
 });
 
+// ───────── telecamera: inquadratura automatica, inseguimento, rispetto dell'utente
+let segue=null, toccata=0, auto=true, centrato=false;
+['dragstart','wheel','touchstart'].forEach(ev=>map.on(ev,()=>{toccata=Date.now();}));
+const bAuto=document.getElementById('auto'), bSeg=document.getElementById('seg');
+bAuto.onclick=()=>{auto=!auto; bAuto.classList.toggle('on',auto);};
+bSeg.onclick=()=>segui(null);
+function segui(u){
+  segue=u;
+  bSeg.classList.toggle('on',!!u);
+  if(u) bSeg.textContent='segue '+u+'  ✕';
+  disegnaHud(ultime);
+  if(u){const v=V.cars.get(u); if(v) map.easeTo({center:[v.tlng,v.tlat],zoom:Math.max(map.getZoom(),16),duration:900});}
+}
+function inquadra(lon,lat,zoom){
+  if(Date.now()-toccata<25000) return;    // l'utente sta guardando altrove: non gli strappo la mappa
+  map.easeTo({center:[lon,lat],zoom:zoom||Math.max(map.getZoom(),15.5),duration:1600});
+}
+
+// ───────── pannello unità
+let ultime=[];
+function disegnaHud(units){
+  ultime=units;
+  const box=document.getElementById('ulist');
+  box.textContent='';
+  if(!units.length){const v=document.createElement('div');v.className='vuoto';
+    v.textContent='nessuna unità';box.append(v);return;}
+  units.forEach(u=>{
+    const r=document.createElement('div'); r.className='ur'+(segue===u.unit?' on':'');
+    const d=document.createElement('span'); d.className='ud'; d.style.background=col(u.unit);
+    const n=document.createElement('span'); n.className='un'; n.textContent=u.unit;
+    const p=document.createElement('span'); p.className='up'; p.textContent=u.place||'';
+    const a=document.createElement('span'); a.className='ua';
+    a.textContent=u.age<60?(u.age|0)+'s':((u.age/60)|0)+'m';
+    r.append(d,n,p,a);
+    r.onclick=()=>segui(segue===u.unit?null:u.unit);
+    box.append(r);
+  });
+}
+
 // ───────── feed (nodi DOM, niente innerHTML: il testo arriva dalla trascrizione)
-function mkrow(e){
-  const r=document.createElement('div'); r.className='row';
-  const u=document.createElement('span'); u.className='u';
-  u.style.color=COLW[e.unit]||'#6ea8ff'; u.textContent=e.unit;
+function barre(conf){
+  const s=document.createElement('span'); s.className='sig';
+  const n=Math.max(1,Math.min(4,Math.round((conf||0)*4)));
+  for(let i=1;i<=4;i++){const b=document.createElement('i');
+    b.style.height=(3+i*1.6)+'px'; if(i<=n)b.className='on'; s.append(b);}
+  return s;
+}
+function mkrow(e,nuova){
+  const r=document.createElement('div'); r.className='row'+(nuova?' nuova':'');
+  const u=document.createElement('span'); u.className='u'; u.style.color=col(e.unit); u.textContent=e.unit;
   const d=document.createElement('div');
   const t=document.createElement('span'); t.className='t';
   t.textContent=new Date(e.ts*1000).toLocaleTimeString('it-IT')+' · '+(e.freq/1e6).toFixed(3)+
-    (e.dur?' · '+e.dur+'s':'')+(e.has_audio?' · ♪':'');
+    (e.dur?' · '+e.dur+'s':'')+(e.rssi?' · '+e.rssi+' dBFS':'')+(e.has_audio?' · ♪':'');
+  if(e.conf) t.append(barre(e.conf));
   const b=document.createElement('div');
   if(e.text){b.textContent=e.text;}else{b.className='q';b.textContent='— solo audio —';}
   d.append(t,b);
-  if(e.place){const p=document.createElement('div');p.className='p';
-    p.textContent='▸ '+e.place; d.append(p);}
+  if(e.place){const p=document.createElement('div');p.className='p';p.textContent='▸ '+e.place;d.append(p);}
   r.append(u,d);
   r.onclick=()=>{
-    if(e.lat!=null) map.flyTo({center:[e.lon,e.lat],zoom:16,pitch:62,essential:true});
+    if(e.lat!=null){toccata=0; map.easeTo({center:[e.lon,e.lat],zoom:16.5,pitch:60,duration:1200});}
     if(e.has_audio) new Audio('/api/audio/'+e.id+QS).play().catch(()=>{});
   };
   return r;
 }
-const seen=new Set();
-let fails=0, centrato=false, toccata=false;
-map.on('dragstart',()=>{toccata=true;});
-map.on('wheel',()=>{toccata=true;});
+
+// ───────── aggiornamento
+const visti=new Set();
+let fails=0;
 async function tick(){
   try{
     const r=await fetch('/api/state'+QS,{cache:'no-store'});
@@ -1713,15 +1832,31 @@ async function tick(){
     const d=await r.json();
     fails=0; document.getElementById('live').className='live';
     (useThree?applyThree:applyDOM)(d);
-    if(!centrato && !toccata && d.units.length && d.units[0].lat!=null){
-      centrato=true;
-      map.easeTo({center:[d.units[0].lon,d.units[0].lat],zoom:15.5,duration:1500});
-    }
+    const vive=new Set();
+    d.units.forEach(u=>{if(u.lat==null)return; vive.add(u.unit); chip(u); traccia(u);});
+    chips.forEach((c,k)=>{if(!vive.has(k)){c.remove(); chips.delete(k); storico.delete(k);}});
+    scie();
+    disegnaHud(d.units.filter(u=>u.lat!=null));
     document.getElementById('sub').textContent=
       d.units.length+' unità · '+d.air.length+' aeromobili · '+d.mode+(useThree?' · 3D':' · 2D');
     const f=document.getElementById('feed');
-    d.events.forEach(e=>{if(seen.has(e.id))return; seen.add(e.id);
-      f.prepend(mkrow(e)); while(f.children.length>120) f.removeChild(f.lastChild);});
+    const freschi=d.events.filter(e=>!visti.has(e.id));
+    freschi.forEach(e=>visti.add(e.id));
+    const nuovo=freschi.find(e=>e.lat!=null);
+    // gli eventi arrivano dal piu' recente: si inseriscono al contrario, altrimenti in
+    // cima finisce il piu' vecchio del lotto
+    freschi.slice().reverse().forEach(e=>{
+      f.prepend(mkrow(e,centrato)); while(f.children.length>120) f.removeChild(f.lastChild);});
+    if(nuovo){
+      pings.push({lon:nuovo.lon,lat:nuovo.lat,c:col(nuovo.unit),t0:performance.now()});
+      if(auto&&centrato) inquadra(nuovo.lon,nuovo.lat);
+    }
+    if(segue){const v=V.cars.get(segue);
+      if(v) map.easeTo({center:[v.tlng,v.tlat],duration:1400}); else segui(null);}
+    if(!centrato&&d.units.length&&d.units[0].lat!=null){
+      centrato=true;
+      if(!toccata) map.easeTo({center:[d.units[0].lon,d.units[0].lat],zoom:15.5,duration:1500});
+    }
   }catch(err){
     fails++;
     document.getElementById('live').className='live off';
