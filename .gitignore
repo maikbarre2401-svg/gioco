@@ -1,0 +1,10 @@
+# runtime di guardia.py
+.venv/
+audio/
+guardia.db
+guardia.db-wal
+guardia.db-shm
+guardia.json
+dsd-fme/
+__pycache__/
+*.pyc
