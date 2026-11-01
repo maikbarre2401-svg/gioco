@@ -104,6 +104,9 @@ DEFAULTS = {
     # manutenzione / mappa
     "retention_hours": 48, "lat": 41.9028, "lon": 12.4964, "radius_km": 25, "city": "Roma",
     "viewbox": "12.30,41.70,12.75,42.10", "geocode": True, "adsb": True, "adsb_interval": 8.0,
+    # 'vector' = stile scuro su OpenFreeMap (senza chiavi), 'osm', oppure un template
+    # raster tuo, es. "https://tile.tuoserver.org/{z}/{x}/{y}.png"
+    "basemap": "vector",
     "freqs": [{"freq": 151175000, "unit": "CC", "mode": "digital"},
               {"freq": 152025000, "unit": "PS", "mode": "digital"},
               {"freq": 160900000, "unit": "PL", "mode": "analog"},
@@ -375,6 +378,9 @@ def validate_cfg(cfg):
     _num(cfg, "lat", -90, 90, 41.9028)
     _num(cfg, "lon", -180, 180, 12.4964)
     _num(cfg, "radius_km", 1, 250, 25)
+    if not isinstance(cfg.get("basemap"), str) or not cfg["basemap"].strip():
+        log.warning("basemap=%r non valido → vector", cfg.get("basemap"))
+        cfg["basemap"] = "vector"
     if cfg["squelch_mode"] not in ("auto", "manual"):
         log.warning("squelch_mode=%r sconosciuto → auto", cfg["squelch_mode"])
         cfg["squelch_mode"] = "auto"
@@ -1355,7 +1361,7 @@ def build_app(cfg, info=None):
             return HTMLResponse(NOTOKEN, status_code=401)
         # il token finisce nella pagina solo per chi è già autenticato (fallback senza cookie)
         return HTML.replace("__GUARDIA_CFG__", json.dumps(
-            {"lon": cfg["lon"], "lat": cfg["lat"], "zoom": 15,
+            {"lon": cfg["lon"], "lat": cfg["lat"], "zoom": 15, "basemap": cfg["basemap"],
              "token": cfg["token"], "mode": info.get("mode", "?")}))
 
     @app.get("/api/state")
@@ -1441,15 +1447,61 @@ const COL={CC:0x2563eb,PS:0xdc2626,PL:0x16a34a,VVF:0xd97706};
 const COLW={CC:'#2563eb',PS:'#dc2626',PL:'#16a34a',VVF:'#d97706'};
 const SCAR=5, SHELI=5;
 
-// base scura CartoDB: senza API key e affidabile, garantisce che la mappa funzioni sempre
+// Base scura disegnata sulle tile VETTORIALI di OpenFreeMap: nessuna API key e stesso
+// fornitore degli edifici 3D. (Le raster CARTO ora rispondono "API KEY REQUIRED".)
+// Con basemap="osm" o un template raster proprio si usa invece una base a immagini.
+const OFM='https://tiles.openfreemap.org';
+const ATTR='&copy; OpenStreetMap &middot; OpenFreeMap';
+const LW=(a,b)=>['interpolate',['exponential',1.5],['zoom'],10,a,18,b];
+const IS=(...c)=>['match',['get','class'],c,true,false];
+const FONT=['Noto Sans Regular'];
+const DARK={version:8,glyphs:OFM+'/fonts/{fontstack}/{range}.pbf',
+  sources:{ofm:{type:'vector',url:OFM+'/planet',attribution:ATTR}},
+  layers:[
+    {id:'bg',type:'background',paint:{'background-color':'#070a0e'}},
+    {id:'verde',source:'ofm','source-layer':'landcover',type:'fill',
+     paint:{'fill-color':'#0d1a15','fill-opacity':.7}},
+    {id:'parco',source:'ofm','source-layer':'park',type:'fill',
+     paint:{'fill-color':'#0d1a15','fill-opacity':.5}},
+    {id:'acqua',source:'ofm','source-layer':'water',type:'fill',paint:{'fill-color':'#09243a'}},
+    {id:'fiume',source:'ofm','source-layer':'waterway',type:'line',
+     paint:{'line-color':'#09243a','line-width':LW(.6,4)}},
+    {id:'strada-min',source:'ofm','source-layer':'transportation',type:'line',minzoom:12,
+     filter:['!',IS('motorway','trunk','primary','secondary','tertiary')],
+     paint:{'line-color':'#19222d','line-width':LW(.4,5)}},
+    {id:'strada-sec',source:'ofm','source-layer':'transportation',type:'line',minzoom:9,
+     filter:IS('secondary','tertiary'),
+     paint:{'line-color':'#222e3c','line-width':LW(.7,7)}},
+    {id:'strada-main',source:'ofm','source-layer':'transportation',type:'line',
+     filter:IS('motorway','trunk','primary'),
+     paint:{'line-color':'#2d3c4e','line-width':LW(1,11)}},
+    {id:'confine',source:'ofm','source-layer':'boundary',type:'line',
+     filter:['<=',['get','admin_level'],6],
+     paint:{'line-color':'#2b3a4a','line-dasharray':[2,2],'line-width':1}},
+    {id:'nome-strada',source:'ofm','source-layer':'transportation_name',type:'symbol',minzoom:14,
+     layout:{'text-field':['get','name'],'text-font':FONT,'text-size':11,
+             'symbol-placement':'line'},
+     paint:{'text-color':'#6f8296','text-halo-color':'#070a0e','text-halo-width':1.2}},
+    {id:'nome-luogo',source:'ofm','source-layer':'place',type:'symbol',
+     filter:['match',['get','class'],['city','town','suburb','neighbourhood'],true,false],
+     layout:{'text-field':['get','name'],'text-font':FONT,'text-letter-spacing':.08,
+             'text-transform':'uppercase',
+             'text-size':['match',['get','class'],'city',15,'town',13,11]},
+     paint:{'text-color':'#9fb3c8','text-halo-color':'#070a0e','text-halo-width':1.4}}
+  ]};
+function rasterStyle(tpl){
+  const t=(tpl==='osm')?['https://tile.openstreetmap.org/{z}/{x}/{y}.png']:[tpl];
+  return {version:8,sources:{r:{type:'raster',tileSize:256,tiles:t,attribution:ATTR}},
+    layers:[{id:'bg',type:'background',paint:{'background-color':'#070a0e'}},
+            {id:'r',type:'raster',source:'r'}]};
+}
+const BM=CFG.basemap||'vector';
 const map=new maplibregl.Map({container:'m',center:[CFG.lon,CFG.lat],zoom:CFG.zoom,
-pitch:58,bearing:-18,maxPitch:82,antialias:true,attributionControl:false,
-style:{version:8,sources:{b:{type:'raster',tileSize:256,
-tiles:['https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png','https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'],
-attribution:'&copy; OpenStreetMap, &copy; CARTO'}},
-layers:[{id:'b',type:'raster',source:'b'}]}});
+  pitch:58,bearing:-18,maxPitch:82,antialias:true,
+  style:(BM==='vector')?DARK:rasterStyle(BM)});
 map.addControl(new maplibregl.NavigationControl({visualizePitch:true}),'top-right');
-map.on('error',()=>{});   // ignora errori di sorgenti opzionali (es. edifici vettoriali)
+// l'attribuzione la aggiunge gia' MapLibre da sola: una seconda darebbe il badge doppio
+map.on('error',()=>{});   // ignora errori di sorgenti opzionali (es. etichette senza glifi)
 
 // ───────── modelli 3D con Three.js (custom layer, condivide il contesto di MapLibre)
 const V={cars:new Map(),helis:new Map(),scene:null,renderer:null,camera:null};
@@ -1474,6 +1526,9 @@ function buildCar(hex,truck){
   const bar=new THREE.Mesh(new THREE.BoxGeometry(W*.62,.24,.5),
     new THREE.MeshStandardMaterial({color:0xffffff,emissive:0x3366ff,emissiveIntensity:1.4}));
   bar.position.set(0,0.55+H+0.78,truck?L*.22:0); g.add(bar); g.userData.bar=bar;
+  const halo=new THREE.Mesh(new THREE.CircleGeometry(4,28),
+    new THREE.MeshBasicMaterial({color:hex,transparent:true,opacity:.3,depthWrite:false}));
+  halo.rotation.x=-Math.PI/2; halo.position.y=.04; g.add(halo);
   const wm=new THREE.MeshStandardMaterial({color:0x0a0a0a});
   [[W/2,L*.3],[-W/2,L*.3],[W/2,-L*.3],[-W/2,-L*.3]].forEach(p=>{
     const w=new THREE.Mesh(new THREE.CylinderGeometry(.5,.5,.32,14),wm);
@@ -1566,18 +1621,60 @@ function applyDOM(d){
     if(!m){m=new maplibregl.Marker({color:'#d97706'}).setLngLat([a.lon,a.lat]).addTo(map);DH.set(a.hex,m);}
     m.setLngLat([a.lon,a.lat]);});
 }
-map.on('load',()=>{
-  // edifici 3D vettoriali (OpenFreeMap, senza API key): best-effort sopra la base scura
+const B3D={id:'b3d',source:'ofm','source-layer':'building',type:'fill-extrusion',minzoom:14,
+  paint:{'fill-extrusion-color':['interpolate',['linear'],['coalesce',['get','render_height'],10],
+    0,'#182233',60,'#243550',180,'#33496d'],
+    'fill-extrusion-height':['coalesce',['get','render_height'],8],
+    'fill-extrusion-base':['coalesce',['get','render_min_height'],0],
+    'fill-extrusion-opacity':.82}};
+
+// I livelli NON si agganciano all'evento 'load': MapLibre lo emette solo quando anche le
+// sorgenti hanno risposto, quindi con le tile lente o irraggiungibili non arriverebbe mai
+// e i veicoli non comparirebbero piu'. Si prova e si ritenta finche' non attecchisce.
+let avviata=false;
+function avvia(){
+  if(avviata) return;
   try{
-    map.addSource('ofm',{type:'vector',url:'https://tiles.openfreemap.org/planet'});
-    map.addLayer({id:'b3d',source:'ofm','source-layer':'building',type:'fill-extrusion',minzoom:14,
-      paint:{'fill-extrusion-color':['interpolate',['linear'],['coalesce',['get','render_height'],10],
-        0,'#182233',60,'#243550',180,'#33496d'],
-        'fill-extrusion-height':['coalesce',['get','render_height'],8],
-        'fill-extrusion-base':['coalesce',['get','render_min_height'],0],
-        'fill-extrusion-opacity':.82}});
+    if(!map.getSource('ofm'))
+      map.addSource('ofm',{type:'vector',url:OFM+'/planet',attribution:ATTR});
   }catch(e){}
-  if(useThree){ try{ map.addLayer(layer3d); }catch(e){ useThree=false; } }
+  try{
+    if(!map.getLayer('b3d')){
+      const sym=(map.getStyle().layers||[]).find(l=>l.type==='symbol');
+      map.addLayer(B3D,sym&&sym.id);      // gli edifici stanno sotto le etichette
+    }
+  }catch(e){}
+  if(useThree){
+    try{ if(!map.getLayer('vehicles')) map.addLayer(layer3d); }
+    catch(e){ return; }                   // stile non ancora pronto: si riprova
+  }
+  avviata=true;
+}
+map.on('load',avvia);
+map.on('styledata',avvia);
+const riprova=setInterval(()=>{ avvia(); if(avviata) clearInterval(riprova); },600);
+
+// Se OpenFreeMap non risponde si resterebbe su uno sfondo nero: base di riserva OSM,
+// scurita e desaturata per non sfondare il tema.
+let controllo=false;
+function riserva(){
+  try{
+    if(map.getSource('osmfb')) return;
+    if(map.isSourceLoaded('ofm')) return;     // un errore isolato su una tile: non cambio base
+    map.addSource('osmfb',{type:'raster',tileSize:256,attribution:ATTR,
+      tiles:['https://tile.openstreetmap.org/{z}/{x}/{y}.png']});
+    const sotto=map.getLayer('verde')?'verde':(map.getLayer('b3d')?'b3d':undefined);
+    map.addLayer({id:'osmfb',type:'raster',source:'osmfb',
+      paint:{'raster-opacity':.6,'raster-saturation':-.85,'raster-brightness-max':.5}},sotto);
+    console.warn('OpenFreeMap non raggiungibile: uso la base di riserva OSM');
+  }catch(e){}
+}
+map.on('error',e=>{
+  // una sorgente vettoriale irraggiungibile emette UN solo errore (il TileJSON): non si
+  // puo' contare gli errori, si guarda se dopo qualche secondo la sorgente e' viva
+  if(BM!=='vector' || !e || e.sourceId!=='ofm' || controllo) return;
+  controllo=true;
+  setTimeout(riserva,5000);
 });
 
 // ───────── feed (nodi DOM, niente innerHTML: il testo arriva dalla trascrizione)
@@ -1602,7 +1699,9 @@ function mkrow(e){
   return r;
 }
 const seen=new Set();
-let fails=0;
+let fails=0, centrato=false, toccata=false;
+map.on('dragstart',()=>{toccata=true;});
+map.on('wheel',()=>{toccata=true;});
 async function tick(){
   try{
     const r=await fetch('/api/state'+QS,{cache:'no-store'});
@@ -1610,6 +1709,10 @@ async function tick(){
     const d=await r.json();
     fails=0; document.getElementById('live').className='live';
     (useThree?applyThree:applyDOM)(d);
+    if(!centrato && !toccata && d.units.length && d.units[0].lat!=null){
+      centrato=true;
+      map.easeTo({center:[d.units[0].lon,d.units[0].lat],zoom:15.5,duration:1500});
+    }
     document.getElementById('sub').textContent=
       d.units.length+' unità · '+d.air.length+' aeromobili · '+d.mode+(useThree?' · 3D':' · 2D');
     const f=document.getElementById('feed');
@@ -1957,6 +2060,7 @@ def main():
     ap.add_argument("--model", help="modello whisper: tiny/base/small/medium")
     ap.add_argument("--no-stt", action="store_true", help="niente trascrizione, solo audio")
     ap.add_argument("--lat", type=float), ap.add_argument("--lon", type=float)
+    ap.add_argument("--basemap", help="'vector' (default), 'osm', o un template raster")
     ap.add_argument("--freqs", help="FREQ:UNITA:modo,FREQ:UNITA:modo")
     ap.add_argument("-v", "--verbose", action="store_true")
     a = ap.parse_args()
@@ -1983,7 +2087,7 @@ def main():
     # guardia.json faceva riapparire un --port di ieri in un avvio senza argomenti
     cfg = dict(disco)
     for k in ["host", "port", "token", "ppm", "gain", "squelch", "squelch_mode", "dwell",
-              "model", "lat", "lon"]:
+              "model", "lat", "lon", "basemap"]:
         v = getattr(a, k.replace("-", "_"), None)
         if v is not None:
             cfg[k] = v

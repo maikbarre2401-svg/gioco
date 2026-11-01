@@ -47,7 +47,13 @@ di normalizzazione è **uno per tratta**, quindi niente pumping.
 righe nascono `pending` e diventano `done` / `empty` / `error` / `nostt`: le tratte in sospeso
 vengono riprese al riavvio e se whisper non c'è l'audio resta comunque ascoltabile.
 
-**Mappa.** Il primo toponimo riconosciuto (`via`, `piazza`, `lungotevere`, …) viene geocodificato
+**Mappa.** La base è uno stile scuro disegnato sulle tile **vettoriali** di OpenFreeMap:
+nessuna API key, stesso fornitore degli edifici 3D. (Le raster di CARTO oggi rispondono con
+tile "API KEY REQUIRED".) Se OpenFreeMap non risponde entro qualche secondo entra da sola una
+base OSM scurita. Con `--basemap osm`, o `basemap` in `guardia.json` impostato a un tuo
+template raster (`https://.../{z}/{x}/{y}.png`), si usa direttamente quella.
+
+Il primo toponimo riconosciuto (`via`, `piazza`, `lungotevere`, …) viene geocodificato
 su Nominatim con cache su DB, cache dei "buchi" (TTL 6 h) e rate-limit globale di 1 req/s.
 Le unità sono modelli 3D (Three.js su MapLibre, fallback a marker 2D), gli elicotteri arrivano
 da ADS-B.
