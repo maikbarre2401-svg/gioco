@@ -5,7 +5,7 @@ package.domain = org.maikbarre
 source.dir = .
 source.include_exts = py
 source.exclude_dirs = tests, bin, .buildozer, .venv, .git
-version = 0.1.0
+version = 0.2.0
 requirements = python3,kivy==2.3.0,pyjnius==1.6.1
 orientation = portrait
 fullscreen = 1

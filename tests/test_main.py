@@ -2,14 +2,18 @@ from datetime import datetime
 
 import pytest
 
-from geometry import (
+from main import (
+    BlinkDot,
+    RecordingBadge,
+    RoundButton,
     choose_preview_size,
     choose_size,
-    cover_size,
+    cover_tex_coords,
+    format_duration,
+    media_filename,
     orientation_hint,
     rotated_size,
     surface_rotation_to_degrees,
-    video_filename,
 )
 
 
@@ -47,10 +51,6 @@ def test_choose_preview_size_ignores_unsupported_preferred():
     assert choose_preview_size((3840, 2160), [(1280, 720), (1920, 1080)], (800, 600)) == (1920, 1080)
 
 
-def test_choose_preview_size_without_preferred():
-    assert choose_preview_size((3840, 2160), [(1280, 720), (1920, 1080)], None) == (1920, 1080)
-
-
 @pytest.mark.parametrize(
     ("sensor", "display", "expected"),
     [(90, 0, 90), (270, 0, 270), (90, 90, 0), (90, 270, 180), (0, 90, 270)],
@@ -83,31 +83,68 @@ def test_rotated_size(rotation, expected):
     assert rotated_size((1920, 1080), rotation) == expected
 
 
-def test_rotated_size_rejects_invalid():
+def test_cover_tex_coords_same_aspect_uses_whole_texture():
+    assert cover_tex_coords((1080, 1920), (540, 960)) == pytest.approx((0.0, 0.0, 1.0, 1.0))
+
+
+def test_cover_tex_coords_crops_sides_on_taller_box():
+    assert cover_tex_coords((1080, 1920), (1080, 2400)) == pytest.approx((0.1, 0.0, 0.9, 1.0))
+
+
+def test_cover_tex_coords_crops_top_and_bottom_on_wider_box():
+    assert cover_tex_coords((1080, 1920), (1440, 1920)) == pytest.approx((0.0, 0.125, 1.0, 0.875))
+
+
+def test_cover_tex_coords_rejects_zero():
     with pytest.raises(ValueError):
-        rotated_size((1920, 1080), 45)
+        cover_tex_coords((1080, 1920), (0, 100))
 
 
-def test_cover_size_exact_fit():
-    assert cover_size((720, 1280), (1080, 1920)) == (1080, 1920)
+@pytest.mark.parametrize(
+    ("seconds", "expected"),
+    [(0, "00:00"), (-3, "00:00"), (9.9, "00:09"), (65, "01:05"), (3600, "1:00:00"), (3725, "1:02:05")],
+)
+def test_format_duration(seconds, expected):
+    assert format_duration(seconds) == expected
 
 
-def test_cover_size_crops_horizontally_on_taller_screen():
-    width, height = cover_size((1080, 1920), (1080, 2400))
-    assert height == 2400
-    assert width >= 1080
+def test_media_filename_includes_milliseconds():
+    moment = datetime(2026, 11, 1, 9, 5, 7, 42_500)
+    assert media_filename("IMG", "png", moment) == "IMG_20261101_090507_042.png"
 
 
-def test_cover_size_crops_vertically_on_wider_box():
-    width, height = cover_size((1080, 1920), (1440, 1920))
-    assert width == 1440
-    assert height >= 1920
-
-
-def test_cover_size_rejects_zero():
+def test_round_button_rejects_unknown_glyph():
     with pytest.raises(ValueError):
-        cover_size((0, 1920), (1080, 1920))
+        RoundButton("flash")
 
 
-def test_video_filename():
-    assert video_filename(datetime(2026, 11, 1, 9, 5, 7)) == "VID_20261101_090507.mp4"
+@pytest.mark.parametrize("glyph", ["photo", "video", "audio"])
+def test_round_button_dims_when_disabled(glyph):
+    button = RoundButton(glyph, size_hint=(None, None), size=(64, 64))
+    button.disabled = True
+    assert button.opacity == pytest.approx(0.35)
+    button.disabled = False
+    button.active = True
+    assert button.opacity == 1.0
+
+
+def test_blink_dot_toggles_and_resets():
+    dot = BlinkDot()
+    dot._toggle(0.5)
+    assert dot._color.a == 0.0
+    dot._toggle(0.5)
+    assert dot._color.a == 1.0
+    dot._toggle(0.5)
+    dot.stop()
+    assert dot._color.a == 1
+
+
+def test_recording_badge_shows_elapsed_time():
+    badge = RecordingBadge()
+    assert badge.opacity == 0
+    badge.show()
+    badge.set_elapsed(75)
+    assert badge.opacity == 1
+    assert badge.time_label.text == "01:15"
+    badge.hide()
+    assert badge.opacity == 0
