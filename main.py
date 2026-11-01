@@ -33,7 +33,15 @@ from kivy.uix.widget import Widget
 from kivy.utils import platform
 
 import debug
-from mjpeg_server import FrameBroker, LatestFrameEncoder, MjpegServer, local_ipv4, rank_lan_addresses, stream_url
+from mjpeg_server import (
+    FrameBroker,
+    LatestFrameEncoder,
+    MjpegServer,
+    local_ipv4,
+    new_token,
+    rank_lan_addresses,
+    stream_url,
+)
 
 IS_ANDROID = platform == "android"
 
@@ -1432,7 +1440,11 @@ class StreamCard(ButtonBehavior, BoxLayout):
         self.bind(pos=self._relayout, size=self._relayout)
         self.title_label = Label(text="Apri dal PC", font_size="15sp", color=(1, 1, 1, 0.75), size_hint_y=None, height=dp(24))
         self.ip_label = Label(font_size="40sp", bold=True)
-        self.detail_label = Label(font_size="15sp", color=(1, 1, 1, 0.85), size_hint_y=None, height=dp(24))
+        # Due righe: l'URL con il token non sta in una sola accanto al numero di spettatori.
+        self.detail_label = Label(
+            font_size="15sp", color=(1, 1, 1, 0.85), size_hint_y=None, height=dp(44), halign="center", valign="middle"
+        )
+        self.detail_label.bind(width=lambda label, width: setattr(label, "text_size", (width, None)))
         self.hint_label = Label(text="Tocca per ridurre", font_size="12sp", color=(1, 1, 1, 0.5), size_hint_y=None, height=dp(20))
         for label in (self.title_label, self.ip_label, self.detail_label, self.hint_label):
             self.add_widget(label)
@@ -1475,15 +1487,17 @@ def encoder_health(encoder: LatestFrameEncoder) -> tuple[bool, str]:
     return True, "thread vivo, codifica JPEG riuscita"
 
 
-def stream_texts(ip: str | None, port: int | None, clients: int, error: str | None) -> tuple[str, str, str, str]:
+def stream_texts(
+    ip: str | None, port: int | None, clients: int, error: str | None, token: str | None = None
+) -> tuple[str, str, str, str]:
     """Restituisce (titolo, testo grande, dettaglio, testo compatto) per la scheda dello stream."""
     if error is not None:
         return "Server non avviato", "Errore", error, "Server non avviato"
     if ip is None:
         return "Nessuna rete", "Wi-Fi assente", "Collega il telefono alla stessa rete del PC", "Wi-Fi assente"
     viewers = "nessuno spettatore" if clients == 0 else f"spettatori: {clients}"
-    url = stream_url(ip, port)
-    return "Apri dal PC", ip, f"{url}  ·  {viewers}", f"{ip}:{port}  ·  {viewers}"
+    url = stream_url(ip, port, token)
+    return "Apri dal PC", ip, f"{url}\n{viewers}", f"{ip}:{port}  ·  {viewers}"
 
 
 class GiocoCameraApp(App):
@@ -1552,9 +1566,12 @@ class GiocoCameraApp(App):
             self._encoder = LatestFrameEncoder(self._broker, nv21_to_jpeg, STREAM_MAX_FPS, on_thread_exit=detach)
             self._encoder.start()
             self._backend.attach_encoder(self._encoder)
-        self._server = MjpegServer(self._broker, self._stream_info)
+        self._stream_token = new_token()
+        self._server = MjpegServer(self._broker, self._stream_info, token=self._stream_token)
         try:
             self._server.start()
+            # Per adb forward dal PC, che non vede la scheda sul telefono. Logcat è leggibile solo via adb.
+            Logger.info(f"Stream: token={self._stream_token} porta={self._server.port}")
         except OSError as exc:
             Logger.exception("Stream: avvio server fallito")
             self._stream_error = str(exc)
@@ -1593,7 +1610,9 @@ class GiocoCameraApp(App):
             Logger.info(f"Stream: indirizzi locali {addresses}")
             self._lan_addresses = addresses
         ip = addresses[0] if addresses else None
-        title, big, detail, compact = stream_texts(ip, self._server.port, clients, self._stream_error)
+        title, big, detail, compact = stream_texts(
+            ip, self._server.port, clients, self._stream_error, self._stream_token
+        )
         self._stream_card.set_texts(title, big, detail)
         self._stream_chip.text = compact
         if self._backend is not None:
@@ -1605,7 +1624,7 @@ class GiocoCameraApp(App):
         if self._stream_error is not None:
             debug.state(debug.STAGE_CLIENTS, False, f"server non avviato: {self._stream_error}")
         else:
-            address = stream_url(ip, self._server.port) if ip else "nessun IP locale raggiungibile"
+            address = stream_url(ip, self._server.port, self._stream_token) if ip else "nessun IP locale raggiungibile"
             debug.state(debug.STAGE_CLIENTS, True, f"{clients} collegati, {address}")
         if self._encoder is not None:
             debug.state(debug.STAGE_ENCODER, *encoder_health(self._encoder))

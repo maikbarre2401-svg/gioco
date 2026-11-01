@@ -179,7 +179,7 @@ def test_stream_texts_with_ip():
     title, big, detail, compact = stream_texts("192.168.1.23", 8080, 0, None)
     assert title == "Apri dal PC"
     assert big == "192.168.1.23"
-    assert detail == "http://192.168.1.23:8080/  ·  nessuno spettatore"
+    assert detail == "http://192.168.1.23:8080/\nnessuno spettatore"
     assert compact == "192.168.1.23:8080  ·  nessuno spettatore"
 
 
@@ -410,3 +410,10 @@ def test_report_preview_frames_during_video_is_not_a_stall(debug_lines):
     for _ in range(5):
         CameraBackend._report_preview_frames(backend, 1.0)
     assert all("callback sospeso: registrazione video" in line for _, line in debug_lines)
+
+
+def test_stream_texts_show_token_url():
+    title, big, detail, compact = stream_texts("192.168.1.23", 8080, 1, None, "Ab3_x9Qz")
+    assert big == "192.168.1.23"
+    assert detail == "http://192.168.1.23:8080/?t=Ab3_x9Qz\nspettatori: 1"
+    assert "Ab3_x9Qz" not in compact

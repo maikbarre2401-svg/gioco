@@ -14,6 +14,7 @@ from mjpeg_server import (
     LatestFrameEncoder,
     MjpegServer,
     local_ipv4,
+    new_token,
     rank_lan_addresses,
     stream_url,
 )
@@ -328,3 +329,77 @@ def test_encoder_reports_liveness_and_last_error():
     assert encoder.last_encoded_at > encoder.last_error_at
     encoder.stop()
     assert encoder.is_alive is False
+
+
+TOKEN = "Ab3_x9Qz"
+
+
+@pytest.fixture
+def token_server():
+    broker = FrameBroker()
+    server = MjpegServer(
+        broker, lambda: {"rotation": 90, "width": 640, "height": 480}, ports=(0,), host="127.0.0.1", token=TOKEN
+    )
+    server.start()
+    yield broker, server
+    server.stop()
+
+
+@pytest.mark.parametrize("path", ["/", "/info.json", "/snapshot.jpg", "/stream.mjpg", "/nope"])
+def test_token_required_on_every_path(token_server, path):
+    _, server = token_server
+    response, body = get(server.port, path)
+    assert response.status == 403
+    assert body == b"token mancante o errato\n"
+
+
+@pytest.mark.parametrize("query", ["?t=", "?t=ab3_x9qz", "?t=Ab3_x9Qz0", "?token=Ab3_x9Qz"])
+def test_wrong_token_is_rejected(token_server, query):
+    _, server = token_server
+    response, _ = get(server.port, "/info.json" + query)
+    assert response.status == 403
+
+
+def test_right_token_opens_page_info_and_snapshot(token_server):
+    broker, server = token_server
+    response, body = get(server.port, f"/?t={TOKEN}")
+    assert response.status == 200
+    assert b'get("t")' in body
+    response, body = get(server.port, f"/info.json?t={TOKEN}")
+    assert response.status == 200
+    assert json.loads(body)["rotation"] == 90
+    broker.publish(b"jpeg")
+    response, body = get(server.port, f"/snapshot.jpg?t={TOKEN}")
+    assert (response.status, body) == (200, b"jpeg")
+
+
+def test_right_token_opens_stream_with_cache_buster(token_server):
+    broker, server = token_server
+    broker.publish(b"frame-1")
+    conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=5)
+    conn.request("GET", f"/stream.mjpg?t={TOKEN}&n=1700000000000")
+    response = conn.getresponse()
+    assert response.status == 200
+    assert read_part(response) == b"frame-1"
+    response.close()
+    conn.close()
+
+
+def test_page_cache_buster_does_not_reuse_token_param(running_server):
+    _, server = running_server
+    _, body = get(server.port, "/")
+    assert b'"&n=" + Date.now()' in body
+    assert b'"/stream.mjpg?t=" + Date.now()' not in body
+
+
+def test_new_token_is_short_url_safe_and_random():
+    tokens = {new_token() for _ in range(200)}
+    assert len(tokens) == 200
+    for token in tokens:
+        assert len(token) == 8
+        assert stream_url("10.0.0.5", 8080, token) == f"http://10.0.0.5:8080/?t={token}"
+        assert all(c.isalnum() or c in "-_" for c in token)
+
+
+def test_stream_url_without_token_is_unchanged():
+    assert stream_url("10.0.0.5", 8080) == "http://10.0.0.5:8080/"

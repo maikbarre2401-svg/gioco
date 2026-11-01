@@ -1,16 +1,22 @@
+import hmac
 import ipaddress
 import json
 import logging
+import secrets
 import socket
 import threading
 import time
 from contextlib import contextmanager
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, quote, urlsplit
 
 log = logging.getLogger("mjpeg")
 
 BOUNDARY = b"gioco-frame"
+TOKEN_PARAM = "t"
+# 6 byte casuali = 8 caratteri url-safe, 48 bit: abbastanza per una rete locale, corto da leggere sulla scheda.
+TOKEN_BYTES = 6
 DEFAULT_PORTS = tuple(range(8080, 8090))
 CLIENT_WAIT_TIMEOUT = 5.0
 CLIENT_SOCKET_TIMEOUT = 10.0
@@ -185,8 +191,20 @@ class _Handler(BaseHTTPRequestHandler):
     # Un client che smette di leggere bloccherebbe il thread per sempre sulla write.
     timeout = CLIENT_SOCKET_TIMEOUT
 
+    def _authorized(self, query: str) -> bool:
+        expected = self.server.token
+        if expected is None:
+            return True
+        supplied = parse_qs(query).get(TOKEN_PARAM, [""])[0]
+        # Confronto a tempo costante: non rivela quanti caratteri iniziali sono giusti.
+        return hmac.compare_digest(supplied.encode("utf-8"), expected.encode("utf-8"))
+
     def do_GET(self):
-        path = self.path.split("?", 1)[0]
+        parts = urlsplit(self.path)
+        path = parts.path
+        if not self._authorized(parts.query):
+            self._send(HTTPStatus.FORBIDDEN, "text/plain; charset=utf-8", b"token mancante o errato\n")
+            return
         if path in ("/", "/index.html"):
             self._send(HTTPStatus.OK, "text/html; charset=utf-8", PAGE_HTML.encode("utf-8"))
         elif path == "/stream.mjpg":
@@ -248,9 +266,12 @@ class _Server(ThreadingHTTPServer):
 
 
 class MjpegServer:
-    def __init__(self, broker: FrameBroker, info_provider, ports=DEFAULT_PORTS, host: str = "0.0.0.0"):
+    def __init__(
+        self, broker: FrameBroker, info_provider, ports=DEFAULT_PORTS, host: str = "0.0.0.0", token: str | None = None
+    ):
         self._broker = broker
         self._info_provider = info_provider
+        self._token = token
         self._ports = tuple(ports)
         self._host = host
         self._httpd = None
@@ -273,6 +294,7 @@ class MjpegServer:
             raise OSError(f"nessuna porta libera in {self._ports}: {last_error}")
         httpd.broker = self._broker
         httpd.info_provider = self._info_provider
+        httpd.token = self._token
         self._httpd = httpd
         self.port = httpd.server_address[1]
         self._thread = threading.Thread(
@@ -338,8 +360,14 @@ def rank_lan_addresses(candidates: list[tuple[str, str]]) -> list[str]:
     return result
 
 
-def stream_url(ip: str, port: int) -> str:
-    return f"http://{ip}:{port}/"
+def new_token() -> str:
+    return secrets.token_urlsafe(TOKEN_BYTES)
+
+
+def stream_url(ip: str, port: int, token: str | None = None) -> str:
+    if token is None:
+        return f"http://{ip}:{port}/"
+    return f"http://{ip}:{port}/?{TOKEN_PARAM}={quote(token)}"
 
 
 PAGE_HTML = """<!doctype html>
@@ -376,7 +404,7 @@ PAGE_HTML = """<!doctype html>
   <div id="status" class="status"><span class="dot"></span><span id="status-text">connessione...</span></div>
   <div class="spacer"></div>
   <button id="rotate" type="button">Ruota 90&deg;</button>
-  <a class="button" href="/snapshot.jpg" target="_blank" rel="noopener">Istantanea</a>
+  <a id="snapshot" class="button" href="/snapshot.jpg" target="_blank" rel="noopener">Istantanea</a>
   <button id="fullscreen" type="button">Schermo intero</button>
 </header>
 <div id="stage">
@@ -393,6 +421,9 @@ PAGE_HTML = """<!doctype html>
   const statusText = document.getElementById("status-text");
   const footer = document.getElementById("footer");
   const STALE_SECONDS = 2.5;
+  // Il token arriva nell'URL della pagina e va ripetuto su ogni richiesta al telefono.
+  const auth = "t=" + encodeURIComponent(new URLSearchParams(location.search).get("t") || "");
+  document.getElementById("snapshot").href = "/snapshot.jpg?" + auth;
   let frameW = 1280, frameH = 720, rotation = 0, userRotated = false, online = false;
 
   function layout() {
@@ -407,7 +438,7 @@ PAGE_HTML = """<!doctype html>
   }
 
   function connect() {
-    img.src = "/stream.mjpg?t=" + Date.now();
+    img.src = "/stream.mjpg?" + auth + "&n=" + Date.now();
   }
 
   function setState(state, text) {
@@ -431,7 +462,12 @@ PAGE_HTML = """<!doctype html>
 
   async function poll() {
     try {
-      const response = await fetch("/info.json", { cache: "no-store" });
+      const response = await fetch("/info.json?" + auth, { cache: "no-store" });
+      if (response.status === 403) {
+        setState("offline", "token mancante o errato");
+        showMessage("Apri l'indirizzo completo mostrato sul telefono, con ?t=...");
+        return;
+      }
       const info = await response.json();
       if (!online) { connect(); }
       if (info.frame_age === null) {
