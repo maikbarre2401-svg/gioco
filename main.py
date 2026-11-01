@@ -418,7 +418,6 @@ class CameraBackend:
         self._first_frame_failed = False
         self._callback_enabled_at = None
         self._last_callback_at = None
-        self._callback_frames = 0
         self._video_recorder = None
         self._video_path = None
         self._audio_recorder = None
@@ -457,13 +456,11 @@ class CameraBackend:
         self._streaming = enabled
         self._callback_enabled_at = time.monotonic() if enabled else None
         self._last_callback_at = None
-        self._callback_frames = 0
         Logger.info(f"Stream: callback anteprima {'attivo' if enabled else 'spento'}")
         debug.state(debug.STAGE_CALLBACK, True, "attivo, in attesa di onPreviewFrame" if enabled else "spento: nessuno spettatore")
 
     def _on_preview_frame(self, data, width, height, encoder):
         # Gira sul thread UI di Android: solo assegnazioni, niente lavoro.
-        self._callback_frames += 1
         self._last_callback_at = time.monotonic()
         encoder.submit((data, width, height))
 
