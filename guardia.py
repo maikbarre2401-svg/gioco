@@ -1317,6 +1317,10 @@ def build_app(cfg, info=None):
         resp.headers["X-Frame-Options"] = "DENY"
         resp.headers["Referrer-Policy"] = "no-referrer"
         resp.headers["Content-Security-Policy"] = CSP
+        if request.url.path == "/":
+            # la pagina e' incorporata nel programma: senza questo, dopo un aggiornamento
+            # il browser continuerebbe a mostrare la versione vecchia presa dalla cache
+            resp.headers["Cache-Control"] = "no-store"
         return resp
 
     def ok(req):
@@ -1928,6 +1932,8 @@ def t_api():
     assert js["events"][0]["has_audio"] == 1
     assert js["units"] and js["units"][0]["unit"] == "A"
     assert "Content-Security-Policy" in r.headers
+    pg = c.get("/", cookies={"t": "segreto123"})
+    assert pg.status_code == 200 and pg.headers.get("Cache-Control") == "no-store"
     tid = js["events"][0]["id"]
     assert c.get("/api/audio/%d" % tid).status_code == 401
     assert c.get("/api/audio/%d?t=segreto123" % tid).status_code == 200
