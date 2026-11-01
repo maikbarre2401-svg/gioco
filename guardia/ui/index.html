@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#060a0f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Sala Operativa</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/ui/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<link rel="stylesheet" href="/ui/css/style.css?v=__V__">
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>window.GUARDIA = __CFG__;</script>
+</head>
+<body>
+
+<header class="barra">
+  <div class="marchio">
+    <h1>SALA OPERATIVA</h1>
+    <div class="stato" id="riga-stato">collegamento…</div>
+  </div>
+  <nav class="attrezzi">
+    <button class="tasto attivo" id="t-auto" title="Inquadra da sola le chiamate nuove">AUTO</button>
+    <button class="tasto" id="t-livelli" title="Livelli dei canali">LIVELLI</button>
+    <button class="tasto" id="t-stat" title="Statistiche">DATI</button>
+    <button class="tasto" id="t-imp" title="Impostazioni">⚙</button>
+    <span class="spia" id="spia">LIVE</span>
+  </nav>
+</header>
+
+<main class="scena">
+  <div id="mappa"></div>
+
+  <section class="pannello unita" id="p-unita">
+    <h2>UNITÀ IN ONDA</h2>
+    <div id="lista-unita"><p class="vuoto">nessuna unità</p></div>
+  </section>
+
+  <section class="pannello livelli nascosto" id="p-livelli">
+    <h2>LIVELLI CANALI <button class="chiudi" data-chiudi="p-livelli">✕</button></h2>
+    <div id="lista-livelli"><p class="vuoto">in attesa della radio…</p></div>
+    <p class="nota" id="nota-livelli"></p>
+  </section>
+
+  <section class="pannello dati nascosto" id="p-stat">
+    <h2>ULTIME 24 ORE <button class="chiudi" data-chiudi="p-stat">✕</button></h2>
+    <div id="corpo-stat"><p class="vuoto">caricamento…</p></div>
+  </section>
+
+  <section class="pannello impostazioni nascosto" id="p-imp">
+    <h2>IMPOSTAZIONI <button class="chiudi" data-chiudi="p-imp">✕</button></h2>
+    <form id="modulo-imp" autocomplete="off"></form>
+    <p class="nota" id="nota-imp">Le modifiche hanno effetto subito e restano salvate.</p>
+  </section>
+</main>
+
+<section class="feed">
+  <div class="filtri">
+    <input id="cerca" type="search" placeholder="cerca nel parlato o nel luogo…"
+           maxlength="80" aria-label="cerca">
+    <div class="pillole" id="pillole-unita"></div>
+    <button class="tasto piccolo" id="t-avvisi" title="Solo le chiamate con parola d'allarme">AVVISI</button>
+    <a class="tasto piccolo" id="t-csv" href="#" title="Scarica il registro">CSV</a>
+  </div>
+  <div id="righe" class="righe"></div>
+</section>
+
+<script type="module" src="/ui/js/app.js?v=__V__"></script>
+</body>
+</html>
