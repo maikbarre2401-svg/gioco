@@ -13,7 +13,7 @@ def captured(monkeypatch):
 
 
 def test_stages_are_unique_and_cover_the_pipeline():
-    assert len(set(debug.STAGES)) == len(debug.STAGES) == 10
+    assert len(set(debug.STAGES)) == len(debug.STAGES) == 11
 
 
 def test_format_line_ok_and_fail():

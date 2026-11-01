@@ -10,8 +10,10 @@ from main import (
     choose_size,
     cover_tex_coords,
     encoder_health,
+    expected_frame_bytes,
     format_duration,
     gl_extensions,
+    image_format_name,
     java_bytes,
     lan_addresses,
     mat4_multiply,
@@ -23,7 +25,7 @@ from main import (
     surface_rotation_to_degrees,
     surface_texture_fallback_matrix,
 )
-from main import MAT4_FLIP_V, MAT4_IDENTITY
+from main import MAT4_FLIP_V, MAT4_IDENTITY, CameraBackend, PreviewFrameMonitor
 
 
 def test_choose_size_returns_exact_match():
@@ -274,3 +276,137 @@ def test_shader_compile_log_reports_errors(gl_context):
     result = shader_compile_log("void main() { questo non compila }")
     assert result.startswith("compile_status=0 log=")
     assert "<vuoto>" not in result
+
+
+@pytest.mark.parametrize(
+    ("code", "name"),
+    [(17, "NV21(17)"), (842094169, "YV12(842094169)"), (35, "YUV_420_888(35)"), (12345, "NON_DOCUMENTATO(12345)"), (None, "sconosciuto")],
+)
+def test_image_format_name(code, name):
+    assert image_format_name(code) == name
+
+
+@pytest.mark.parametrize(
+    ("width", "height", "image_format", "expected"),
+    [
+        (1920, 1080, 17, 3_110_400),
+        (1920, 1080, 842094169, 3_110_400),
+        (1000, 500, 842094169, 1008 * 500 + 512 * 250 * 2),
+        (640, 480, 20, 614_400),
+        (640, 480, 256, None),
+        (640, 480, None, None),
+    ],
+)
+def test_expected_frame_bytes(width, height, image_format, expected):
+    assert expected_frame_bytes(width, height, image_format) == expected
+
+
+def test_frame_monitor_counts_frames_per_tick():
+    monitor = PreviewFrameMonitor()
+    for _ in range(30):
+        monitor.frame(3_110_400)
+    assert monitor.tick(1.0, suspended=False) == ("ok", 30)
+    assert monitor.last_bytes == 3_110_400
+    monitor.frame(3_110_400)
+    assert monitor.tick(1.0, suspended=False) == ("ok", 1)
+    assert monitor.total == 31
+
+
+def test_frame_monitor_reports_stall_once_after_three_seconds():
+    monitor = PreviewFrameMonitor(stall_seconds=3.0)
+    outcomes = [monitor.tick(1.0, suspended=False)[0] for _ in range(5)]
+    assert outcomes == ["zero", "zero", "stallo", "fermo", "fermo"]
+    assert monitor.zero_seconds == 5.0
+
+
+def test_frame_monitor_recovers_and_can_stall_again():
+    monitor = PreviewFrameMonitor(stall_seconds=2.0)
+    assert [monitor.tick(1.0, False)[0] for _ in range(3)] == ["zero", "stallo", "fermo"]
+    monitor.frame(10)
+    assert monitor.tick(1.0, False) == ("ok", 1)
+    assert monitor.zero_seconds == 0.0
+    assert [monitor.tick(1.0, False)[0] for _ in range(2)] == ["zero", "stallo"]
+
+
+def test_frame_monitor_does_not_count_suspended_time():
+    monitor = PreviewFrameMonitor(stall_seconds=3.0)
+    monitor.tick(1.0, False)
+    monitor.tick(1.0, False)
+    assert monitor.tick(1.0, suspended=True) == ("sospeso", 0)
+    assert monitor.zero_seconds == 0.0
+    assert monitor.tick(1.0, False) == ("zero", 0)
+
+
+def test_frame_monitor_uses_real_elapsed_time():
+    monitor = PreviewFrameMonitor(stall_seconds=3.0)
+    assert monitor.tick(1.6, False)[0] == "zero"
+    assert monitor.tick(1.6, False)[0] == "stallo"
+
+
+@pytest.fixture
+def debug_lines(monkeypatch):
+    import debug
+
+    lines = []
+    monkeypatch.setattr(debug, "DEBUG", True)
+    monkeypatch.setattr(debug, "_write", lambda priority, message: lines.append((priority, message)))
+    return lines
+
+
+def fake_backend(**overrides):
+    from types import SimpleNamespace
+
+    values = dict(
+        preview_size=(1920, 1080),
+        _requested_format=17,
+        _actual_format=842094169,
+        _supported_formats=[17, 842094169],
+        _callback_error=None,
+        _callback_active=True,
+        _video_recorder=None,
+        _frame_monitor=PreviewFrameMonitor(stall_seconds=3.0),
+    )
+    values.update(overrides)
+    backend = SimpleNamespace(**values)
+    backend._frame_stall_reason = lambda expected: CameraBackend._frame_stall_reason(backend, expected)
+    return backend
+
+
+def test_report_preview_frames_prints_count_every_tick(debug_lines):
+    import debug
+
+    backend = fake_backend(_actual_format=17)
+    for _ in range(29):
+        backend._frame_monitor.frame(3_110_400)
+    CameraBackend._report_preview_frames(backend, 1.0)
+    assert debug_lines[-1][0] == debug.ANDROID_LOG_INFO
+    assert debug_lines[-1][1].endswith("fotogrammi       OK 29 in 1.0 s, totale 29, ultimo=3110400 byte (attesi 3110400)")
+
+
+def test_report_preview_frames_fails_with_requested_and_actual_format(debug_lines):
+    import debug
+
+    backend = fake_backend()
+    for _ in range(3):
+        CameraBackend._report_preview_frames(backend, 1.0)
+    priority, line = debug_lines[-1]
+    assert priority == debug.ANDROID_LOG_ERROR
+    assert "fotogrammi       FAIL 0 fotogrammi da onPreviewFrame da 3 s con fotocamera aperta" in line
+    assert "formato richiesto=NV21(17) effettivo=YV12(842094169)" in line
+    assert "supportati=[NV21(17), YV12(842094169)]" in line
+    assert "anteprima=1920x1080 attesi=3110400 byte/fotogramma; callback registrato" in line
+    assert [p for p, _ in debug_lines] == [debug.ANDROID_LOG_INFO, debug.ANDROID_LOG_INFO, debug.ANDROID_LOG_ERROR]
+
+
+def test_stall_reason_includes_callback_registration_error(debug_lines):
+    backend = fake_backend(_callback_active=False, _callback_error="setPreviewCallback(proxy): RuntimeException")
+    for _ in range(3):
+        CameraBackend._report_preview_frames(backend, 1.0)
+    assert debug_lines[-1][1].endswith("callback non registrato (setPreviewCallback(proxy): RuntimeException)")
+
+
+def test_report_preview_frames_during_video_is_not_a_stall(debug_lines):
+    backend = fake_backend(_video_recorder=object())
+    for _ in range(5):
+        CameraBackend._report_preview_frames(backend, 1.0)
+    assert all("callback sospeso: registrazione video" in line for _, line in debug_lines)

@@ -23,6 +23,7 @@ STAGE_TEXTURE = "texture"
 STAGE_SHADER = "shader"
 STAGE_FIRST_FRAME = "primo_fotogramma"
 STAGE_CALLBACK = "callback"
+STAGE_FRAMES = "fotogrammi"
 STAGE_ENCODER = "encoder"
 STAGE_CLIENTS = "client"
 
@@ -35,6 +36,7 @@ STAGES = (
     STAGE_SHADER,
     STAGE_FIRST_FRAME,
     STAGE_CALLBACK,
+    STAGE_FRAMES,
     STAGE_ENCODER,
     STAGE_CLIENTS,
 )

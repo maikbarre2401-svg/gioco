@@ -93,7 +93,24 @@ OES_EXTENSION = "GL_OES_EGL_image_external"
 CAMERA_TEXTURE_UNIT = 1
 
 FIRST_FRAME_TIMEOUT = 3.0
-CALLBACK_STALL_SECONDS = 3.0
+FRAME_STALL_SECONDS = 3.0
+FRAME_REPORT_SECONDS = 1.0
+
+# Codici di android.graphics.ImageFormat: i formati di anteprima che Camera può restituire.
+IMAGE_FORMAT_NAMES = {
+    0: "UNKNOWN",
+    4: "RGB_565",
+    16: "NV16",
+    17: "NV21",
+    20: "YUY2",
+    32: "RAW_SENSOR",
+    34: "PRIVATE",
+    35: "YUV_420_888",
+    256: "JPEG",
+    842094169: "YV12",
+}
+IMAGE_FORMAT_BITS = {4: 16, 16: 16, 17: 12, 20: 16, 35: 12}
+IMAGE_FORMAT_YV12 = 842094169
 
 FOCUS_CONTINUOUS_VIDEO = "continuous-video"
 AUDIO_BIT_RATE = 128_000
@@ -357,6 +374,68 @@ def shader_compile_log(source: str) -> str:
     return f"compile_status={status} log={text or '<vuoto>'}"
 
 
+def image_format_name(code: int | None) -> str:
+    if code is None:
+        return "sconosciuto"
+    return f"{IMAGE_FORMAT_NAMES.get(code, 'NON_DOCUMENTATO')}({code})"
+
+
+def expected_frame_bytes(width: int, height: int, image_format: int | None) -> int | None:
+    if image_format == IMAGE_FORMAT_YV12:
+        # YV12 allinea le righe a 16 byte (documentazione di Camera.Parameters.setPreviewFormat).
+        y_stride = -(-width // 16) * 16
+        uv_stride = -(-(y_stride // 2) // 16) * 16
+        return y_stride * height + uv_stride * (height // 2) * 2
+    bits = IMAGE_FORMAT_BITS.get(image_format)
+    if bits is None:
+        return None
+    return width * height * bits // 8
+
+
+class PreviewFrameMonitor:
+    """Conta i fotogrammi di onPreviewFrame e decide, a ogni controllo, se lo stallo è iniziato."""
+
+    def __init__(self, stall_seconds: float = FRAME_STALL_SECONDS):
+        self.stall_seconds = stall_seconds
+        self.total = 0
+        self.last_bytes = None
+        self.zero_seconds = 0.0
+        self._last_total = 0
+        self._stall_reported = False
+
+    def frame(self, nbytes: int | None) -> None:
+        # Unico scrittore: il thread UI di Android. Il thread di Kivy legge soltanto.
+        self.total += 1
+        self.last_bytes = nbytes
+
+    def tick(self, dt: float, suspended: bool) -> tuple[str, int]:
+        """Restituisce (esito, fotogrammi dall'ultimo tick). Esiti: ok, sospeso, zero, stallo (una volta), fermo."""
+        total = self.total
+        count = total - self._last_total
+        self._last_total = total
+        if suspended or count > 0:
+            self.zero_seconds = 0.0
+            self._stall_reported = False
+            return ("sospeso" if suspended else "ok"), count
+        self.zero_seconds += dt
+        if self.zero_seconds < self.stall_seconds:
+            return "zero", 0
+        if not self._stall_reported:
+            self._stall_reported = True
+            return "stallo", 0
+        return "fermo", 0
+
+
+def _java_ints(java_list) -> list[int]:
+    if java_list is None:
+        return []
+    values = []
+    for i in range(java_list.size()):
+        item = java_list.get(i)
+        values.append(int(item) if isinstance(item, int) else int(item.intValue()))
+    return values
+
+
 def java_bytes(value) -> bytes:
     if isinstance(value, (bytes, bytearray)):
         return bytes(value)
@@ -416,14 +495,18 @@ class CameraBackend:
         self._opened_at = 0.0
         self._first_frame_seen = False
         self._first_frame_failed = False
-        self._callback_enabled_at = None
-        self._last_callback_at = None
+        self._stream_wanted = False
+        self._callback_error = None
+        self._requested_format = None
+        self._actual_format = None
+        self._supported_formats = []
+        self._frame_monitor = PreviewFrameMonitor()
         self._video_recorder = None
         self._video_path = None
         self._audio_recorder = None
         self._audio_path = None
         self.preview_size = None
-        self._streaming = False
+        self._callback_active = False
         # pyjnius non trattiene il proxy: senza questo riferimento il GC lo libera mentre Java lo chiama.
         self._preview_callback = None
 
@@ -437,44 +520,77 @@ class CameraBackend:
         return {"rotation": self._rotation, "width": self.preview_size[0], "height": self.preview_size[1]}
 
     def set_streaming(self, enabled: bool, encoder: LatestFrameEncoder):
-        # Il callback copia ~3 MB a fotogramma da Java a Python: lo si attiva solo se c'è qualcuno collegato.
-        if self._camera is None or self._video_recorder is not None or enabled == self._streaming:
+        # Il callback copia ~3 MB a fotogramma da Java a Python: senza DEBUG lo si registra solo se c'è uno spettatore.
+        self._stream_wanted = enabled
+        want_callback = enabled or debug.DEBUG
+        if self._camera is None or self._video_recorder is not None:
             return
-        try:
-            if enabled:
-                width, height = self.preview_size
-                self._preview_callback = _PreviewCallback(
-                    lambda data: self._on_preview_frame(data, width, height, encoder)
-                )
-                self._camera.setPreviewCallback(self._preview_callback)
-            else:
-                self._camera.setPreviewCallback(None)
-        except JAVA_ERRORS as exc:
-            Logger.exception("Stream: cambio stato del callback anteprima fallito")
-            debug.state(debug.STAGE_CALLBACK, False, f"setPreviewCallback({'attivo' if enabled else 'null'}): {exc}")
-            return
-        self._streaming = enabled
-        self._callback_enabled_at = time.monotonic() if enabled else None
-        self._last_callback_at = None
-        Logger.info(f"Stream: callback anteprima {'attivo' if enabled else 'spento'}")
-        debug.state(debug.STAGE_CALLBACK, True, "attivo, in attesa di onPreviewFrame" if enabled else "spento: nessuno spettatore")
+        if want_callback != self._callback_active:
+            try:
+                if want_callback:
+                    width, height = self.preview_size
+                    self._preview_callback = _PreviewCallback(
+                        lambda data: self._on_preview_frame(data, width, height, encoder)
+                    )
+                    self._camera.setPreviewCallback(self._preview_callback)
+                else:
+                    self._camera.setPreviewCallback(None)
+            except JAVA_ERRORS as exc:
+                Logger.exception("Stream: cambio stato del callback anteprima fallito")
+                self._callback_error = f"setPreviewCallback({'proxy' if want_callback else 'null'}): {exc}"
+                debug.state(debug.STAGE_CALLBACK, False, self._callback_error)
+                return
+            self._callback_active = want_callback
+            self._callback_error = None
+            Logger.info(f"Stream: callback anteprima {'attivo' if want_callback else 'spento'}")
+        if not self._callback_active:
+            detail = "spento: nessuno spettatore"
+        elif enabled:
+            detail = "attivo, fotogrammi inoltrati all'encoder"
+        else:
+            detail = "attivo solo per il contatore (DEBUG), nessuno spettatore"
+        debug.state(debug.STAGE_CALLBACK, True, detail)
 
     def _on_preview_frame(self, data, width, height, encoder):
-        # Gira sul thread UI di Android: solo assegnazioni, niente lavoro.
-        self._last_callback_at = time.monotonic()
-        encoder.submit((data, width, height))
+        # Gira sul thread UI di Android: solo contatore e consegna, niente lavoro.
+        try:
+            nbytes = len(data)
+        except TypeError:
+            nbytes = None
+        self._frame_monitor.frame(nbytes)
+        if self._stream_wanted:
+            encoder.submit((data, width, height))
 
-    def callback_health(self) -> tuple[bool, str] | None:
-        if not self._streaming or self._callback_enabled_at is None:
-            return None
-        now = time.monotonic()
-        if self._last_callback_at is None:
-            if now - self._callback_enabled_at > CALLBACK_STALL_SECONDS:
-                return False, f"attivo ma nessun onPreviewFrame in {CALLBACK_STALL_SECONDS:.0f} s"
-            return True, "attivo, in attesa di onPreviewFrame"
-        if now - self._last_callback_at > CALLBACK_STALL_SECONDS:
-            return False, f"attivo ma onPreviewFrame fermo da oltre {CALLBACK_STALL_SECONDS:.0f} s"
-        return True, f"attivo, fotogrammi in arrivo ({self.preview_size[0]}x{self.preview_size[1]} NV21)"
+    def _report_preview_frames(self, dt):
+        monitor = self._frame_monitor
+        outcome, count = monitor.tick(dt, suspended=self._video_recorder is not None)
+        width, height = self.preview_size
+        expected = expected_frame_bytes(width, height, self._actual_format)
+        summary = f"{count} in {dt:.1f} s, totale {monitor.total}"
+        if outcome == "ok":
+            debug.ok(debug.STAGE_FRAMES, f"{summary}, ultimo={monitor.last_bytes} byte (attesi {expected})")
+        elif outcome == "sospeso":
+            debug.ok(debug.STAGE_FRAMES, f"{summary}, callback sospeso: registrazione video")
+        elif outcome == "zero":
+            debug.ok(debug.STAGE_FRAMES, f"{summary}, a zero da {monitor.zero_seconds:.0f} s")
+        elif outcome == "stallo":
+            debug.fail(debug.STAGE_FRAMES, self._frame_stall_reason(expected))
+        else:
+            debug.fail(debug.STAGE_FRAMES, f"{summary}, a zero da {monitor.zero_seconds:.0f} s")
+
+    def _frame_stall_reason(self, expected) -> str:
+        width, height = self.preview_size
+        supported = ", ".join(image_format_name(code) for code in self._supported_formats) or "nessuno"
+        if self._callback_error is not None:
+            callback = f"non registrato ({self._callback_error})"
+        else:
+            callback = "registrato" if self._callback_active else "non registrato"
+        return (
+            f"0 fotogrammi da onPreviewFrame da {self._frame_monitor.zero_seconds:.0f} s con fotocamera aperta; "
+            f"formato richiesto={image_format_name(self._requested_format)} "
+            f"effettivo={image_format_name(self._actual_format)} supportati=[{supported}]; "
+            f"anteprima={width}x{height} attesi={expected} byte/fotogramma; callback {callback}"
+        )
 
     @property
     def texture(self):
@@ -486,6 +602,7 @@ class CameraBackend:
         self._opened_at = time.monotonic()
         self._first_frame_seen = False
         self._first_frame_failed = False
+        self._frame_monitor = PreviewFrameMonitor()
         try:
             self._open_camera()
             self._create_gl_pipeline()
@@ -499,18 +616,21 @@ class CameraBackend:
             self.close()
             raise
         Clock.schedule_interval(self._tick, 0)
+        if debug.DEBUG:
+            Clock.schedule_interval(self._report_preview_frames, FRAME_REPORT_SECONDS)
 
     def close(self):
         Clock.unschedule(self._tick)
+        Clock.unschedule(self._report_preview_frames)
         if self._video_recorder is not None:
             self.stop_video()
         if self._camera is not None:
             camera = self._camera
             self._camera = None
-            if self._streaming:
+            if self._callback_active:
                 Logger.info("Stream: callback anteprima spento (fotocamera chiusa)")
                 debug.state(debug.STAGE_CALLBACK, True, "spento: fotocamera chiusa")
-            self._streaming = False
+            self._callback_active = False
             try:
                 camera.setPreviewCallback(None)
                 camera.stopPreview()
@@ -558,8 +678,15 @@ class CameraBackend:
             if FOCUS_CONTINUOUS_VIDEO in focus_modes:
                 params.setFocusMode(FOCUS_CONTINUOUS_VIDEO)
             self._camera.setParameters(params)
+            # Riletti dopo setParameters: alcuni driver accettano NV21 e poi consegnano altro.
+            applied = self._camera.getParameters()
+            self._requested_format = int(ImageFormat.NV21)
+            self._actual_format = int(applied.getPreviewFormat())
+            self._supported_formats = _java_ints(applied.getSupportedPreviewFormats())
             probe.detail = (
                 f"anteprima={preview_size[0]}x{preview_size[1]} video={video_size[0]}x{video_size[1]} "
+                f"formato richiesto={image_format_name(self._requested_format)} "
+                f"effettivo={image_format_name(self._actual_format)} "
                 f"profilo={profile_size[0]}x{profile_size[1]} preferita={preferred_size} "
                 f"supportate={len(preview_sizes)} anteprime/{len(video_sizes)} video "
                 f"fuoco={'continuous-video' if FOCUS_CONTINUOUS_VIDEO in focus_modes else 'predefinito'}"
@@ -672,10 +799,10 @@ class CameraBackend:
         if self._camera is None:
             raise CameraError("fotocamera non aperta")
         profile = self._profile
-        if self._streaming:
+        if self._callback_active:
             # Con la fotocamera ceduta a MediaRecorder i callback dell'anteprima non sono garantiti.
             self._camera.setPreviewCallback(None)
-            self._streaming = False
+            self._callback_active = False
             Logger.info("Stream: callback anteprima spento (registrazione video)")
             debug.state(debug.STAGE_CALLBACK, True, "spento: registrazione video in corso")
         recorder = MediaRecorder()
@@ -1139,10 +1266,6 @@ class GiocoCameraApp(App):
             debug.state(debug.STAGE_CLIENTS, True, f"{clients} collegati, {address}")
         if self._encoder is not None:
             debug.state(debug.STAGE_ENCODER, *encoder_health(self._encoder))
-        if self._backend is not None:
-            health = self._backend.callback_health()
-            if health is not None:
-                debug.state(debug.STAGE_CALLBACK, *health)
 
     def _build_bottom_bar(self):
         bar = BoxLayout(
