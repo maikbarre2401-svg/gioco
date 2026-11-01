@@ -345,7 +345,7 @@ def test_frame_monitor_uses_real_elapsed_time():
 
 @pytest.fixture
 def debug_lines(monkeypatch):
-    import debug
+    import main as debug
 
     lines = []
     monkeypatch.setattr(debug, "DEBUG", True)
@@ -373,7 +373,7 @@ def fake_backend(**overrides):
 
 
 def test_report_preview_frames_prints_count_every_tick(debug_lines):
-    import debug
+    import main as debug
 
     backend = fake_backend(_actual_format=17)
     for _ in range(29):
@@ -384,7 +384,7 @@ def test_report_preview_frames_prints_count_every_tick(debug_lines):
 
 
 def test_report_preview_frames_fails_with_requested_and_actual_format(debug_lines):
-    import debug
+    import main as debug
 
     backend = fake_backend()
     for _ in range(3):

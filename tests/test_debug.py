@@ -1,6 +1,6 @@
 import pytest
 
-import debug
+import main as debug
 
 
 @pytest.fixture

@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from mjpeg_server import (
+from main import (
     BOUNDARY,
     BrokerClosed,
     FrameBroker,

@@ -1,7 +1,19 @@
+import ctypes
+import hmac
+import ipaddress
+import json
+import logging
 import os
+import secrets
+import socket
+import sys
 import threading
 import time
+from contextlib import contextmanager
 from datetime import datetime
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, quote, urlsplit
 
 from kivy.app import App
 from kivy.clock import Clock, mainthread
@@ -32,16 +44,656 @@ from kivy.uix.label import Label
 from kivy.uix.widget import Widget
 from kivy.utils import platform
 
-import debug
-from mjpeg_server import (
-    FrameBroker,
-    LatestFrameEncoder,
-    MjpegServer,
-    local_ipv4,
-    new_token,
-    rank_lan_addresses,
-    stream_url,
+
+# Diagnostica della pipeline: una riga su logcat con tag GIOCO per ogni stadio, solo con DEBUG = True.
+
+DEBUG = True
+
+TAG = "GIOCO"
+# logcat tronca le righe oltre ~4 KB; meglio tagliare noi e lasciare spazio a tag e intestazione.
+MAX_MESSAGE_BYTES = 3500
+
+ANDROID_LOG_INFO = 4
+ANDROID_LOG_ERROR = 6
+
+STAGE_DEBUG = "debug"
+STAGE_CAMERA_OPEN = "fotocamera"
+STAGE_PREVIEW_SIZE = "dimensioni"
+STAGE_ROTATION = "rotazione"
+STAGE_TEXTURE = "texture"
+STAGE_SHADER = "shader"
+STAGE_FIRST_FRAME = "primo_fotogramma"
+STAGE_CALLBACK = "callback"
+STAGE_FRAMES = "fotogrammi"
+STAGE_ENCODER = "encoder"
+STAGE_CLIENTS = "client"
+
+STAGES = (
+    STAGE_DEBUG,
+    STAGE_CAMERA_OPEN,
+    STAGE_PREVIEW_SIZE,
+    STAGE_ROTATION,
+    STAGE_TEXTURE,
+    STAGE_SHADER,
+    STAGE_FIRST_FRAME,
+    STAGE_CALLBACK,
+    STAGE_FRAMES,
+    STAGE_ENCODER,
+    STAGE_CLIENTS,
 )
+
+_STARTED_AT = time.monotonic()
+_lock = threading.Lock()
+_last_state: dict[str, tuple[bool, str]] = {}
+_write = None
+_output = "non ancora scelto"
+
+
+def _android_writer():
+    # ctypes su liblog invece di android.util.Log via pyjnius: un thread che tocca la JVM deve fare detach
+    # prima di uscire, e i thread del server HTTP non lo fanno.
+    try:
+        liblog = ctypes.CDLL("liblog.so")
+    except OSError:
+        return None
+    log_write = liblog["__android_log_write"]
+    log_write.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_char_p)
+    log_write.restype = ctypes.c_int
+    tag = TAG.encode("ascii")
+
+    def write(priority: int, message: str) -> None:
+        log_write(priority, tag, encode_message(message))
+
+    return write
+
+
+def _stderr_writer(priority: int, message: str) -> None:
+    level = "E" if priority >= ANDROID_LOG_ERROR else "I"
+    print(f"{TAG}/{level}: {message}", file=sys.stderr, flush=True)
+
+
+def _get_writer():
+    global _write, _output
+    if _write is None:
+        android = _android_writer()
+        if android is not None:
+            _write, _output = android, "logcat (liblog)"
+        else:
+            _write, _output = _stderr_writer, "stderr"
+    return _write
+
+
+def output_name() -> str:
+    _get_writer()
+    return _output
+
+
+def encode_message(message: str) -> bytes:
+    data = message.replace("\x00", "\\0").encode("utf-8", "replace")
+    if len(data) <= MAX_MESSAGE_BYTES:
+        return data
+    return data[: MAX_MESSAGE_BYTES - 3].decode("utf-8", "ignore").encode("utf-8") + b"..."
+
+
+def format_line(stage: str, ok: bool, detail: str, elapsed: float) -> str:
+    verdict = "OK" if ok else "FAIL"
+    line = f"t={elapsed:8.3f}s {stage:<16} {verdict}"
+    return f"{line} {detail}" if detail else line
+
+
+def report(stage: str, ok: bool, detail: str = "") -> None:
+    if not DEBUG:
+        return
+    line = format_line(stage, ok, detail, time.monotonic() - _STARTED_AT)
+    try:
+        _get_writer()(ANDROID_LOG_INFO if ok else ANDROID_LOG_ERROR, line)
+    except Exception as exc:
+        # La diagnostica non deve mai far cadere l'app: ripiega su stderr, che p4a manda in logcat col tag python.
+        _stderr_writer(ANDROID_LOG_ERROR, f"scrittura log fallita ({type(exc).__name__}: {exc}): {line}")
+
+
+def ok(stage: str, detail: str = "") -> None:
+    report(stage, True, detail)
+
+
+def fail(stage: str, reason: str) -> None:
+    report(stage, False, reason)
+
+
+def state(stage: str, ok: bool, detail: str = "") -> None:
+    """Come report, ma scrive solo quando esito o dettaglio cambiano: per gli stadi controllati ogni secondo."""
+    if not DEBUG:
+        return
+    key = (ok, detail)
+    with _lock:
+        if _last_state.get(stage) == key:
+            return
+        _last_state[stage] = key
+    report(stage, ok, detail)
+
+
+def forget(stage: str) -> None:
+    with _lock:
+        _last_state.pop(stage, None)
+
+
+class StageProbe:
+    def __init__(self):
+        self.detail = ""
+
+
+@contextmanager
+def stage(name: str):
+    """OK con probe.detail se il blocco termina, FAIL con il tipo e il messaggio dell'eccezione se solleva (che poi risale)."""
+    probe = StageProbe()
+    try:
+        yield probe
+    except BaseException as exc:
+        fail(name, f"{type(exc).__name__}: {exc}")
+        raise
+    ok(name, probe.detail)
+
+
+# Server MJPEG: pagina web, stream multipart, istantanea, info.json e token nell'URL.
+
+log = logging.getLogger("mjpeg")
+
+BOUNDARY = b"gioco-frame"
+TOKEN_PARAM = "t"
+# 6 byte casuali = 8 caratteri url-safe, 48 bit: abbastanza per una rete locale, corto da leggere sulla scheda.
+TOKEN_BYTES = 6
+DEFAULT_PORTS = tuple(range(8080, 8090))
+CLIENT_WAIT_TIMEOUT = 5.0
+CLIENT_SOCKET_TIMEOUT = 10.0
+PROBE_ADDRESSES = ("10.255.255.255", "192.0.2.1", "8.8.8.8")
+# Wi-Fi prima, poi hotspot, poi tethering USB/Ethernet. Le interfacce dati mobili e VPN non sono raggiungibili dal PC.
+INTERFACE_PRIORITY = (("wlan", 0), ("swlan", 1), ("softap", 1), ("ap", 1), ("eth", 2), ("usb", 2), ("rndis", 2), ("ncm", 2))
+EXCLUDED_INTERFACE_PREFIXES = ("rmnet", "ccmni", "tun", "ppp", "dummy", "lo", "ipsec", "clat", "v4-")
+OTHER_INTERFACE_PRIORITY = 3
+
+
+class BrokerClosed(Exception):
+    pass
+
+
+class FrameBroker:
+    """Ultimo JPEG disponibile più un numero di sequenza: ogni client salta i fotogrammi che non riesce a seguire."""
+
+    def __init__(self):
+        self._cond = threading.Condition()
+        self._frame = None
+        self._seq = 0
+        self._closed = False
+        self._clients = 0
+        self._published_at = None
+
+    @property
+    def clients(self) -> int:
+        with self._cond:
+            return self._clients
+
+    def publish(self, jpeg: bytes) -> None:
+        with self._cond:
+            self._frame = bytes(jpeg)
+            self._seq += 1
+            self._published_at = time.monotonic()
+            self._cond.notify_all()
+
+    def frame_age(self) -> float | None:
+        with self._cond:
+            if self._published_at is None:
+                return None
+            return time.monotonic() - self._published_at
+
+    def latest(self) -> bytes | None:
+        with self._cond:
+            return self._frame
+
+    def wait_next(self, last_seq: int, timeout: float) -> tuple[int, bytes] | None:
+        deadline = time.monotonic() + timeout
+        with self._cond:
+            while not self._closed and self._seq == last_seq:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return None
+                self._cond.wait(remaining)
+            if self._closed:
+                raise BrokerClosed()
+            return self._seq, self._frame
+
+    @contextmanager
+    def client(self):
+        with self._cond:
+            self._clients += 1
+        try:
+            yield
+        finally:
+            with self._cond:
+                self._clients -= 1
+
+    def close(self) -> None:
+        with self._cond:
+            self._closed = True
+            self._cond.notify_all()
+
+
+class LatestFrameEncoder:
+    """Tiene in coda un solo fotogramma: se la codifica è lenta, quelli intermedi vengono scartati invece di accumularsi."""
+
+    def __init__(self, broker: FrameBroker, encode, max_fps: float, on_thread_exit=None):
+        if max_fps <= 0:
+            raise ValueError(f"max_fps deve essere positivo: {max_fps}")
+        self._broker = broker
+        self._encode = encode
+        self._min_interval = 1.0 / max_fps
+        self._on_thread_exit = on_thread_exit
+        self._cond = threading.Condition()
+        self._pending = None
+        self._running = False
+        self._thread = None
+        self.encoded = 0
+        self.dropped = 0
+        self.errors = 0
+        self.last_error = None
+        self.last_error_at = None
+        self.last_encoded_at = None
+
+    @property
+    def is_alive(self) -> bool:
+        thread = self._thread
+        return thread is not None and thread.is_alive()
+
+    def start(self) -> None:
+        with self._cond:
+            if self._running:
+                return
+            self._running = True
+        self._thread = threading.Thread(target=self._run, name="mjpeg-encoder", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        with self._cond:
+            self._running = False
+            self._pending = None
+            self._cond.notify_all()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+            self._thread = None
+
+    def submit(self, item) -> None:
+        with self._cond:
+            if not self._running:
+                return
+            if self._pending is not None:
+                self.dropped += 1
+            self._pending = item
+            self._cond.notify()
+
+    def _take(self):
+        with self._cond:
+            if not self._running:
+                return None, False
+            item, self._pending = self._pending, None
+            return item, True
+
+    def _run(self) -> None:
+        last = 0.0
+        try:
+            while True:
+                with self._cond:
+                    while self._running and self._pending is None:
+                        self._cond.wait()
+                    if not self._running:
+                        return
+                delay = self._min_interval - (time.monotonic() - last)
+                if delay > 0:
+                    time.sleep(delay)
+                item, running = self._take()
+                if not running:
+                    return
+                if item is None:
+                    continue
+                last = time.monotonic()
+                try:
+                    jpeg = self._encode(item)
+                except Exception as exc:
+                    # L'encoder Android solleva JavaException, che qui non è importabile.
+                    log.exception("codifica JPEG fallita")
+                    self.errors += 1
+                    self.last_error = f"{type(exc).__name__}: {exc}"
+                    self.last_error_at = time.monotonic()
+                    continue
+                self._broker.publish(jpeg)
+                self.encoded += 1
+                self.last_encoded_at = time.monotonic()
+        finally:
+            if self._on_thread_exit is not None:
+                self._on_thread_exit()
+
+
+class _Handler(BaseHTTPRequestHandler):
+    server_version = "GiocoMJPEG/1.0"
+    # Un client che smette di leggere bloccherebbe il thread per sempre sulla write.
+    timeout = CLIENT_SOCKET_TIMEOUT
+
+    def _authorized(self, query: str) -> bool:
+        expected = self.server.token
+        if expected is None:
+            return True
+        supplied = parse_qs(query).get(TOKEN_PARAM, [""])[0]
+        # Confronto a tempo costante: non rivela quanti caratteri iniziali sono giusti.
+        return hmac.compare_digest(supplied.encode("utf-8"), expected.encode("utf-8"))
+
+    def do_GET(self):
+        parts = urlsplit(self.path)
+        path = parts.path
+        if not self._authorized(parts.query):
+            self._send(HTTPStatus.FORBIDDEN, "text/plain; charset=utf-8", b"token mancante o errato\n")
+            return
+        if path in ("/", "/index.html"):
+            self._send(HTTPStatus.OK, "text/html; charset=utf-8", PAGE_HTML.encode("utf-8"))
+        elif path == "/stream.mjpg":
+            self._stream()
+        elif path == "/snapshot.jpg":
+            frame = self.server.broker.latest()
+            if frame is None:
+                self._send(HTTPStatus.SERVICE_UNAVAILABLE, "text/plain; charset=utf-8", b"nessun fotogramma\n")
+            else:
+                self._send(HTTPStatus.OK, "image/jpeg", frame)
+        elif path == "/info.json":
+            info = dict(self.server.info_provider())
+            broker = self.server.broker
+            info["clients"] = broker.clients
+            age = broker.frame_age()
+            # Senza questo campo la pagina non distingue uno stream fermo da uno vivo: la connessione resta aperta.
+            info["frame_age"] = None if age is None else round(age, 1)
+            self._send(HTTPStatus.OK, "application/json", json.dumps(info).encode("utf-8"))
+        else:
+            self._send(HTTPStatus.NOT_FOUND, "text/plain; charset=utf-8", b"non trovato\n")
+
+    def _send(self, status, content_type, body: bytes):
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _stream(self):
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", f"multipart/x-mixed-replace; boundary={BOUNDARY.decode()}")
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        broker = self.server.broker
+        seq = 0
+        with broker.client():
+            try:
+                while True:
+                    item = broker.wait_next(seq, CLIENT_WAIT_TIMEOUT)
+                    if item is None:
+                        continue
+                    seq, frame = item
+                    header = b"--%s\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n" % (BOUNDARY, len(frame))
+                    self.wfile.write(header + frame + b"\r\n")
+                    self.wfile.flush()
+            except (OSError, BrokerClosed):
+                return
+
+    def log_message(self, fmt, *args):
+        log.debug("%s %s", self.address_string(), fmt % args)
+
+
+class _Server(ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+
+class MjpegServer:
+    def __init__(
+        self, broker: FrameBroker, info_provider, ports=DEFAULT_PORTS, host: str = "0.0.0.0", token: str | None = None
+    ):
+        self._broker = broker
+        self._info_provider = info_provider
+        self._token = token
+        self._ports = tuple(ports)
+        self._host = host
+        self._httpd = None
+        self._thread = None
+        self.port = None
+
+    def start(self) -> int:
+        if self._httpd is not None:
+            return self.port
+        if not self._ports:
+            raise ValueError("nessuna porta indicata")
+        last_error = None
+        for port in self._ports:
+            try:
+                httpd = _Server((self._host, port), _Handler)
+                break
+            except OSError as exc:
+                last_error = exc
+        else:
+            raise OSError(f"nessuna porta libera in {self._ports}: {last_error}")
+        httpd.broker = self._broker
+        httpd.info_provider = self._info_provider
+        httpd.token = self._token
+        self._httpd = httpd
+        self.port = httpd.server_address[1]
+        self._thread = threading.Thread(
+            target=httpd.serve_forever, kwargs={"poll_interval": 0.5}, name="mjpeg-server", daemon=True
+        )
+        self._thread.start()
+        log.info("server MJPEG in ascolto su %s:%d", self._host, self.port)
+        return self.port
+
+    def stop(self) -> None:
+        if self._httpd is None:
+            return
+        self._broker.close()
+        self._httpd.shutdown()
+        self._httpd.server_close()
+        self._thread.join(timeout=2.0)
+        self._httpd = None
+        self._thread = None
+
+
+def local_ipv4(probe_addresses=PROBE_ADDRESSES) -> str | None:
+    # connect() su UDP non spedisce pacchetti: chiede solo al kernel quale interfaccia userebbe.
+    for address in probe_addresses:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                sock.connect((address, 1))
+                ip = sock.getsockname()[0]
+        except OSError:
+            continue
+        if ip and ip != "0.0.0.0" and not ip.startswith("127."):
+            return ip
+    return None
+
+
+def _interface_priority(name: str) -> int | None:
+    lowered = name.lower()
+    if lowered.startswith(EXCLUDED_INTERFACE_PREFIXES):
+        return None
+    for prefix, priority in INTERFACE_PRIORITY:
+        if lowered.startswith(prefix):
+            return priority
+    return OTHER_INTERFACE_PRIORITY
+
+
+def rank_lan_addresses(candidates: list[tuple[str, str]]) -> list[str]:
+    """Ordina gli IPv4 privati per probabilità che il PC li raggiunga; scarta dati mobili, VPN, loopback e link-local."""
+    ranked = []
+    for order, (name, ip) in enumerate(candidates):
+        priority = _interface_priority(name)
+        if priority is None:
+            continue
+        try:
+            address = ipaddress.IPv4Address(ip)
+        except ValueError:
+            continue
+        if not address.is_private or address.is_loopback or address.is_link_local:
+            continue
+        ranked.append((priority, order, ip))
+    result = []
+    for _, _, ip in sorted(ranked):
+        if ip not in result:
+            result.append(ip)
+    return result
+
+
+def new_token() -> str:
+    return secrets.token_urlsafe(TOKEN_BYTES)
+
+
+def stream_url(ip: str, port: int, token: str | None = None) -> str:
+    if token is None:
+        return f"http://{ip}:{port}/"
+    return f"http://{ip}:{port}/?{TOKEN_PARAM}={quote(token)}"
+
+
+PAGE_HTML = """<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gioco - fotocamera</title>
+<style>
+  :root { color-scheme: dark; --bg: #0b0d10; --panel: #161a20; --text: #e8ebef; --muted: #8b95a1; --live: #e5484d; --ok: #3dd68c; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  body { display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: var(--panel); flex-wrap: wrap; }
+  h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  .status { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+  .live .dot { background: var(--live); animation: blink 1s steps(1) infinite; }
+  .live, .paused { color: var(--text); }
+  .paused .dot { background: #f5a524; }
+  @keyframes blink { 50% { opacity: 0.2; } }
+  .spacer { flex: 1; }
+  button, a.button { background: #252b33; color: var(--text); border: 1px solid #333b45; border-radius: 8px; padding: 7px 12px; font: inherit; cursor: pointer; text-decoration: none; }
+  button:hover, a.button:hover { background: #2f3640; }
+  #stage { position: relative; flex: 1; overflow: hidden; }
+  #video { position: absolute; left: 50%; top: 50%; transform-origin: center center; background: #000; }
+  #message { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text); background: rgba(11, 13, 16, 0.6); text-align: center; padding: 16px; pointer-events: none; }
+  footer { padding: 6px 16px; color: var(--muted); font-size: 13px; background: var(--panel); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Gioco &middot; fotocamera posteriore</h1>
+  <div id="status" class="status"><span class="dot"></span><span id="status-text">connessione...</span></div>
+  <div class="spacer"></div>
+  <button id="rotate" type="button">Ruota 90&deg;</button>
+  <a id="snapshot" class="button" href="/snapshot.jpg" target="_blank" rel="noopener">Istantanea</a>
+  <button id="fullscreen" type="button">Schermo intero</button>
+</header>
+<div id="stage">
+  <img id="video" alt="Stream della fotocamera">
+  <div id="message">In attesa del primo fotogramma...</div>
+</div>
+<footer id="footer">&nbsp;</footer>
+<script>
+(() => {
+  const img = document.getElementById("video");
+  const stage = document.getElementById("stage");
+  const message = document.getElementById("message");
+  const status = document.getElementById("status");
+  const statusText = document.getElementById("status-text");
+  const footer = document.getElementById("footer");
+  const STALE_SECONDS = 2.5;
+  // Il token arriva nell'URL della pagina e va ripetuto su ogni richiesta al telefono.
+  const auth = "t=" + encodeURIComponent(new URLSearchParams(location.search).get("t") || "");
+  document.getElementById("snapshot").href = "/snapshot.jpg?" + auth;
+  let frameW = 1280, frameH = 720, rotation = 0, userRotated = false, online = false;
+
+  function layout() {
+    const box = stage.getBoundingClientRect();
+    const turned = rotation % 180 !== 0;
+    const rw = turned ? frameH : frameW;
+    const rh = turned ? frameW : frameH;
+    const scale = Math.min(box.width / rw, box.height / rh);
+    img.style.width = (frameW * scale) + "px";
+    img.style.height = (frameH * scale) + "px";
+    img.style.transform = "translate(-50%, -50%) rotate(" + rotation + "deg)";
+  }
+
+  function connect() {
+    img.src = "/stream.mjpg?" + auth + "&n=" + Date.now();
+  }
+
+  function setState(state, text) {
+    online = state !== "offline";
+    status.classList.toggle("live", state === "live");
+    status.classList.toggle("paused", state === "paused");
+    statusText.textContent = text;
+  }
+
+  function showMessage(text) {
+    message.style.display = text ? "flex" : "none";
+    message.textContent = text;
+  }
+
+  img.addEventListener("error", () => {
+    setState("offline", "riconnessione...");
+    message.style.display = "flex";
+    message.textContent = "Stream interrotto. Riprovo...";
+    setTimeout(connect, 1500);
+  });
+
+  async function poll() {
+    try {
+      const response = await fetch("/info.json?" + auth, { cache: "no-store" });
+      if (response.status === 403) {
+        setState("offline", "token mancante o errato");
+        showMessage("Apri l'indirizzo completo mostrato sul telefono, con ?t=...");
+        return;
+      }
+      const info = await response.json();
+      if (!online) { connect(); }
+      if (info.frame_age === null) {
+        setState("paused", "in attesa");
+        showMessage("In attesa del primo fotogramma...");
+      } else if (info.frame_age > STALE_SECONDS) {
+        setState("paused", "in pausa");
+        showMessage("Nessun fotogramma da " + Math.round(info.frame_age) + " s: sul telefono l'app \u00e8 in background o sta registrando un video.");
+      } else {
+        setState("live", "in diretta");
+        showMessage("");
+      }
+      if (info.width && info.height) { frameW = info.width; frameH = info.height; }
+      if (!userRotated && typeof info.rotation === "number") { rotation = info.rotation; }
+      footer.textContent = frameW + "\\u00d7" + frameH + " \\u00b7 rotazione " + rotation + "\\u00b0 \\u00b7 spettatori: " + info.clients;
+      layout();
+    } catch (err) {
+      setState("offline", "telefono non raggiungibile");
+    }
+  }
+
+  document.getElementById("rotate").addEventListener("click", () => {
+    rotation = (rotation + 90) % 360;
+    userRotated = true;
+    layout();
+  });
+  document.getElementById("fullscreen").addEventListener("click", () => {
+    if (document.fullscreenElement) { document.exitFullscreen(); } else { stage.requestFullscreen(); }
+  });
+  window.addEventListener("resize", layout);
+  document.addEventListener("fullscreenchange", layout);
+
+  layout();
+  poll();
+  setInterval(poll, 3000);
+})();
+</script>
+</body>
+</html>
+"""
+
 
 IS_ANDROID = platform == "android"
 
@@ -743,7 +1395,7 @@ class CameraBackend:
     def _sync_preview_callback(self):
         # Il callback copia ~3 MB a fotogramma da Java a Python: lo si registra solo se serve a qualcuno.
         surface_needs_frames = self.mode == PREVIEW_SURFACE
-        want_callback = self._stream_wanted or debug.DEBUG or surface_needs_frames
+        want_callback = self._stream_wanted or DEBUG or surface_needs_frames
         if self._camera is None or self._video_recorder is not None:
             return
         if want_callback != self._callback_active:
@@ -757,7 +1409,7 @@ class CameraBackend:
             except JAVA_ERRORS as exc:
                 Logger.exception("Stream: cambio stato del callback anteprima fallito")
                 self._callback_error = f"setPreviewCallback({'proxy' if want_callback else 'null'}): {exc}"
-                debug.state(debug.STAGE_CALLBACK, False, self._callback_error)
+                state(STAGE_CALLBACK, False, self._callback_error)
                 return
             self._callback_active = want_callback
             self._callback_error = None
@@ -770,7 +1422,7 @@ class CameraBackend:
             detail = "attivo per il FBO delle foto (modalità surface), nessuno spettatore"
         else:
             detail = "attivo solo per il contatore (DEBUG), nessuno spettatore"
-        debug.state(debug.STAGE_CALLBACK, True, detail)
+        state(STAGE_CALLBACK, True, detail)
 
     def _on_preview_frame(self, data, width, height):
         # Gira sul thread UI di Android: solo contatore e consegna, niente lavoro.
@@ -792,15 +1444,15 @@ class CameraBackend:
         expected = expected_frame_bytes(width, height, self._actual_format)
         summary = f"{count} in {dt:.1f} s, totale {monitor.total}"
         if outcome == "ok":
-            debug.ok(debug.STAGE_FRAMES, f"{summary}, ultimo={monitor.last_bytes} byte (attesi {expected})")
+            ok(STAGE_FRAMES, f"{summary}, ultimo={monitor.last_bytes} byte (attesi {expected})")
         elif outcome == "sospeso":
-            debug.ok(debug.STAGE_FRAMES, f"{summary}, callback sospeso: registrazione video")
+            ok(STAGE_FRAMES, f"{summary}, callback sospeso: registrazione video")
         elif outcome == "zero":
-            debug.ok(debug.STAGE_FRAMES, f"{summary}, a zero da {monitor.zero_seconds:.0f} s")
+            ok(STAGE_FRAMES, f"{summary}, a zero da {monitor.zero_seconds:.0f} s")
         elif outcome == "stallo":
-            debug.fail(debug.STAGE_FRAMES, self._frame_stall_reason(expected))
+            fail(STAGE_FRAMES, self._frame_stall_reason(expected))
         else:
-            debug.fail(debug.STAGE_FRAMES, f"{summary}, a zero da {monitor.zero_seconds:.0f} s")
+            fail(STAGE_FRAMES, f"{summary}, a zero da {monitor.zero_seconds:.0f} s")
 
     def _frame_stall_reason(self, expected) -> str:
         width, height = self.preview_size
@@ -841,7 +1493,7 @@ class CameraBackend:
                     self._camera.setPreviewTexture(self._surface_texture)
                     self._camera.startPreview()
                 except CAMERA_ERRORS as exc:
-                    debug.fail(debug.STAGE_FIRST_FRAME, f"startPreview fallito: {exc}")
+                    fail(STAGE_FIRST_FRAME, f"startPreview fallito: {exc}")
                     raise
             else:
                 self._create_yuv_pipeline()
@@ -854,7 +1506,7 @@ class CameraBackend:
         else:
             Clock.schedule_interval(self._tick_yuv, SURFACE_FBO_INTERVAL)
             self._attach_native_surface()
-        if debug.DEBUG:
+        if DEBUG:
             Clock.schedule_interval(self._report_preview_frames, FRAME_REPORT_SECONDS)
 
     def close(self):
@@ -869,7 +1521,7 @@ class CameraBackend:
         if camera is not None:
             if self._callback_active:
                 Logger.info("Stream: callback anteprima spento (fotocamera chiusa)")
-                debug.state(debug.STAGE_CALLBACK, True, "spento: fotocamera chiusa")
+                state(STAGE_CALLBACK, True, "spento: fotocamera chiusa")
             self._callback_active = False
             try:
                 camera.setPreviewCallback(None)
@@ -902,13 +1554,13 @@ class CameraBackend:
         raise CameraError("nessuna fotocamera posteriore trovata")
 
     def _open_camera(self):
-        with debug.stage(debug.STAGE_CAMERA_OPEN) as probe:
+        with stage(STAGE_CAMERA_OPEN) as probe:
             camera_id, sensor_degrees = self._find_back_camera()
             self._camera = Camera.open(camera_id)
             probe.detail = f"id={camera_id} sensore={sensor_degrees}° fotocamere={Camera.getNumberOfCameras()}"
         params = self._camera.getParameters()
 
-        with debug.stage(debug.STAGE_PREVIEW_SIZE) as probe:
+        with stage(STAGE_PREVIEW_SIZE) as probe:
             profile = CamcorderProfile.get(camera_id, CamcorderProfile.QUALITY_HIGH)
             profile_size = (int(profile.videoFrameWidth), int(profile.videoFrameHeight))
             preview_sizes = _java_sizes(params.getSupportedPreviewSizes())
@@ -939,7 +1591,7 @@ class CameraBackend:
                 f"fuoco={'continuous-video' if FOCUS_CONTINUOUS_VIDEO in focus_modes else 'predefinito'}"
             )
 
-        with debug.stage(debug.STAGE_ROTATION) as probe:
+        with stage(STAGE_ROTATION) as probe:
             display = PythonActivity.mActivity.getWindowManager().getDefaultDisplay()
             display_degrees = surface_rotation_to_degrees(display.getRotation())
             rotation = orientation_hint(sensor_degrees, display_degrees)
@@ -956,14 +1608,14 @@ class CameraBackend:
 
     def _create_gl_pipeline(self):
         width, height = self.content_size
-        with debug.stage(debug.STAGE_TEXTURE) as probe:
+        with stage(STAGE_TEXTURE) as probe:
             self._tex_id = int(glGenTextures(1)[0])
             if self._tex_id == 0:
                 raise CameraError("glGenTextures ha restituito 0: nessun contesto GL attivo su questo thread")
             self._surface_texture = SurfaceTexture(self._tex_id)
             fbo = Fbo(size=(width, height))
             probe.detail = f"gl_id={self._tex_id} SurfaceTexture creata, fbo={width}x{height}"
-        with debug.stage(debug.STAGE_SHADER) as probe:
+        with stage(STAGE_SHADER) as probe:
             has_oes = OES_EXTENSION in gl_extensions()
             fbo.shader.fs = PREVIEW_FRAGMENT_SHADER
             if not fbo.shader.success:
@@ -985,14 +1637,14 @@ class CameraBackend:
         glActiveTexture(GL_TEXTURE0)
 
     def _create_yuv_pipeline(self):
-        with debug.stage(debug.STAGE_TEXTURE) as probe:
+        with stage(STAGE_TEXTURE) as probe:
             renderer = YuvPreviewRenderer(self.preview_size, self._rotation)
             width, height = self.preview_size
             probe.detail = (
                 f"modalità surface: Y {width}x{height} luminance, VU {width // 2}x{height // 2} luminance_alpha, "
                 f"fbo={renderer.content_size[0]}x{renderer.content_size[1]}"
             )
-        with debug.stage(debug.STAGE_SHADER) as probe:
+        with stage(STAGE_SHADER) as probe:
             renderer.compile()
             probe.detail = "shader YUV->RGB compilato (modalità surface)"
         self._yuv = renderer
@@ -1024,7 +1676,7 @@ class CameraBackend:
                 self._camera.startPreview()
             except JAVA_ERRORS as exc:
                 Logger.exception("Camera: startPreview su SurfaceView fallito")
-                debug.fail(debug.STAGE_FIRST_FRAME, f"startPreview su SurfaceView fallito: {exc}")
+                fail(STAGE_FIRST_FRAME, f"startPreview su SurfaceView fallito: {exc}")
                 return
             self._surface_preview_running = True
         Logger.info("Camera: anteprima avviata su SurfaceView")
@@ -1057,12 +1709,12 @@ class CameraBackend:
             if not self._yuv_error_reported:
                 self._yuv_error_reported = True
                 Logger.error(f"Camera: fotogramma NV21 scartato: {exc}")
-                debug.fail(debug.STAGE_FIRST_FRAME, f"{exc}; formato effettivo={image_format_name(self._actual_format)}")
+                fail(STAGE_FIRST_FRAME, f"{exc}; formato effettivo={image_format_name(self._actual_format)}")
             return None
         if not self._has_frame:
             self._has_frame = True
             elapsed = time.monotonic() - self._opened_at
-            debug.ok(debug.STAGE_FIRST_FRAME, f"dopo {elapsed * 1000:.0f} ms, onPreviewFrame -> FBO YUV")
+            ok(STAGE_FIRST_FRAME, f"dopo {elapsed * 1000:.0f} ms, onPreviewFrame -> FBO YUV")
         self._on_frame()
         return None
 
@@ -1070,7 +1722,7 @@ class CameraBackend:
         elapsed = time.monotonic() - self._opened_at
         if elapsed > FIRST_FRAME_TIMEOUT and not self._first_frame_failed:
             self._first_frame_failed = True
-            debug.fail(debug.STAGE_FIRST_FRAME, f"nessun fotogramma dopo {FIRST_FRAME_TIMEOUT:.0f} s: {reason}")
+            fail(STAGE_FIRST_FRAME, f"nessun fotogramma dopo {FIRST_FRAME_TIMEOUT:.0f} s: {reason}")
 
     def _tick(self, dt):
         if self._surface_texture is None or self._fbo is None:
@@ -1105,8 +1757,8 @@ class CameraBackend:
         if self._surface_texture.getTimestamp() != 0:
             self._has_frame = True
             elapsed = time.monotonic() - self._opened_at
-            debug.ok(
-                debug.STAGE_FIRST_FRAME,
+            ok(
+                STAGE_FIRST_FRAME,
                 f"dopo {elapsed * 1000:.0f} ms, matrice {'da getTransformMatrix' if real_matrix else 'ricostruita'}",
             )
         else:
@@ -1139,7 +1791,7 @@ class CameraBackend:
             self._camera.setPreviewCallback(None)
             self._callback_active = False
             Logger.info("Stream: callback anteprima spento (registrazione video)")
-            debug.state(debug.STAGE_CALLBACK, True, "spento: registrazione video in corso")
+            state(STAGE_CALLBACK, True, "spento: registrazione video in corso")
         recorder = MediaRecorder()
         try:
             self._camera.unlock()
@@ -1556,7 +2208,7 @@ class GiocoCameraApp(App):
         return root
 
     def _start_stream_server(self):
-        debug.ok(debug.STAGE_DEBUG, f"diagnostica attiva, uscita={debug.output_name()}, android={IS_ANDROID}")
+        ok(STAGE_DEBUG, f"diagnostica attiva, uscita={output_name()}, android={IS_ANDROID}")
         self._broker = FrameBroker()
         self._encoder = None
         self._stream_error = None
@@ -1617,17 +2269,17 @@ class GiocoCameraApp(App):
         self._stream_chip.text = compact
         if self._backend is not None:
             self._backend.set_streaming(clients > 0 and self._mode != MODE_VIDEO)
-        if debug.DEBUG:
+        if DEBUG:
             self._report_pipeline(ip, clients)
 
     def _report_pipeline(self, ip, clients):
         if self._stream_error is not None:
-            debug.state(debug.STAGE_CLIENTS, False, f"server non avviato: {self._stream_error}")
+            state(STAGE_CLIENTS, False, f"server non avviato: {self._stream_error}")
         else:
             address = stream_url(ip, self._server.port, self._stream_token) if ip else "nessun IP locale raggiungibile"
-            debug.state(debug.STAGE_CLIENTS, True, f"{clients} collegati, {address}")
+            state(STAGE_CLIENTS, True, f"{clients} collegati, {address}")
         if self._encoder is not None:
-            debug.state(debug.STAGE_ENCODER, *encoder_health(self._encoder))
+            state(STAGE_ENCODER, *encoder_health(self._encoder))
 
     def _build_bottom_bar(self):
         bar = BoxLayout(
