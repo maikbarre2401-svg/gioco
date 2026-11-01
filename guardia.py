@@ -565,7 +565,8 @@ def build_app(cfg):
             r.set_cookie("t", request.query_params["t"], max_age=86400 * 365,
                          httponly=True, samesite="lax")
             return r
-        return HTML
+        return HTML.replace("__GUARDIA_CFG__", json.dumps(
+            {"lon": cfg["lon"], "lat": cfg["lat"], "zoom": 15}))
 
     @app.get("/api/state")
     def state(request: Request):
@@ -587,49 +588,203 @@ def build_app(cfg):
 
 HTML = """<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Sala Operativa</title>
+<title>Sala Operativa 3D</title>
 <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-body{margin:0;background:#0b0f14;color:#e8eef6;font:14px system-ui,sans-serif;display:flex;flex-direction:column;height:100vh}
-header{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border-bottom:1px solid #1e2833}
+body{margin:0;background:#0b0f14;color:#e8eef6;font:14px system-ui,sans-serif;display:flex;flex-direction:column;height:100dvh}
+header{display:flex;justify-content:space-between;align-items:center;padding:11px 14px;border-bottom:1px solid #1e2833;z-index:3}
 h1{margin:0;font-size:12px;letter-spacing:.14em;font-weight:800}
 .sub{font-size:10px;color:#7d8b9c;margin-top:2px}
-.live{font-size:9px;font-weight:800;background:#b91c1c;color:#fff;padding:4px 9px;border-radius:99px}
-#m{flex:1;min-height:240px}
-#feed{max-height:38vh;overflow:auto;border-top:1px solid #1e2833}
+.live{font-size:9px;font-weight:800;background:#b91c1c;color:#fff;padding:4px 9px;border-radius:99px;animation:pulse 1.6s infinite}
+@keyframes pulse{50%{opacity:.45}}
+#wrap{flex:1;position:relative;min-height:240px}
+#m{position:absolute;inset:0}
+#leg{position:absolute;left:10px;bottom:10px;z-index:2;background:rgba(11,15,20,.78);
+ border:1px solid #1e2833;border-radius:10px;padding:8px 10px;font-size:10.5px;backdrop-filter:blur(6px)}
+#leg b{display:block;font-size:9px;letter-spacing:.1em;color:#7d8b9c;margin-bottom:4px}
+#leg span{display:inline-flex;align-items:center;gap:5px;margin-right:9px}
+.dot{width:9px;height:9px;border-radius:2px;display:inline-block}
+#feed{max-height:34vh;overflow:auto;border-top:1px solid #1e2833}
 .row{display:flex;gap:9px;padding:9px 13px;border-bottom:1px solid #1e2833;font-size:12px;cursor:pointer}
 .row:active{background:#111823}
 .t{color:#7d8b9c;font-size:10.5px}
-.u{color:#6ea8ff;font-weight:700;font-size:10.5px;min-width:38px}
+.u{font-weight:800;font-size:10.5px;min-width:38px}
 .p{color:#14b8a6;font-size:10px;margin-top:3px}
+.maplibregl-ctrl-group{background:#121a24!important}
+.maplibregl-ctrl button{filter:invert(1) hue-rotate(180deg)}
 </style></head><body>
-<header><div><h1>SALA OPERATIVA</h1><div class="sub" id="sub">connessione...</div></div>
-<div class="live">LIVE</div></header><div id="m"></div><div id="feed"></div>
+<header><div><h1>SALA OPERATIVA 3D</h1><div class="sub" id="sub">connessione...</div></div>
+<div class="live">LIVE</div></header>
+<div id="wrap"><div id="m"></div>
+<div id="leg"><b>UNITÀ</b>
+ <span><i class="dot" style="background:#2563eb"></i>CC</span>
+ <span><i class="dot" style="background:#dc2626"></i>PS</span>
+ <span><i class="dot" style="background:#16a34a"></i>PL</span>
+ <span><i class="dot" style="background:#d97706"></i>VVF</span>
+ <span><i class="dot" style="background:#d97706;border-radius:50%"></i>elicottero</span>
+</div></div>
+<div id="feed"></div>
 <script>
-const COL={CC:'#1d4ed8',PS:'#b91c1c',PL:'#15803d',VVF:'#d97706'};
-const map=new maplibregl.Map({container:'m',center:[12.4964,41.9028],zoom:13,attributionControl:false,
- style:{version:8,sources:{b:{type:'raster',tileSize:256,tiles:['https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png']}},
- layers:[{id:'b',type:'raster',source:'b'}]}});
-const M=new Map(),H=new Map(),seen=new Set();
-function unit(u){let m=M.get(u.unit);
- if(!m){m=new maplibregl.Marker({color:COL[u.unit]||'#6ea8ff'}).setLngLat([u.lon,u.lat]).addTo(map);M.set(u.unit,m);}
- m.setLngLat([u.lon,u.lat]);m.getElement().style.opacity=Math.max(.2,1-u.age/300);}
-function heli(a){let m=H.get(a.hex);
- if(!m){m=new maplibregl.Marker({color:'#d97706'}).setLngLat([a.lon,a.lat]).addTo(map);H.set(a.hex,m);}
- m.setLngLat([a.lon,a.lat]);}
+const CFG=__GUARDIA_CFG__;
+const COL={CC:0x2563eb,PS:0xdc2626,PL:0x16a34a,VVF:0xd97706};
+const COLW={CC:'#2563eb',PS:'#dc2626',PL:'#16a34a',VVF:'#d97706'};
+const SCAR=5, SHELI=5;
+
+// base scura CartoDB: keyless e affidabile, garantisce che la mappa funzioni sempre
+const map=new maplibregl.Map({container:'m',center:[CFG.lon,CFG.lat],zoom:CFG.zoom,
+ pitch:58,bearing:-18,maxPitch:82,antialias:true,attributionControl:false,
+ style:{version:8,sources:{b:{type:'raster',tileSize:256,
+   tiles:['https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png','https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png']}},
+   layers:[{id:'b',type:'raster',source:'b'}]}});
+map.addControl(new maplibregl.NavigationControl({visualizePitch:true}),'top-right');
+map.on('error',()=>{});   // ignora errori di sorgenti opzionali (es. edifici vettoriali)
+
+// ───────── modelli 3D con Three.js (custom layer condiviso col contesto di MapLibre)
+const V={cars:new Map(),helis:new Map(),scene:null,renderer:null,camera:null};
+let useThree = (typeof THREE!=='undefined');
+
+function baseMatrix(lng,lat,alt,s){
+ const c=maplibregl.MercatorCoordinate.fromLngLat([lng,lat],alt||0);
+ const sc=c.meterInMercatorCoordinateUnits()*s;
+ return new THREE.Matrix4().makeTranslation(c.x,c.y,c.z)
+   .scale(new THREE.Vector3(sc,-sc,sc))
+   .multiply(new THREE.Matrix4().makeRotationAxis(new THREE.Vector3(1,0,0),Math.PI/2));
+}
+function buildCar(hex,truck){
+ const g=new THREE.Group();
+ const L=truck?7:4.8,H=truck?1.7:0.9,W=truck?2.4:2.2;
+ const body=new THREE.Mesh(new THREE.BoxGeometry(W,H,L),
+   new THREE.MeshStandardMaterial({color:hex,metalness:.3,roughness:.5}));
+ body.position.y=0.55+H/2; g.add(body);
+ const cab=new THREE.Mesh(new THREE.BoxGeometry(W*.92,.7,truck?2.6:2.2),
+   new THREE.MeshStandardMaterial({color:0x0b0f14,metalness:.1,roughness:.25}));
+ cab.position.set(0,0.55+H+0.35,truck?L*.22:-0.25); g.add(cab);
+ const bar=new THREE.Mesh(new THREE.BoxGeometry(W*.62,.24,.5),
+   new THREE.MeshStandardMaterial({color:0xffffff,emissive:0x3366ff,emissiveIntensity:1.4}));
+ bar.position.set(0,0.55+H+0.78,truck?L*.22:0); g.add(bar); g.userData.bar=bar;
+ const wm=new THREE.MeshStandardMaterial({color:0x0a0a0a});
+ [[W/2,L*.3],[-W/2,L*.3],[W/2,-L*.3],[-W/2,-L*.3]].forEach(p=>{
+   const w=new THREE.Mesh(new THREE.CylinderGeometry(.5,.5,.32,14),wm);
+   w.rotation.z=Math.PI/2; w.position.set(p[0],.5,p[1]); g.add(w);});
+ return g;
+}
+function buildHeli(){
+ const g=new THREE.Group();
+ const mat=new THREE.MeshStandardMaterial({color:0xd97706,metalness:.45,roughness:.5});
+ const body=new THREE.Mesh(new THREE.SphereGeometry(2,18,12),mat);
+ body.scale.set(1,.9,1.6); body.position.y=2.2; g.add(body);
+ const boom=new THREE.Mesh(new THREE.CylinderGeometry(.42,.24,6,14),mat);
+ boom.rotation.x=Math.PI/2; boom.position.set(0,2.6,-4.3); g.add(boom);
+ const tail=new THREE.Mesh(new THREE.BoxGeometry(.2,1.6,.5),mat); tail.position.set(0,2.9,-7); g.add(tail);
+ const rotor=new THREE.Group(); rotor.position.y=3.8;
+ const bm=new THREE.MeshStandardMaterial({color:0x1a1a1a});
+ const b1=new THREE.Mesh(new THREE.BoxGeometry(12,.12,.6),bm); rotor.add(b1);
+ const b2=b1.clone(); b2.rotation.y=Math.PI/2; rotor.add(b2);
+ g.add(rotor); g.userData.rotor=rotor;
+ const sm=new THREE.MeshStandardMaterial({color:0x0a0a0a});
+ [-1.4,1.4].forEach(sx=>{const s=new THREE.Mesh(new THREE.BoxGeometry(.2,.2,5),sm); s.position.set(sx,.2,0); g.add(s);});
+ return g;
+}
+const layer3d={id:'vehicles',type:'custom',renderingMode:'3d',
+ onAdd(m,gl){
+   V.camera=new THREE.Camera(); V.scene=new THREE.Scene();
+   V.scene.add(new THREE.AmbientLight(0xffffff,.95));
+   const d=new THREE.DirectionalLight(0xffffff,.65); d.position.set(.4,-1,.8); V.scene.add(d);
+   V.renderer=new THREE.WebGLRenderer({canvas:m.getCanvas(),context:gl,antialias:true});
+   V.renderer.autoClear=false;
+ },
+ render(gl,arg){
+   let a=arg; if(a&&!Array.isArray(a)) a=(a.defaultProjectionData&&a.defaultProjectionData.mainMatrix)||a;
+   animate();
+   V.camera.projectionMatrix=new THREE.Matrix4().fromArray(a);
+   V.renderer.resetState();
+   V.renderer.render(V.scene,V.camera);
+   map.triggerRepaint();
+ }};
+function addCar(u){
+ const outer=new THREE.Group(); outer.matrixAutoUpdate=false;
+ const inner=new THREE.Group();
+ const model=buildCar(COL[u.unit]||0x6ea8ff,u.unit==='VVF');
+ inner.add(model); outer.add(inner); V.scene.add(outer);
+ const v={outer,inner,bar:model.userData.bar,lng:u.lon,lat:u.lat,tlng:u.lon,tlat:u.lat,heading:0};
+ V.cars.set(u.unit,v); return v;
+}
+function addHeli(a){
+ const outer=new THREE.Group(); outer.matrixAutoUpdate=false;
+ const model=buildHeli(); outer.add(model); V.scene.add(outer);
+ const v={outer,rotor:model.userData.rotor,lng:a.lon,lat:a.lat,tlng:a.lon,tlat:a.lat,alt:120};
+ V.helis.set(a.hex,v); return v;
+}
+function animate(){
+ const t=Date.now();
+ V.cars.forEach(v=>{
+   v.lng+=(v.tlng-v.lng)*.12; v.lat+=(v.tlat-v.lat)*.12;
+   const dx=v.tlng-v.lng,dy=v.tlat-v.lat;
+   if(Math.hypot(dx,dy)>1e-6) v.heading=Math.atan2(dx,dy);
+   v.inner.rotation.y=v.heading;
+   v.outer.matrix.copy(baseMatrix(v.lng,v.lat,0,SCAR)); v.outer.matrixWorldNeedsUpdate=true;
+   if(v.bar){const on=(t%700)<350; v.bar.material.emissive.setHex(on?0x3366ff:0xff2b2b);}
+ });
+ V.helis.forEach(v=>{
+   v.lng+=(v.tlng-v.lng)*.1; v.lat+=(v.tlat-v.lat)*.1;
+   v.outer.matrix.copy(baseMatrix(v.lng,v.lat,v.alt,SHELI)); v.outer.matrixWorldNeedsUpdate=true;
+   if(v.rotor) v.rotor.rotation.y+=.7;
+ });
+}
+function applyThree(d){
+ const su=new Set();
+ d.units.forEach(u=>{if(u.lat==null)return; su.add(u.unit);
+   const v=V.cars.get(u.unit)||addCar(u); v.tlng=u.lon; v.tlat=u.lat;});
+ V.cars.forEach((v,k)=>{if(!su.has(k)){V.scene.remove(v.outer);V.cars.delete(k);}});
+ const sa=new Set();
+ d.air.forEach(a=>{if(a.lat==null||a.lon==null)return; sa.add(a.hex);
+   const v=V.helis.get(a.hex)||addHeli(a); v.tlng=a.lon; v.tlat=a.lat; v.alt=Math.min(a.alt||120,300);});
+ V.helis.forEach((v,k)=>{if(!sa.has(k)){V.scene.remove(v.outer);V.helis.delete(k);}});
+}
+
+// ───────── fallback: marker DOM 2D se Three.js non è disponibile
+const DM=new Map(),DH=new Map();
+function applyDOM(d){
+ d.units.forEach(u=>{if(u.lat==null)return; let m=DM.get(u.unit);
+   if(!m){m=new maplibregl.Marker({color:COLW[u.unit]||'#6ea8ff'}).setLngLat([u.lon,u.lat]).addTo(map);DM.set(u.unit,m);}
+   m.setLngLat([u.lon,u.lat]); m.getElement().style.opacity=Math.max(.25,1-u.age/300);});
+ d.air.forEach(a=>{if(a.lat==null)return; let m=DH.get(a.hex);
+   if(!m){m=new maplibregl.Marker({color:'#d97706'}).setLngLat([a.lon,a.lat]).addTo(map);DH.set(a.hex,m);}
+   m.setLngLat([a.lon,a.lat]);});
+}
+
+map.on('load',()=>{
+ // edifici 3D vettoriali (OpenFreeMap, senza API key): best-effort sopra la base scura
+ try{
+   map.addSource('ofm',{type:'vector',url:'https://tiles.openfreemap.org/planet'});
+   map.addLayer({id:'b3d',source:'ofm','source-layer':'building',type:'fill-extrusion',minzoom:14,
+     paint:{'fill-extrusion-color':['interpolate',['linear'],['coalesce',['get','render_height'],10],
+              0,'#182233',60,'#243550',180,'#33496d'],
+            'fill-extrusion-height':['coalesce',['get','render_height'],8],
+            'fill-extrusion-base':['coalesce',['get','render_min_height'],0],
+            'fill-extrusion-opacity':.82}});
+ }catch(e){}
+ // modelli 3D dei veicoli
+ if(useThree){ try{ map.addLayer(layer3d); }catch(e){ useThree=false; } }
+});
+
+const seen=new Set();
 async function tick(){try{
  const d=await (await fetch('/api/state')).json();
- d.units.forEach(unit);d.air.forEach(heli);
- document.getElementById('sub').textContent=d.units.length+' unità · '+d.air.length+' aeromobili';
+ (useThree?applyThree:applyDOM)(d);
+ document.getElementById('sub').textContent=d.units.length+' unità · '+d.air.length+' aeromobili'+(useThree?' · 3D':' · 2D');
  const f=document.getElementById('feed');
  d.events.forEach(e=>{if(seen.has(e.id))return;seen.add(e.id);
   const r=document.createElement('div');r.className='row';
-  r.innerHTML='<span class="u">'+e.unit+'</span><div><span class="t">'+new Date(e.ts*1000).toLocaleTimeString('it-IT')+
-   ' · '+(e.freq/1e6).toFixed(3)+'</span><div>'+e.text+'</div>'+(e.place?'<div class="p">▸ '+e.place+'</div>':'')+'</div>';
-  r.onclick=()=>{if(e.lat)map.flyTo({center:[e.lon,e.lat],zoom:15});if(e.wav)new Audio('/api/audio/'+e.id).play().catch(()=>{});};
-  f.prepend(r);});
+  r.innerHTML='<span class="u" style="color:'+(COLW[e.unit]||'#6ea8ff')+'">'+e.unit+'</span><div><span class="t">'+
+   new Date(e.ts*1000).toLocaleTimeString('it-IT')+' · '+(e.freq/1e6).toFixed(3)+'</span><div>'+
+   (e.text||'')+'</div>'+(e.place?'<div class="p">▸ '+e.place+'</div>':'')+'</div>';
+  r.onclick=()=>{if(e.lat)map.flyTo({center:[e.lon,e.lat],zoom:16,pitch:62,essential:true});
+   if(e.wav)new Audio('/api/audio/'+e.id).play().catch(()=>{});};
+  f.prepend(r); while(f.children.length>120)f.removeChild(f.lastChild);});
 }catch(_){document.getElementById('sub').textContent='offline';}}
 setInterval(tick,3000);tick();
 </script></body></html>"""
