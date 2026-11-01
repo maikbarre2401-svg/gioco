@@ -18,7 +18,7 @@ from kivy.uix.label import Label
 from kivy.uix.widget import Widget
 from kivy.utils import platform
 
-from mjpeg_server import FrameBroker, LatestFrameEncoder, MjpegServer, local_ipv4, stream_url
+from mjpeg_server import FrameBroker, LatestFrameEncoder, MjpegServer, local_ipv4, rank_lan_addresses, stream_url
 
 IS_ANDROID = platform == "android"
 
@@ -45,6 +45,8 @@ if IS_ANDROID:
     AudioEncoder = autoclass("android.media.MediaRecorder$AudioEncoder")
     Environment = autoclass("android.os.Environment")
     SurfaceTexture = autoclass("android.graphics.SurfaceTexture")
+    NetworkInterface = autoclass("java.net.NetworkInterface")
+    InetAddress = autoclass("java.net.InetAddress")
     JAVA_ERRORS = (JavaException,)
 
     class _PreviewCallback(PythonJavaClass):
@@ -89,6 +91,14 @@ KEY_BACK = 27
 BAR_HEIGHT_DP = 150
 RECORD_RED = (0.92, 0.16, 0.16, 1)
 GLYPHS = ("photo", "video", "audio")
+
+# Matrici 4x4 column-major come quelle di GLConsumer (frameworks/native/libs/gui/GLConsumer.cpp).
+MAT4_IDENTITY = (1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+MAT4_FLIP_H = (-1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 1.0)
+MAT4_FLIP_V = (1.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 1.0)
+MAT4_ROT_90 = (0.0, 1.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 1.0)
+# Rotazione di setDisplayOrientation -> flag NATIVE_WINDOW_TRANSFORM (flip_h, flip_v, rot_90).
+DISPLAY_ORIENTATION_TRANSFORM = {0: (False, False, False), 90: (False, False, True), 180: (True, True, False), 270: (True, True, True)}
 
 VALID_ROTATIONS = (0, 90, 180, 270)
 SURFACE_ROTATION_DEGREES = {0: 0, 1: 90, 2: 180, 3: 270}
@@ -191,6 +201,24 @@ def cover_tex_coords(content: Size, box: Size) -> tuple[float, float, float, flo
     return 0.0, start, 1.0, start + visible
 
 
+def mat4_multiply(a, b) -> tuple[float, ...]:
+    return tuple(sum(a[k * 4 + row] * b[col * 4 + k] for k in range(4)) for col in range(4) for row in range(4))
+
+
+def surface_texture_fallback_matrix(rotation: int) -> tuple[float, ...]:
+    """Ricostruisce la matrice di getTransformMatrix senza crop, per quando pyjnius non la restituisce."""
+    _check_rotation(rotation)
+    flip_h, flip_v, rot_90 = DISPLAY_ORIENTATION_TRANSFORM[rotation]
+    xform = MAT4_IDENTITY
+    if flip_h:
+        xform = mat4_multiply(xform, MAT4_FLIP_H)
+    if flip_v:
+        xform = mat4_multiply(xform, MAT4_FLIP_V)
+    if rot_90:
+        xform = mat4_multiply(xform, MAT4_ROT_90)
+    return mat4_multiply(MAT4_FLIP_V, xform)
+
+
 def format_duration(seconds: float) -> str:
     total = max(0, int(seconds))
     hours, rest = divmod(total, 3600)
@@ -243,6 +271,41 @@ def _app_dir(activity, kind) -> str:
     path = directory.getAbsolutePath()
     os.makedirs(path, exist_ok=True)
     return path
+
+
+def _android_ipv4_candidates() -> list[tuple[str, str]]:
+    candidates = []
+    interfaces = NetworkInterface.getNetworkInterfaces()
+    if interfaces is None:
+        return candidates
+    while interfaces.hasMoreElements():
+        iface = cast(NetworkInterface, interfaces.nextElement())
+        try:
+            if not iface.isUp() or iface.isLoopback():
+                continue
+        except JAVA_ERRORS:
+            continue
+        name = iface.getName()
+        addresses = iface.getInetAddresses()
+        while addresses.hasMoreElements():
+            host = cast(InetAddress, addresses.nextElement()).getHostAddress()
+            if host and ":" not in host:
+                candidates.append((name, host))
+    return candidates
+
+
+def lan_addresses() -> list[str]:
+    candidates = []
+    if IS_ANDROID:
+        try:
+            candidates = _android_ipv4_candidates()
+        except JAVA_ERRORS:
+            Logger.exception("Stream: elenco interfacce di rete fallito")
+    ranked = rank_lan_addresses(candidates)
+    if ranked:
+        return ranked
+    fallback = local_ipv4()
+    return rank_lan_addresses([("default", fallback)]) if fallback else []
 
 
 def java_bytes(value) -> bytes:
@@ -300,6 +363,7 @@ class CameraBackend:
         # Lista Python: pyjnius ci ricopia dentro il float[] scritto da getTransformMatrix.
         self._st_values = [0.0] * 16
         self._last_st_values = None
+        self._matrix_fallback_logged = False
         self._video_recorder = None
         self._video_path = None
         self._audio_recorder = None
@@ -359,6 +423,8 @@ class CameraBackend:
         if self._camera is not None:
             camera = self._camera
             self._camera = None
+            if self._streaming:
+                Logger.info("Stream: callback anteprima spento (fotocamera chiusa)")
             self._streaming = False
             try:
                 camera.setPreviewCallback(None)
@@ -444,11 +510,18 @@ class CameraBackend:
         except JAVA_ERRORS:
             Logger.exception("Camera: aggiornamento texture fallito")
             return None
-        if any(self._st_values) and self._st_values != self._last_st_values:
-            self._last_st_values = list(self._st_values)
+        values = list(self._st_values)
+        if not any(values):
+            # pyjnius non ha ricopiato il float[] nella lista: senza matrice l'anteprima esce ruotata e capovolta.
+            values = list(surface_texture_fallback_matrix(self._rotation))
+            if not self._matrix_fallback_logged:
+                Logger.warning(f"Camera: getTransformMatrix vuota, uso la matrice calcolata per rotazione={self._rotation}")
+                self._matrix_fallback_logged = True
+        if values != self._last_st_values:
+            self._last_st_values = values
             # Kivy carica una uniform solo se l'oggetto cambia: serve una Matrix nuova.
             matrix = Matrix()
-            matrix.set(flat=self._last_st_values)
+            matrix.set(flat=values)
             self._fbo["st_matrix"] = matrix
         self._fbo.ask_update()
         self._fbo.draw()
@@ -477,6 +550,7 @@ class CameraBackend:
             # Con la fotocamera ceduta a MediaRecorder i callback dell'anteprima non sono garantiti.
             self._camera.setPreviewCallback(None)
             self._streaming = False
+            Logger.info("Stream: callback anteprima spento (registrazione video)")
         recorder = MediaRecorder()
         try:
             self._camera.unlock()
@@ -873,6 +947,7 @@ class GiocoCameraApp(App):
         self._broker = FrameBroker()
         self._encoder = None
         self._stream_error = None
+        self._lan_addresses = None
         if IS_ANDROID:
             # detach: un thread Python che ha chiamato Java e termina senza staccarsi dalla JVM fa crashare il processo.
             self._encoder = LatestFrameEncoder(self._broker, nv21_to_jpeg, STREAM_MAX_FPS, on_thread_exit=detach)
@@ -903,7 +978,12 @@ class GiocoCameraApp(App):
 
     def _refresh_stream(self, dt):
         clients = self._broker.clients
-        title, big, detail, compact = stream_texts(local_ipv4(), self._server.port, clients, self._stream_error)
+        addresses = lan_addresses()
+        if addresses != self._lan_addresses:
+            Logger.info(f"Stream: indirizzi locali {addresses}")
+            self._lan_addresses = addresses
+        ip = addresses[0] if addresses else None
+        title, big, detail, compact = stream_texts(ip, self._server.port, clients, self._stream_error)
         self._stream_card.set_texts(title, big, detail)
         self._stream_chip.text = compact
         if self._backend is not None and self._encoder is not None:

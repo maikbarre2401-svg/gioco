@@ -11,12 +11,16 @@ from main import (
     cover_tex_coords,
     format_duration,
     java_bytes,
+    lan_addresses,
+    mat4_multiply,
     media_filename,
     orientation_hint,
     rotated_size,
     stream_texts,
     surface_rotation_to_degrees,
+    surface_texture_fallback_matrix,
 )
+from main import MAT4_FLIP_V, MAT4_IDENTITY
 
 
 def test_choose_size_returns_exact_match():
@@ -185,3 +189,38 @@ def test_stream_texts_without_network():
 def test_stream_texts_with_server_error():
     title, big, detail, _ = stream_texts("10.0.0.5", None, 0, "porte occupate")
     assert (title, big, detail) == ("Server non avviato", "Errore", "porte occupate")
+
+
+def apply_mat4(matrix, x, y):
+    return (matrix[0] * x + matrix[4] * y + matrix[12], matrix[1] * x + matrix[5] * y + matrix[13])
+
+
+def test_mat4_multiply_identity():
+    assert mat4_multiply(MAT4_IDENTITY, MAT4_FLIP_V) == pytest.approx(MAT4_FLIP_V)
+
+
+@pytest.mark.parametrize(
+    ("rotation", "mapping"),
+    [
+        (0, lambda x, y: (x, 1 - y)),
+        (90, lambda x, y: (1 - y, 1 - x)),
+        (180, lambda x, y: (1 - x, y)),
+        (270, lambda x, y: (y, x)),
+    ],
+)
+def test_surface_texture_fallback_matrix_maps_corners(rotation, mapping):
+    matrix = surface_texture_fallback_matrix(rotation)
+    for x, y in ((0, 0), (1, 0), (1, 1), (0, 1), (0.25, 0.75)):
+        assert apply_mat4(matrix, x, y) == pytest.approx(mapping(x, y))
+
+
+def test_surface_texture_fallback_matrix_rejects_invalid_rotation():
+    with pytest.raises(ValueError):
+        surface_texture_fallback_matrix(45)
+
+
+def test_lan_addresses_on_desktop_are_private():
+    import ipaddress
+
+    for ip in lan_addresses():
+        assert ipaddress.IPv4Address(ip).is_private

@@ -14,6 +14,7 @@ from mjpeg_server import (
     LatestFrameEncoder,
     MjpegServer,
     local_ipv4,
+    rank_lan_addresses,
     stream_url,
 )
 
@@ -99,7 +100,21 @@ def test_info_reports_rotation_size_and_clients(running_server):
     _, server = running_server
     response, body = get(server.port, "/info.json")
     assert response.status == 200
-    assert json.loads(body) == {"rotation": 90, "width": 640, "height": 480, "clients": 0}
+    assert json.loads(body) == {"rotation": 90, "width": 640, "height": 480, "clients": 0, "frame_age": None}
+
+
+def test_info_reports_frame_age_after_publish(running_server):
+    broker, server = running_server
+    broker.publish(b"frame")
+    _, body = get(server.port, "/info.json")
+    assert 0 <= json.loads(body)["frame_age"] < 1
+
+
+def test_page_handles_stale_stream(running_server):
+    _, server = running_server
+    _, body = get(server.port, "/")
+    assert b"frame_age" in body
+    assert b"STALE_SECONDS" in body
 
 
 def test_snapshot_unavailable_then_available(running_server):
@@ -255,3 +270,38 @@ def test_local_ipv4_none_when_all_probes_fail():
 
 def test_stream_url():
     assert stream_url("192.168.1.23", 8080) == "http://192.168.1.23:8080/"
+
+
+def test_broker_frame_age():
+    broker = FrameBroker()
+    assert broker.frame_age() is None
+    broker.publish(b"frame")
+    time.sleep(0.05)
+    assert 0.04 <= broker.frame_age() < 1
+
+
+def test_rank_prefers_wifi_then_hotspot_then_usb():
+    candidates = [
+        ("rndis0", "192.168.42.129"),
+        ("swlan0", "192.168.43.1"),
+        ("wlan0", "192.168.1.23"),
+    ]
+    assert rank_lan_addresses(candidates) == ["192.168.1.23", "192.168.43.1", "192.168.42.129"]
+
+
+def test_rank_drops_mobile_vpn_loopback_and_public():
+    candidates = [
+        ("rmnet_data0", "10.45.3.2"),
+        ("tun0", "10.8.0.2"),
+        ("lo", "127.0.0.1"),
+        ("wlan0", "169.254.10.1"),
+        ("wlan0", "100.72.1.5"),
+        ("wlan0", "8.8.8.8"),
+        ("wlan0", "not-an-ip"),
+    ]
+    assert rank_lan_addresses(candidates) == []
+
+
+def test_rank_keeps_unknown_interfaces_last_and_deduplicates():
+    candidates = [("enp3s0", "10.0.0.7"), ("wlan0", "192.168.1.23"), ("default", "192.168.1.23")]
+    assert rank_lan_addresses(candidates) == ["192.168.1.23", "10.0.0.7"]

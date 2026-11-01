@@ -1,3 +1,4 @@
+import ipaddress
 import json
 import logging
 import socket
@@ -14,6 +15,10 @@ DEFAULT_PORTS = tuple(range(8080, 8090))
 CLIENT_WAIT_TIMEOUT = 5.0
 CLIENT_SOCKET_TIMEOUT = 10.0
 PROBE_ADDRESSES = ("10.255.255.255", "192.0.2.1", "8.8.8.8")
+# Wi-Fi prima, poi hotspot, poi tethering USB/Ethernet. Le interfacce dati mobili e VPN non sono raggiungibili dal PC.
+INTERFACE_PRIORITY = (("wlan", 0), ("swlan", 1), ("softap", 1), ("ap", 1), ("eth", 2), ("usb", 2), ("rndis", 2), ("ncm", 2))
+EXCLUDED_INTERFACE_PREFIXES = ("rmnet", "ccmni", "tun", "ppp", "dummy", "lo", "ipsec", "clat", "v4-")
+OTHER_INTERFACE_PRIORITY = 3
 
 
 class BrokerClosed(Exception):
@@ -29,6 +34,7 @@ class FrameBroker:
         self._seq = 0
         self._closed = False
         self._clients = 0
+        self._published_at = None
 
     @property
     def clients(self) -> int:
@@ -39,7 +45,14 @@ class FrameBroker:
         with self._cond:
             self._frame = bytes(jpeg)
             self._seq += 1
+            self._published_at = time.monotonic()
             self._cond.notify_all()
+
+    def frame_age(self) -> float | None:
+        with self._cond:
+            if self._published_at is None:
+                return None
+            return time.monotonic() - self._published_at
 
     def latest(self) -> bytes | None:
         with self._cond:
@@ -173,7 +186,11 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send(HTTPStatus.OK, "image/jpeg", frame)
         elif path == "/info.json":
             info = dict(self.server.info_provider())
-            info["clients"] = self.server.broker.clients
+            broker = self.server.broker
+            info["clients"] = broker.clients
+            age = broker.frame_age()
+            # Senza questo campo la pagina non distingue uno stream fermo da uno vivo: la connessione resta aperta.
+            info["frame_age"] = None if age is None else round(age, 1)
             self._send(HTTPStatus.OK, "application/json", json.dumps(info).encode("utf-8"))
         else:
             self._send(HTTPStatus.NOT_FOUND, "text/plain; charset=utf-8", b"non trovato\n")
@@ -277,6 +294,37 @@ def local_ipv4(probe_addresses=PROBE_ADDRESSES) -> str | None:
     return None
 
 
+def _interface_priority(name: str) -> int | None:
+    lowered = name.lower()
+    if lowered.startswith(EXCLUDED_INTERFACE_PREFIXES):
+        return None
+    for prefix, priority in INTERFACE_PRIORITY:
+        if lowered.startswith(prefix):
+            return priority
+    return OTHER_INTERFACE_PRIORITY
+
+
+def rank_lan_addresses(candidates: list[tuple[str, str]]) -> list[str]:
+    """Ordina gli IPv4 privati per probabilità che il PC li raggiunga; scarta dati mobili, VPN, loopback e link-local."""
+    ranked = []
+    for order, (name, ip) in enumerate(candidates):
+        priority = _interface_priority(name)
+        if priority is None:
+            continue
+        try:
+            address = ipaddress.IPv4Address(ip)
+        except ValueError:
+            continue
+        if not address.is_private or address.is_loopback or address.is_link_local:
+            continue
+        ranked.append((priority, order, ip))
+    result = []
+    for _, _, ip in sorted(ranked):
+        if ip not in result:
+            result.append(ip)
+    return result
+
+
 def stream_url(ip: str, port: int) -> str:
     return f"http://{ip}:{port}/"
 
@@ -297,14 +345,15 @@ PAGE_HTML = """<!doctype html>
   .status { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; }
   .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
   .live .dot { background: var(--live); animation: blink 1s steps(1) infinite; }
-  .live { color: var(--text); }
+  .live, .paused { color: var(--text); }
+  .paused .dot { background: #f5a524; }
   @keyframes blink { 50% { opacity: 0.2; } }
   .spacer { flex: 1; }
   button, a.button { background: #252b33; color: var(--text); border: 1px solid #333b45; border-radius: 8px; padding: 7px 12px; font: inherit; cursor: pointer; text-decoration: none; }
   button:hover, a.button:hover { background: #2f3640; }
   #stage { position: relative; flex: 1; overflow: hidden; }
   #video { position: absolute; left: 50%; top: 50%; transform-origin: center center; background: #000; }
-  #message { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--muted); text-align: center; padding: 16px; pointer-events: none; }
+  #message { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text); background: rgba(11, 13, 16, 0.6); text-align: center; padding: 16px; pointer-events: none; }
   footer { padding: 6px 16px; color: var(--muted); font-size: 13px; background: var(--panel); }
 </style>
 </head>
@@ -330,6 +379,7 @@ PAGE_HTML = """<!doctype html>
   const status = document.getElementById("status");
   const statusText = document.getElementById("status-text");
   const footer = document.getElementById("footer");
+  const STALE_SECONDS = 2.5;
   let frameW = 1280, frameH = 720, rotation = 0, userRotated = false, online = false;
 
   function layout() {
@@ -347,15 +397,20 @@ PAGE_HTML = """<!doctype html>
     img.src = "/stream.mjpg?t=" + Date.now();
   }
 
-  function setOnline(value, text) {
-    online = value;
-    status.classList.toggle("live", value);
+  function setState(state, text) {
+    online = state !== "offline";
+    status.classList.toggle("live", state === "live");
+    status.classList.toggle("paused", state === "paused");
     statusText.textContent = text;
   }
 
-  img.addEventListener("load", () => { message.style.display = "none"; });
+  function showMessage(text) {
+    message.style.display = text ? "flex" : "none";
+    message.textContent = text;
+  }
+
   img.addEventListener("error", () => {
-    setOnline(false, "riconnessione...");
+    setState("offline", "riconnessione...");
     message.style.display = "flex";
     message.textContent = "Stream interrotto. Riprovo...";
     setTimeout(connect, 1500);
@@ -366,13 +421,22 @@ PAGE_HTML = """<!doctype html>
       const response = await fetch("/info.json", { cache: "no-store" });
       const info = await response.json();
       if (!online) { connect(); }
-      setOnline(true, "in diretta");
+      if (info.frame_age === null) {
+        setState("paused", "in attesa");
+        showMessage("In attesa del primo fotogramma...");
+      } else if (info.frame_age > STALE_SECONDS) {
+        setState("paused", "in pausa");
+        showMessage("Nessun fotogramma da " + Math.round(info.frame_age) + " s: sul telefono l'app \u00e8 in background o sta registrando un video.");
+      } else {
+        setState("live", "in diretta");
+        showMessage("");
+      }
       if (info.width && info.height) { frameW = info.width; frameH = info.height; }
       if (!userRotated && typeof info.rotation === "number") { rotation = info.rotation; }
       footer.textContent = frameW + "\\u00d7" + frameH + " \\u00b7 rotazione " + rotation + "\\u00b0 \\u00b7 spettatori: " + info.clients;
       layout();
     } catch (err) {
-      setOnline(false, "telefono non raggiungibile");
+      setState("offline", "telefono non raggiungibile");
     }
   }
 
