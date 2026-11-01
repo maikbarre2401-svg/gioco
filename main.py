@@ -5,7 +5,19 @@ from datetime import datetime
 from kivy.app import App
 from kivy.clock import Clock, mainthread
 from kivy.graphics import Callback, Color, Ellipse, Fbo, Line, Rectangle, RoundedRectangle
-from kivy.graphics.opengl import glActiveTexture, glBindTexture, glDeleteTextures, glGenTextures
+from kivy.graphics.opengl import (
+    glActiveTexture,
+    glBindTexture,
+    glCompileShader,
+    glCreateShader,
+    glDeleteShader,
+    glDeleteTextures,
+    glGenTextures,
+    glGetShaderInfoLog,
+    glGetShaderiv,
+    glGetString,
+    glShaderSource,
+)
 from kivy.graphics.transformation import Matrix
 from kivy.logger import Logger
 from kivy.metrics import dp
@@ -18,6 +30,7 @@ from kivy.uix.label import Label
 from kivy.uix.widget import Widget
 from kivy.utils import platform
 
+import debug
 from mjpeg_server import FrameBroker, LatestFrameEncoder, MjpegServer, local_ipv4, rank_lan_addresses, stream_url
 
 IS_ANDROID = platform == "android"
@@ -73,7 +86,14 @@ else:
 
 GL_TEXTURE0 = 0x84C0
 GL_TEXTURE_EXTERNAL_OES = 0x8D65
+GL_FRAGMENT_SHADER = 0x8B30
+GL_COMPILE_STATUS = 0x8B81
+GL_EXTENSIONS = 0x1F03
+OES_EXTENSION = "GL_OES_EGL_image_external"
 CAMERA_TEXTURE_UNIT = 1
+
+FIRST_FRAME_TIMEOUT = 3.0
+CALLBACK_STALL_SECONDS = 3.0
 
 FOCUS_CONTINUOUS_VIDEO = "continuous-video"
 AUDIO_BIT_RATE = 128_000
@@ -308,6 +328,35 @@ def lan_addresses() -> list[str]:
     return rank_lan_addresses([("default", fallback)]) if fallback else []
 
 
+def gl_extensions() -> str:
+    try:
+        value = glGetString(GL_EXTENSIONS)
+    except Exception as exc:
+        # I binding GL di Kivy sollevano tipi diversi a seconda della piattaforma.
+        return f"<glGetString fallita: {exc}>"
+    if isinstance(value, bytes):
+        return value.decode("ascii", "replace")
+    return str(value or "")
+
+
+def shader_compile_log(source: str) -> str:
+    """Ricompila lo shader a mano solo per leggerne il log: Kivy lo stampa ma non lo espone."""
+    try:
+        shader = glCreateShader(GL_FRAGMENT_SHADER)
+        try:
+            glShaderSource(shader, source.encode("utf-8"))
+            glCompileShader(shader)
+            status = glGetShaderiv(shader, GL_COMPILE_STATUS)
+            log = glGetShaderInfoLog(shader, 4096)
+        finally:
+            glDeleteShader(shader)
+    except Exception as exc:
+        return f"log GL non disponibile ({type(exc).__name__}: {exc}); cerca 'Shader' nel log di Kivy"
+    text = log.decode("utf-8", "replace") if isinstance(log, bytes) else str(log)
+    text = " ".join(text.split())
+    return f"compile_status={status} log={text or '<vuoto>'}"
+
+
 def java_bytes(value) -> bytes:
     if isinstance(value, (bytes, bytearray)):
         return bytes(value)
@@ -364,6 +413,12 @@ class CameraBackend:
         self._st_values = [0.0] * 16
         self._last_st_values = None
         self._matrix_fallback_logged = False
+        self._opened_at = 0.0
+        self._first_frame_seen = False
+        self._first_frame_failed = False
+        self._callback_enabled_at = None
+        self._last_callback_at = None
+        self._callback_frames = 0
         self._video_recorder = None
         self._video_path = None
         self._audio_recorder = None
@@ -389,15 +444,40 @@ class CameraBackend:
         try:
             if enabled:
                 width, height = self.preview_size
-                self._preview_callback = _PreviewCallback(lambda data: encoder.submit((data, width, height)))
+                self._preview_callback = _PreviewCallback(
+                    lambda data: self._on_preview_frame(data, width, height, encoder)
+                )
                 self._camera.setPreviewCallback(self._preview_callback)
             else:
                 self._camera.setPreviewCallback(None)
-        except JAVA_ERRORS:
+        except JAVA_ERRORS as exc:
             Logger.exception("Stream: cambio stato del callback anteprima fallito")
+            debug.state(debug.STAGE_CALLBACK, False, f"setPreviewCallback({'attivo' if enabled else 'null'}): {exc}")
             return
         self._streaming = enabled
+        self._callback_enabled_at = time.monotonic() if enabled else None
+        self._last_callback_at = None
+        self._callback_frames = 0
         Logger.info(f"Stream: callback anteprima {'attivo' if enabled else 'spento'}")
+        debug.state(debug.STAGE_CALLBACK, True, "attivo, in attesa di onPreviewFrame" if enabled else "spento: nessuno spettatore")
+
+    def _on_preview_frame(self, data, width, height, encoder):
+        # Gira sul thread UI di Android: solo assegnazioni, niente lavoro.
+        self._callback_frames += 1
+        self._last_callback_at = time.monotonic()
+        encoder.submit((data, width, height))
+
+    def callback_health(self) -> tuple[bool, str] | None:
+        if not self._streaming or self._callback_enabled_at is None:
+            return None
+        now = time.monotonic()
+        if self._last_callback_at is None:
+            if now - self._callback_enabled_at > CALLBACK_STALL_SECONDS:
+                return False, f"attivo ma nessun onPreviewFrame in {CALLBACK_STALL_SECONDS:.0f} s"
+            return True, "attivo, in attesa di onPreviewFrame"
+        if now - self._last_callback_at > CALLBACK_STALL_SECONDS:
+            return False, f"attivo ma onPreviewFrame fermo da oltre {CALLBACK_STALL_SECONDS:.0f} s"
+        return True, f"attivo, fotogrammi in arrivo ({self.preview_size[0]}x{self.preview_size[1]} NV21)"
 
     @property
     def texture(self):
@@ -406,11 +486,18 @@ class CameraBackend:
     def open(self):
         if self._camera is not None:
             return
+        self._opened_at = time.monotonic()
+        self._first_frame_seen = False
+        self._first_frame_failed = False
         try:
             self._open_camera()
             self._create_gl_pipeline()
-            self._camera.setPreviewTexture(self._surface_texture)
-            self._camera.startPreview()
+            try:
+                self._camera.setPreviewTexture(self._surface_texture)
+                self._camera.startPreview()
+            except CAMERA_ERRORS as exc:
+                debug.fail(debug.STAGE_FIRST_FRAME, f"startPreview fallito: {exc}")
+                raise
         except CAMERA_ERRORS:
             self.close()
             raise
@@ -425,6 +512,7 @@ class CameraBackend:
             self._camera = None
             if self._streaming:
                 Logger.info("Stream: callback anteprima spento (fotocamera chiusa)")
+                debug.state(debug.STAGE_CALLBACK, True, "spento: fotocamera chiusa")
             self._streaming = False
             try:
                 camera.setPreviewCallback(None)
@@ -450,29 +538,43 @@ class CameraBackend:
         raise CameraError("nessuna fotocamera posteriore trovata")
 
     def _open_camera(self):
-        camera_id, sensor_degrees = self._find_back_camera()
-        self._camera = Camera.open(camera_id)
+        with debug.stage(debug.STAGE_CAMERA_OPEN) as probe:
+            camera_id, sensor_degrees = self._find_back_camera()
+            self._camera = Camera.open(camera_id)
+            probe.detail = f"id={camera_id} sensore={sensor_degrees}° fotocamere={Camera.getNumberOfCameras()}"
         params = self._camera.getParameters()
 
-        profile = CamcorderProfile.get(camera_id, CamcorderProfile.QUALITY_HIGH)
-        preview_sizes = _java_sizes(params.getSupportedPreviewSizes())
-        video_sizes = _java_sizes(params.getSupportedVideoSizes()) or preview_sizes
-        video_size = choose_size((int(profile.videoFrameWidth), int(profile.videoFrameHeight)), video_sizes)
-        preferred = params.getPreferredPreviewSizeForVideo()
-        preferred_size = _size_tuple(preferred) if preferred is not None else None
-        preview_size = choose_preview_size(video_size, preview_sizes, preferred_size)
+        with debug.stage(debug.STAGE_PREVIEW_SIZE) as probe:
+            profile = CamcorderProfile.get(camera_id, CamcorderProfile.QUALITY_HIGH)
+            profile_size = (int(profile.videoFrameWidth), int(profile.videoFrameHeight))
+            preview_sizes = _java_sizes(params.getSupportedPreviewSizes())
+            video_sizes = _java_sizes(params.getSupportedVideoSizes()) or preview_sizes
+            video_size = choose_size(profile_size, video_sizes)
+            preferred = params.getPreferredPreviewSizeForVideo()
+            preferred_size = _size_tuple(preferred) if preferred is not None else None
+            preview_size = choose_preview_size(video_size, preview_sizes, preferred_size)
 
-        params.setPreviewSize(preview_size[0], preview_size[1])
-        params.setPreviewFormat(ImageFormat.NV21)
-        params.setRecordingHint(True)
-        if FOCUS_CONTINUOUS_VIDEO in _java_strings(params.getSupportedFocusModes()):
-            params.setFocusMode(FOCUS_CONTINUOUS_VIDEO)
-        self._camera.setParameters(params)
+            params.setPreviewSize(preview_size[0], preview_size[1])
+            params.setPreviewFormat(ImageFormat.NV21)
+            params.setRecordingHint(True)
+            focus_modes = _java_strings(params.getSupportedFocusModes())
+            if FOCUS_CONTINUOUS_VIDEO in focus_modes:
+                params.setFocusMode(FOCUS_CONTINUOUS_VIDEO)
+            self._camera.setParameters(params)
+            probe.detail = (
+                f"anteprima={preview_size[0]}x{preview_size[1]} video={video_size[0]}x{video_size[1]} "
+                f"profilo={profile_size[0]}x{profile_size[1]} preferita={preferred_size} "
+                f"supportate={len(preview_sizes)} anteprime/{len(video_sizes)} video "
+                f"fuoco={'continuous-video' if FOCUS_CONTINUOUS_VIDEO in focus_modes else 'predefinito'}"
+            )
 
-        display = PythonActivity.mActivity.getWindowManager().getDefaultDisplay()
-        rotation = orientation_hint(sensor_degrees, surface_rotation_to_degrees(display.getRotation()))
-        # Su SurfaceTexture la rotazione arriva nella matrice di getTransformMatrix, applicata dallo shader.
-        self._camera.setDisplayOrientation(rotation)
+        with debug.stage(debug.STAGE_ROTATION) as probe:
+            display = PythonActivity.mActivity.getWindowManager().getDefaultDisplay()
+            display_degrees = surface_rotation_to_degrees(display.getRotation())
+            rotation = orientation_hint(sensor_degrees, display_degrees)
+            # Su SurfaceTexture la rotazione arriva nella matrice di getTransformMatrix, applicata dallo shader.
+            self._camera.setDisplayOrientation(rotation)
+            probe.detail = f"sensore={sensor_degrees}° display={display_degrees}° -> setDisplayOrientation({rotation})"
 
         self._profile = profile
         self._video_size = video_size
@@ -483,12 +585,22 @@ class CameraBackend:
 
     def _create_gl_pipeline(self):
         width, height = self.content_size
-        self._tex_id = int(glGenTextures(1)[0])
-        self._surface_texture = SurfaceTexture(self._tex_id)
-        fbo = Fbo(size=(width, height))
-        fbo.shader.fs = PREVIEW_FRAGMENT_SHADER
-        if not fbo.shader.success:
-            raise CameraError("shader dell'anteprima non compilato: GL_OES_EGL_image_external non disponibile")
+        with debug.stage(debug.STAGE_TEXTURE) as probe:
+            self._tex_id = int(glGenTextures(1)[0])
+            if self._tex_id == 0:
+                raise CameraError("glGenTextures ha restituito 0: nessun contesto GL attivo su questo thread")
+            self._surface_texture = SurfaceTexture(self._tex_id)
+            fbo = Fbo(size=(width, height))
+            probe.detail = f"gl_id={self._tex_id} SurfaceTexture creata, fbo={width}x{height}"
+        with debug.stage(debug.STAGE_SHADER) as probe:
+            has_oes = OES_EXTENSION in gl_extensions()
+            fbo.shader.fs = PREVIEW_FRAGMENT_SHADER
+            if not fbo.shader.success:
+                raise CameraError(
+                    f"shader dell'anteprima non compilato ({OES_EXTENSION} "
+                    f"{'presente' if has_oes else 'assente'}): {shader_compile_log(PREVIEW_FRAGMENT_SHADER)}"
+                )
+            probe.detail = f"compilato, {OES_EXTENSION} {'presente' if has_oes else 'assente'}"
         with fbo:
             Callback(self._bind_camera_texture)
             Rectangle(size=(width, height))
@@ -511,6 +623,8 @@ class CameraBackend:
             Logger.exception("Camera: aggiornamento texture fallito")
             return None
         values = list(self._st_values)
+        if debug.DEBUG and not self._first_frame_seen:
+            self._check_first_frame(real_matrix=any(values))
         if not any(values):
             # pyjnius non ha ricopiato il float[] nella lista: senza matrice l'anteprima esce ruotata e capovolta.
             values = list(surface_texture_fallback_matrix(self._rotation))
@@ -527,6 +641,21 @@ class CameraBackend:
         self._fbo.draw()
         self._on_frame()
         return None
+
+    def _check_first_frame(self, real_matrix: bool):
+        elapsed = time.monotonic() - self._opened_at
+        if self._surface_texture.getTimestamp() != 0:
+            self._first_frame_seen = True
+            debug.ok(
+                debug.STAGE_FIRST_FRAME,
+                f"dopo {elapsed * 1000:.0f} ms, matrice {'da getTransformMatrix' if real_matrix else 'ricostruita'}",
+            )
+        elif elapsed > FIRST_FRAME_TIMEOUT and not self._first_frame_failed:
+            self._first_frame_failed = True
+            debug.fail(
+                debug.STAGE_FIRST_FRAME,
+                f"nessun fotogramma dopo {FIRST_FRAME_TIMEOUT:.0f} s: SurfaceTexture.getTimestamp() è ancora 0",
+            )
 
     def take_photo(self, path: str):
         if self._fbo is None:
@@ -551,6 +680,7 @@ class CameraBackend:
             self._camera.setPreviewCallback(None)
             self._streaming = False
             Logger.info("Stream: callback anteprima spento (registrazione video)")
+            debug.state(debug.STAGE_CALLBACK, True, "spento: registrazione video in corso")
         recorder = MediaRecorder()
         try:
             self._camera.unlock()
@@ -882,6 +1012,18 @@ class StreamChip(ButtonBehavior, Label):
         self.size = self.texture_size
 
 
+def encoder_health(encoder: LatestFrameEncoder) -> tuple[bool, str]:
+    if not encoder.is_alive:
+        return False, "thread mjpeg-encoder terminato"
+    if encoder.last_error_at is not None and (
+        encoder.last_encoded_at is None or encoder.last_error_at > encoder.last_encoded_at
+    ):
+        return False, f"thread vivo ma la codifica fallisce: {encoder.last_error}"
+    if encoder.last_encoded_at is None:
+        return True, "thread vivo, nessun fotogramma da codificare"
+    return True, "thread vivo, codifica JPEG riuscita"
+
+
 def stream_texts(ip: str | None, port: int | None, clients: int, error: str | None) -> tuple[str, str, str, str]:
     """Restituisce (titolo, testo grande, dettaglio, testo compatto) per la scheda dello stream."""
     if error is not None:
@@ -944,6 +1086,7 @@ class GiocoCameraApp(App):
         return root
 
     def _start_stream_server(self):
+        debug.ok(debug.STAGE_DEBUG, f"diagnostica attiva, uscita={debug.output_name()}, android={IS_ANDROID}")
         self._broker = FrameBroker()
         self._encoder = None
         self._stream_error = None
@@ -988,6 +1131,21 @@ class GiocoCameraApp(App):
         self._stream_chip.text = compact
         if self._backend is not None and self._encoder is not None:
             self._backend.set_streaming(clients > 0 and self._mode != MODE_VIDEO, self._encoder)
+        if debug.DEBUG:
+            self._report_pipeline(ip, clients)
+
+    def _report_pipeline(self, ip, clients):
+        if self._stream_error is not None:
+            debug.state(debug.STAGE_CLIENTS, False, f"server non avviato: {self._stream_error}")
+        else:
+            address = stream_url(ip, self._server.port) if ip else "nessun IP locale raggiungibile"
+            debug.state(debug.STAGE_CLIENTS, True, f"{clients} collegati, {address}")
+        if self._encoder is not None:
+            debug.state(debug.STAGE_ENCODER, *encoder_health(self._encoder))
+        if self._backend is not None:
+            health = self._backend.callback_health()
+            if health is not None:
+                debug.state(debug.STAGE_CALLBACK, *health)
 
     def _build_bottom_bar(self):
         bar = BoxLayout(

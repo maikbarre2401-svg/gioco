@@ -9,13 +9,16 @@ from main import (
     choose_preview_size,
     choose_size,
     cover_tex_coords,
+    encoder_health,
     format_duration,
+    gl_extensions,
     java_bytes,
     lan_addresses,
     mat4_multiply,
     media_filename,
     orientation_hint,
     rotated_size,
+    shader_compile_log,
     stream_texts,
     surface_rotation_to_degrees,
     surface_texture_fallback_matrix,
@@ -224,3 +227,50 @@ def test_lan_addresses_on_desktop_are_private():
 
     for ip in lan_addresses():
         assert ipaddress.IPv4Address(ip).is_private
+
+
+def fake_encoder(alive=True, last_error=None, last_error_at=None, last_encoded_at=None):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        is_alive=alive, last_error=last_error, last_error_at=last_error_at, last_encoded_at=last_encoded_at
+    )
+
+
+def test_encoder_health_dead_thread():
+    assert encoder_health(fake_encoder(alive=False)) == (False, "thread mjpeg-encoder terminato")
+
+
+def test_encoder_health_idle():
+    assert encoder_health(fake_encoder()) == (True, "thread vivo, nessun fotogramma da codificare")
+
+
+def test_encoder_health_failing_since_last_success():
+    health = encoder_health(fake_encoder(last_error="JavaException: x", last_error_at=5.0, last_encoded_at=4.0))
+    assert health == (False, "thread vivo ma la codifica fallisce: JavaException: x")
+
+
+def test_encoder_health_recovered():
+    health = encoder_health(fake_encoder(last_error="JavaException: x", last_error_at=4.0, last_encoded_at=5.0))
+    assert health == (True, "thread vivo, codifica JPEG riuscita")
+
+
+@pytest.fixture
+def gl_context():
+    from kivy.core.window import Window
+
+    return Window
+
+
+def test_gl_extensions_lists_something(gl_context):
+    assert gl_extensions().strip()
+
+
+def test_shader_compile_log_valid_shader(gl_context):
+    assert shader_compile_log("void main() { gl_FragColor = vec4(1.0); }").startswith("compile_status=1")
+
+
+def test_shader_compile_log_reports_errors(gl_context):
+    result = shader_compile_log("void main() { questo non compila }")
+    assert result.startswith("compile_status=0 log=")
+    assert "<vuoto>" not in result

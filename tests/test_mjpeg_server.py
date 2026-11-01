@@ -305,3 +305,26 @@ def test_rank_drops_mobile_vpn_loopback_and_public():
 def test_rank_keeps_unknown_interfaces_last_and_deduplicates():
     candidates = [("enp3s0", "10.0.0.7"), ("wlan0", "192.168.1.23"), ("default", "192.168.1.23")]
     assert rank_lan_addresses(candidates) == ["192.168.1.23", "10.0.0.7"]
+
+
+def test_encoder_reports_liveness_and_last_error():
+    broker = FrameBroker()
+
+    def encode(item):
+        if item == b"bad":
+            raise RuntimeError("compressToJpeg ha restituito false")
+        return item
+
+    encoder = LatestFrameEncoder(broker, encode, max_fps=1000)
+    assert encoder.is_alive is False
+    encoder.start()
+    assert encoder.is_alive is True
+    encoder.submit(b"bad")
+    assert wait_until(lambda: encoder.errors == 1)
+    assert encoder.last_error == "RuntimeError: compressToJpeg ha restituito false"
+    assert encoder.last_encoded_at is None
+    encoder.submit(b"good")
+    assert wait_until(lambda: encoder.last_encoded_at is not None)
+    assert encoder.last_encoded_at > encoder.last_error_at
+    encoder.stop()
+    assert encoder.is_alive is False

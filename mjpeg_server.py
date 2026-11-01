@@ -102,6 +102,15 @@ class LatestFrameEncoder:
         self._thread = None
         self.encoded = 0
         self.dropped = 0
+        self.errors = 0
+        self.last_error = None
+        self.last_error_at = None
+        self.last_encoded_at = None
+
+    @property
+    def is_alive(self) -> bool:
+        thread = self._thread
+        return thread is not None and thread.is_alive()
 
     def start(self) -> None:
         with self._cond:
@@ -156,12 +165,16 @@ class LatestFrameEncoder:
                 last = time.monotonic()
                 try:
                     jpeg = self._encode(item)
-                except Exception:
+                except Exception as exc:
                     # L'encoder Android solleva JavaException, che qui non è importabile.
                     log.exception("codifica JPEG fallita")
+                    self.errors += 1
+                    self.last_error = f"{type(exc).__name__}: {exc}"
+                    self.last_error_at = time.monotonic()
                     continue
                 self._broker.publish(jpeg)
                 self.encoded += 1
+                self.last_encoded_at = time.monotonic()
         finally:
             if self._on_thread_exit is not None:
                 self._on_thread_exit()
