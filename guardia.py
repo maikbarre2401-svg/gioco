@@ -127,6 +127,51 @@ def run_live(cmd):
     return subprocess.run(cmd, shell=isinstance(cmd, str)).returncode
 
 
+def win_dll_path():
+    """
+    Su Windows pyrtlsdr cerca librtlsdr.dll nelle cartelle di sistema e nel PATH, non
+    accanto allo script: con questo basta copiare i DLL qui (o in ./dll) e funziona.
+    """
+    if not (IS_WIN and hasattr(os, "add_dll_directory")):
+        return
+    for d in (BASE, os.path.join(BASE, "dll")):
+        if os.path.isdir(d):
+            try:
+                os.add_dll_directory(d)
+            except OSError:
+                pass
+
+
+def dongle_hint(err):
+    """Spiega l'errore del dongle: libreria assente e driver assente sono problemi diversi."""
+    msg = str(err)
+    if "librtlsdr" in msg or "DLL" in msg.upper() or "cannot open shared object" in msg:
+        print("!! manca la libreria librtlsdr (il driver del dongle e' un'altra cosa):")
+        if IS_WIN:
+            print("   scarica i binari Windows da github.com/rtlsdrblog/rtl-sdr-blog/releases")
+            print("   e copia librtlsdr.dll e libusb-1.0.dll accanto a guardia.py")
+        else:
+            print("   sudo apt install rtl-sdr librtlsdr0      (oppure python guardia.py --install)")
+    elif IS_WIN:
+        print("!! su Windows serve Zadig/WinUSB sul dongle (vedi la docstring o --check)")
+    else:
+        print("!! controlla che il dongle sia collegato e non in uso da un altro programma")
+
+
+def port_free(host, port):
+    """Prova a occupare la porta prima di avviare uvicorn, per dare un errore comprensibile."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        if not IS_WIN:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)   # come fa uvicorn
+        s.bind(("" if host in ("0.0.0.0", "") else host, int(port)))
+        return True
+    except OSError:
+        return False
+    finally:
+        s.close()
+
+
 def local_ip():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -210,6 +255,7 @@ def do_install():
 
 
 def do_check():
+    win_dll_path()
     print("== DIAGNOSTICA ==")
     print("  python   " + sys.executable)
     print("  venv     " + ("sì" if sys.prefix != sys.base_prefix else "NO"))
@@ -234,8 +280,7 @@ def do_check():
             sdr.close()
     except Exception as e:
         print("  MANCA    dongle (" + str(e)[:70] + ")")
-        if IS_WIN:
-            print("           → su Windows serve Zadig/WinUSB sul dongle")
+        dongle_hint(e)
     print("  db       %s (%s)" % (DB_PATH, "presente" if os.path.exists(DB_PATH) else "nuovo"))
 
 
@@ -390,20 +435,26 @@ def db_init():
                 place TEXT, lat REAL, lon REAL,
                 state TEXT DEFAULT 'done', dur REAL DEFAULT 0, rssi REAL);
             CREATE INDEX IF NOT EXISTS i_ts ON tx(ts DESC);
-            CREATE INDEX IF NOT EXISTS i_state ON tx(state);
             CREATE TABLE IF NOT EXISTS geo(q TEXT PRIMARY KEY, lat REAL, lon REAL, conf REAL, ts REAL);
             CREATE TABLE IF NOT EXISTS air(hex TEXT PRIMARY KEY, callsign TEXT, lat REAL, lon REAL,
                 alt INTEGER, spd REAL, seen REAL);
             CREATE INDEX IF NOT EXISTS i_seen ON air(seen DESC);
             CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT);
         """)
-        # migrazione dolce da schemi più vecchi: aggiungo solo le colonne che mancano
+        # Migrazione dolce da schemi più vecchi: aggiungo solo le colonne che mancano.
+        # Deve stare PRIMA degli indici che usano quelle colonne, altrimenti su un DB
+        # vecchio il CREATE INDEX fallisce con "no such column".
         cols = {r[1] for r in c.execute("PRAGMA table_info(tx)")}
         for name, ddl in (("state", "TEXT DEFAULT 'done'"), ("dur", "REAL DEFAULT 0"),
                           ("rssi", "REAL")):
             if name not in cols:
                 c.execute("ALTER TABLE tx ADD COLUMN %s %s" % (name, ddl))
                 log.info("db: aggiunta colonna tx.%s", name)
+        if "state" not in cols:
+            # nel vecchio schema una riga senza testo era una tratta scartata
+            n = c.execute("UPDATE tx SET state='empty' WHERE text IS NULL OR text=''").rowcount
+            log.info("db: migrate %d righe esistenti", n)
+        c.execute("CREATE INDEX IF NOT EXISTS i_state ON tx(state)")
         c.execute("INSERT OR REPLACE INTO meta VALUES('schema',?)", (str(SCHEMA_VERSION),))
         c.commit()
     finally:
@@ -1784,7 +1835,54 @@ def t_api():
     os.unlink(wav)
 
 
-TESTS = [t_config, t_regex, t_cluster, t_dsp, t_gate, t_wav, t_db, t_api]
+def t_migrate():
+    """db: migrazione da uno schema vecchio senza state/dur/rssi"""
+    global DB_PATH
+    vecchio = os.path.join(os.path.dirname(DB_PATH), "vecchio.db")
+    c = sqlite3.connect(vecchio)
+    c.executescript("""
+        CREATE TABLE tx(id INTEGER PRIMARY KEY, ts REAL, freq INTEGER, unit TEXT,
+            mode TEXT, wav TEXT, text TEXT DEFAULT '', conf REAL, place TEXT, lat REAL, lon REAL);
+        CREATE INDEX i_ts ON tx(ts DESC);
+        CREATE TABLE geo(q TEXT PRIMARY KEY, lat REAL, lon REAL, conf REAL, ts REAL);
+        CREATE TABLE air(hex TEXT PRIMARY KEY, callsign TEXT, lat REAL, lon REAL,
+            alt INTEGER, spd REAL, seen REAL);
+    """)
+    c.execute("INSERT INTO tx(ts,unit,text) VALUES(1,'CC','andate in via Nomentana 88')")
+    c.execute("INSERT INTO tx(ts,unit,text) VALUES(2,'PS','')")
+    c.commit()
+    c.close()
+
+    prima, DB_PATH = DB_PATH, vecchio
+    _local.__dict__.pop("conn", None)
+    try:
+        db_init()                       # non deve sollevare "no such column: state"
+        db_init()                       # idempotente
+        assert {r["state"] for r in q("SELECT state FROM tx")} == {"done", "empty"}
+        assert q("SELECT dur,rssi FROM tx WHERE id=1")[0]["dur"] == 0
+        idx = {r["name"] for r in q("SELECT name FROM sqlite_master WHERE type='index'")}
+        assert "i_state" in idx, idx
+        assert q("SELECT v FROM meta WHERE k='schema'")[0]["v"] == str(SCHEMA_VERSION)
+    finally:
+        _local.__dict__.pop("conn", None)
+        DB_PATH = prima
+
+
+def t_port():
+    """porta: rilevamento di una porta già occupata"""
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    porta = srv.getsockname()[1]
+    try:
+        assert not port_free("127.0.0.1", porta), "porta occupata vista come libera"
+    finally:
+        srv.close()
+    assert port_free("127.0.0.1", porta), "porta liberata vista come occupata"
+
+
+TESTS = [t_config, t_regex, t_cluster, t_dsp, t_gate, t_wav, t_db, t_migrate, t_port, t_api]
 
 
 def do_selftest():
@@ -1875,8 +1973,15 @@ def main():
     if a.selftest:
         return do_selftest()
 
+    win_dll_path()
     ensure_env(REQ_CORE)
-    cfg = load_cfg()
+    disco = load_cfg()
+    nuovo_token = not disco.get("token")
+    if nuovo_token:
+        disco["token"] = os.urandom(8).hex()
+    # gli override da riga di comando valgono SOLO per questa esecuzione: scriverli in
+    # guardia.json faceva riapparire un --port di ieri in un avvio senza argomenti
+    cfg = dict(disco)
     for k in ["host", "port", "token", "ppm", "gain", "squelch", "squelch_mode", "dwell",
               "model", "lat", "lon"]:
         v = getattr(a, k.replace("-", "_"), None)
@@ -1893,10 +1998,17 @@ def main():
             print("!! --freqs malformato (%s). Usa FREQ:UNITA:modo,FREQ:UNITA:modo" % e)
             print("   es. 151175000:CC:digital,160900000:PL:analog")
             return 1
-    if not cfg["token"]:
-        cfg["token"] = os.urandom(8).hex()
     validate_cfg(cfg)
-    save_cfg(cfg)
+    if nuovo_token or not os.path.exists(CFG_PATH):
+        save_cfg(validate_cfg(dict(DEFAULTS, **disco)))   # il file resta dell'utente
+
+    if not port_free(cfg["host"], cfg["port"]):
+        print("!! la porta %d e' gia' occupata." % cfg["port"])
+        print("   Un'altra istanza di guardia e' ancora in esecuzione? Chiudila (Ctrl+C nella")
+        print("   sua finestra), oppure usa un'altra porta:  python guardia.py --port 8081")
+        if os.path.exists(CFG_PATH):
+            print("   La porta predefinita e' quella scritta in %s" % CFG_PATH)
+        return 1
 
     os.makedirs(AUDIO, exist_ok=True)
     db_init()
@@ -1926,9 +2038,10 @@ def main():
             RtlSdr().close()
             mode = "radio"
         except Exception as e:
-            print("!! dongle non disponibile (" + str(e)[:70] + ") → DEMO")
-            if IS_WIN:
-                print("!! su Windows serve Zadig/WinUSB sul dongle (vedi --check)")
+            print("!! dongle non disponibile: " + str(e).strip()[:100])
+            dongle_hint(e)
+            print("!! parto in DEMO (interfaccia con traffico finto). Con --sim provi invece")
+            print("   tutta la catena radio su un dongle simulato.")
 
     if mode in ("radio", "sim"):
         try:
