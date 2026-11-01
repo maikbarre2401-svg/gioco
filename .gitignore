@@ -1,0 +1,12 @@
+# ambiente e file generati da guardia.py
+.venv/
+audio/
+guardia.db
+guardia.db-wal
+guardia.db-shm
+guardia.json
+dsd-fme/
+
+# python
+__pycache__/
+*.pyc

@@ -1,0 +1,629 @@
+#!/usr/bin/env python3
+"""
+guardia.py — sala operativa radio self-hosted, un file solo. Windows/Linux.
+
+AVVIO
+  python guardia.py            # prima esecuzione: crea venv e installa le dipendenze (3-10 min)
+  python guardia.py            # poi: avvia (demo se il dongle non risponde)
+  python guardia.py --ppm 42 --gain 24 --freqs 151175000:CC:digital,160900000:PL:analog
+  python guardia.py --check
+
+WINDOWS + SDR REALE
+  Serve Zadig (https://zadig.akeo.ie): Options > List All Devices > Bulk-In Interface
+  > sostituisci il driver con WinUSB. Poi riattacca il dongle e rilancia.
+
+LINUX
+  python3 guardia.py --install   # apt + sink audio + dsd-fme
+"""
+import argparse, hmac, json, os, queue, random, re, shutil, socket, sqlite3
+import subprocess, sys, threading, time, wave
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
+BASE = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE, "guardia.db")
+AUDIO = os.path.join(BASE, "audio")
+CFG_PATH = os.path.join(BASE, "guardia.json")
+VENV = os.path.join(BASE, ".venv")
+IS_WIN = os.name == "nt"
+VPY = os.path.join(VENV, "Scripts", "python.exe") if IS_WIN else os.path.join(VENV, "bin", "python")
+STOP = threading.Event()
+REQ = ["numpy", "scipy", "pyrtlsdr", "faster-whisper", "fastapi", "uvicorn[standard]", "requests"]
+
+DEFAULTS = {
+    "port": 8080, "token": "", "ppm": 0, "gain": 28, "squelch": 7.0,
+    "min_voice": 0.8, "max_seg": 12, "model": "small", "retention_hours": 48,
+    "lat": 41.9028, "lon": 12.4964, "radius_km": 25, "city": "Roma",
+    "viewbox": "12.30,41.70,12.75,42.10",
+    "freqs": [{"freq": 151175000, "unit": "CC", "mode": "digital"},
+              {"freq": 152025000, "unit": "PS", "mode": "digital"},
+              {"freq": 160900000, "unit": "PL", "mode": "analog"},
+              {"freq": 161300000, "unit": "VVF", "mode": "analog"}],
+}
+
+# ─────────────────────────────── ambiente
+def have(b):
+    return shutil.which(b) is not None
+
+def sh(cmd):
+    return subprocess.run(cmd, shell=isinstance(cmd, str), capture_output=True, text=True)
+
+def run_live(cmd):
+    """Come sh() ma con l'output a schermo: obbligatorio per pip, che è lento."""
+    print("  $ " + (cmd if isinstance(cmd, str) else " ".join(cmd)), flush=True)
+    return subprocess.run(cmd, shell=isinstance(cmd, str)).returncode
+
+def local_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80)); return s.getsockname()[0]
+    except Exception:
+        return "127.0.0.1"
+    finally:
+        s.close()
+
+def ensure_env():
+    if sys.prefix == sys.base_prefix:
+        if not os.path.exists(VPY):
+            print("· creo l'ambiente virtuale...", flush=True)
+            run_live([sys.executable, "-m", "venv", VENV])
+            if not os.path.exists(VPY):
+                print("!! venv non creata. Reinstalla Python spuntando 'pip' e 'Add python.exe to PATH'.")
+                sys.exit(1)
+        os.execv(VPY, [VPY] + sys.argv)
+
+    missing = []
+    for pkg in REQ:
+        mod = pkg.split("[")[0].replace("-", "_")
+        try:
+            __import__(mod)
+        except Exception:
+            missing.append(pkg)
+    if not missing:
+        return
+
+    print("\n" + "=" * 60)
+    print("  INSTALLAZIONE DIPENDENZE — può durare 3-10 minuti.")
+    print("  Vedrai l'avanzamento: NON è bloccato, lascia finire.")
+    print("  Pacchetti: " + " ".join(missing))
+    print("=" * 60 + "\n", flush=True)
+
+    run_live([sys.executable, "-m", "pip", "install", "--upgrade", "pip", "wheel"])
+    rc = run_live([sys.executable, "-m", "pip", "install", "--prefer-binary"] + missing)
+    if rc != 0:
+        print("\n!! Installazione fallita. Lancia a mano per leggere l'errore reale:\n")
+        print('   "%s" -m pip install --prefer-binary %s\n' % (VPY, " ".join(missing)))
+        sys.exit(1)
+    print("\n· dipendenze pronte.\n", flush=True)
+
+def do_install():
+    print("== INSTALLAZIONE ==")
+    if not IS_WIN:
+        run_live(["sudo", "apt", "update"])
+        run_live(["sudo", "apt", "install", "-y", "rtl-sdr", "sqlite3", "ffmpeg", "curl",
+                  "cmake", "build-essential", "libpulse-dev", "pulseaudio", "python3-venv"])
+        if have("pactl"):
+            sh("pactl load-module module-null-sink sink_name=dsd_out rate=48000 channels=1")
+        if not have("dsd-fme") and not os.path.isdir(os.path.join(BASE, "dsd-fme")):
+            run_live(["git", "clone", "https://github.com/lwvmobile/dsd-fme"])
+            d = os.path.join(BASE, "dsd-fme")
+            if os.path.isdir(d):
+                sh(["git", "-C", d, "checkout", "pulseaudio"])
+                os.makedirs(os.path.join(d, "build"), exist_ok=True)
+                run_live("cd '%s/build' && cmake .. && make -j$(nproc) && sudo make install" % d)
+    else:
+        print("· Windows: ffmpeg opzionale →  winget install Gyan.FFmpeg")
+        print("· Per l'SDR reale serve Zadig/WinUSB sul dongle (vedi docstring).")
+    ensure_env()
+    print("\nfatto. Avvia con: python guardia.py")
+
+def do_check():
+    print("== DIAGNOSTICA ==")
+    for pkg in REQ:
+        mod = pkg.split("[")[0].replace("-", "_")
+        try:
+            __import__(mod); print("  ok      " + pkg)
+        except Exception:
+            print("  MANCA   " + pkg)
+    for b in ["rtl_test", "ffmpeg", "parec", "pactl", "dsd-fme"]:
+        print(("  ok      " if have(b) else "  assente ") + b)
+    try:
+        from rtlsdr import RtlSdr
+        RtlSdr().close(); print("  ok      dongle RTL-SDR")
+    except Exception as e:
+        print("  MANCA   dongle (" + str(e)[:60] + ")")
+        if IS_WIN:
+            print("          → su Windows serve Zadig/WinUSB sul dongle")
+
+def do_service():
+    if IS_WIN:
+        print("Windows: usa il Task Scheduler, oppure avvia con: pythonw guardia.py")
+        return
+    unit = f"""[Unit]
+Description=Guardia
+After=network.target sound.target
+[Service]
+User={os.environ.get('USER', 'pi')}
+WorkingDirectory={BASE}
+ExecStart={VPY} {BASE}/guardia.py
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=multi-user.target
+"""
+    open("/tmp/guardia.service", "w").write(unit)
+    sh(["sudo", "cp", "/tmp/guardia.service", "/etc/systemd/system/guardia.service"])
+    sh(["sudo", "systemctl", "daemon-reload"])
+    print("fatto: sudo systemctl enable --now guardia")
+
+# ─────────────────────────────── config/db
+def load_cfg():
+    cfg = json.loads(json.dumps(DEFAULTS))
+    if os.path.exists(CFG_PATH):
+        try:
+            cfg.update(json.load(open(CFG_PATH)))
+        except Exception:
+            pass
+    return cfg
+
+def save_cfg(cfg):
+    json.dump(cfg, open(CFG_PATH, "w"), indent=2)
+
+def db_init():
+    c = sqlite3.connect(DB_PATH)
+    c.executescript("""
+    PRAGMA journal_mode=WAL;
+    CREATE TABLE IF NOT EXISTS tx(id INTEGER PRIMARY KEY, ts REAL, freq INTEGER, unit TEXT,
+      mode TEXT, wav TEXT, text TEXT DEFAULT '', conf REAL, place TEXT, lat REAL, lon REAL);
+    CREATE INDEX IF NOT EXISTS i_ts ON tx(ts DESC);
+    CREATE TABLE IF NOT EXISTS geo(q TEXT PRIMARY KEY, lat REAL, lon REAL, conf REAL, ts REAL);
+    CREATE TABLE IF NOT EXISTS air(hex TEXT PRIMARY KEY, callsign TEXT, lat REAL, lon REAL,
+      alt INTEGER, spd REAL, seen REAL);
+    """)
+    c.commit(); c.close()
+
+def q(sql, args=()):
+    c = sqlite3.connect(DB_PATH, timeout=10); c.row_factory = sqlite3.Row
+    try:
+        return [dict(r) for r in c.execute(sql, args).fetchall()]
+    finally:
+        c.close()
+
+def x(sql, args=()):
+    c = sqlite3.connect(DB_PATH, timeout=10)
+    try:
+        cur = c.execute(sql, args); c.commit(); return cur.lastrowid
+    finally:
+        c.close()
+
+# ─────────────────────────────── geocodifica
+PAT = re.compile(
+    r"\b(via|viale|piazza|piazzale|vicolo|largo|corso|lungotevere|strada|circonvallazione)"
+    r"\s+((?:[A-ZÀ-Ù][\w'’\.]*)(?:\s+(?:di|del|della|dei|degli|delle|de|da|san|santa)\s+[\w'’\.]+)?"
+    r"(?:\s+[A-ZÀ-Ù][\w'’\.]*){0,3})")
+UA = {"User-Agent": "guardia.py/1.0 (self-hosted)"}
+
+def geocode(place, cfg):
+    key = place.lower().strip()
+    hit = q("SELECT lat,lon,conf FROM geo WHERE q=?", (key,))
+    if hit:
+        # lat NULL = "buco" già noto: non riprovo Nominatim (lo riproverà dopo la scadenza)
+        if hit[0]["lat"] is None:
+            return None
+        return hit[0]["lat"], hit[0]["lon"], hit[0]["conf"]
+    try:
+        import requests
+        r = requests.get("https://nominatim.openstreetmap.org/search",
+                         params={"q": f"{place}, {cfg['city']}", "format": "jsonv2", "limit": 1,
+                                 "viewbox": cfg["viewbox"], "bounded": 1},
+                         headers=UA, timeout=8).json()
+        time.sleep(1.05)
+        if not r:
+            # memorizzo il buco per non martellare Nominatim a ogni frase
+            x("INSERT OR REPLACE INTO geo VALUES(?,?,?,?,?)", (key, None, None, 0.0, time.time()))
+            return None
+        lat, lon = float(r[0]["lat"]), float(r[0]["lon"])
+        conf = min(0.95, 0.45 + float(r[0].get("importance", 0.3)))
+        x("INSERT OR REPLACE INTO geo VALUES(?,?,?,?,?)", (key, lat, lon, conf, time.time()))
+        return lat, lon, conf
+    except Exception:
+        # errore di rete: non lo memorizzo come buco, verrà ritentato
+        return None
+
+def extract_place(text, cfg):
+    for m in PAT.finditer(text):
+        place = f"{m.group(1)} {m.group(2).strip().rstrip(',.')}"
+        g = geocode(place, cfg)
+        if g:
+            return (place, *g)
+    return None
+
+# ─────────────────────────────── radio
+class Radio(threading.Thread):
+    daemon = True
+    SR, DEC, OFF, TAU = 2_400_000, 50, 150_000, 300e-6
+
+    def __init__(self, cfg, txq):
+        super().__init__()
+        import numpy as np
+        from rtlsdr import RtlSdr
+        self.np, self.cfg, self.txq = np, cfg, txq
+        self.sdr = RtlSdr()
+        self.sdr.sample_rate = self.SR
+        self.sdr.gain = cfg["gain"]
+        self.sdr.freq_correction = cfg["ppm"]
+        self.udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.alpha = (1 / 48000) / (self.TAU + 1 / 48000)
+        self.dsd = have("dsd-fme") and have("parec")
+
+    def rssi(self, iq):
+        return float(10 * self.np.log10(self.np.mean(self.np.abs(iq) ** 2) + 1e-12))
+
+    def demod(self, iq):
+        np = self.np
+        from scipy.signal import decimate, lfilter
+        t = np.arange(len(iq)) / self.SR
+        iq = iq * np.exp(-2j * np.pi * self.OFF * t)
+        a = np.angle(iq[1:] * np.conj(iq[:-1]))
+        a = decimate(a, self.DEC, ftype="fir", zero_phase=True)
+        a -= a.mean()
+        # de-emphasis: filtro IIR a singolo polo y[n]=α·x[n]+(1-α)·y[n-1], vettorizzato
+        y = lfilter([self.alpha], [1.0, -(1.0 - self.alpha)], a)
+        y = y / (np.max(np.abs(y)) + 1e-9) * 14000
+        return np.clip(y, -32768, 32767).astype("<i2")
+
+    def capture(self, ch):
+        self.sdr.center_freq = ch["freq"] + self.OFF
+        t0 = time.time()
+        while time.time() - t0 < 2 and not STOP.is_set():
+            if self.rssi(self.sdr.read_samples(8192)) > self.cfg["squelch"]:
+                break
+        else:
+            return None
+
+        digital = ch["mode"] == "digital" and self.dsd
+        mon = raw = None
+        if digital:
+            raw = os.path.join(AUDIO, f"{int(time.time()*1000)}_{ch['freq']}.raw")
+            mon = subprocess.Popen(["parec", "-d", "dsd_out.monitor", "--format=s16le",
+                                    "--rate=48000", "--channels=1", "--raw"],
+                                   stdout=open(raw, "wb"), stderr=subprocess.DEVNULL)
+
+        chunks, t0, quiet = [], time.time(), 0.0
+        while time.time() - t0 < self.cfg["max_seg"] and not STOP.is_set():
+            iq = self.sdr.read_samples(32768)
+            lvl = self.rssi(iq)
+            pcm = self.demod(iq)
+            if digital:
+                self.udp.sendto(pcm.tobytes(), ("127.0.0.1", 7355))
+            chunks.append(pcm.tobytes())
+            quiet = quiet + 0.0136 if lvl < self.cfg["squelch"] - 3 else 0.0
+            if quiet > 0.6 and time.time() - t0 > self.cfg["min_voice"]:
+                break
+        if mon:
+            time.sleep(0.15); mon.terminate(); mon.wait()
+
+        if time.time() - t0 < self.cfg["min_voice"] or not chunks:
+            if raw and os.path.exists(raw):
+                os.unlink(raw)
+            return None
+        if raw:
+            return raw
+
+        p = os.path.join(AUDIO, f"{int(time.time()*1000)}_{ch['freq']}.wav")
+        w = wave.open(p, "wb"); w.setnchannels(1); w.setsampwidth(2)
+        w.setframerate(48000); w.writeframes(b"".join(chunks)); w.close()
+        return p
+
+    def run(self):
+        while not STOP.is_set():
+            for ch in self.cfg["freqs"]:
+                try:
+                    path = self.capture(ch)
+                except Exception as e:
+                    print("radio:", e); STOP.wait(2); continue
+                if path:
+                    self.txq.put(x("INSERT INTO tx(ts,freq,unit,mode,wav,conf) VALUES(?,?,?,?,?,0)",
+                                   (time.time(), ch["freq"], ch["unit"], ch["mode"], path)))
+
+# ─────────────────────────────── demo
+DEMO = [("CC", "Centrale a 21, andate in via Nomentana civico 88 per incidente stradale."),
+        ("PS", "Volante 7, intervento in piazza Vittorio Emanuele II per schiamazzi."),
+        ("PL", "Pronto intervento, via del Corso altezza civico 12, auto in sosta vietata."),
+        ("CC", "Ricevuto, in avvicinamento. Traffico intenso su via Salaria."),
+        ("PS", "Richiedo pattuglia di supporto in via Cavour, soggetto molesto."),
+        ("VVF", "Squadra 3, intervento in lungotevere Marzio per principio di incendio."),
+        ("CC", "Centrale, soggetto in fuga a piedi verso viale Trastevere."),
+        ("PS", "Situazione rientrata in piazza del Popolo, nessun ferito."),
+        ("PL", "Segnalazione su via Nazionale, veicolo senza revisione."),
+        ("CC", "Rientro in caserma, via di Macchia Saponara.")]
+
+def demo_thread(cfg, txq):
+    # la demo genera righe già complete (testo + posizione): NON passano dal transcriber
+    freqs = {c["unit"]: c["freq"] for c in cfg["freqs"]}
+    while not STOP.is_set():
+        unit, text = random.choice(DEMO)
+        g = extract_place(text, cfg)
+        x("""INSERT INTO tx(ts,freq,unit,mode,text,conf,place,lat,lon)
+             VALUES(?,?,?,?,?,?,?,?,?)""",
+          (time.time(), freqs.get(unit, 0), unit, "demo", text,
+           random.uniform(-0.6, -0.15), g[0] if g else None,
+           g[1] if g else None, g[2] if g else None))
+        STOP.wait(random.uniform(4, 9))
+
+# ─────────────────────────────── whisper
+def transcriber(cfg, txq):
+    from faster_whisper import WhisperModel
+    print("· carico il modello whisper '" + cfg["model"] + "' (il primo avvio scarica i pesi)...",
+          flush=True)
+    model = WhisperModel(cfg["model"], device="cpu", compute_type="int8")
+    print("· whisper pronto.", flush=True)
+    while not STOP.is_set():
+        try:
+            tid = txq.get(timeout=1)
+        except queue.Empty:
+            continue
+        row = q("SELECT wav,text FROM tx WHERE id=?", (tid,))
+        if not row or not row[0]["wav"]:
+            continue
+        if row[0].get("text"):   # già trascritta: non la tocco
+            continue
+        src = row[0]["wav"]; wav = src
+        if src.endswith(".raw"):
+            if not have("ffmpeg"):
+                x("UPDATE tx SET text=NULL WHERE id=?", (tid,)); continue
+            wav = src[:-4] + ".wav"
+            sh(f'ffmpeg -y -loglevel error -f s16le -ar 48000 -ac 1 -i "{src}" -ar 16000 "{wav}"')
+            try:
+                os.unlink(src)
+            except OSError:
+                pass
+            # d'ora in poi la riga punta al wav riproducibile dal browser
+            x("UPDATE tx SET wav=? WHERE id=?", (wav, tid))
+        try:
+            segs, _ = model.transcribe(wav, language="it", vad_filter=True, beam_size=1,
+                                       initial_prompt="Centrale, volante, intervenite, via, civico, targa.")
+            text = " ".join(s.text.strip() for s in segs).strip()
+            if len(text) < 10:
+                x("UPDATE tx SET text=NULL WHERE id=?", (tid,)); continue
+            g = extract_place(text, cfg)
+            x("UPDATE tx SET text=?,place=?,lat=?,lon=? WHERE id=?",
+              (text, g[0] if g else None, g[1] if g else None, g[2] if g else None, tid))
+        except Exception as e:
+            print("whisper:", e); x("UPDATE tx SET text=NULL WHERE id=?", (tid,))
+
+# ─────────────────────────────── manutenzione (retention disco + DB)
+def janitor(cfg):
+    while not STOP.is_set():
+        cutoff = time.time() - cfg["retention_hours"] * 3600
+        try:
+            for r in q("SELECT wav FROM tx WHERE ts<? AND wav IS NOT NULL", (cutoff,)):
+                try:
+                    os.unlink(r["wav"])
+                except OSError:
+                    pass
+            x("DELETE FROM tx WHERE ts<?", (cutoff,))
+            x("DELETE FROM geo WHERE conf<=0 AND ts<?", (cutoff,))   # scadono solo i 'buchi'
+            for f in os.listdir(AUDIO):                               # file audio orfani
+                p = os.path.join(AUDIO, f)
+                try:
+                    if os.path.isfile(p) and os.path.getmtime(p) < cutoff:
+                        os.unlink(p)
+                except OSError:
+                    pass
+        except Exception as e:
+            print("janitor:", e)
+        STOP.wait(600)
+
+# ─────────────────────────────── adsb
+def adsb_thread(cfg):
+    import requests
+    url = "https://api.adsb.lol/v2/lat/{}/lon/{}/dist/{}".format(
+        cfg["lat"], cfg["lon"], cfg["radius_km"])
+    while not STOP.is_set():
+        try:
+            for a in requests.get(url, timeout=10).json().get("ac", []):
+                h = (a.get("hex") or "").lower()
+                alt, spd = a.get("alt_baro"), a.get("gs") or 0
+                if not h.startswith("33") or not isinstance(alt, int):
+                    continue
+                if alt > 4000 or spd > 140:
+                    continue
+                x("INSERT OR REPLACE INTO air VALUES(?,?,?,?,?,?,?)",
+                  (h, (a.get("flight") or "").strip(), a.get("lat"), a.get("lon"),
+                   alt, spd, time.time()))
+        except Exception:
+            pass
+        STOP.wait(6)
+
+# ─────────────────────────────── api
+def build_app(cfg):
+    from fastapi import FastAPI, HTTPException, Request
+    from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+    app = FastAPI()
+
+    def auth(req):
+        tok = req.query_params.get("t") or req.cookies.get("t") or ""
+        if cfg["token"] and hmac.compare_digest(tok, cfg["token"]):
+            return
+        raise HTTPException(401, "token mancante")
+
+    def snap():
+        now = time.time(); units, seen = [], set()
+        for u in q("""SELECT unit,freq,text,place,lat,lon,ts,conf FROM tx
+                      WHERE lat IS NOT NULL AND ts>? ORDER BY ts DESC""", (now - 300,)):
+            if u["unit"] in seen:
+                continue
+            seen.add(u["unit"]); u["age"] = round(now - u["ts"], 1); units.append(u)
+        return {"now": now, "units": units,
+                "events": q("""SELECT id,ts,unit,freq,text,place,lat,lon,conf,wav FROM tx
+                               WHERE text!='' ORDER BY ts DESC LIMIT 80"""),
+                "air": q("SELECT * FROM air WHERE seen>?", (now - 45,))}
+
+    @app.get("/", response_class=HTMLResponse)
+    def index(request: Request):
+        if request.query_params.get("t"):
+            r = RedirectResponse("/", status_code=302)
+            r.set_cookie("t", request.query_params["t"], max_age=86400 * 365)
+            return r
+        return HTML
+
+    @app.get("/api/state")
+    def state(request: Request):
+        auth(request); return snap()
+
+    @app.get("/api/audio/{tid}")
+    def audio(tid: int, request: Request):
+        auth(request)
+        r = q("SELECT wav FROM tx WHERE id=?", (tid,))
+        if not r or not r[0]["wav"] or not os.path.exists(r[0]["wav"]):
+            raise HTTPException(404)
+        return FileResponse(r[0]["wav"])
+
+    @app.get("/health")
+    def health():
+        return {"ok": True, "tx": q("SELECT COUNT(*) c FROM tx")[0]["c"]}
+
+    return app
+
+HTML = """<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Sala Operativa</title>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:#0b0f14;color:#e8eef6;font:14px system-ui,sans-serif;display:flex;flex-direction:column;height:100vh}
+header{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border-bottom:1px solid #1e2833}
+h1{margin:0;font-size:12px;letter-spacing:.14em;font-weight:800}
+.sub{font-size:10px;color:#7d8b9c;margin-top:2px}
+.live{font-size:9px;font-weight:800;background:#b91c1c;color:#fff;padding:4px 9px;border-radius:99px}
+#m{flex:1;min-height:240px}
+#feed{max-height:38vh;overflow:auto;border-top:1px solid #1e2833}
+.row{display:flex;gap:9px;padding:9px 13px;border-bottom:1px solid #1e2833;font-size:12px;cursor:pointer}
+.row:active{background:#111823}
+.t{color:#7d8b9c;font-size:10.5px}
+.u{color:#6ea8ff;font-weight:700;font-size:10.5px;min-width:38px}
+.p{color:#14b8a6;font-size:10px;margin-top:3px}
+</style></head><body>
+<header><div><h1>SALA OPERATIVA</h1><div class="sub" id="sub">connessione...</div></div>
+<div class="live">LIVE</div></header><div id="m"></div><div id="feed"></div>
+<script>
+const COL={CC:'#1d4ed8',PS:'#b91c1c',PL:'#15803d',VVF:'#d97706'};
+const map=new maplibregl.Map({container:'m',center:[12.4964,41.9028],zoom:13,attributionControl:false,
+ style:{version:8,sources:{b:{type:'raster',tileSize:256,tiles:['https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png']}},
+ layers:[{id:'b',type:'raster',source:'b'}]}});
+const M=new Map(),H=new Map(),seen=new Set();
+function unit(u){let m=M.get(u.unit);
+ if(!m){m=new maplibregl.Marker({color:COL[u.unit]||'#6ea8ff'}).setLngLat([u.lon,u.lat]).addTo(map);M.set(u.unit,m);}
+ m.setLngLat([u.lon,u.lat]);m.getElement().style.opacity=Math.max(.2,1-u.age/300);}
+function heli(a){let m=H.get(a.hex);
+ if(!m){m=new maplibregl.Marker({color:'#d97706'}).setLngLat([a.lon,a.lat]).addTo(map);H.set(a.hex,m);}
+ m.setLngLat([a.lon,a.lat]);}
+async function tick(){try{
+ const d=await (await fetch('/api/state')).json();
+ d.units.forEach(unit);d.air.forEach(heli);
+ document.getElementById('sub').textContent=d.units.length+' unità · '+d.air.length+' aeromobili';
+ const f=document.getElementById('feed');
+ d.events.forEach(e=>{if(seen.has(e.id))return;seen.add(e.id);
+  const r=document.createElement('div');r.className='row';
+  r.innerHTML='<span class="u">'+e.unit+'</span><div><span class="t">'+new Date(e.ts*1000).toLocaleTimeString('it-IT')+
+   ' · '+(e.freq/1e6).toFixed(3)+'</span><div>'+e.text+'</div>'+(e.place?'<div class="p">▸ '+e.place+'</div>':'')+'</div>';
+  r.onclick=()=>{if(e.lat)map.flyTo({center:[e.lon,e.lat],zoom:15});if(e.wav)new Audio('/api/audio/'+e.id).play().catch(()=>{});};
+  f.prepend(r);});
+}catch(_){document.getElementById('sub').textContent='offline';}}
+setInterval(tick,3000);tick();
+</script></body></html>"""
+
+# ─────────────────────────────── main
+def main():
+    ap = argparse.ArgumentParser()
+    for f in ["--demo", "--check", "--install", "--service"]:
+        ap.add_argument(f, action="store_true")
+    ap.add_argument("--port", type=int); ap.add_argument("--token")
+    ap.add_argument("--ppm", type=int); ap.add_argument("--gain", type=int)
+    ap.add_argument("--squelch", type=float); ap.add_argument("--model")
+    ap.add_argument("--lat", type=float); ap.add_argument("--lon", type=float)
+    ap.add_argument("--freqs")
+    a = ap.parse_args()
+
+    if a.install:
+        return do_install()
+    if a.check:
+        return do_check()
+    if a.service:
+        return do_service()
+
+    ensure_env()
+    cfg = load_cfg()
+    for k in ["port", "token", "ppm", "gain", "squelch", "model", "lat", "lon"]:
+        if getattr(a, k) is not None:
+            cfg[k] = getattr(a, k)
+    if a.freqs:
+        try:
+            parsed = []
+            for p in a.freqs.split(","):
+                freq, unit, mode = p.split(":")
+                parsed.append({"freq": int(freq), "unit": unit, "mode": mode})
+            cfg["freqs"] = parsed
+        except ValueError:
+            print("!! --freqs malformato. Usa FREQ:UNITA:modo,FREQ:UNITA:modo"
+                  "  (es. 151175000:CC:digital,160900000:PL:analog)")
+            sys.exit(1)
+    if not cfg["token"]:
+        cfg["token"] = os.urandom(6).hex()
+    save_cfg(cfg)
+
+    os.makedirs(AUDIO, exist_ok=True)
+    db_init()
+    txq = queue.Queue()
+
+    demo = a.demo
+    if not demo:
+        try:
+            from rtlsdr import RtlSdr
+            RtlSdr().close()
+        except Exception as e:
+            print("!! dongle non disponibile (" + str(e)[:70] + ") → DEMO")
+            if IS_WIN:
+                print("!! su Windows serve Zadig/WinUSB sul dongle")
+            demo = True
+
+    if demo:
+        threading.Thread(target=demo_thread, args=(cfg, txq), daemon=True).start()
+    else:
+        try:
+            Radio(cfg, txq).start()   # Radio è già un Thread: .start() ne esegue run()
+        except Exception as e:
+            print("!! radio non avviabile (" + str(e)[:70] + ") → DEMO")
+            demo = True
+            threading.Thread(target=demo_thread, args=(cfg, txq), daemon=True).start()
+    threading.Thread(target=transcriber, args=(cfg, txq), daemon=True).start()
+    threading.Thread(target=adsb_thread, args=(cfg,), daemon=True).start()
+    threading.Thread(target=janitor, args=(cfg,), daemon=True).start()
+
+    ip = local_ip()
+    print(f"""
+============================================
+  GUARDIA {'[DEMO]' if demo else '[RADIO]'}
+  Telefono:  http://{ip}:{cfg['port']}/?t={cfg['token']}
+  Locale:    http://127.0.0.1:{cfg['port']}/?t={cfg['token']}
+  Canali:    {', '.join(f"{c['freq']/1e6:.3f}/{c['unit']}/{c['mode']}" for c in cfg['freqs'])}
+  Ctrl+C per fermare
+============================================
+""", flush=True)
+
+    import uvicorn
+    try:
+        uvicorn.run(build_app(cfg), host="0.0.0.0", port=cfg["port"], log_level="warning")
+    except KeyboardInterrupt:
+        pass
+    finally:
+        STOP.set()
+        print("\nchiuso.")
+
+if __name__ == "__main__":
+    main()
