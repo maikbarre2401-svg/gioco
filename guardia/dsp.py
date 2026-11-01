@@ -22,14 +22,6 @@ log = logging.getLogger("guardia.dsp")
 AUDIO_SR = 48000
 
 
-def lowpass_taps(cutoff, sr, ntaps=127, beta=7.0):
-    """FIR passa-basso a finestra di Kaiser (sinc * kaiser), guadagno unitario in continua."""
-    import numpy as np
-    n = np.arange(ntaps) - (ntaps - 1) / 2.0
-    h = np.sinc(2.0 * cutoff / sr * n) * np.kaiser(ntaps, beta)
-    return h / h.sum()
-
-
 class Fir:
     """FIR streaming con stato: continuita' garantita tra blocchi consecutivi."""
 

@@ -3,7 +3,7 @@
 export const CFG = window.GUARDIA || {};
 export const QS = CFG.token ? '?t=' + encodeURIComponent(CFG.token) : '';
 
-export const COLORI = { CC: '#2563eb', PS: '#dc2626', PL: '#16a34a', VVF: '#d97706' };
+const COLORI = { CC: '#2563eb', PS: '#dc2626', PL: '#16a34a', VVF: '#d97706' };
 export const colore = u => COLORI[u] || '#6ea8ff';
 export const colore3 = u => parseInt(colore(u).slice(1), 16);
 

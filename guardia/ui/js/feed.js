@@ -6,7 +6,11 @@ const righe = new Map();          // id → elemento
 let onApri = () => { };
 const filtro = { unita: null, soloAvvisi: false, cerca: '' };
 let inRicerca = false;
-const MAX_RIGHE = 150;
+let piuVecchio = null;        // ts della riga più vecchia caricata
+let staCaricando = false;
+let esaurito = false;
+const MAX_RIGHE = 400;
+const PAGINA = 60;
 
 export function init(apri) {
   onApri = apri || onApri;
@@ -21,6 +25,30 @@ export function init(apri) {
     $('#t-avvisi').classList.toggle('attivo', filtro.soloAvvisi);
     applica();
   };
+  // registro lungo: si carica scorrendo, invece di tenere tutto in memoria dall'inizio
+  $('#righe').addEventListener('scroll', ev => {
+    const b = ev.target;
+    if (b.scrollTop + b.clientHeight > b.scrollHeight - 120) piuVecchie();
+  }, { passive: true });
+}
+
+async function piuVecchie() {
+  if (staCaricando || esaurito || inRicerca || piuVecchio == null) return;
+  staCaricando = true;
+  try {
+    const r = await api('/api/events?limit=' + PAGINA + '&before=' + piuVecchio);
+    const ev = r.events || [];
+    if (!ev.length) { esaurito = true; return; }
+    for (const e of ev) {
+      if (righe.has(e.id)) continue;
+      const nodo = disegna(e, false);
+      righe.set(e.id, nodo);
+      $('#righe').append(nodo);
+      applicaUna(nodo, e);
+      piuVecchio = Math.min(piuVecchio, e.ts);
+    }
+  } catch (e) { /* si riprova al prossimo scorrimento */ }
+  finally { staCaricando = false; }
 }
 
 /** Le pillole di filtro nascono dalle unità che hanno davvero parlato. */
@@ -68,6 +96,8 @@ function sostituisciTutto(eventi) {
   const box = $('#righe');
   box.textContent = '';
   righe.clear();
+  esaurito = false;
+  piuVecchio = eventi.length ? Math.min(...eventi.map(e => e.ts)) : null;
   for (const e of eventi.slice().reverse()) aggiungi(e, false);
   applica();
 }
@@ -91,6 +121,7 @@ export function aggiungi(e, animata = true) {
     const ultimo = box.lastChild;
     righe.delete(Number(ultimo.dataset.id));
     ultimo.remove();
+    esaurito = false;               // ne è stata buttata una: si può ricaricare scorrendo
   }
   applicaUna(nodo, e);
 }
@@ -144,6 +175,11 @@ function applica() {
 }
 
 export const inCerca = () => inRicerca;
+
+/** Unità che stanno trasmettendo in questo momento (dai livelli della radio). */
+export function segnaInOnda(unita) {
+  for (const b of $('#pillole-unita').children) b.classList.toggle('onda', unita.has(b.dataset.u));
+}
 
 /** Evidenzia la riga il cui audio sta suonando. */
 export function segnaInAscolto(id) {

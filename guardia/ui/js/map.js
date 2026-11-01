@@ -16,7 +16,7 @@ const MIN = ['!', IS('motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'r
 const SEC = IS('secondary', 'tertiary');
 const MAIN = IS('motorway', 'trunk', 'primary');
 
-export const STILE_SCURO = {
+const STILE_SCURO = {
   version: 8, glyphs: OFM + '/fonts/{fontstack}/{range}.pbf',
   light: { anchor: 'viewport', color: '#dce9ff', intensity: .35, position: [1.3, 200, 35] },
   sources: { ofm: { type: 'vector', url: OFM + '/planet', attribution: ATTR } },
@@ -69,7 +69,7 @@ function stileRaster(tpl) {
       { id: 'r', type: 'raster', source: 'r' }] };
 }
 
-export const base = CFG.basemap || 'vector';
+const base = CFG.basemap || 'vector';
 export const mappa = new maplibregl.Map({
   container: 'mappa', center: [CFG.lon, CFG.lat], zoom: CFG.zoom || 15,
   pitch: 56, bearing: -18, maxPitch: 82, antialias: true,
@@ -179,7 +179,7 @@ setInterval(animaAnelli, 70);
 // ───── telecamera che rispetta l'utente
 let toccata = 0;
 ['dragstart', 'wheel', 'touchstart'].forEach(ev => mappa.on(ev, () => { toccata = Date.now(); }));
-export const mossaDaPoco = () => Date.now() - toccata < 25000;
+const mossaDaPoco = () => Date.now() - toccata < 25000;
 export function azzeraTocco() { toccata = 0; }
 export function inquadra(lon, lat, zoom) {
   if (mossaDaPoco()) return false;

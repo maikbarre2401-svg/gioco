@@ -60,6 +60,10 @@ button,input,a.tasto{font:inherit;color:inherit}
   cursor:pointer;font-size:11.5px;transition:background var(--t)}
 .riga-unita:hover{background:#111b26}
 .riga-unita.seguita{background:#13273a;box-shadow:inset 0 0 0 1px #1d5b8a}
+.riga-unita.onda{background:#10261c}
+.riga-unita.onda .sigla::after,.pillola.onda::after{content:'●';color:var(--verde);
+  margin-left:5px;animation:battito 1.1s infinite;font-size:8px;vertical-align:1px}
+.targhetta.onda{border-color:var(--verde);box-shadow:0 0 0 1px rgba(34,197,94,.45),0 2px 14px rgba(0,0,0,.7)}
 .punto{width:8px;height:8px;border-radius:2px;flex:none}
 .sigla{font-weight:800;min-width:32px}
 .luogo{color:#14b8a6;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:98px}

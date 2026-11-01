@@ -3,13 +3,17 @@
 import { $, el, api, colore, eta, mhz, memoria } from './util.js';
 
 // ───────── unità in onda
+let inOndaOra = new Set();
+export function impostaInOnda(set) { inOndaOra = set; }
+
 export function disegnaUnita(units, seguita, onScegli) {
   const box = $('#lista-unita');
   box.textContent = '';
   const vive = (units || []).filter(u => u.lat != null);
   if (!vive.length) { box.append(el('p', 'vuoto', 'nessuna unità')); return; }
   for (const u of vive) {
-    const r = el('div', 'riga-unita' + (seguita === u.unit ? ' seguita' : ''));
+    const r = el('div', 'riga-unita' + (seguita === u.unit ? ' seguita' : '')
+      + (inOndaOra.has(u.unit) ? ' onda' : ''));
     const p = el('span', 'punto'); p.style.background = colore(u.unit);
     r.append(p, el('span', 'sigla', u.unit), el('span', 'luogo', u.place || ''),
       el('span', 'eta', eta(u.age)));

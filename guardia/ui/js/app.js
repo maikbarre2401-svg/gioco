@@ -53,7 +53,13 @@ live.on('state', d => {
   veicoli.aggiorna(d.units, d.air);
   pannelli.disegnaUnita(d.units, seguita, segui);
   feed.pillole([...new Set((d.units || []).map(u => u.unit))]);
-  if (d.levels) pannelli.disegnaLivelli({ canali: d.levels.canali, centro: d.levels.centro });
+  if (d.levels) {
+    pannelli.disegnaLivelli(d.levels);
+    const onda = new Set((d.levels.canali || []).filter(c => c.open).map(c => c.unit));
+    pannelli.impostaInOnda(onda);
+    veicoli.inOnda(onda);
+    feed.segnaInOnda(onda);
+  }
   intestazione(d);
   if (seguita) {
     const p = veicoli.posizione(seguita);
@@ -77,7 +83,13 @@ live.on('event', e => {
 });
 
 live.on('capture', c => { if (c && !feed.inCerca()) feed.attesa(c); });
-live.on('levels', d => pannelli.disegnaLivelli(d));
+live.on('levels', d => {
+  pannelli.disegnaLivelli(d);
+  const onda = new Set(((d && d.canali) || []).filter(c => c.open).map(c => c.unit));
+  pannelli.impostaInOnda(onda);
+  veicoli.inOnda(onda);
+  feed.segnaInOnda(onda);
+});
 live.on('settings', s => pannelli.sincronizzaImpostazioni(s));
 live.on('collegamento', s => { collegamento = s.modo; intestazione(ultimo); });
 live.on('errore', () => { collegamento = 'giu'; intestazione(ultimo); });

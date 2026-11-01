@@ -204,6 +204,11 @@ export function aggiorna(units, air) {
   disegnaScie();
 }
 
+/** Le unità che stanno trasmettendo pulsano sulla mappa. */
+export function inOnda(unita) {
+  targhette.forEach((m, k) => m.getElement().classList.toggle('onda', unita.has(k)));
+}
+
 export function posizione(unita) {
   const v = V.auto.get(unita);
   return v ? [v.tlng, v.tlat] : null;
