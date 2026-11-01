@@ -1,0 +1,10 @@
+# artefatti generati da guardia.py
+__pycache__/
+*.pyc
+.venv/
+guardia.json
+guardia.db
+guardia.db-wal
+guardia.db-shm
+audio/
+dsd-fme/
