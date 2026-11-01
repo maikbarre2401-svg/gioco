@@ -1,10 +1,11 @@
 import os
+import threading
 import time
 from datetime import datetime
 
 from kivy.app import App
 from kivy.clock import Clock, mainthread
-from kivy.graphics import Callback, Color, Ellipse, Fbo, Line, Rectangle, RoundedRectangle
+from kivy.graphics import BindTexture, Callback, Color, Ellipse, Fbo, Line, Rectangle, RoundedRectangle
 from kivy.graphics.opengl import (
     glActiveTexture,
     glBindTexture,
@@ -18,6 +19,7 @@ from kivy.graphics.opengl import (
     glGetString,
     glShaderSource,
 )
+from kivy.graphics.texture import Texture
 from kivy.graphics.transformation import Matrix
 from kivy.logger import Logger
 from kivy.metrics import dp
@@ -58,6 +60,10 @@ if IS_ANDROID:
     AudioEncoder = autoclass("android.media.MediaRecorder$AudioEncoder")
     Environment = autoclass("android.os.Environment")
     SurfaceTexture = autoclass("android.graphics.SurfaceTexture")
+    SurfaceView = autoclass("android.view.SurfaceView")
+    Gravity = autoclass("android.view.Gravity")
+    ViewGroup = autoclass("android.view.ViewGroup")
+    FrameLayoutParams = autoclass("android.widget.FrameLayout$LayoutParams")
     NetworkInterface = autoclass("java.net.NetworkInterface")
     InetAddress = autoclass("java.net.InetAddress")
     JAVA_ERRORS = (JavaException,)
@@ -81,6 +87,72 @@ if IS_ANDROID:
     @run_on_ui_thread
     def keep_screen_on():
         PythonActivity.mActivity.getWindow().addFlags(WindowLayoutParams.FLAG_KEEP_SCREEN_ON)
+
+    class _SurfaceHolderCallback(PythonJavaClass):
+        __javainterfaces__ = ["android/view/SurfaceHolder$Callback"]
+        __javacontext__ = "app"
+
+        def __init__(self, on_created, on_destroyed):
+            super().__init__()
+            self._on_created = on_created
+            self._on_destroyed = on_destroyed
+
+        @java_method("(Landroid/view/SurfaceHolder;)V")
+        def surfaceCreated(self, holder):
+            try:
+                self._on_created(holder)
+            except Exception:
+                Logger.exception("Camera: surfaceCreated fallito")
+
+        @java_method("(Landroid/view/SurfaceHolder;III)V")
+        def surfaceChanged(self, holder, pixel_format, width, height):
+            Logger.info(f"Camera: SurfaceView {width}x{height} formato {pixel_format}")
+
+        @java_method("(Landroid/view/SurfaceHolder;)V")
+        def surfaceDestroyed(self, holder):
+            try:
+                self._on_destroyed(holder)
+            except Exception:
+                Logger.exception("Camera: surfaceDestroyed fallito")
+
+    class NativePreviewSurface:
+        """SurfaceView nativa sopra la superficie SDL; ogni metodo gira sul thread UI di Android."""
+
+        def __init__(self, on_created, on_destroyed):
+            # pyjnius non trattiene il proxy: senza questo riferimento il GC lo libera mentre Java lo chiama.
+            self._callback = _SurfaceHolderCallback(on_created, on_destroyed)
+            self._view = None
+
+        @run_on_ui_thread
+        def attach(self, left, top, width, height, hidden):
+            if self._view is not None:
+                return
+            activity = PythonActivity.mActivity
+            view = SurfaceView(activity)
+            # Sopra la SurfaceView di SDL: Kivy non può disegnarci sopra, per questo il riquadro evita barra e fascia alta.
+            view.setZOrderMediaOverlay(True)
+            view.getHolder().addCallback(self._callback)
+            params = FrameLayoutParams(width, height, Gravity.TOP | Gravity.LEFT)
+            params.setMargins(left, top, 0, 0)
+            view.setTranslationX(SURFACE_HIDDEN_OFFSET if hidden else 0.0)
+            activity.addContentView(view, params)
+            self._view = view
+
+        @run_on_ui_thread
+        def set_hidden(self, hidden):
+            if self._view is not None:
+                # Fuori schermo invece di INVISIBLE: con INVISIBLE Android distrugge la superficie e l'anteprima si ferma.
+                self._view.setTranslationX(SURFACE_HIDDEN_OFFSET if hidden else 0.0)
+
+        @run_on_ui_thread
+        def detach(self):
+            view, self._view = self._view, None
+            if view is None:
+                return
+            view.getHolder().removeCallback(self._callback)
+            parent = view.getParent()
+            if parent is not None:
+                cast(ViewGroup, parent).removeView(view)
 else:
     JAVA_ERRORS = ()
 
@@ -119,6 +191,24 @@ AUDIO_SAMPLE_RATE = 44_100
 STREAM_JPEG_QUALITY = 70
 STREAM_MAX_FPS = 15
 STREAM_REFRESH_SECONDS = 1.0
+
+PREVIEW_FBO = "fbo"
+PREVIEW_SURFACE = "surface"
+PREVIEW_MODES = (PREVIEW_FBO, PREVIEW_SURFACE)
+
+
+def check_preview_mode(mode: str) -> str:
+    if mode not in PREVIEW_MODES:
+        raise ValueError(f"PREVIEW_MODE non valido: {mode!r}, ammessi {PREVIEW_MODES}")
+    return mode
+
+
+# "fbo": SurfaceTexture -> shader OES -> FBO mostrato da Kivy.
+# "surface": SurfaceView nativa per lo schermo; il FBO per le foto è alimentato da onPreviewFrame (NV21).
+PREVIEW_MODE = check_preview_mode("fbo")
+SURFACE_FBO_INTERVAL = 0.1
+SURFACE_HIDDEN_OFFSET = -100000.0
+TOP_BAND_DP = 112
 
 MODE_IDLE = "idle"
 MODE_VIDEO = "video"
@@ -160,6 +250,31 @@ void main()
     gl_FragColor = texture2D(camera_texture, coord);
 }
 """
+
+# NV21: piano Y (luminance) e piano VU interleaved a metà risoluzione (luminance_alpha: L=V, A=U). BT.601 full range.
+YUV_FRAGMENT_SHADER = """
+#ifdef GL_ES
+    precision highp float;
+#endif
+
+varying vec4 frag_color;
+varying vec2 tex_coord0;
+
+uniform sampler2D texture0;
+uniform sampler2D uv_texture;
+uniform mat4 st_matrix;
+
+void main()
+{
+    vec2 coord = (st_matrix * vec4(tex_coord0, 0.0, 1.0)).xy;
+    float y = texture2D(texture0, coord).r;
+    vec4 vu = texture2D(uv_texture, coord);
+    float v = vu.r - 0.5;
+    float u = vu.a - 0.5;
+    gl_FragColor = vec4(y + 1.402 * v, y - 0.344136 * u - 0.714136 * v, y + 1.772 * u, 1.0);
+}
+"""
+UV_TEXTURE_UNIT = 1
 
 Size = tuple[int, int]
 
@@ -254,6 +369,23 @@ def surface_texture_fallback_matrix(rotation: int) -> tuple[float, ...]:
     if rot_90:
         xform = mat4_multiply(xform, MAT4_ROT_90)
     return mat4_multiply(MAT4_FLIP_V, xform)
+
+
+def contain_rect(content: Size, rect: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+    """Riquadro più grande con le proporzioni di content, centrato dentro rect (x, y, larghezza, altezza)."""
+    x, y, width, height = rect
+    if min(*content, width, height) <= 0:
+        raise ValueError(f"dimensioni non positive: contenuto={content} riquadro={rect}")
+    scale = min(width / content[0], height / content[1])
+    fit_w = int(content[0] * scale)
+    fit_h = int(content[1] * scale)
+    return x + (width - fit_w) // 2, y + (height - fit_h) // 2, fit_w, fit_h
+
+
+def kivy_rect_to_android(rect: tuple[int, int, int, int], window_height: int) -> tuple[int, int, int, int]:
+    """Kivy misura y dal basso, le View Android dall'alto."""
+    x, y, width, height = rect
+    return x, window_height - (y + height), width, height
 
 
 def format_duration(seconds: float) -> str:
@@ -471,11 +603,86 @@ def _stop_recorder(recorder) -> bool:
     return saved
 
 
-class CameraBackend:
-    """Fotocamera, MediaRecorder e texture GL vivono tutti sul thread di Kivy, che possiede il contesto GL."""
+def save_texture_png(texture, path: str) -> None:
+    # Le texture degli FBO hanno la riga 0 in basso: senza flipped=True il PNG esce capovolto (verificato in test).
+    texture.save(path, flipped=True)
 
-    def __init__(self, on_frame):
+
+class YuvPreviewRenderer:
+    """Converte fotogrammi NV21 in RGB dentro un FBO, ruotati come lo schermo. Gira sul thread di Kivy."""
+
+    def __init__(self, frame_size: Size, rotation: int):
+        width, height = frame_size
+        if width <= 0 or height <= 0 or width % 2 or height % 2:
+            raise ValueError(f"NV21 richiede dimensioni pari e positive, ricevuto {width}x{height}")
+        self.frame_size = frame_size
+        self.rotation = rotation
+        self.content_size = rotated_size(frame_size, rotation)
+        self.frame_bytes = width * height * 3 // 2
+        self.frames = 0
+        self.y_texture = Texture.create(size=(width, height), colorfmt="luminance")
+        self.uv_texture = Texture.create(size=(width // 2, height // 2), colorfmt="luminance_alpha")
+        self.fbo = None
+
+    def compile(self) -> None:
+        fbo = Fbo(size=self.content_size)
+        fbo.shader.fs = YUV_FRAGMENT_SHADER
+        if not fbo.shader.success:
+            raise CameraError(f"shader YUV non compilato: {shader_compile_log(YUV_FRAGMENT_SHADER)}")
+        with fbo:
+            BindTexture(texture=self.uv_texture, index=UV_TEXTURE_UNIT)
+            Rectangle(size=self.content_size, texture=self.y_texture)
+        fbo["uv_texture"] = UV_TEXTURE_UNIT
+        # Il buffer NV21 ha la riga 0 in alto e l'orientamento del sensore: è la stessa trasformazione
+        # che GLConsumer applica a una SurfaceTexture ruotata con setDisplayOrientation.
+        matrix = Matrix()
+        matrix.set(flat=list(surface_texture_fallback_matrix(self.rotation)))
+        fbo["st_matrix"] = matrix
+        self.fbo = fbo
+
+    @property
+    def texture(self):
+        return self.fbo.texture if self.fbo is not None else None
+
+    def upload(self, nv21) -> None:
+        if self.fbo is None:
+            raise CameraError("YuvPreviewRenderer.compile() non ancora chiamato")
+        width, height = self.frame_size
+        # bytes e non memoryview: Texture.blit_buffer di Kivy rifiuta i memoryview in sola lettura.
+        data = nv21 if isinstance(nv21, bytes) else bytes(nv21)
+        if len(data) < self.frame_bytes:
+            raise ValueError(f"fotogramma NV21 di {len(data)} byte, attesi {self.frame_bytes} per {width}x{height}")
+        luma = width * height
+        self.y_texture.blit_buffer(data[:luma], colorfmt="luminance", bufferfmt="ubyte")
+        self.uv_texture.blit_buffer(data[luma:self.frame_bytes], colorfmt="luminance_alpha", bufferfmt="ubyte")
+        self.fbo.ask_update()
+        self.fbo.draw()
+        self.frames += 1
+
+
+class CameraBackend:
+    """Fotocamera, MediaRecorder e texture GL vivono sul thread di Kivy, che possiede il contesto GL.
+
+    Fa eccezione la SurfaceView della modalità "surface": i suoi callback arrivano sul thread UI di Android,
+    e l'unico accesso alla fotocamera da lì (stopPreview in surfaceDestroyed) passa per _camera_lock.
+    """
+
+    def __init__(self, on_frame, mode: str = PREVIEW_MODE, surface_rect=None):
         self._on_frame = on_frame
+        self.mode = check_preview_mode(mode)
+        if self.mode == PREVIEW_SURFACE and surface_rect is None:
+            raise ValueError("la modalità surface richiede surface_rect")
+        self._surface_rect = surface_rect
+        self._camera_lock = threading.RLock()
+        self._encoder = None
+        self._yuv = None
+        self._latest_nv21 = None
+        self._uploaded_nv21 = None
+        self._yuv_error_reported = False
+        self._native_surface = None
+        self._surface_hidden = False
+        self._surface_preview_running = False
+        self._has_frame = False
         activity = PythonActivity.mActivity
         self.photo_dir = _app_dir(activity, Environment.DIRECTORY_PICTURES)
         self.video_dir = _app_dir(activity, Environment.DIRECTORY_MOVIES)
@@ -493,7 +700,6 @@ class CameraBackend:
         self._last_st_values = None
         self._matrix_fallback_logged = False
         self._opened_at = 0.0
-        self._first_frame_seen = False
         self._first_frame_failed = False
         self._stream_wanted = False
         self._callback_error = None
@@ -519,19 +725,24 @@ class CameraBackend:
             return {"rotation": 0}
         return {"rotation": self._rotation, "width": self.preview_size[0], "height": self.preview_size[1]}
 
-    def set_streaming(self, enabled: bool, encoder: LatestFrameEncoder):
-        # Il callback copia ~3 MB a fotogramma da Java a Python: senza DEBUG lo si registra solo se c'è uno spettatore.
+    def attach_encoder(self, encoder: LatestFrameEncoder) -> None:
+        self._encoder = encoder
+
+    def set_streaming(self, enabled: bool):
         self._stream_wanted = enabled
-        want_callback = enabled or debug.DEBUG
+        self._sync_preview_callback()
+
+    def _sync_preview_callback(self):
+        # Il callback copia ~3 MB a fotogramma da Java a Python: lo si registra solo se serve a qualcuno.
+        surface_needs_frames = self.mode == PREVIEW_SURFACE
+        want_callback = self._stream_wanted or debug.DEBUG or surface_needs_frames
         if self._camera is None or self._video_recorder is not None:
             return
         if want_callback != self._callback_active:
             try:
                 if want_callback:
                     width, height = self.preview_size
-                    self._preview_callback = _PreviewCallback(
-                        lambda data: self._on_preview_frame(data, width, height, encoder)
-                    )
+                    self._preview_callback = _PreviewCallback(lambda data: self._on_preview_frame(data, width, height))
                     self._camera.setPreviewCallback(self._preview_callback)
                 else:
                     self._camera.setPreviewCallback(None)
@@ -545,20 +756,25 @@ class CameraBackend:
             Logger.info(f"Stream: callback anteprima {'attivo' if want_callback else 'spento'}")
         if not self._callback_active:
             detail = "spento: nessuno spettatore"
-        elif enabled:
+        elif self._stream_wanted:
             detail = "attivo, fotogrammi inoltrati all'encoder"
+        elif surface_needs_frames:
+            detail = "attivo per il FBO delle foto (modalità surface), nessuno spettatore"
         else:
             detail = "attivo solo per il contatore (DEBUG), nessuno spettatore"
         debug.state(debug.STAGE_CALLBACK, True, detail)
 
-    def _on_preview_frame(self, data, width, height, encoder):
+    def _on_preview_frame(self, data, width, height):
         # Gira sul thread UI di Android: solo contatore e consegna, niente lavoro.
         try:
             nbytes = len(data)
         except TypeError:
             nbytes = None
         self._frame_monitor.frame(nbytes)
-        if self._stream_wanted:
+        if self.mode == PREVIEW_SURFACE:
+            self._latest_nv21 = data
+        encoder = self._encoder
+        if self._stream_wanted and encoder is not None:
             encoder.submit((data, width, height))
 
     def _report_preview_frames(self, dt):
@@ -594,39 +810,55 @@ class CameraBackend:
 
     @property
     def texture(self):
+        if self._yuv is not None:
+            return self._yuv.texture
         return self._fbo.texture if self._fbo is not None else None
+
+    @property
+    def has_frame(self) -> bool:
+        return self._has_frame
 
     def open(self):
         if self._camera is not None:
             return
         self._opened_at = time.monotonic()
-        self._first_frame_seen = False
         self._first_frame_failed = False
+        self._has_frame = False
         self._frame_monitor = PreviewFrameMonitor()
         try:
             self._open_camera()
-            self._create_gl_pipeline()
-            try:
-                self._camera.setPreviewTexture(self._surface_texture)
-                self._camera.startPreview()
-            except CAMERA_ERRORS as exc:
-                debug.fail(debug.STAGE_FIRST_FRAME, f"startPreview fallito: {exc}")
-                raise
+            if self.mode == PREVIEW_FBO:
+                self._create_gl_pipeline()
+                try:
+                    self._camera.setPreviewTexture(self._surface_texture)
+                    self._camera.startPreview()
+                except CAMERA_ERRORS as exc:
+                    debug.fail(debug.STAGE_FIRST_FRAME, f"startPreview fallito: {exc}")
+                    raise
+            else:
+                self._create_yuv_pipeline()
         except CAMERA_ERRORS:
             self.close()
             raise
-        Clock.schedule_interval(self._tick, 0)
+        self._sync_preview_callback()
+        if self.mode == PREVIEW_FBO:
+            Clock.schedule_interval(self._tick, 0)
+        else:
+            Clock.schedule_interval(self._tick_yuv, SURFACE_FBO_INTERVAL)
+            self._attach_native_surface()
         if debug.DEBUG:
             Clock.schedule_interval(self._report_preview_frames, FRAME_REPORT_SECONDS)
 
     def close(self):
         Clock.unschedule(self._tick)
+        Clock.unschedule(self._tick_yuv)
         Clock.unschedule(self._report_preview_frames)
         if self._video_recorder is not None:
             self.stop_video()
-        if self._camera is not None:
-            camera = self._camera
-            self._camera = None
+        with self._camera_lock:
+            camera, self._camera = self._camera, None
+            self._surface_preview_running = False
+        if camera is not None:
             if self._callback_active:
                 Logger.info("Stream: callback anteprima spento (fotocamera chiusa)")
                 debug.state(debug.STAGE_CALLBACK, True, "spento: fotocamera chiusa")
@@ -637,6 +869,13 @@ class CameraBackend:
                 camera.release()
             except JAVA_ERRORS:
                 Logger.exception("Camera: rilascio fotocamera fallito")
+        if self._native_surface is not None:
+            self._native_surface.detach()
+            self._native_surface = None
+        self._yuv = None
+        self._latest_nv21 = None
+        self._uploaded_nv21 = None
+        self._has_frame = False
         if self._surface_texture is not None:
             self._surface_texture.release()
             self._surface_texture = None
@@ -737,6 +976,94 @@ class CameraBackend:
         glBindTexture(GL_TEXTURE_EXTERNAL_OES, self._tex_id)
         glActiveTexture(GL_TEXTURE0)
 
+    def _create_yuv_pipeline(self):
+        with debug.stage(debug.STAGE_TEXTURE) as probe:
+            renderer = YuvPreviewRenderer(self.preview_size, self._rotation)
+            width, height = self.preview_size
+            probe.detail = (
+                f"modalità surface: Y {width}x{height} luminance, VU {width // 2}x{height // 2} luminance_alpha, "
+                f"fbo={renderer.content_size[0]}x{renderer.content_size[1]}"
+            )
+        with debug.stage(debug.STAGE_SHADER) as probe:
+            renderer.compile()
+            probe.detail = "shader YUV->RGB compilato (modalità surface)"
+        self._yuv = renderer
+        self._yuv_error_reported = False
+
+    def _attach_native_surface(self):
+        x, y, width, height, window_height = self._surface_rect()
+        fit = contain_rect(self.content_size, (x, y, width, height))
+        left, top, view_w, view_h = kivy_rect_to_android(fit, window_height)
+        self._native_surface = NativePreviewSurface(self._on_surface_created, self._on_surface_destroyed)
+        self._native_surface.attach(left, top, view_w, view_h, self._surface_hidden)
+        Logger.info(f"Camera: SurfaceView richiesta in left={left} top={top} {view_w}x{view_h}")
+
+    def set_surface_hidden(self, hidden: bool) -> None:
+        self._surface_hidden = hidden
+        if self._native_surface is not None:
+            self._native_surface.set_hidden(hidden)
+
+    def _on_surface_created(self, holder):
+        # Thread UI: la fotocamera si tocca solo dal thread di Kivy, quindi si rimanda lì.
+        Clock.schedule_once(lambda dt: self._start_surface_preview(holder), 0)
+
+    def _start_surface_preview(self, holder):
+        with self._camera_lock:
+            if self._camera is None or self._surface_preview_running:
+                return
+            try:
+                self._camera.setPreviewDisplay(holder)
+                self._camera.startPreview()
+            except JAVA_ERRORS as exc:
+                Logger.exception("Camera: startPreview su SurfaceView fallito")
+                debug.fail(debug.STAGE_FIRST_FRAME, f"startPreview su SurfaceView fallito: {exc}")
+                return
+            self._surface_preview_running = True
+        Logger.info("Camera: anteprima avviata su SurfaceView")
+
+    def _on_surface_destroyed(self, holder):
+        # Thread UI: Android invalida la superficie appena questo metodo ritorna, quindi l'anteprima va fermata qui.
+        with self._camera_lock:
+            if self._camera is None or not self._surface_preview_running:
+                return
+            try:
+                self._camera.stopPreview()
+                self._camera.setPreviewDisplay(None)
+            except JAVA_ERRORS:
+                Logger.exception("Camera: stop anteprima su SurfaceView fallito")
+            self._surface_preview_running = False
+
+    def _tick_yuv(self, dt):
+        renderer = self._yuv
+        if renderer is None:
+            return False
+        data = self._latest_nv21
+        if data is None or data is self._uploaded_nv21:
+            if not self._has_frame:
+                self._check_first_frame_timeout("onPreviewFrame non ha ancora consegnato fotogrammi al FBO")
+            return None
+        self._uploaded_nv21 = data
+        try:
+            renderer.upload(java_bytes(data))
+        except ValueError as exc:
+            if not self._yuv_error_reported:
+                self._yuv_error_reported = True
+                Logger.error(f"Camera: fotogramma NV21 scartato: {exc}")
+                debug.fail(debug.STAGE_FIRST_FRAME, f"{exc}; formato effettivo={image_format_name(self._actual_format)}")
+            return None
+        if not self._has_frame:
+            self._has_frame = True
+            elapsed = time.monotonic() - self._opened_at
+            debug.ok(debug.STAGE_FIRST_FRAME, f"dopo {elapsed * 1000:.0f} ms, onPreviewFrame -> FBO YUV")
+        self._on_frame()
+        return None
+
+    def _check_first_frame_timeout(self, reason: str) -> None:
+        elapsed = time.monotonic() - self._opened_at
+        if elapsed > FIRST_FRAME_TIMEOUT and not self._first_frame_failed:
+            self._first_frame_failed = True
+            debug.fail(debug.STAGE_FIRST_FRAME, f"nessun fotogramma dopo {FIRST_FRAME_TIMEOUT:.0f} s: {reason}")
+
     def _tick(self, dt):
         if self._surface_texture is None or self._fbo is None:
             return False
@@ -747,7 +1074,7 @@ class CameraBackend:
             Logger.exception("Camera: aggiornamento texture fallito")
             return None
         values = list(self._st_values)
-        if debug.DEBUG and not self._first_frame_seen:
+        if not self._has_frame:
             self._check_first_frame(real_matrix=any(values))
         if not any(values):
             # pyjnius non ha ricopiato il float[] nella lista: senza matrice l'anteprima esce ruotata e capovolta.
@@ -767,24 +1094,24 @@ class CameraBackend:
         return None
 
     def _check_first_frame(self, real_matrix: bool):
-        elapsed = time.monotonic() - self._opened_at
         if self._surface_texture.getTimestamp() != 0:
-            self._first_frame_seen = True
+            self._has_frame = True
+            elapsed = time.monotonic() - self._opened_at
             debug.ok(
                 debug.STAGE_FIRST_FRAME,
                 f"dopo {elapsed * 1000:.0f} ms, matrice {'da getTransformMatrix' if real_matrix else 'ricostruita'}",
             )
-        elif elapsed > FIRST_FRAME_TIMEOUT and not self._first_frame_failed:
-            self._first_frame_failed = True
-            debug.fail(
-                debug.STAGE_FIRST_FRAME,
-                f"nessun fotogramma dopo {FIRST_FRAME_TIMEOUT:.0f} s: SurfaceTexture.getTimestamp() è ancora 0",
-            )
+        else:
+            self._check_first_frame_timeout("SurfaceTexture.getTimestamp() è ancora 0")
 
     def take_photo(self, path: str):
-        if self._fbo is None:
+        texture = self.texture
+        if texture is None:
             raise CameraError("fotocamera non aperta")
-        self._fbo.texture.save(path, flipped=False)
+        if not self._has_frame:
+            # Prima del primo fotogramma il FBO contiene memoria non inizializzata: la foto sarebbe nera o sporca.
+            raise CameraError("nessun fotogramma ancora disponibile")
+        save_texture_png(texture, path)
 
     def _relock_camera(self):
         if self._camera is None:
@@ -1185,13 +1512,18 @@ class GiocoCameraApp(App):
 
         self._toast = Toast()
         self._toast.y = dp(BAR_HEIGHT_DP) + dp(16)
+        if PREVIEW_MODE == PREVIEW_SURFACE:
+            # La SurfaceView copre l'area sopra la barra: gli avvisi vanno nella fascia alta, che resta di Kivy.
+            self._toast.bind(size=lambda toast, size: setattr(toast, "top", Window.height - dp(8)))
         root.add_widget(self._toast)
 
         root.add_widget(self._build_bottom_bar())
         Window.bind(on_keyboard=self._on_keyboard)
 
         if IS_ANDROID:
-            self._backend = CameraBackend(on_frame=self._preview.refresh)
+            self._backend = CameraBackend(
+                on_frame=self._preview.refresh, mode=PREVIEW_MODE, surface_rect=self._surface_preview_rect
+            )
         else:
             self._preview.show_message("Anteprima disponibile solo su Android")
         self._refresh_controls()
@@ -1219,6 +1551,7 @@ class GiocoCameraApp(App):
             # detach: un thread Python che ha chiamato Java e termina senza staccarsi dalla JVM fa crashare il processo.
             self._encoder = LatestFrameEncoder(self._broker, nv21_to_jpeg, STREAM_MAX_FPS, on_thread_exit=detach)
             self._encoder.start()
+            self._backend.attach_encoder(self._encoder)
         self._server = MjpegServer(self._broker, self._stream_info)
         try:
             self._server.start()
@@ -1237,6 +1570,16 @@ class GiocoCameraApp(App):
                 widget.parent.remove_widget(widget)
         self._root.add_widget(self._stream_card if expanded else self._stream_chip)
         self._place_stream_chip()
+        if self._backend is not None and self._backend.mode == PREVIEW_SURFACE:
+            # La scheda IP sta sotto la SurfaceView: mentre è aperta, la SurfaceView si sposta fuori schermo.
+            self._backend.set_surface_hidden(expanded)
+
+    def _surface_preview_rect(self) -> tuple[int, int, int, int, int]:
+        """Riquadro Kivy (x, y, larghezza, altezza) libero per la SurfaceView, più l'altezza della finestra."""
+        window_w, window_h = (int(v) for v in self._window.size)
+        bottom = int(dp(BAR_HEIGHT_DP))
+        height = window_h - bottom - int(dp(TOP_BAND_DP))
+        return 0, bottom, window_w, height, window_h
 
     def _place_stream_chip(self, *_):
         chip = self._stream_chip
@@ -1253,8 +1596,8 @@ class GiocoCameraApp(App):
         title, big, detail, compact = stream_texts(ip, self._server.port, clients, self._stream_error)
         self._stream_card.set_texts(title, big, detail)
         self._stream_chip.text = compact
-        if self._backend is not None and self._encoder is not None:
-            self._backend.set_streaming(clients > 0 and self._mode != MODE_VIDEO, self._encoder)
+        if self._backend is not None:
+            self._backend.set_streaming(clients > 0 and self._mode != MODE_VIDEO)
         if debug.DEBUG:
             self._report_pipeline(ip, clients)
 
@@ -1350,7 +1693,11 @@ class GiocoCameraApp(App):
             Logger.exception("Camera: apertura fallita")
             self._preview.show_message(f"Errore apertura fotocamera:\n{exc}")
             return
-        self._preview.set_source(self._backend.texture, self._backend.content_size)
+        if self._backend.mode == PREVIEW_FBO:
+            self._preview.set_source(self._backend.texture, self._backend.content_size)
+        else:
+            self._preview.clear_source()
+            self._backend.set_surface_hidden(self._stream_card.parent is not None)
 
     def _on_preview_tap(self):
         if IS_ANDROID and not self._camera_allowed:
