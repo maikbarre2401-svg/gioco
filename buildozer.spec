@@ -5,6 +5,8 @@ package.domain = org.maikbarre
 source.dir = .
 source.include_exts = py
 source.exclude_dirs = tests, bin, .buildozer, .venv, .git, .pytest_cache
+# Il pannello di controllo gira sul PC: nell'APK sarebbe solo peso morto.
+source.exclude_patterns = pc_controllo.py
 version = 0.3.0
 requirements = python3,kivy==2.3.0,pyjnius==1.6.1
 orientation = portrait
