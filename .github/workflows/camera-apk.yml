@@ -1,0 +1,72 @@
+name: APK Gioco fotocamera (Kivy)
+
+# Compila l'APK sui server Linux di GitHub: buildozer non gira su Windows.
+on:
+  push:
+    branches:
+      - "claude/festive-brahmagupta-vdj2r9"
+      - "main"
+    paths:
+      - "main.py"
+      - "buildozer.spec"
+      - ".github/workflows/camera-apk.yml"
+  workflow_dispatch:
+    inputs:
+      preview_mode:
+        description: "Anteprima: surface (verificata sul telefono) oppure fbo"
+        type: choice
+        options: ["surface", "fbo"]
+        default: "surface"
+
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      # Sul telefono di prova "fbo" dava schermo nero e "surface" ha passato tutti i passi.
+      PREVIEW_MODE: ${{ github.event.inputs.preview_mode || 'surface' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Pacchetti di sistema
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y autoconf automake libtool libltdl-dev pkg-config zlib1g-dev \
+            libncurses-dev cmake libffi-dev libssl-dev zip unzip
+
+      - name: Buildozer
+        # Stesse versioni della compilazione Kivy già riuscita in questo repository (run 37946513456).
+        run: pip install buildozer==1.6.0 cython==0.29.37 setuptools==84.0.0
+
+      - name: Modalità di anteprima
+        run: |
+          sed -i "s/^PREVIEW_MODE = check_preview_mode(\"fbo\")$/PREVIEW_MODE = check_preview_mode(\"${PREVIEW_MODE}\")/" main.py
+          grep -n '^PREVIEW_MODE = ' main.py
+          grep -q "^PREVIEW_MODE = check_preview_mode(\"${PREVIEW_MODE}\")$" main.py
+
+      - name: Cache di SDK e NDK
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.buildozer
+            .buildozer
+          key: camera-buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+
+      - name: Compila l'APK
+        run: yes | buildozer -v android debug
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gioco-apk-${{ env.PREVIEW_MODE }}-${{ github.sha }}
+          path: bin/*.apk
+          if-no-files-found: error
+          retention-days: 30
