@@ -536,3 +536,74 @@ def test_snapshot(phone):
     assert info.value.status == 503
     broker.publish(b"\xff\xd8jpeg\xff\xd9")
     assert client.snapshot() == b"\xff\xd8jpeg\xff\xd9"
+
+
+# --- impostazioni e cronologia ------------------------------------------------------------------
+
+import json as _json  # noqa: E402
+from datetime import datetime as _datetime  # noqa: E402
+
+from pc_controllo import (  # noqa: E402
+    HISTORY_LIMIT,
+    SettingsStore,
+    default_settings_path,
+    history_label,
+    remember_connection,
+    valid_geometry,
+)
+
+
+def test_settings_round_trip(tmp_path):
+    store = SettingsStore(str(tmp_path / "sub" / "config.json"))
+    assert store.load() == {}
+    store.save({"host": "192.168.1.23", "history": [{"host": "x", "port": 1}]})
+    data = store.load()
+    assert data["host"] == "192.168.1.23" and data["version"] == 1
+    assert store.load_problem is None
+
+
+def test_corrupt_settings_are_set_aside(tmp_path):
+    path = tmp_path / "config.json"
+    path.write_text("{non json")
+    store = SettingsStore(str(path))
+    assert store.load() == {}
+    assert "illeggibili" in store.load_problem
+    assert (tmp_path / "config.json.rotto").read_text() == "{non json"
+    assert not path.exists()
+
+
+def test_settings_path_override(monkeypatch, tmp_path):
+    monkeypatch.setenv("GIOCO_PC_CONFIG", str(tmp_path / "x.json"))
+    assert default_settings_path() == str(tmp_path / "x.json")
+
+
+def test_remember_connection_dedupes_and_limits():
+    when = _datetime(2026, 11, 2, 10, 0, 0)
+    history = []
+    for i in range(HISTORY_LIMIT + 3):
+        history = remember_connection(history, f"10.0.0.{i}", 8080, f"t{i}", when)
+    assert len(history) == HISTORY_LIMIT
+    history = remember_connection(history, "10.0.0.5", 8080, "nuovo", when)
+    assert history[0] == {"host": "10.0.0.5", "port": 8080, "token": "nuovo", "used": "2026-11-02T10:00:00"}
+    assert [h["host"] for h in history].count("10.0.0.5") == 1
+    assert history_label(history[0]) == "10.0.0.5:8080"
+
+
+def test_remember_connection_ignores_garbage():
+    assert remember_connection("rotto", "h", 1, "t")[0]["host"] == "h"
+    assert len(remember_connection([1, {"x": 2}, {"host": "a", "port": 2}], "h", 1, "t")) == 2
+
+
+@pytest.mark.parametrize(
+    ("geometry", "expected"),
+    [
+        ("1200x800+10+20", "1200x800+10+20"),
+        ("3000x2000+10+20", "1920x1080+10+20"),
+        ("1200x800+3000+20", "1200x800"),
+        ("1200x800+-1500+20", "1200x800"),
+        ("rotto", None),
+        (None, None),
+    ],
+)
+def test_valid_geometry(geometry, expected):
+    assert valid_geometry(geometry, 1920, 1080) == expected

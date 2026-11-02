@@ -77,6 +77,9 @@ VIDEO_MIN_SIZE = (640, 480)
 # Dimensione richiesta dal riquadro video: piccola, così su schermi bassi lo spazio va prima ai pannelli laterali.
 VIDEO_REQUEST_SIZE = (480, 270)
 LOG_MAX_LINES = 4000
+HISTORY_LIMIT = 10
+SETTINGS_VERSION = 1
+GEOMETRY_PATTERN = re.compile(r"^(\d+)x(\d+)([+-]-?\d+)([+-]-?\d+)$")
 
 APP_PACKAGE = "org.maikbarre.gioco"
 APP_ACTIVITY = "org.kivy.android.PythonActivity"
@@ -690,6 +693,84 @@ class DownloadBatch:
         return DownloadReport(completed, failed, self._cancel.is_set())
 
 
+def default_settings_path() -> str:
+    """File delle impostazioni: %APPDATA%\\gioco su Windows, ~/.config/gioco altrove. GIOCO_PC_CONFIG lo sostituisce."""
+    override = os.environ.get("GIOCO_PC_CONFIG")
+    if override:
+        return override
+    if os.name == "nt":
+        base = os.environ.get("APPDATA") or os.path.expanduser("~")
+    else:
+        base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
+    return os.path.join(base, "gioco", "pc_controllo.json")
+
+
+class SettingsStore:
+    """Impostazioni in JSON. Un file illeggibile non blocca l'avvio: viene messo da parte e si riparte da zero."""
+
+    def __init__(self, path: str | None = None) -> None:
+        self.path = path or default_settings_path()
+        self.load_problem: str | None = None
+
+    def load(self) -> dict:
+        try:
+            with open(self.path, encoding="utf-8") as handle:
+                data = json.load(handle)
+        except FileNotFoundError:
+            return {}
+        except (OSError, ValueError) as exc:
+            broken = self.path + ".rotto"
+            try:
+                os.replace(self.path, broken)
+                self.load_problem = f"impostazioni illeggibili ({exc}): salvate in {broken}, riparto da zero"
+            except OSError:
+                self.load_problem = f"impostazioni illeggibili ({exc}): riparto da zero"
+            return {}
+        if not isinstance(data, dict):
+            self.load_problem = "impostazioni in un formato inatteso: riparto da zero"
+            return {}
+        return data
+
+    def save(self, data: dict) -> None:
+        directory = os.path.dirname(self.path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        payload = {"version": SETTINGS_VERSION, **data}
+        write_bytes_atomic(self.path, json.dumps(payload, indent=2, ensure_ascii=False).encode("utf-8"))
+
+
+def remember_connection(history: Any, host: str, port: int, token: str, now: datetime | None = None) -> list[dict]:
+    """Mette la connessione in cima alla cronologia, senza doppioni di host:porta, al massimo HISTORY_LIMIT voci."""
+    entry = {"host": host, "port": port, "token": token, "used": (now or datetime.now()).isoformat(timespec="seconds")}
+    previous = [
+        item for item in (history if isinstance(history, list) else [])
+        if isinstance(item, dict) and isinstance(item.get("host"), str)
+        and not (item.get("host") == host and as_int(item.get("port")) == port)
+    ]
+    return [entry, *previous][:HISTORY_LIMIT]
+
+
+def history_label(entry: dict) -> str:
+    return f"{entry.get('host')}:{as_int(entry.get('port'), DEFAULT_PORT)}"
+
+
+def valid_geometry(geometry: Any, screen_width: int, screen_height: int) -> str | None:
+    """Geometria salvata, se ha senso su questo schermo; la posizione si scarta se finirebbe fuori (monitor staccato)."""
+    if not isinstance(geometry, str):
+        return None
+    match = GEOMETRY_PATTERN.match(geometry)
+    if not match:
+        return None
+    width, height = min(int(match.group(1)), screen_width), min(int(match.group(2)), screen_height)
+    # "+N" è la distanza dal bordo sinistro/alto; "-N" dal bordo destro/basso e "+-N" è fuori a sinistra: scartate.
+    offsets = [match.group(3), match.group(4)]
+    if all(part.startswith("+") and not part.startswith("+-") for part in offsets):
+        x, y = int(offsets[0][1:]), int(offsets[1][1:])
+        if x < screen_width - 100 and y < screen_height - 100:
+            return f"{width}x{height}+{x}+{y}"
+    return f"{width}x{height}"
+
+
 class DeployError(Exception):
     pass
 
@@ -1224,7 +1305,10 @@ class ControlPanel:
         self._host = detect_host()
         self._runner = None
         self._closing = False
+        self.settings_store = SettingsStore()
+        self.history: list[dict] = []
         self._build()
+        self._load_settings()
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.root.report_callback_exception = self._report_tk_exception
         self.root.after(PUMP_INTERVAL_MS, self._pump)
@@ -1259,6 +1343,7 @@ class ControlPanel:
         self.branch_var = tk.StringVar(value=DEFAULT_BRANCH)
         self.github_token_var = tk.StringVar(value=os.environ.get("GITHUB_TOKEN", ""))
         self.apk_dir_var = tk.StringVar(value=default_apk_dir())
+        self.remember_github_token_var = tk.BooleanVar(value=False)
         self.github_fields = ttk.Frame(deploy)
         self.github_fields.grid(row=1, column=0, sticky="w", pady=(6, 0))
         for column, (label, variable, width, secret) in enumerate(
@@ -1273,6 +1358,9 @@ class ControlPanel:
             ttk.Entry(self.github_fields, textvariable=variable, width=width, show="•" if secret else "").grid(
                 row=0, column=column * 2 + 1, padx=(0, 12)
             )
+        ttk.Checkbutton(
+            self.github_fields, text="Ricorda token", variable=self.remember_github_token_var
+        ).grid(row=0, column=8, padx=(0, 4))
 
         self.project_var = tk.StringVar(value=DEFAULT_PROJECT_DIR)
         self.buildozer_var = tk.StringVar(value=DEFAULT_BUILDOZER)
@@ -1313,11 +1401,19 @@ class ControlPanel:
         self.host_var = tk.StringVar()
         self.port_var = tk.StringVar(value=str(DEFAULT_PORT))
         self.token_var = tk.StringVar()
+        ttk.Label(connection, text="IP").grid(row=0, column=0, padx=(0, 4))
+        # Combobox modificabile: si scrive l'IP (o si incolla l'URL della scheda) oppure si sceglie dalla cronologia.
+        self.host_box = ttk.Combobox(connection, textvariable=self.host_var, width=22)
+        self.host_box.grid(row=0, column=1, padx=(0, 12))
+        self.host_box.bind("<<ComboboxSelected>>", self._on_history_selected)
         for column, (label, variable, width) in enumerate(
-            (("IP", self.host_var, 16), ("Porta", self.port_var, 6), ("Token", self.token_var, 12))
+            (("Porta", self.port_var, 6), ("Token", self.token_var, 12)), start=1
         ):
             ttk.Label(connection, text=label).grid(row=0, column=column * 2, padx=(0, 4))
-            ttk.Entry(connection, textvariable=variable, width=width).grid(row=0, column=column * 2 + 1, padx=(0, 12))
+            entry = ttk.Entry(connection, textvariable=variable, width=width)
+            entry.grid(row=0, column=column * 2 + 1, padx=(0, 12))
+            entry.bind("<Return>", lambda event: self.toggle_connection() if self.client is None else None)
+        self.host_box.bind("<Return>", lambda event: self.toggle_connection() if self.client is None else None)
         self.connect_button = ttk.Button(connection, text="Connetti", command=self.toggle_connection)
         self.connect_button.grid(row=0, column=6, padx=(0, 8))
         ttk.Button(connection, text="Apri nel browser", command=self.open_browser).grid(row=0, column=7)
@@ -1456,6 +1552,95 @@ class ControlPanel:
         self._refresh_command_buttons()
         if not connected:
             self._set_state("disconnected")
+
+    # --- impostazioni e cronologia ------------------------------------------------------------------
+
+    def _settings_fields(self) -> dict[str, Any]:
+        return {
+            "host": self.host_var,
+            "port": self.port_var,
+            "token": self.token_var,
+            "mode": self.mode_var,
+            "adb": self.adb_var,
+            "repo": self.repo_var,
+            "branch": self.branch_var,
+            "apk_dir": self.apk_dir_var,
+            "project_dir": self.project_var,
+            "buildozer": self.buildozer_var,
+            "wsl_distro": self.distro_var,
+            "media_dir": self.dir_var,
+        }
+
+    def _load_settings(self) -> None:
+        data = self.settings_store.load()
+        if self.settings_store.load_problem:
+            self.log(self.settings_store.load_problem)
+        for key, variable in self._settings_fields().items():
+            value = data.get(key)
+            if isinstance(value, str) and value:
+                variable.set(value)
+        if self.mode_var.get() not in ACTION_LABELS:
+            self.mode_var.set("github" if self._host == "windows" else "wsl")
+        if self.dir_var.get() not in [label for _, label in MEDIA_DIRS]:
+            self.dir_var.set(MEDIA_DIRS[0][1])
+        self.remember_github_token_var.set(bool(data.get("remember_github_token")))
+        saved_token = data.get("github_token")
+        if self.remember_github_token_var.get() and isinstance(saved_token, str) and saved_token:
+            if not self.github_token_var.get():
+                self.github_token_var.set(saved_token)
+        download_dir = data.get("download_dir")
+        if isinstance(download_dir, str) and os.path.isdir(download_dir):
+            self.download_dir = download_dir
+        self.history = []
+        history = data.get("history")
+        if isinstance(history, list):
+            self.history = [entry for entry in history if isinstance(entry, dict) and isinstance(entry.get("host"), str)][
+                :HISTORY_LIMIT
+            ]
+        self._refresh_history_box()
+        geometry = valid_geometry(data.get("geometry"), self.root.winfo_screenwidth(), self.root.winfo_screenheight())
+        if geometry:
+            self.root.geometry(geometry)
+        self._on_mode_change()
+
+    def save_settings(self, quiet: bool = False) -> bool:
+        data: dict[str, Any] = {key: variable.get() for key, variable in self._settings_fields().items()}
+        data["history"] = self.history
+        data["download_dir"] = self.download_dir
+        data["remember_github_token"] = bool(self.remember_github_token_var.get())
+        if data["remember_github_token"]:
+            data["github_token"] = self.github_token_var.get().strip()
+        data["geometry"] = self.root.geometry()
+        try:
+            self.settings_store.save(data)
+        except OSError as exc:
+            self.log(f"Impostazioni non salvate in {self.settings_store.path}: {exc}")
+            return False
+        if not quiet:
+            self.log(f"Impostazioni salvate in {self.settings_store.path}")
+        return True
+
+    def _remember_current_connection(self) -> None:
+        try:
+            host, _, _ = parse_phone_address(self.host_var.get())
+        except ValueError:
+            return
+        port = as_int(self.port_var.get(), DEFAULT_PORT)
+        self.history = remember_connection(self.history, host, port, self.token_var.get().strip())
+        self._refresh_history_box()
+        self.save_settings(quiet=True)
+
+    def _refresh_history_box(self) -> None:
+        self.host_box.configure(values=[history_label(entry) for entry in self.history])
+
+    def _on_history_selected(self, event=None) -> None:
+        index = self.host_box.current()
+        if not 0 <= index < len(self.history):
+            return
+        entry = self.history[index]
+        self.host_var.set(entry.get("host", ""))
+        self.port_var.set(str(as_int(entry.get("port"), DEFAULT_PORT)))
+        self.token_var.set(entry.get("token") or "")
 
     def _set_state(self, state: str, detail: str = "") -> None:
         text, color = CONNECTION_STATES[state]
@@ -1628,6 +1813,7 @@ class ControlPanel:
             self._set_connected(True)
             self._set_state("connected", client.base.removeprefix("http://"))
             self.log(f"Connesso: {info.get('width')}x{info.get('height')}, rotazione {self.rotation}°")
+            self._remember_current_connection()
             self._apply_status(status)
             self._start_stream()
             self._schedule_status()
@@ -2090,10 +2276,13 @@ class ControlPanel:
             self.log_from_thread(f"Fotogramma illeggibile scartato ({self._sink.bad_frames} in tutto): {problem}")
 
     def close(self):
+        if self._closing:
+            return
         if self._runner is not None:
             self._runner.cancel()
         if self.client is not None:
             self.disconnect()
+        self.save_settings(quiet=True)
         self._closing = True
         self.root.destroy()
 

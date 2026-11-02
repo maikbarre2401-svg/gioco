@@ -1,5 +1,6 @@
 """Test del pannello con Tk vero: si saltano dove Tkinter o un display non sono disponibili."""
 
+import gc
 import os
 import threading
 import time
@@ -12,9 +13,18 @@ import pc_controllo  # noqa: E402
 from pc_controllo import ControlPanel  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def collect_tk_objects_on_main_thread():
+    # Le variabili Tk di una finestra chiusa vanno liberate dal thread principale: se il garbage collector
+    # le raccoglie in un thread di rete, Tcl si interrompe (limite di Tkinter, non del pannello).
+    yield
+    gc.collect()
+
+
 @pytest.fixture
 def panel(tmp_path, monkeypatch):
     monkeypatch.setenv("GIOCO_PC_CONFIG", str(tmp_path / "config.json"))
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     try:
         root = tk.Tk()
     except tk.TclError:
@@ -172,3 +182,50 @@ def test_single_download_asks_file_name(panel, tmp_path, monkeypatch):
     panel.download_selected()
     assert pump_until(panel, lambda: target.exists() and panel._download_batch is None)
     assert panel.transfer_var.get() == "1 scaricati"
+
+
+def test_settings_persist_between_runs(tmp_path, monkeypatch):
+    monkeypatch.setenv("GIOCO_PC_CONFIG", str(tmp_path / "config.json"))
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip("nessun display per Tk")
+    root.withdraw()
+    first = ControlPanel(root)
+    first.host_var.set("192.168.1.23")
+    first.port_var.set("8081")
+    first.token_var.set("Ab3_x9Qz")
+    first.repo_var.set("io/altro")
+    first.github_token_var.set("segreto")
+    first._remember_current_connection()
+    first.close()
+    del first
+    gc.collect()
+    saved = (tmp_path / "config.json").read_text()
+    assert "segreto" not in saved
+
+    root = tk.Tk()
+    root.withdraw()
+    second = ControlPanel(root)
+    try:
+        assert (second.host_var.get(), second.port_var.get(), second.token_var.get()) == ("192.168.1.23", "8081", "Ab3_x9Qz")
+        assert second.repo_var.get() == "io/altro"
+        assert list(second.host_box.cget("values")) == ["192.168.1.23:8081"]
+        second.host_var.set("")
+        second.host_box.current(0)
+        second._on_history_selected()
+        assert (second.host_var.get(), second.port_var.get()) == ("192.168.1.23", "8081")
+        second.remember_github_token_var.set(True)
+        second.github_token_var.set("segreto")
+    finally:
+        second.close()
+    del second
+    gc.collect()
+    root = tk.Tk()
+    root.withdraw()
+    third = ControlPanel(root)
+    try:
+        assert third.github_token_var.get() == "segreto"
+    finally:
+        third.close()
