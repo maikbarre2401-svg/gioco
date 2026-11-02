@@ -4,18 +4,27 @@
 Avvio con doppio clic, oppure: python pc_controllo.py
 Pillow serve solo a mostrare lo stream nella finestra (pip install pillow); senza Pillow
 il pulsante "Apri nel browser" mostra lo stream nella pagina servita dal telefono.
+
+La sezione "Telefono e APK" compila l'APK con buildozer dentro WSL2 (buildozer non gira su
+Windows), lo installa con adb, concede i permessi, avvia l'app, legge token e porta dal log
+del telefono, apre adb forward e si connette da sola.
 """
 
 import io
 import json
 import os
+import platform
 import queue
+import re
+import shlex
+import subprocess
 import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
+from dataclasses import dataclass
 from datetime import datetime
 
 try:
@@ -48,6 +57,19 @@ PROGRESS_STEP_BYTES = 2 * 1024 * 1024
 MAX_PART_BYTES = 20 * 1024 * 1024
 MEDIA_DIRS = (("photos", "Foto"), ("videos", "Video"), ("audio", "Audio"))
 VIDEO_MIN_SIZE = (640, 480)
+LOG_MAX_LINES = 4000
+
+APP_PACKAGE = "org.maikbarre.gioco"
+APP_ACTIVITY = "org.kivy.android.PythonActivity"
+APP_PERMISSIONS = ("android.permission.CAMERA", "android.permission.RECORD_AUDIO")
+DEFAULT_PROJECT_DIR = "~/gioco"
+DEFAULT_BUILDOZER = "~/.venvs/buildozer/bin/buildozer"
+TOKEN_WAIT_SECONDS = 30.0
+TOKEN_POLL_SECONDS = 1.0
+OUTPUT_TAIL_LINES = 400
+ERROR_TAIL_LINES = 15
+# Riga che main.py scrive all'avvio del server; Kivy la riformatta come "[INFO   ] [Stream      ] token=… porta=…".
+SERVER_LINE = re.compile(r"\] token=([A-Za-z0-9_-]+) porta=(\d+)")
 
 # Il telefono è sulla rete locale: un proxy di sistema sul PC intercetterebbe le richieste senza poterle servire.
 _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -238,6 +260,246 @@ def describe_status(status: dict) -> dict:
     }
 
 
+class DeployError(Exception):
+    pass
+
+
+def detect_host() -> str:
+    if os.name == "nt":
+        return "windows"
+    if "microsoft" in platform.release().lower():
+        return "wsl"
+    return "linux"
+
+
+def default_adb(host: str) -> str:
+    # Dentro WSL2 l'USB non si vede: serve l'adb.exe di Windows, raggiungibile via interop.
+    return "adb.exe" if host == "wsl" else "adb"
+
+
+@dataclass
+class DeploySettings:
+    host: str
+    project_dir: str = DEFAULT_PROJECT_DIR
+    buildozer: str = DEFAULT_BUILDOZER
+    wsl_distro: str = ""
+    adb: str = "adb"
+
+
+def bash_path(path: str) -> str:
+    """Percorso per bash -lc: ~/ diventa $HOME/ tra virgolette doppie, ogni altro percorso è quotato per intero."""
+    if path == "~":
+        return '"$HOME"'
+    if path.startswith("~/"):
+        rest = path[2:]
+        for char in ("\\", '"', "$", "`"):
+            rest = rest.replace(char, "\\" + char)
+        return f'"$HOME/{rest}"'
+    return shlex.quote(path)
+
+
+def linux_command(settings: DeploySettings, script: str) -> list[str]:
+    if settings.host == "windows":
+        args = ["wsl.exe"]
+        if settings.wsl_distro:
+            args += ["-d", settings.wsl_distro]
+        return args + ["--", "bash", "-lc", script]
+    return ["bash", "-lc", script]
+
+
+def check_script(settings: DeploySettings) -> str:
+    return (
+        f"if ! cd {bash_path(settings.project_dir)} 2>/dev/null; then echo 'MANCA cartella del progetto'; exit 0; fi; "
+        "for f in main.py buildozer.spec; do test -f \"$f\" || echo \"MANCA $f\"; done; "
+        f"test -x {bash_path(settings.buildozer)} || echo 'MANCA buildozer'; "
+        "echo FINE"
+    )
+
+
+def build_script(settings: DeploySettings) -> str:
+    return f"cd {bash_path(settings.project_dir)} && {bash_path(settings.buildozer)} -v android debug"
+
+
+def needs_windows_path(settings: DeploySettings) -> bool:
+    return settings.host == "windows" or settings.adb.lower().endswith(".exe")
+
+
+def apk_path_script(settings: DeploySettings) -> str:
+    show = 'wslpath -w "$PWD/$f"' if needs_windows_path(settings) else 'printf "%s\\n" "$PWD/$f"'
+    return (
+        f"cd {bash_path(settings.project_dir)} && f=$(ls -t bin/*.apk 2>/dev/null | head -n 1) && "
+        f'test -n "$f" && {show}'
+    )
+
+
+def parse_server_line(text: str) -> tuple[str, int] | None:
+    match = None
+    for match in SERVER_LINE.finditer(text):
+        pass
+    if match is None:
+        return None
+    return match.group(1), int(match.group(2))
+
+
+def parse_devices(lines: list[str]) -> tuple[list[str], list[str]]:
+    """Da 'adb devices': (seriali pronti, righe con problemi come unauthorized o offline)."""
+    ready, problems = [], []
+    for line in lines:
+        parts = line.split()
+        if len(parts) < 2 or line.startswith("List of devices") or line.startswith("*"):
+            continue
+        if parts[1] == "device":
+            ready.append(parts[0])
+        else:
+            problems.append(f"{parts[0]} {parts[1]}")
+    return ready, problems
+
+
+class ProcessRunner:
+    """Esegue un comando e ne passa le righe a on_line. Blocca: si usa solo da un thread di lavoro."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._process = None
+        self.cancelled = False
+
+    def __call__(self, args: list[str], on_line=None) -> tuple[int, list[str]]:
+        if self.cancelled:
+            raise DeployError("interrotto")
+        try:
+            process = subprocess.Popen(
+                args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                # Su Windows evita che ogni comando apra una finestra di console.
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except FileNotFoundError:
+            raise DeployError(f"comando non trovato: {args[0]}") from None
+        with self._lock:
+            self._process = process
+        tail = []
+        for raw in process.stdout:
+            # wsl.exe scrive i propri messaggi in UTF-16: i byte nulli resterebbero nel testo.
+            line = raw.decode("utf-8", "replace").replace("\x00", "").rstrip("\r\n")
+            tail.append(line)
+            if len(tail) > OUTPUT_TAIL_LINES:
+                del tail[0]
+            if on_line is not None:
+                on_line(line)
+        code = process.wait()
+        with self._lock:
+            self._process = None
+        if self.cancelled:
+            raise DeployError("interrotto")
+        return code, tail
+
+    def cancel(self):
+        self.cancelled = True
+        with self._lock:
+            process = self._process
+        if process is not None and process.poll() is None:
+            process.terminate()
+
+
+class Deployer:
+    """Compila, installa, avvia e trova token e porta. Riceve run e log dall'esterno: nessun widget qui."""
+
+    def __init__(self, settings: DeploySettings, run, log, sleep=time.sleep, clock=time.monotonic):
+        self.settings = settings
+        self._run = run
+        self._log = log
+        self._sleep = sleep
+        self._clock = clock
+
+    def _call(self, args: list[str], label: str, stream: bool = False) -> list[str]:
+        self._log("$ " + " ".join(shlex.quote(arg) for arg in args))
+        code, lines = self._run(args, self._log if stream else None)
+        if code != 0:
+            tail = "\n".join(lines[-ERROR_TAIL_LINES:])
+            raise DeployError(f"{label} fallito (uscita {code})" + (f":\n{tail}" if tail else ""))
+        return lines
+
+    def adb(self, *args: str, label: str | None = None) -> list[str]:
+        return self._call([self.settings.adb, *args], label or f"adb {args[0]}")
+
+    def check(self) -> list[str]:
+        problems = []
+        lines = self._call(linux_command(self.settings, check_script(self.settings)), "controllo di WSL")
+        for line in lines:
+            if line.startswith("MANCA "):
+                problems.append(f"in WSL manca: {line[6:]} ({self.settings.project_dir}, {self.settings.buildozer})")
+        if "FINE" not in lines and not problems:
+            problems.append("WSL non ha risposto come previsto: " + " | ".join(lines[-3:]))
+        try:
+            ready, bad = parse_devices(self.adb("devices"))
+        except DeployError as exc:
+            problems.append(f"adb non utilizzabile: {exc}")
+        else:
+            if bad:
+                problems.append("telefono non pronto: " + ", ".join(bad) + " (accetta l'impronta RSA sul telefono)")
+            if not ready:
+                problems.append("nessun telefono collegato con il debug USB attivo")
+            elif len(ready) > 1:
+                problems.append(f"più telefoni collegati ({', '.join(ready)}): lasciane collegato uno")
+        for problem in problems:
+            self._log(f"PROBLEMA: {problem}")
+        if not problems:
+            self._log("Pronto: progetto e buildozer in WSL, un telefono collegato.")
+        return problems
+
+    def build(self) -> None:
+        self._log("Compilazione dell'APK in WSL: la prima volta dura 20-40 minuti.")
+        self._call(linux_command(self.settings, build_script(self.settings)), "buildozer", stream=True)
+
+    def apk_path(self) -> str:
+        lines = self._call(linux_command(self.settings, apk_path_script(self.settings)), "ricerca dell'APK")
+        paths = [line.strip() for line in lines if line.strip()]
+        if not paths:
+            raise DeployError("nessun APK in bin/: compila prima")
+        return paths[-1]
+
+    def install(self) -> None:
+        path = self.apk_path()
+        lines = self.adb("install", "-r", path, label="installazione")
+        if not any("Success" in line for line in lines):
+            raise DeployError("installazione non confermata da adb:\n" + "\n".join(lines[-ERROR_TAIL_LINES:]))
+        for permission in APP_PERMISSIONS:
+            self.adb("shell", "pm", "grant", APP_PACKAGE, permission, label=f"permesso {permission}")
+        self._log("APK installato, permessi fotocamera e microfono concessi.")
+
+    def launch(self) -> tuple[str, int]:
+        self.adb("logcat", "-c", label="pulizia del log")
+        self.adb("shell", "am", "force-stop", APP_PACKAGE, label="chiusura dell'app")
+        lines = self.adb("shell", "am", "start", "-W", "-n", f"{APP_PACKAGE}/{APP_ACTIVITY}", label="avvio dell'app")
+        if any(line.startswith("Error") for line in lines):
+            raise DeployError("avvio rifiutato:\n" + "\n".join(lines))
+        deadline = self._clock() + TOKEN_WAIT_SECONDS
+        found = None
+        while found is None:
+            found = parse_server_line("\n".join(self.adb("logcat", "-d", "-s", "python:I", label="lettura del log")))
+            if found is None:
+                if self._clock() >= deadline:
+                    raise DeployError(
+                        f"token non trovato nel log entro {TOKEN_WAIT_SECONDS:.0f} s: "
+                        "guarda il telefono, l'app potrebbe essere in errore"
+                    )
+                self._sleep(TOKEN_POLL_SECONDS)
+        token, port = found
+        self.adb("forward", f"tcp:{port}", f"tcp:{port}", label="adb forward")
+        self._log(f"App avviata: token {token}, porta {port} inoltrata su localhost via USB.")
+        return token, port
+
+    def everything(self) -> tuple[str, int]:
+        problems = self.check()
+        if problems:
+            raise DeployError("controllo iniziale fallito: " + "; ".join(problems))
+        self.build()
+        self.install()
+        return self.launch()
+
+
 class ControlPanel:
     """Finestra Tk. Regola: i thread di rete mettono messaggi in coda, solo _pump (thread Tk) tocca i widget."""
 
@@ -257,6 +519,8 @@ class ControlPanel:
         self._video_box = VIDEO_MIN_SIZE
         self._status_job = None
         self._status_busy = False
+        self._host = detect_host()
+        self._runner = None
         self._build()
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.root.after(PUMP_INTERVAL_MS, self._pump)
@@ -264,12 +528,46 @@ class ControlPanel:
     def _build(self):
         root = self.root
         root.title("Gioco - controllo telefono")
-        root.minsize(1000, 700)
+        root.minsize(1000, 760)
         root.columnconfigure(0, weight=1)
-        root.rowconfigure(1, weight=1)
+        root.rowconfigure(2, weight=1)
+
+        deploy = ttk.LabelFrame(root, text="Telefono e APK (buildozer in WSL2, adb via USB)", padding=8)
+        deploy.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
+        self.project_var = tk.StringVar(value=DEFAULT_PROJECT_DIR)
+        self.buildozer_var = tk.StringVar(value=DEFAULT_BUILDOZER)
+        self.distro_var = tk.StringVar(value="")
+        self.adb_var = tk.StringVar(value=default_adb(self._host))
+        fields = [("Progetto in WSL", self.project_var, 18), ("buildozer", self.buildozer_var, 30)]
+        if self._host == "windows":
+            fields.append(("Distribuzione WSL (vuoto = predefinita)", self.distro_var, 14))
+        fields.append(("adb", self.adb_var, 10))
+        for column, (label, variable, width) in enumerate(fields):
+            ttk.Label(deploy, text=label).grid(row=0, column=column * 2, padx=(0, 4), sticky="w")
+            ttk.Entry(deploy, textvariable=variable, width=width).grid(row=0, column=column * 2 + 1, padx=(0, 12))
+        actions = ttk.Frame(deploy)
+        actions.grid(row=1, column=0, columnspan=len(fields) * 2, sticky="w", pady=(6, 0))
+        self.deploy_buttons = []
+        for column, (label, action) in enumerate(
+            (
+                ("Verifica", "check"),
+                ("Genera APK", "build"),
+                ("Installa sul telefono", "install"),
+                ("Avvia e connetti", "launch"),
+                ("Tutto: genera, installa, avvia", "everything"),
+            )
+        ):
+            button = ttk.Button(actions, text=label, command=lambda name=action: self.deploy(name))
+            button.grid(row=0, column=column, padx=(0, 6))
+            self.deploy_buttons.append(button)
+        self.cancel_button = ttk.Button(actions, text="Interrompi", command=self.cancel_deploy)
+        self.cancel_button.grid(row=0, column=6, padx=(12, 0))
+        self.cancel_button.state(["disabled"])
+        self.deploy_var = tk.StringVar(value="")
+        ttk.Label(actions, textvariable=self.deploy_var).grid(row=0, column=7, padx=(12, 0))
 
         connection = ttk.LabelFrame(root, text="Connessione", padding=8)
-        connection.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
+        connection.grid(row=1, column=0, sticky="ew", padx=8, pady=4)
         self.host_var = tk.StringVar()
         self.port_var = tk.StringVar(value=str(DEFAULT_PORT))
         self.token_var = tk.StringVar()
@@ -283,7 +581,7 @@ class ControlPanel:
         ttk.Button(connection, text="Apri nel browser", command=self.open_browser).grid(row=0, column=7)
 
         body = ttk.Frame(root)
-        body.grid(row=1, column=0, sticky="nsew", padx=8, pady=4)
+        body.grid(row=2, column=0, sticky="nsew", padx=8, pady=4)
         body.columnconfigure(0, weight=1)
         body.rowconfigure(0, weight=1)
 
@@ -351,7 +649,7 @@ class ControlPanel:
         self.download_button.grid(row=2, column=0, columnspan=2, sticky="ew")
 
         log_frame = ttk.LabelFrame(root, text="Log", padding=4)
-        log_frame.grid(row=2, column=0, sticky="ew", padx=8, pady=(4, 8))
+        log_frame.grid(row=3, column=0, sticky="ew", padx=8, pady=(4, 8))
         log_frame.columnconfigure(0, weight=1)
         self.log_text = tk.Text(log_frame, height=8, state="disabled", wrap="word")
         self.log_text.grid(row=0, column=0, sticky="ew")
@@ -368,6 +666,10 @@ class ControlPanel:
     def log(self, text: str):
         self.log_text.configure(state="normal")
         self.log_text.insert("end", f"{datetime.now():%H:%M:%S}  {text}\n")
+        # buildozer -v scrive migliaia di righe: oltre il limite si tolgono le più vecchie.
+        lines = int(self.log_text.index("end-1c").split(".")[0])
+        if lines > LOG_MAX_LINES:
+            self.log_text.delete("1.0", f"{lines - LOG_MAX_LINES}.0")
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
 
@@ -418,6 +720,8 @@ class ControlPanel:
                         self._status_busy = False
                     elif first == "connessione":
                         self.connect_button.state(["!disabled"])
+                    elif first == "apk":
+                        self._deploy_finished("errore: vedi il log")
                 elif kind == "log":
                     self.log(first)
         except queue.Empty:
@@ -485,6 +789,71 @@ class ControlPanel:
         self._photo_image = None
         self.fps_var.set("")
         self.log("Disconnesso")
+
+    def _deploy_settings(self) -> DeploySettings:
+        return DeploySettings(
+            host=self._host,
+            project_dir=self.project_var.get().strip() or DEFAULT_PROJECT_DIR,
+            buildozer=self.buildozer_var.get().strip() or DEFAULT_BUILDOZER,
+            wsl_distro=self.distro_var.get().strip(),
+            adb=self.adb_var.get().strip() or default_adb(self._host),
+        )
+
+    def deploy(self, action: str):
+        if self._runner is not None:
+            return
+        settings = self._deploy_settings()
+        runner = ProcessRunner()
+        self._runner = runner
+        for button in self.deploy_buttons:
+            button.state(["disabled"])
+        self.cancel_button.state(["!disabled"])
+        labels = {
+            "check": "verifica",
+            "build": "compilazione",
+            "install": "installazione",
+            "launch": "avvio",
+            "everything": "compilazione, installazione e avvio",
+        }
+        self.deploy_var.set(f"In corso: {labels[action]}...")
+
+        def emit(line):
+            self.events.put(("log", line, None))
+
+        def work():
+            deployer = Deployer(settings, runner, emit)
+            return action, getattr(deployer, action)()
+
+        self.run_in_thread("apk", work, self._deploy_done)
+
+    def _deploy_done(self, result):
+        action, value = result
+        if action == "check":
+            self._deploy_finished("pronto" if not value else f"{len(value)} problemi: vedi il log")
+            return
+        if action in ("launch", "everything"):
+            token, port = value
+            self._deploy_finished(f"app avviata, porta {port}")
+            if self.client is not None:
+                self.disconnect()
+            self.host_var.set("127.0.0.1")
+            self.port_var.set(str(port))
+            self.token_var.set(token)
+            self.toggle_connection()
+            return
+        self._deploy_finished("fatto")
+
+    def _deploy_finished(self, text: str):
+        self._runner = None
+        for button in self.deploy_buttons:
+            button.state(["!disabled"])
+        self.cancel_button.state(["disabled"])
+        self.deploy_var.set(text)
+
+    def cancel_deploy(self):
+        if self._runner is not None:
+            self._runner.cancel()
+            self.log("Interruzione richiesta.")
 
     def open_browser(self):
         client = self.client or self._read_fields()
@@ -625,6 +994,8 @@ class ControlPanel:
         threading.Thread(target=self._stream_loop, args=(client, stop), name="rete-stream", daemon=True).start()
 
     def close(self):
+        if self._runner is not None:
+            self._runner.cancel()
         if self.client is not None:
             self.disconnect()
         self.root.destroy()
