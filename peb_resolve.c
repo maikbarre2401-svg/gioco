@@ -5,7 +5,7 @@
  * walks each module's export table to resolve by name.
  *
  * Target : Windows 11 23H2 x64, MSVC 19.4x
- * Build  : cl /GS- /O2 peb_resolve.c /link /ENTRY:main /SUBSYSTEM:CONSOLE kernel32.lib
+ * Build  : cl /GS- /O2 peb_resolve.c /link /ENTRY:entry /SUBSYSTEM:CONSOLE kernel32.lib
  */
 
 #include <windows.h>
@@ -45,7 +45,13 @@ typedef NTSTATUS (NTAPI *fn_NtCreateThreadEx)(
 
 /* ---------- no-CRT string helpers ---------- */
 
-static __forceinline int w_eq_ci(const wchar_t *a, const wchar_t *b)
+#ifdef _MSC_VER
+#define FINLINE __forceinline
+#else
+#define FINLINE __attribute__((always_inline)) inline
+#endif
+
+static FINLINE int w_eq_ci(const wchar_t *a, const wchar_t *b)
 {
     for (;; a++, b++) {
         wchar_t ca = *a, cb = *b;
@@ -56,7 +62,7 @@ static __forceinline int w_eq_ci(const wchar_t *a, const wchar_t *b)
     }
 }
 
-static __forceinline int a_eq(const char *a, const char *b)
+static FINLINE int a_eq(const char *a, const char *b)
 {
     for (;; a++, b++) {
         if (*a != *b)   return 0;
@@ -142,7 +148,12 @@ static PVOID find_export(PVOID base, const char *func_name)
 
 /* ---------- smoke test ---------- */
 
-int main(void)
+/*
+ * Entry point name:
+ *   MSVC : cl /GS- /O2 peb_resolve.c /link /ENTRY:entry /SUBSYSTEM:CONSOLE kernel32.lib
+ *   mingw: x86_64-w64-mingw32-gcc -O2 -nostdlib -nostartfiles -Wl,--entry,entry -o peb_resolve.exe peb_resolve.c -lkernel32
+ */
+int entry(void)
 {
     PVOID k32 = find_dll(L"kernel32.dll");
     PVOID ntd = find_dll(L"ntdll.dll");
