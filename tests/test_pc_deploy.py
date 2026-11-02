@@ -395,3 +395,11 @@ def test_process_runner_cancel_before_start():
     runner.cancel()
     with pytest.raises(DeployError, match="interrotto"):
         runner([sys.executable, "-c", "print('mai')"])
+
+
+def test_main_refuses_old_python(monkeypatch):
+    import pc_controllo
+
+    monkeypatch.setattr(pc_controllo.sys, "version_info", (3, 9, 18))
+    with pytest.raises(SystemExit, match="Serve Python 3.10"):
+        pc_controllo.main()

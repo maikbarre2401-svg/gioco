@@ -5,9 +5,13 @@ Avvio con doppio clic, oppure: python pc_controllo.py
 Pillow serve solo a mostrare lo stream nella finestra (pip install pillow); senza Pillow
 il pulsante "Apri nel browser" mostra lo stream nella pagina servita dal telefono.
 
-La sezione "Telefono e APK" compila l'APK con buildozer dentro WSL2 (buildozer non gira su
-Windows), lo installa con adb, concede i permessi, avvia l'app, legge token e porta dal log
+La sezione "Telefono e APK" scarica l'APK compilato da GitHub Actions, oppure lo compila con
+buildozer dentro WSL2 (buildozer non gira su Windows); poi lo installa con adb, concede i permessi, avvia l'app, legge token e porta dal log
 del telefono, apre adb forward e si connette da sola.
+
+Impostazioni e cronologia delle connessioni restano in pc_controllo.json (in %APPDATA%\\gioco
+su Windows, in ~/.config/gioco altrove; GIOCO_PC_CONFIG lo sposta). F1 elenca le scorciatoie.
+Serve Python 3.10 o più recente; nessuna libreria esterna oltre a Pillow, facoltativa.
 """
 
 from __future__ import annotations
@@ -32,7 +36,7 @@ import urllib.parse
 import urllib.request
 import webbrowser
 import zipfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -112,7 +116,7 @@ _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 class ApiError(Exception):
-    def __init__(self, status: int, code: str, message: str):
+    def __init__(self, status: int, code: str, message: str) -> None:
         super().__init__(message)
         self.status = status
         self.code = code
@@ -167,7 +171,7 @@ def unique_path(directory: str, name: str, taken: set[str] | None = None) -> str
 class ProgressThrottle:
     """Lascia passare un aggiornamento di avanzamento al massimo ogni PROGRESS_INTERVAL_SECONDS, più l'ultimo."""
 
-    def __init__(self, callback: Callable[[int, int], None] | None, clock: Callable[[], float] = time.monotonic):
+    def __init__(self, callback: Callable[[int, int], None] | None, clock: Callable[[], float] = time.monotonic) -> None:
         self._callback = callback
         self._clock = clock
         self._last = float("-inf")
@@ -216,7 +220,7 @@ def parse_phone_address(text: str) -> tuple[str, int | None, str | None]:
 class PhoneClient:
     """Client HTTP del telefono. Ogni metodo blocca: va chiamato da un thread di rete, mai da Tk."""
 
-    def __init__(self, host: str, port: int, token: str, sleep: Callable[[float], None] = time.sleep):
+    def __init__(self, host: str, port: int, token: str, sleep: Callable[[float], None] = time.sleep) -> None:
         self.base = f"http://{format_host(host)}:{port}"
         self.token = token
         self._sleep = sleep
@@ -229,7 +233,7 @@ class PhoneClient:
     def page_url(self) -> str:
         return self.url("/")
 
-    def _open(self, request: urllib.request.Request, timeout: float):
+    def _open(self, request: urllib.request.Request, timeout: float) -> Any:
         try:
             return _OPENER.open(request, timeout=timeout)
         except urllib.error.HTTPError as exc:
@@ -327,11 +331,11 @@ class PhoneClient:
         with self._open(urllib.request.Request(self.url("/snapshot.jpg"), method="GET"), HTTP_TIMEOUT) as response:
             return response.read()
 
-    def open_stream(self):
+    def open_stream(self) -> Any:
         return self._open(urllib.request.Request(self.url("/stream.mjpg"), method="GET"), STREAM_TIMEOUT)
 
 
-def _read_exact(stream, length: int) -> bytes | None:
+def _read_exact(stream: Any, length: int) -> bytes | None:
     chunks = []
     remaining = length
     while remaining > 0:
@@ -343,7 +347,7 @@ def _read_exact(stream, length: int) -> bytes | None:
     return b"".join(chunks)
 
 
-def iter_mjpeg(stream, stop=None):
+def iter_mjpeg(stream: Any, stop: threading.Event | None = None) -> Iterator[bytes]:
     """Restituisce i JPEG di uno stream multipart/x-mixed-replace finché la connessione resta aperta."""
     while stop is None or not stop.is_set():
         line = stream.readline()
@@ -382,7 +386,7 @@ def fit_size(source: tuple[int, int], box: tuple[int, int], rotation: int) -> tu
     return max(1, round(source_w * scale)), max(1, round(source_h * scale))
 
 
-def decode_frame(jpeg: bytes, rotation: int, box: tuple[int, int]):
+def decode_frame(jpeg: bytes, rotation: int, box: tuple[int, int]) -> Any:
     """JPEG dello stream -> immagine Pillow ruotata e adattata al riquadro. Richiede Pillow."""
     image = Image.open(io.BytesIO(jpeg))
     target = fit_size(image.size, box, rotation)
@@ -437,7 +441,7 @@ class FrameSink:
             self._decoded += 1
         return None
 
-    def take(self):
+    def take(self) -> Any:
         with self._lock:
             image, self._latest = self._latest, None
         return image
@@ -569,6 +573,10 @@ def format_timestamp(value: Any) -> str:
         return "?"
 
 
+def count_text(count: int, singular: str, plural: str) -> str:
+    return f"{count} {singular if count == 1 else plural}"
+
+
 def human_size(size: int | None) -> str:
     if size is None:
         return "?"
@@ -588,6 +596,10 @@ def as_int(value: Any, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _as_list(value: Any) -> list:
+    return value if isinstance(value, list) else []
 
 
 def _as_dict(value: Any) -> dict:
@@ -781,7 +793,7 @@ def valid_geometry(geometry: Any, screen_width: int, screen_height: int) -> str 
 class DeployError(Exception):
     """Errore di compilazione, installazione o GitHub. retryable indica un problema temporaneo (rete, 5xx)."""
 
-    def __init__(self, message: str, retryable: bool = False):
+    def __init__(self, message: str, retryable: bool = False) -> None:
         super().__init__(message)
         self.retryable = retryable
 
@@ -899,12 +911,12 @@ def parse_devices(lines: list[str]) -> tuple[list[str], list[str]]:
 class ProcessRunner:
     """Esegue un comando e ne passa le righe a on_line. Blocca: si usa solo da un thread di lavoro."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._process = None
+        self._process: subprocess.Popen | None = None
         self.cancelled = False
 
-    def __call__(self, args: list[str], on_line=None) -> tuple[int, list[str]]:
+    def __call__(self, args: list[str], on_line: Callable[[str], None] | None = None) -> tuple[int, list[str]]:
         if self.cancelled:
             raise DeployError("interrotto")
         try:
@@ -938,7 +950,7 @@ class ProcessRunner:
             raise DeployError("interrotto")
         return code, tail
 
-    def cancel(self):
+    def cancel(self) -> None:
         self.cancelled = True
         with self._lock:
             process = self._process
@@ -964,7 +976,14 @@ class ProcessRunner:
 class Deployer:
     """Compila, installa, avvia e trova token e porta. Riceve run e log dall'esterno: nessun widget qui."""
 
-    def __init__(self, settings: DeploySettings, run, log, sleep=time.sleep, clock=time.monotonic):
+    def __init__(
+        self,
+        settings: DeploySettings,
+        run: Callable[..., tuple[int, list[str]]],
+        log: Callable[[str], None],
+        sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self.settings = settings
         self._run = run
         self._log = log
@@ -1161,7 +1180,7 @@ class GitHubBuilds:
             headers["Authorization"] = f"Bearer {self.token}"
         return urllib.request.Request(url, headers=headers)
 
-    def _open(self, url: str):
+    def _open(self, url: str) -> Any:
         try:
             return _GITHUB_OPENER.open(self._request(url), timeout=GITHUB_TIMEOUT)
         except urllib.error.HTTPError as exc:
@@ -1203,16 +1222,20 @@ class GitHubBuilds:
             raise DeployError("risposta di GitHub non valida: JSON inatteso")
         return payload
 
-    def _runs(self, **params) -> list[dict]:
+    def _runs(self, **params: Any) -> list[dict]:
         query = urllib.parse.urlencode({"branch": self.branch, **params})
         url = f"{self.api}/repos/{self.repo}/actions/workflows/{self.workflow}/runs?{query}"
-        return self._json(url).get("workflow_runs", [])
+        return [run for run in _as_list(self._json(url).get("workflow_runs")) if isinstance(run, dict)]
 
     def latest_build(self) -> dict:
         for run in self._runs(status="success", per_page=RUNS_TO_SCAN):
+            if not isinstance(run, dict) or "id" not in run:
+                continue
             artifacts = self._json(f"{self.api}/repos/{self.repo}/actions/runs/{run['id']}/artifacts")
-            for artifact in artifacts.get("artifacts", []):
-                if artifact["name"].startswith(ARTIFACT_PREFIX) and not artifact.get("expired"):
+            for artifact in _as_list(artifacts.get("artifacts")):
+                if not isinstance(artifact, dict) or not {"id", "name", "archive_download_url"} <= artifact.keys():
+                    continue
+                if str(artifact["name"]).startswith(ARTIFACT_PREFIX) and not artifact.get("expired"):
                     return {
                         "run_id": run["id"],
                         "sha": run.get("head_sha", ""),
@@ -1417,7 +1440,7 @@ def is_text_input(widget: Any) -> bool:
 class ControlPanel:
     """Finestra Tk. Regola: i thread di rete mettono messaggi in coda, solo _pump (thread Tk) tocca i widget."""
 
-    def __init__(self, root):
+    def __init__(self, root: tk.Tk) -> None:
         self.root = root
         # Coda di (funzione, argomenti) da eseguire sul thread Tk: è l'unico ponte tra thread di rete e widget.
         self.events: queue.Queue[tuple[Callable[..., Any], tuple[Any, ...]]] = queue.Queue()
@@ -1449,15 +1472,21 @@ class ControlPanel:
         self.root.report_callback_exception = self._report_tk_exception
         self._pump_job: str | None = self.root.after(PUMP_INTERVAL_MS, self._pump)
 
-    def _build(self):
+    def _build(self) -> None:
         root = self.root
         root.title("Gioco - controllo telefono")
-        root.minsize(1000, 760)
+        # 640: entra anche in un portatile 1366x768 con la barra di Windows; le sezioni nascondibili fanno il resto.
+        root.minsize(1000, 640)
         root.columnconfigure(0, weight=1)
-        root.rowconfigure(2, weight=1)
+        # Anche il log cede spazio: con il solo corpo elastico, sotto i 940 px l'elenco dei file spariva del tutto.
+        root.rowconfigure(2, weight=3)
+        root.rowconfigure(3, weight=1)
+        self.show_deploy_var = tk.BooleanVar(value=True)
+        self.show_log_var = tk.BooleanVar(value=True)
 
         deploy = ttk.LabelFrame(root, text="Telefono e APK (adb via USB)", padding=8)
         deploy.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
+        self.deploy_frame = deploy
         # Su Windows buildozer non gira: lì la strada predefinita è l'APK già compilato da GitHub.
         self.mode_var = tk.StringVar(value="github" if self._host == "windows" else "wsl")
         self.adb_var = tk.StringVar(value=default_adb(self._host))
@@ -1599,8 +1628,11 @@ class ControlPanel:
             "torcia": self.torch_button,
             "istantanea": self.snapshot_button,
         }
-        for row, button in enumerate(self.command_buttons):
-            button.grid(row=row, column=0, sticky="ew", pady=2)
+        # Su due colonne: in una sola, su schermi bassi, l'elenco dei file sotto restava schiacciato a zero righe.
+        for index, button in enumerate(self.command_buttons):
+            button.grid(row=index // 2, column=index % 2, sticky="ew", padx=2, pady=2)
+        self.snapshot_button.grid_configure(columnspan=2)
+        commands.columnconfigure((0, 1), weight=1, uniform="comandi")
 
         status_frame = ttk.LabelFrame(side, text="Stato", padding=8)
         status_frame.grid(row=1, column=0, sticky="ew", pady=(8, 0))
@@ -1654,10 +1686,12 @@ class ControlPanel:
         ttk.Label(transfer, textvariable=self.transfer_var, wraplength=330).grid(row=1, column=0, columnspan=2, sticky="w")
 
         log_frame = ttk.LabelFrame(root, text="Log", padding=4)
-        log_frame.grid(row=3, column=0, sticky="ew", padx=8, pady=(4, 8))
+        log_frame.grid(row=3, column=0, sticky="nsew", padx=8, pady=(4, 8))
         log_frame.columnconfigure(0, weight=1)
-        self.log_text = tk.Text(log_frame, height=8, state="disabled", wrap="word")
-        self.log_text.grid(row=0, column=0, sticky="ew")
+        log_frame.rowconfigure(0, weight=1)
+        self.log_frame = log_frame
+        self.log_text = tk.Text(log_frame, height=6, state="disabled", wrap="word")
+        self.log_text.grid(row=0, column=0, sticky="nsew")
         scrollbar = ttk.Scrollbar(log_frame, command=self.log_text.yview)
         scrollbar.grid(row=0, column=1, sticky="ns")
         self.log_text.configure(yscrollcommand=scrollbar.set)
@@ -1739,6 +1773,9 @@ class ControlPanel:
         menubar.add_cascade(label="APK", menu=apk)
 
         view = tk.Menu(menubar, tearoff=False)
+        view.add_checkbutton(label="Sezione APK", variable=self.show_deploy_var, command=self.apply_visibility)
+        view.add_checkbutton(label="Log", variable=self.show_log_var, command=self.apply_visibility)
+        view.add_separator()
         add(view, "Pulisci log", "clear_log")
         menubar.add_cascade(label="Visualizza", menu=view)
 
@@ -1791,6 +1828,14 @@ class ControlPanel:
             self.log_text.delete("1.0", f"{lines - LOG_MAX_LINES}.0")
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
+
+    def apply_visibility(self) -> None:
+        """Sezioni nascondibili da Visualizza: su schermi bassi lasciano spazio a stream e file."""
+        for frame, variable in ((self.deploy_frame, self.show_deploy_var), (self.log_frame, self.show_log_var)):
+            if variable.get():
+                frame.grid()
+            else:
+                frame.grid_remove()
 
     def clear_log(self) -> None:
         self.log_text.configure(state="normal")
@@ -1846,7 +1891,7 @@ class ControlPanel:
     def show_about(self) -> None:
         messagebox.showinfo("Informazioni", self.about_text(), parent=self.root)
 
-    def _set_connected(self, connected: bool):
+    def _set_connected(self, connected: bool) -> None:
         self.connect_button.configure(text="Disconnetti" if connected else "Connetti")
         for widget in (self.refresh_button, self.download_button):
             widget.state(["!disabled"] if connected else ["disabled"])
@@ -1885,6 +1930,10 @@ class ControlPanel:
         if self.dir_var.get() not in [label for _, label in MEDIA_DIRS]:
             self.dir_var.set(MEDIA_DIRS[0][1])
         self.remember_github_token_var.set(bool(data.get("remember_github_token")))
+        for key, variable in (("show_deploy", self.show_deploy_var), ("show_log", self.show_log_var)):
+            if isinstance(data.get(key), bool):
+                variable.set(data[key])
+        self.apply_visibility()
         saved_token = data.get("github_token")
         if self.remember_github_token_var.get() and isinstance(saved_token, str) and saved_token:
             if not self.github_token_var.get():
@@ -1909,6 +1958,8 @@ class ControlPanel:
         data["history"] = self.history
         data["download_dir"] = self.download_dir
         data["remember_github_token"] = bool(self.remember_github_token_var.get())
+        data["show_deploy"] = bool(self.show_deploy_var.get())
+        data["show_log"] = bool(self.show_log_var.get())
         if data["remember_github_token"]:
             data["github_token"] = self.github_token_var.get().strip()
         data["geometry"] = self.root.geometry()
@@ -1971,10 +2022,10 @@ class ControlPanel:
     def rotation(self, value: int) -> None:
         self._sink.rotation = value
 
-    def _on_video_resize(self, event):
+    def _on_video_resize(self, event: Any) -> None:
         self._sink.box = (max(event.width, 1), max(event.height, 1))
 
-    def _read_fields(self):
+    def _read_fields(self) -> PhoneClient | None:
         try:
             host, parsed_port, parsed_token = parse_phone_address(self.host_var.get())
         except ValueError as exc:
@@ -2062,7 +2113,7 @@ class ControlPanel:
         last = traceback.format_exception_only(exc_type, exc_value)[-1].strip()
         self.log(f"errore nell'interfaccia: {last}")
 
-    def _show_latest_frame(self):
+    def _show_latest_frame(self) -> None:
         frame = self._sink.take()
         if frame is not None and ImageTk is not None:
             if self._photo_image is not None and self._photo_size == frame.size:
@@ -2081,7 +2132,7 @@ class ControlPanel:
                 bad_text = f", {bad} illeggibili scartati" if bad else ""
                 self.fps_var.set(f"{fps:.1f} fotogrammi/s, rotazione {self.rotation}°{bad_text}")
 
-    def toggle_connection(self):
+    def toggle_connection(self) -> None:
         if self.client is not None:
             self.disconnect()
             return
@@ -2122,7 +2173,7 @@ class ControlPanel:
 
         self.run_in_thread("connessione", work, connected, failed, session=self._session)
 
-    def disconnect(self):
+    def disconnect(self) -> None:
         self._session += 1
         self._status_busy = False
         self._status_failures = 0
@@ -2149,7 +2200,7 @@ class ControlPanel:
             adb=self.adb_var.get().strip() or default_adb(self._host),
         )
 
-    def _on_mode_change(self):
+    def _on_mode_change(self) -> None:
         github = self.mode_var.get() == "github"
         if github:
             self.wsl_fields.grid_remove()
@@ -2169,7 +2220,7 @@ class ControlPanel:
             self.github_token_var.get().strip(),
         )
 
-    def open_builds_page(self):
+    def open_builds_page(self) -> None:
         try:
             url = self._github_builds().page_url()
         except DeployError as exc:
@@ -2178,7 +2229,7 @@ class ControlPanel:
         webbrowser.open(url)
         self.log(f"Aperta la pagina delle compilazioni: {url}")
 
-    def install_from_file(self):
+    def install_from_file(self) -> None:
         path = filedialog.askopenfilename(
             title="APK da installare (o zip scaricato da GitHub)",
             filetypes=[("APK o zip di GitHub", "*.apk *.zip"), ("Tutti i file", "*.*")],
@@ -2186,9 +2237,13 @@ class ControlPanel:
         if path:
             self.deploy("install_file", apk_path=path)
 
-    def deploy(self, action: str, apk_path: str | None = None):
+    def deploy(self, action: str, apk_path: str | None = None) -> None:
         if self._runner is not None:
             return
+        if not self.show_deploy_var.get():
+            # Avviata dal menu con la sezione nascosta: senza mostrarla non si vedrebbero avanzamento e Interrompi.
+            self.show_deploy_var.set(True)
+            self.apply_visibility()
         settings = self._deploy_settings()
         mode = self.mode_var.get()
         try:
@@ -2231,7 +2286,7 @@ class ControlPanel:
 
         self.run_in_thread("apk", work, self._deploy_done, failed)
 
-    def _deploy_done(self, result):
+    def _deploy_done(self, result: tuple[str, Any]) -> None:
         action, value = result
         if action == "check":
             self._deploy_finished("pronto" if not value else f"{len(value)} problemi: vedi il log")
@@ -2262,7 +2317,7 @@ class ControlPanel:
             self.deploy_progress.configure(value=min(1000, int(done * 1000 / total)))
         self.deploy_var.set(f"Download dell'APK: {human_size(done)} di {human_size(total) if total else '?'}")
 
-    def _deploy_finished(self, text: str):
+    def _deploy_finished(self, text: str) -> None:
         self.deploy_progress.stop()
         self.deploy_progress.grid_remove()
         self._runner = None
@@ -2271,23 +2326,23 @@ class ControlPanel:
         self.cancel_button.state(["disabled"])
         self.deploy_var.set(text)
 
-    def cancel_deploy(self):
+    def cancel_deploy(self) -> None:
         if self._runner is not None:
             self._runner.cancel()
             self.log("Interruzione richiesta.")
 
-    def open_browser(self):
+    def open_browser(self) -> None:
         client = self.client or self._read_fields()
         if client is not None:
             webbrowser.open(client.page_url())
             self.log(f"Aperto nel browser: {client.page_url()}")
 
-    def _schedule_status(self, delay_ms: int = STATUS_INTERVAL_MS):
+    def _schedule_status(self, delay_ms: int = STATUS_INTERVAL_MS) -> None:
         if self._status_job is not None:
             self.root.after_cancel(self._status_job)
         self._status_job = self.root.after(delay_ms, self._poll_status)
 
-    def _poll_status(self):
+    def _poll_status(self) -> None:
         self._status_job = None
         if self.client is None:
             return
@@ -2296,7 +2351,7 @@ class ControlPanel:
             return
         self.refresh_status(reschedule=True)
 
-    def refresh_status(self, reschedule: bool = False):
+    def refresh_status(self, reschedule: bool = False) -> None:
         """Chiede /status. Con reschedule il prossimo controllo parte quando arriva questo, con l'attesa giusta."""
         if self.client is None or self._status_busy:
             return
@@ -2330,7 +2385,7 @@ class ControlPanel:
                 self.log("Il telefono non risponde: continuo a riprovare con attese più lunghe.")
             self._set_state("unreachable", str(exc))
 
-    def _apply_status(self, status: dict):
+    def _apply_status(self, status: dict) -> None:
         self._status_busy = False
         if self._status_failures and self.client is not None:
             self.log("Telefono di nuovo raggiungibile.")
@@ -2352,7 +2407,7 @@ class ControlPanel:
         self.torch_button.configure(text="Spegni torcia" if torch else "Accendi torcia")
         self._refresh_command_buttons()
 
-    def _command(self, label: str, work, describe):
+    def _command(self, label: str, work: Callable[[PhoneClient], dict], describe: Callable[[dict], str]) -> None:
         """Manda un comando al telefono; il suo pulsante resta disattivato finché non arriva la risposta."""
         client = self.client
         if client is None or label in self._busy_commands:
@@ -2376,22 +2431,22 @@ class ControlPanel:
 
         self.run_in_thread(label, lambda: work(client), done, failed, session=self._session)
 
-    def take_photo(self):
+    def take_photo(self) -> None:
         self._command("foto", lambda c: c.photo(), lambda r: f"Foto salvata: {self._file_text(r.get('file'))}")
 
-    def toggle_video(self):
+    def toggle_video(self) -> None:
         start = self.status.get("mode") != "video"
         self._command(
             "video", lambda c: c.video(start), lambda r: self._recording_text("Video", start, r)
         )
 
-    def toggle_audio(self):
+    def toggle_audio(self) -> None:
         start = self.status.get("mode") != "audio"
         self._command(
             "audio", lambda c: c.audio(start), lambda r: self._recording_text("Audio", start, r)
         )
 
-    def toggle_torch(self):
+    def toggle_torch(self) -> None:
         on = not (self.status.get("camera") or {}).get("torch")
         self._command("torcia", lambda c: c.torch(on), lambda r: f"Torcia {'accesa' if r.get('torch') else 'spenta'}")
 
@@ -2414,14 +2469,14 @@ class ControlPanel:
                 return dirname
         return MEDIA_DIRS[0][0]
 
-    def refresh_files(self):
+    def refresh_files(self) -> None:
         if self.client is None:
             return
         dirname = self._selected_dir()
         client = self.client
         self.run_in_thread("file", lambda: client.files(dirname), self._show_files, session=self._session)
 
-    def _show_files(self, result: dict):
+    def _show_files(self, result: dict) -> None:
         result = _as_dict(result)
         if result.get("dir") != self._selected_dir():
             return
@@ -2444,7 +2499,7 @@ class ControlPanel:
             self.files_tree.selection_set(item)
             self.download_selected()
 
-    def download_selected(self):
+    def download_selected(self) -> None:
         """Un file: si sceglie dove salvarlo. Più file: si sceglie la cartella e i nomi restano unici."""
         if self.client is None:
             return
@@ -2496,9 +2551,9 @@ class ControlPanel:
             self.transfer_cancel.state(["disabled"])
             if self.client is not None:
                 self.download_button.state(["!disabled"])
-            parts = [f"{len(report.completed)} scaricati"]
+            parts = [count_text(len(report.completed), "scaricato", "scaricati")]
             if report.failed:
-                parts.append(f"{len(report.failed)} non riusciti")
+                parts.append(count_text(len(report.failed), "non riuscito", "non riusciti"))
             if report.cancelled:
                 parts.append("annullato")
             summary = ", ".join(parts)
@@ -2545,7 +2600,7 @@ class ControlPanel:
 
         self._command("istantanea", work, lambda r: f"Istantanea salvata in {dest} ({human_size(r.get('size'))})")
 
-    def _start_stream(self):
+    def _start_stream(self) -> None:
         if Image is None or ImageTk is None:
             self.video_label.configure(text="Pillow non installato: usa 'Apri nel browser'")
             return
@@ -2576,7 +2631,7 @@ class ControlPanel:
         if problem is not None and self._sink.bad_frames in (1, 10, 100, 1000):
             self.log_from_thread(f"Fotogramma illeggibile scartato ({self._sink.bad_frames} in tutto): {problem}")
 
-    def close(self):
+    def close(self) -> None:
         if self._closing:
             return
         if self._runner is not None:
@@ -2595,7 +2650,15 @@ class ControlPanel:
         self.root.destroy()
 
 
-def main():
+MIN_PYTHON = (3, 10)
+
+
+def main() -> None:
+    if sys.version_info < MIN_PYTHON:
+        raise SystemExit(
+            f"Serve Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]} o più recente, questo è {platform.python_version()}: "
+            "scaricalo da python.org"
+        )
     if tk is None:
         raise SystemExit("Tkinter non è installato in questo Python: su Linux sudo apt install python3-tk")
     root = tk.Tk()

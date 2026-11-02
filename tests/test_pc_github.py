@@ -398,3 +398,10 @@ def test_non_json_github_answer_is_clear(github):
     github.garbage_runs = True
     with pytest.raises(DeployError, match="non è JSON"):
         builds(github).latest_build()
+
+
+def test_malformed_runs_and_artifacts_are_skipped(github):
+    github.add_run(50, [(500, f"{ARTIFACT_PREFIX}-surface-abc", False)])
+    github.runs.insert(0, {"senza": "id"})
+    github.artifacts[50].insert(0, {"name": f"{ARTIFACT_PREFIX}-rotto"})
+    assert builds(github).latest_build()["artifact_id"] == 500

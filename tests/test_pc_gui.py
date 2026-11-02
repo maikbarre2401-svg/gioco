@@ -168,7 +168,7 @@ def test_multi_download_uses_unique_names_and_reports(panel, tmp_path, monkeypat
     assert (tmp_path / "IMG_1.png").read_bytes() == b"gia presente"
     assert (tmp_path / "IMG_1 (2).png").read_bytes() == b"x" * 10
     assert (tmp_path / "IMG_2.png").exists() and not (tmp_path / "IMG_3.png").exists()
-    assert panel.transfer_var.get() == "2 scaricati, 1 non riusciti"
+    assert panel.transfer_var.get() == "2 scaricati, 1 non riuscito"
     assert panel.download_dir == str(tmp_path)
 
 
@@ -181,7 +181,7 @@ def test_single_download_asks_file_name(panel, tmp_path, monkeypatch):
     monkeypatch.setattr(pc_controllo.filedialog, "asksaveasfilename", lambda **kwargs: str(target))
     panel.download_selected()
     assert pump_until(panel, lambda: target.exists() and panel._download_batch is None)
-    assert panel.transfer_var.get() == "1 scaricati"
+    assert panel.transfer_var.get() == "1 scaricato"
 
 
 def test_settings_persist_between_runs(tmp_path, monkeypatch):
@@ -350,3 +350,34 @@ def test_close_leaves_no_pending_after_jobs(panel):
     panel._schedule_status(60000)
     panel.close()
     assert panel.root.tk.call("after", "info") in ("", ())
+
+
+def test_hidden_sections_persist_and_deploy_shows_its_section(tmp_path, monkeypatch):
+    monkeypatch.setenv("GIOCO_PC_CONFIG", str(tmp_path / "config.json"))
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip("nessun display per Tk")
+    root.withdraw()
+    first = ControlPanel(root)
+    first.show_deploy_var.set(False)
+    first.show_log_var.set(False)
+    first.apply_visibility()
+    assert not first.deploy_frame.winfo_manager() and not first.log_frame.winfo_manager()
+    first.close()
+    del first
+    gc.collect()
+
+    root = tk.Tk()
+    root.withdraw()
+    second = ControlPanel(root)
+    try:
+        assert not second.show_deploy_var.get() and not second.show_log_var.get()
+        assert not second.deploy_frame.winfo_manager()
+        monkeypatch.setattr(second, "_github_builds", lambda: (_ for _ in ()).throw(pc_controllo.DeployError("prova")))
+        second.mode_var.set("github")
+        second.deploy("check")
+        assert second.show_deploy_var.get() and second.deploy_frame.winfo_manager() == "grid"
+    finally:
+        second.close()
