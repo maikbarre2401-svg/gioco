@@ -10,6 +10,8 @@ Windows), lo installa con adb, concede i permessi, avvia l'app, legge token e po
 del telefono, apre adb forward e si connette da sola.
 """
 
+from __future__ import annotations
+
 import io
 import json
 import os
@@ -21,13 +23,16 @@ import shutil
 import subprocess
 import threading
 import time
+import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 try:
     import tkinter as tk
@@ -53,6 +58,8 @@ STREAM_TIMEOUT = 10.0
 STREAM_RETRY_SECONDS = 2.0
 STATUS_INTERVAL_MS = 2000
 PUMP_INTERVAL_MS = 30
+# Massimo lavoro per giro della coda: con buildozer -v arrivano migliaia di righe e Tk deve restare reattivo.
+PUMP_BUDGET_SECONDS = 0.02
 FPS_INTERVAL_SECONDS = 1.0
 DOWNLOAD_CHUNK_BYTES = 256 * 1024
 PROGRESS_STEP_BYTES = 2 * 1024 * 1024
@@ -225,6 +232,16 @@ def iter_mjpeg(stream, stop=None):
         yield data
 
 
+def format_timestamp(value: Any) -> str:
+    """Data leggibile da un timestamp Unix del telefono; '?' se manca o non è valido."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        return "?"
+    try:
+        return datetime.fromtimestamp(value).strftime("%Y-%m-%d %H:%M")
+    except (OverflowError, OSError, ValueError):
+        return "?"
+
+
 def human_size(size: int | None) -> str:
     if size is None:
         return "?"
@@ -236,24 +253,41 @@ def human_size(size: int | None) -> str:
     return f"{size} B"
 
 
+def as_int(value: Any, default: int = 0) -> int:
+    """Intero da un campo JSON del telefono, senza eccezioni se manca o ha un tipo inatteso."""
+    if isinstance(value, bool):
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_dict(value: Any) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
 def describe_status(status: dict) -> dict:
-    """Testi del pannello di stato a partire dalla risposta di /status."""
+    """Testi del pannello di stato a partire dalla risposta di /status. Campi mancanti o strani non sollevano."""
+    status = _as_dict(status)
     mode = status.get("mode", "?")
-    seconds = status.get("recording_seconds") or 0
-    battery = status.get("battery")
-    storage = status.get("storage")
-    camera = status.get("camera") or {}
-    if battery:
-        battery_text = f"{battery['percent']}%{' in carica' if battery.get('charging') else ''}"
+    seconds = as_int(status.get("recording_seconds"))
+    battery = _as_dict(status.get("battery"))
+    storage = _as_dict(status.get("storage"))
+    camera = _as_dict(status.get("camera"))
+    if "percent" in battery:
+        battery_text = f"{as_int(battery['percent'])}%{' in carica' if battery.get('charging') else ''}"
     else:
         battery_text = "non disponibile"
-    if storage:
-        storage_text = f"{human_size(storage['free_bytes'])} liberi su {human_size(storage['total_bytes'])}"
+    if "free_bytes" in storage and "total_bytes" in storage:
+        storage_text = (
+            f"{human_size(as_int(storage['free_bytes']))} liberi su {human_size(as_int(storage['total_bytes']))}"
+        )
     else:
         storage_text = "non disponibile"
     if camera.get("open"):
         size = camera.get("preview_size")
-        size_text = f" {size[0]}x{size[1]}" if size else ""
+        size_text = f" {size[0]}x{size[1]}" if isinstance(size, (list, tuple)) and len(size) == 2 else ""
         camera_text = f"aperta{size_text}, {camera.get('preview_mode')}, torcia {'accesa' if camera.get('torch') else 'spenta'}"
         if not camera.get("has_frame"):
             camera_text += ", nessun fotogramma"
@@ -748,8 +782,11 @@ class ControlPanel:
 
     def __init__(self, root):
         self.root = root
-        self.events = queue.Queue()
-        self.client = None
+        # Coda di (funzione, argomenti) da eseguire sul thread Tk: è l'unico ponte tra thread di rete e widget.
+        self.events: queue.Queue[tuple[Callable[..., Any], tuple[Any, ...]]] = queue.Queue()
+        self.client: PhoneClient | None = None
+        # Cambia a ogni connessione e disconnessione: le risposte di una sessione vecchia vengono scartate.
+        self._session = 0
         self.status = {}
         self.rotation = 0
         self._stream_stop = None
@@ -764,8 +801,10 @@ class ControlPanel:
         self._status_busy = False
         self._host = detect_host()
         self._runner = None
+        self._closing = False
         self._build()
         self.root.protocol("WM_DELETE_WINDOW", self.close)
+        self.root.report_callback_exception = self._report_tk_exception
         self.root.after(PUMP_INTERVAL_MS, self._pump)
 
     def _build(self):
@@ -941,7 +980,9 @@ class ControlPanel:
 
     # --- thread Tk ---------------------------------------------------------------------------------
 
-    def log(self, text: str):
+    def log(self, text: str) -> None:
+        if self._closing:
+            return
         self.log_text.configure(state="normal")
         self.log_text.insert("end", f"{datetime.now():%H:%M:%S}  {text}\n")
         # buildozer -v scrive migliaia di righe: oltre il limite si tolgono le più vecchie.
@@ -972,40 +1013,70 @@ class ControlPanel:
             return None
         return PhoneClient(host, port, token)
 
-    def run_in_thread(self, label: str, work, on_success=None):
-        """Esegue work() in un thread; il risultato torna sul thread Tk tramite la coda."""
+    def ui_call(self, function: Callable[..., Any], *args: Any) -> None:
+        """Chiede al thread Tk di eseguire function(*args). Sicura da qualunque thread."""
+        self.events.put((function, args))
 
-        def runner():
+    def log_from_thread(self, text: str) -> None:
+        self.ui_call(self.log, text)
+
+    def run_in_thread(
+        self,
+        label: str,
+        work: Callable[[], Any],
+        on_success: Callable[[Any], Any] | None = None,
+        on_error: Callable[[Exception], Any] | None = None,
+        session: int | None = None,
+    ) -> None:
+        """Esegue work() in un thread; esito ed errore tornano sul thread Tk tramite la coda.
+
+        Con session, l'esito viene scartato se nel frattempo la connessione è cambiata.
+        """
+
+        def deliver(callback: Callable[..., Any] | None, value: Any) -> None:
+            if session is not None and session != self._session:
+                return
+            if callback is not None:
+                callback(value)
+
+        def runner() -> None:
             try:
                 value = work()
             except Exception as exc:
-                self.events.put(("error", label, exc))
+                if on_error is None:
+                    self.ui_call(deliver, lambda error: self.log(f"{label}: {error}"), exc)
+                else:
+                    self.ui_call(deliver, on_error, exc)
             else:
-                self.events.put(("done", on_success, value))
+                self.ui_call(deliver, on_success, value)
 
         threading.Thread(target=runner, name=f"rete-{label}", daemon=True).start()
 
-    def _pump(self):
+    def _pump(self) -> None:
+        deadline = time.monotonic() + PUMP_BUDGET_SECONDS
         try:
-            while True:
-                kind, first, second = self.events.get_nowait()
-                if kind == "done":
-                    if first is not None:
-                        first(second)
-                elif kind == "error":
-                    self.log(f"{first}: {second}")
-                    if first == "stato":
-                        self._status_busy = False
-                    elif first == "connessione":
-                        self.connect_button.state(["!disabled"])
-                    elif first == "apk":
-                        self._deploy_finished("errore: vedi il log")
-                elif kind == "log":
-                    self.log(first)
-        except queue.Empty:
-            pass
-        self._show_latest_frame()
-        self.root.after(PUMP_INTERVAL_MS, self._pump)
+            while time.monotonic() < deadline:
+                try:
+                    function, args = self.events.get_nowait()
+                except queue.Empty:
+                    break
+                try:
+                    function(*args)
+                except Exception:
+                    # Un esito malformato non deve fermare la coda: senza questo il pannello resterebbe congelato.
+                    self._log_exception("errore interno")
+            self._show_latest_frame()
+        finally:
+            if not self._closing:
+                self.root.after(PUMP_INTERVAL_MS, self._pump)
+
+    def _log_exception(self, context: str) -> None:
+        details = traceback.format_exc().strip().splitlines()
+        self.log(f"{context}: {details[-1] if details else 'sconosciuto'}")
+
+    def _report_tk_exception(self, exc_type, exc_value, exc_traceback) -> None:
+        last = traceback.format_exception_only(exc_type, exc_value)[-1].strip()
+        self.log(f"errore nell'interfaccia: {last}")
 
     def _show_latest_frame(self):
         with self._frame_lock:
@@ -1030,14 +1101,19 @@ class ControlPanel:
             return
         self.log(f"Connessione a {client.base} ...")
         self.connect_button.state(["disabled"])
+        self._session += 1
 
         def work():
             return client.info(), client.status()
 
+        def failed(exc: Exception) -> None:
+            self.connect_button.state(["!disabled"])
+            self.log(f"connessione: {exc}")
+
         def connected(result):
             info, status = result
             self.client = client
-            self.rotation = int(info.get("rotation") or 0)
+            self.rotation = as_int(_as_dict(info).get("rotation"))
             self.connect_button.state(["!disabled"])
             self._set_connected(True)
             self.log(f"Connesso: {info.get('width')}x{info.get('height')}, rotazione {self.rotation}°")
@@ -1046,9 +1122,11 @@ class ControlPanel:
             self._schedule_status()
             self.refresh_files()
 
-        self.run_in_thread("connessione", work, connected)
+        self.run_in_thread("connessione", work, connected, failed, session=self._session)
 
     def disconnect(self):
+        self._session += 1
+        self._status_busy = False
         if self._stream_stop is not None:
             self._stream_stop.set()
         response = self._stream_response
@@ -1135,8 +1213,7 @@ class ControlPanel:
         else:
             self.deploy_var.set(f"In corso: {ACTION_LABELS[mode][action][1]}...")
 
-        def emit(line):
-            self.events.put(("log", line, None))
+        emit = self.log_from_thread
 
         def work():
             deployer = Deployer(settings, runner, emit)
@@ -1148,7 +1225,11 @@ class ControlPanel:
                 return action, getattr(pipeline, action)()
             return action, getattr(deployer, action)()
 
-        self.run_in_thread("apk", work, self._deploy_done)
+        def failed(exc: Exception) -> None:
+            self.log(f"apk: {exc}")
+            self._deploy_finished("errore: vedi il log")
+
+        self.run_in_thread("apk", work, self._deploy_done, failed)
 
     def _deploy_done(self, result):
         action, value = result
@@ -1205,18 +1286,25 @@ class ControlPanel:
             return
         self._status_busy = True
         client = self.client
-        self.run_in_thread("stato", client.status, self._apply_status)
+
+        def failed(exc: Exception) -> None:
+            self._status_busy = False
+            self.log(f"stato: {exc}")
+
+        self.run_in_thread("stato", client.status, self._apply_status, failed, session=self._session)
 
     def _apply_status(self, status: dict):
         self._status_busy = False
+        status = _as_dict(status)
         self.status = status
-        rotation = (status.get("camera") or {}).get("rotation")
-        if isinstance(rotation, int):
+        camera = _as_dict(status.get("camera"))
+        rotation = camera.get("rotation")
+        if isinstance(rotation, int) and not isinstance(rotation, bool):
             self.rotation = rotation
         for key, text in describe_status(status).items():
             self.status_vars[key].set(text)
         mode = status.get("mode")
-        torch = (status.get("camera") or {}).get("torch")
+        torch = camera.get("torch")
         self.video_button.configure(text="Ferma video" if mode == "video" else "Avvia video")
         self.audio_button.configure(text="Ferma audio" if mode == "audio" else "Avvia audio")
         self.torch_button.configure(text="Spegni torcia" if torch else "Accendi torcia")
@@ -1231,7 +1319,7 @@ class ControlPanel:
             self.refresh_status()
             self.refresh_files()
 
-        self.run_in_thread(label, lambda: work(client), done)
+        self.run_in_thread(label, lambda: work(client), done, session=self._session)
 
     def take_photo(self):
         self._command("foto", lambda c: c.photo(), lambda r: f"Foto salvata: {self._file_text(r.get('file'))}")
@@ -1276,16 +1364,22 @@ class ControlPanel:
             return
         dirname = self._selected_dir()
         client = self.client
-        self.run_in_thread("file", lambda: client.files(dirname), self._show_files)
+        self.run_in_thread("file", lambda: client.files(dirname), self._show_files, session=self._session)
 
     def _show_files(self, result: dict):
+        result = _as_dict(result)
         if result.get("dir") != self._selected_dir():
             return
         self.files_tree.delete(*self.files_tree.get_children())
-        for entry in result.get("files", []):
-            modified = entry.get("modified")
-            date = datetime.fromtimestamp(modified).strftime("%Y-%m-%d %H:%M") if modified else "?"
-            self.files_tree.insert("", "end", text=entry["name"], values=(human_size(entry.get("size")), date))
+        files = result.get("files")
+        for entry in files if isinstance(files, list) else []:
+            entry = _as_dict(entry)
+            name = entry.get("name")
+            if not isinstance(name, str) or not name:
+                continue
+            self.files_tree.insert(
+                "", "end", text=name, values=(human_size(entry.get("size")), format_timestamp(entry.get("modified")))
+            )
 
     def download_selected(self):
         if self.client is None:
@@ -1304,7 +1398,7 @@ class ControlPanel:
 
         def progress(received, total):
             total_text = human_size(total) if total else "?"
-            self.events.put(("log", f"  {name}: {human_size(received)} di {total_text}", None))
+            self.log_from_thread(f"  {name}: {human_size(received)} di {total_text}")
 
         self.run_in_thread(
             "download",
@@ -1326,6 +1420,7 @@ class ControlPanel:
             self._runner.cancel()
         if self.client is not None:
             self.disconnect()
+        self._closing = True
         self.root.destroy()
 
     # --- thread di rete: niente widget, solo coda e frame condiviso -------------------------------
@@ -1335,16 +1430,16 @@ class ControlPanel:
             try:
                 response = client.open_stream()
                 self._stream_response = response
-                self.events.put(("log", "Stream collegato", None))
+                self.log_from_thread("Stream collegato")
                 with response:
                     for jpeg in iter_mjpeg(response, stop):
                         self._decode(jpeg)
                 if not stop.is_set():
-                    self.events.put(("log", "Stream chiuso dal telefono, riprovo", None))
+                    self.log_from_thread("Stream chiuso dal telefono, riprovo")
             except Exception as exc:
                 if stop.is_set():
                     return
-                self.events.put(("log", f"Stream interrotto: {exc}. Riprovo tra {STREAM_RETRY_SECONDS:.0f} s", None))
+                self.log_from_thread(f"Stream interrotto: {exc}. Riprovo tra {STREAM_RETRY_SECONDS:.0f} s")
             finally:
                 self._stream_response = None
             stop.wait(STREAM_RETRY_SECONDS)

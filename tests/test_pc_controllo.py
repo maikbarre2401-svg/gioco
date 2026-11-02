@@ -5,7 +5,7 @@ import pytest
 
 import pc_controllo
 from main import CommandApi, CommandError, FrameBroker, MainThreadRunner, MjpegServer
-from pc_controllo import ApiError, PhoneClient, describe_status, human_size, iter_mjpeg
+from pc_controllo import ApiError, PhoneClient, as_int, describe_status, format_timestamp, human_size, iter_mjpeg
 
 TOKEN = "Ab3_x9Qz"
 
@@ -219,3 +219,32 @@ def test_human_size(size, text):
 def test_module_imports_without_tk_requirements():
     assert pc_controllo.PhoneClient is PhoneClient
     assert pc_controllo.DEFAULT_PORT == 8080
+
+
+def test_describe_status_tolerates_malformed_fields():
+    texts = describe_status(
+        {"mode": "audio", "recording_seconds": "x", "battery": {"charging": True}, "storage": {"free_bytes": 1},
+         "camera": {"open": True, "preview_size": "1920x1080", "torch": False}}
+    )
+    assert texts["battery"] == "non disponibile"
+    assert texts["storage"] == "non disponibile"
+    assert texts["recording"] == "audio da 00:00"
+    assert texts["camera"].startswith("aperta, ")
+
+
+def test_describe_status_accepts_non_dict():
+    assert describe_status(None)["mode"] == "?"
+
+
+@pytest.mark.parametrize(("value", "expected"), [(5, 5), ("7", 7), (None, 0), ("x", 0), (True, 0), (3.9, 3)])
+def test_as_int(value, expected):
+    assert as_int(value) == expected
+
+
+@pytest.mark.parametrize("value", [None, "ieri", 0, -5, True, 10**20])
+def test_format_timestamp_invalid(value):
+    assert format_timestamp(value) == "?"
+
+
+def test_format_timestamp_valid():
+    assert len(format_timestamp(1_700_000_000)) == len("2023-11-14 22:13")
