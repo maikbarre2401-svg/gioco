@@ -843,6 +843,10 @@ def detect_host() -> str:
     return "linux"
 
 
+def default_mode(host: str) -> str:
+    return "github" if host == "windows" else "wsl"
+
+
 def default_adb(host: str) -> str:
     # Dentro WSL2 l'USB non si vede: serve l'adb.exe di Windows, raggiungibile via interop.
     return "adb.exe" if host == "wsl" else "adb"
@@ -1756,7 +1760,8 @@ class ControlPanel:
         deploy.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
         self.deploy_frame = deploy
         # Su Windows buildozer non gira: lì la strada predefinita è l'APK già compilato da GitHub.
-        self.mode_var = tk.StringVar(value="wsl")
+        # Su Windows la strada che funziona senza installare nulla è l'APK compilato da GitHub.
+        self.mode_var = tk.StringVar(value=default_mode(self._host))
         self.adb_var = tk.StringVar(value=default_adb(self._host))
         mode_row = ttk.Frame(deploy)
         mode_row.grid(row=0, column=0, sticky="w")
@@ -2206,7 +2211,7 @@ class ControlPanel:
             if isinstance(value, str) and value:
                 variable.set(value)
         if self.mode_var.get() not in ACTION_LABELS:
-            self.mode_var.set("wsl")
+            self.mode_var.set(default_mode(self._host))
         if self.dir_var.get() not in [label for _, label in MEDIA_DIRS]:
             self.dir_var.set(MEDIA_DIRS[0][1])
         self.remember_github_token_var.set(bool(data.get("remember_github_token")))

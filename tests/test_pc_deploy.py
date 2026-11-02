@@ -525,3 +525,11 @@ def test_build_script_keeps_buildozer_exit_code(tmp_path, code, expected):
     result = subprocess.run(["bash", "-lc", script], capture_output=True, text=True)
     assert result.returncode == expected
     assert "risposta=y" in result.stdout
+
+
+def test_windows_defaults_to_github_build():
+    from pc_controllo import default_mode
+
+    assert default_mode("windows") == "github"
+    assert default_mode("wsl") == "wsl"
+    assert default_mode("linux") == "wsl"
