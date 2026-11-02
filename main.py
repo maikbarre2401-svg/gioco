@@ -5,11 +5,13 @@ import json
 import logging
 import os
 import secrets
+import shutil
 import socket
 import sys
 import threading
 import time
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -390,6 +392,9 @@ class _Handler(BaseHTTPRequestHandler):
         if not self._authorized(parts.query):
             self._send(HTTPStatus.FORBIDDEN, "text/plain; charset=utf-8", b"token mancante o errato\n")
             return
+        if is_api_path(path):
+            self._send_json(HTTPStatus.METHOD_NOT_ALLOWED, error_payload("metodo", "usa POST"), allow="POST")
+            return
         if path in ("/", "/index.html"):
             self._send(HTTPStatus.OK, "text/html; charset=utf-8", PAGE_HTML.encode("utf-8"))
         elif path == "/stream.mjpg":
@@ -410,6 +415,66 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(HTTPStatus.OK, "application/json", json.dumps(info).encode("utf-8"))
         else:
             self._send(HTTPStatus.NOT_FOUND, "text/plain; charset=utf-8", b"non trovato\n")
+
+    def do_POST(self):
+        parts = urlsplit(self.path)
+        if not self._authorized(parts.query):
+            self._send_json(HTTPStatus.FORBIDDEN, error_payload("token", "token mancante o errato"))
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            self._send_json(HTTPStatus.BAD_REQUEST, error_payload("richiesta", "Content-Length non valido"))
+            return
+        if length < 0:
+            self._send_json(HTTPStatus.BAD_REQUEST, error_payload("richiesta", "Content-Length non valido"))
+            return
+        if length > MAX_BODY_BYTES:
+            self._send_json(
+                HTTPStatus.REQUEST_ENTITY_TOO_LARGE, error_payload("troppo_grande", f"corpo oltre {MAX_BODY_BYTES} byte")
+            )
+            return
+        body = self.rfile.read(length) if length else b""
+        api = self.server.api
+        if api is None:
+            self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, error_payload("non_disponibile", "API di comando non attiva"))
+            return
+        result = api.dispatch(parts.path, parse_qs(parts.query), body)
+        if result.file_path is not None:
+            self._send_file(result)
+        else:
+            self._send_json(result.status, result.payload)
+
+    def _send_json(self, status, payload: dict, allow: str | None = None):
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        if allow is not None:
+            self.send_header("Allow", allow)
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_file(self, result: "ApiResult"):
+        try:
+            handle = open(result.file_path, "rb")
+        except OSError as exc:
+            self._send_json(HTTPStatus.NOT_FOUND, error_payload("file_non_trovato", str(exc)))
+            return
+        with handle:
+            size = os.fstat(handle.fileno()).st_size
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", result.content_type)
+            self.send_header("Content-Length", str(size))
+            self.send_header("Content-Disposition", f'attachment; filename="{result.filename}"')
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            try:
+                shutil.copyfileobj(handle, self.wfile, FILE_CHUNK_BYTES)
+            except OSError:
+                # Il client ha chiuso a metà download: non c'è nessuno a cui rispondere.
+                return
 
     def _send(self, status, content_type, body: bytes):
         self.send_response(status)
@@ -452,11 +517,18 @@ class _Server(ThreadingHTTPServer):
 
 class MjpegServer:
     def __init__(
-        self, broker: FrameBroker, info_provider, ports=DEFAULT_PORTS, host: str = "0.0.0.0", token: str | None = None
+        self,
+        broker: FrameBroker,
+        info_provider,
+        ports=DEFAULT_PORTS,
+        host: str = "0.0.0.0",
+        token: str | None = None,
+        api: "CommandApi | None" = None,
     ):
         self._broker = broker
         self._info_provider = info_provider
         self._token = token
+        self._api = api
         self._ports = tuple(ports)
         self._host = host
         self._httpd = None
@@ -480,6 +552,7 @@ class MjpegServer:
         httpd.broker = self._broker
         httpd.info_provider = self._info_provider
         httpd.token = self._token
+        httpd.api = self._api
         self._httpd = httpd
         self.port = httpd.server_address[1]
         self._thread = threading.Thread(
@@ -543,6 +616,192 @@ def rank_lan_addresses(candidates: list[tuple[str, str]]) -> list[str]:
         if ip not in result:
             result.append(ip)
     return result
+
+
+API_PATHS = ("/status", "/files", "/files/get")
+API_PREFIX = "/cmd/"
+CMD_TIMEOUT = 10.0
+MAX_BODY_BYTES = 1024
+FILE_CHUNK_BYTES = 256 * 1024
+MEDIA_DIRS = ("photos", "videos", "audio")
+MEDIA_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".mp4": "video/mp4", ".m4a": "audio/mp4"}
+
+
+def is_api_path(path: str) -> bool:
+    return path.startswith(API_PREFIX) or path in API_PATHS
+
+
+def error_payload(code: str, message: str) -> dict:
+    return {"ok": False, "error": code, "message": message}
+
+
+class CommandError(Exception):
+    """Errore di un comando remoto: diventa una risposta JSON con il suo codice HTTP."""
+
+    def __init__(self, status: int, code: str, message: str):
+        super().__init__(message)
+        self.status = status
+        self.code = code
+        self.message = message
+
+
+@dataclass
+class ApiResult:
+    status: int
+    payload: dict | None = None
+    file_path: str | None = None
+    content_type: str | None = None
+    filename: str | None = None
+
+
+class MainThreadRunner:
+    """Esegue una funzione sul thread di Kivy e ne attende il risultato da un altro thread."""
+
+    def __init__(self, schedule=None, timeout: float = CMD_TIMEOUT):
+        self._schedule = schedule if schedule is not None else _schedule_on_kivy
+        self.timeout = timeout
+
+    def call(self, fn):
+        lock = threading.Lock()
+        done = threading.Event()
+        state_ = {"started": False, "cancelled": False}
+        box = {}
+
+        def run():
+            with lock:
+                if state_["cancelled"]:
+                    return
+                state_["started"] = True
+            try:
+                box["value"] = fn()
+            except BaseException as exc:
+                box["error"] = exc
+            finally:
+                done.set()
+
+        self._schedule(run)
+        if not done.wait(self.timeout):
+            with lock:
+                started = state_["started"]
+                if not started:
+                    state_["cancelled"] = True
+            if not started:
+                raise CommandError(
+                    504, "timeout", f"il thread di Kivy non ha preso il comando entro {self.timeout:.0f} s: annullato"
+                )
+            # Il comando è partito sul thread di Kivy: aspettarlo ancora non bloccherebbe niente di nuovo.
+            if not done.wait(self.timeout):
+                raise CommandError(
+                    504, "timeout", f"comando avviato ma non concluso entro {2 * self.timeout:.0f} s: esito sconosciuto"
+                )
+        if "error" in box:
+            raise box["error"]
+        return box["value"]
+
+
+def _schedule_on_kivy(fn) -> None:
+    # Clock.schedule_once è l'unico ingresso al thread di Kivy sicuro da un altro thread.
+    Clock.schedule_once(lambda dt: fn(), 0)
+
+
+def parse_torch_body(body: bytes) -> bool:
+    text = body.decode("utf-8", "replace").strip().lower()
+    if text == "on":
+        return True
+    if text == "off":
+        return False
+    raise CommandError(400, "richiesta", "corpo atteso: on oppure off")
+
+
+def media_entry(dirname: str, path: str) -> dict:
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return {"dir": dirname, "name": os.path.basename(path), "size": 0, "modified": None}
+    return {"dir": dirname, "name": os.path.basename(path), "size": stat.st_size, "modified": int(stat.st_mtime)}
+
+
+def list_media(dirs: dict, query: dict) -> dict:
+    if not dirs:
+        raise CommandError(503, "non_disponibile", "cartelle dei file disponibili solo su Android")
+    dirname = query.get("dir", [""])[0]
+    if dirname not in MEDIA_DIRS:
+        raise CommandError(400, "richiesta", f"dir deve essere uno di {', '.join(MEDIA_DIRS)}")
+    folder = dirs[dirname]
+    files = []
+    try:
+        entries = list(os.scandir(folder))
+    except FileNotFoundError:
+        entries = []
+    for entry in entries:
+        if entry.name.startswith(".") or not entry.is_file():
+            continue
+        stat = entry.stat()
+        files.append({"name": entry.name, "size": stat.st_size, "modified": int(stat.st_mtime)})
+    files.sort(key=lambda item: (item["modified"], item["name"]), reverse=True)
+    return {"dir": dirname, "files": files}
+
+
+def resolve_media_file(dirs: dict, query: dict) -> ApiResult:
+    if not dirs:
+        raise CommandError(503, "non_disponibile", "cartelle dei file disponibili solo su Android")
+    raw = query.get("path", [""])[0]
+    dirname, separator, name = raw.partition("/")
+    valid_name = name and name not in (".", "..") and not name.startswith(".") and "/" not in name and "\\" not in name
+    if not separator or dirname not in MEDIA_DIRS or not valid_name:
+        raise CommandError(400, "richiesta", "path atteso nella forma <photos|videos|audio>/<nome file>")
+    folder = os.path.realpath(dirs[dirname])
+    full = os.path.realpath(os.path.join(folder, name))
+    # realpath risolve anche i link simbolici: il file deve stare davvero dentro la cartella dichiarata.
+    if os.path.dirname(full) != folder:
+        raise CommandError(400, "richiesta", "path fuori dalla cartella dei file")
+    if not os.path.isfile(full):
+        raise CommandError(404, "file_non_trovato", f"{dirname}/{name} non esiste")
+    content_type = MEDIA_TYPES.get(os.path.splitext(name)[1].lower(), "application/octet-stream")
+    return ApiResult(200, file_path=full, content_type=content_type, filename=name)
+
+
+class CommandApi:
+    """Instrada le richieste POST. I comandi che toccano fotocamera o stato dell'app passano dal runner."""
+
+    def __init__(self, controller, runner: MainThreadRunner):
+        self._controller = controller
+        self._runner = runner
+
+    def dispatch(self, path: str, query: dict, body: bytes) -> ApiResult:
+        try:
+            return self._route(path, query, body)
+        except CommandError as exc:
+            return ApiResult(exc.status, error_payload(exc.code, exc.message))
+        except Exception as exc:
+            log.exception("comando %s fallito", path)
+            return ApiResult(500, error_payload("errore", f"{type(exc).__name__}: {exc}"))
+
+    def _route(self, path: str, query: dict, body: bytes) -> ApiResult:
+        controller = self._controller
+        if path == "/cmd/photo":
+            return self._on_main(controller.photo)
+        if path == "/cmd/video/start":
+            return self._on_main(controller.video_start)
+        if path == "/cmd/video/stop":
+            return self._on_main(controller.video_stop)
+        if path == "/cmd/audio/start":
+            return self._on_main(controller.audio_start)
+        if path == "/cmd/audio/stop":
+            return self._on_main(controller.audio_stop)
+        if path == "/cmd/torch":
+            on = parse_torch_body(body)
+            return self._on_main(lambda: controller.torch(on))
+        if path == "/status":
+            return self._on_main(controller.status)
+        if path == "/files":
+            return ApiResult(200, {"ok": True, **list_media(controller.media_dirs(), query)})
+        if path == "/files/get":
+            return resolve_media_file(controller.media_dirs(), query)
+        raise CommandError(404, "sconosciuto", f"endpoint sconosciuto: {path}")
+
+    def _on_main(self, fn) -> ApiResult:
+        return ApiResult(200, {"ok": True, **self._runner.call(fn)})
 
 
 def new_token() -> str:
@@ -720,6 +979,8 @@ if IS_ANDROID:
     AudioEncoder = autoclass("android.media.MediaRecorder$AudioEncoder")
     Environment = autoclass("android.os.Environment")
     SurfaceTexture = autoclass("android.graphics.SurfaceTexture")
+    BatteryManager = autoclass("android.os.BatteryManager")
+    Context = autoclass("android.content.Context")
     SurfaceView = autoclass("android.view.SurfaceView")
     Gravity = autoclass("android.view.Gravity")
     ViewGroup = autoclass("android.view.ViewGroup")
@@ -845,6 +1106,8 @@ IMAGE_FORMAT_BITS = {4: 16, 16: 16, 17: 12, 20: 16, 35: 12}
 IMAGE_FORMAT_YV12 = 842094169
 
 FOCUS_CONTINUOUS_VIDEO = "continuous-video"
+FLASH_MODE_TORCH = "torch"
+FLASH_MODE_OFF = "off"
 AUDIO_BIT_RATE = 128_000
 AUDIO_SAMPLE_RATE = 44_100
 
@@ -1320,6 +1583,10 @@ class YuvPreviewRenderer:
         self.frames += 1
 
 
+class TorchUnavailable(CameraError):
+    pass
+
+
 class CameraBackend:
     """Fotocamera, MediaRecorder e texture GL vivono sul thread di Kivy, che possiede il contesto GL.
 
@@ -1773,6 +2040,25 @@ class CameraBackend:
             raise CameraError("nessun fotogramma ancora disponibile")
         save_texture_png(texture, path)
 
+    # Fotocamera su cui è stata accesa la torcia: dopo una chiusura e riapertura è un altro oggetto e la torcia è spenta.
+    _torch_camera = None
+
+    @property
+    def torch_on(self) -> bool:
+        return self._camera is not None and self._torch_camera is self._camera
+
+    def set_torch(self, on: bool) -> None:
+        if self._camera is None:
+            raise CameraError("fotocamera non aperta")
+        params = self._camera.getParameters()
+        modes = _java_strings(params.getSupportedFlashModes())
+        wanted = FLASH_MODE_TORCH if on else FLASH_MODE_OFF
+        if wanted not in modes:
+            raise TorchUnavailable(f"modalità flash '{wanted}' non supportata, disponibili: {modes or 'nessuna'}")
+        params.setFlashMode(wanted)
+        self._camera.setParameters(params)
+        self._torch_camera = self._camera if on else None
+
     def _relock_camera(self):
         if self._camera is None:
             return
@@ -2127,6 +2413,63 @@ class StreamChip(ButtonBehavior, Label):
         self.size = self.texture_size
 
 
+def battery_status() -> dict | None:
+    if not IS_ANDROID:
+        return None
+    try:
+        manager = cast(BatteryManager, PythonActivity.mActivity.getSystemService(Context.BATTERY_SERVICE))
+        return {
+            "percent": int(manager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)),
+            "charging": bool(manager.isCharging()),
+        }
+    except JAVA_ERRORS:
+        Logger.exception("Comandi: lettura batteria fallita")
+        return None
+
+
+def storage_status(path: str) -> dict | None:
+    try:
+        stats = os.statvfs(path)
+    except OSError:
+        return None
+    return {"free_bytes": stats.f_bavail * stats.f_frsize, "total_bytes": stats.f_blocks * stats.f_frsize}
+
+
+class AppController:
+    """Comandi remoti tradotti in chiamate all'app. Tutti tranne media_dirs girano sul thread di Kivy."""
+
+    def __init__(self, app):
+        self._app = app
+
+    def photo(self) -> dict:
+        return {"file": media_entry("photos", self._app._photo())}
+
+    def video_start(self) -> dict:
+        return {"mode": MODE_VIDEO, "file": media_entry("videos", self._app._start_video())}
+
+    def video_stop(self) -> dict:
+        return self._app._stop_mode(MODE_VIDEO, "videos")
+
+    def audio_start(self) -> dict:
+        return {"mode": MODE_AUDIO, "file": media_entry("audio", self._app._start_audio())}
+
+    def audio_stop(self) -> dict:
+        return self._app._stop_mode(MODE_AUDIO, "audio")
+
+    def torch(self, on: bool) -> dict:
+        return {"torch": self._app._set_torch(on)}
+
+    def status(self) -> dict:
+        return self._app._remote_status()
+
+    def media_dirs(self) -> dict:
+        # Cartelle fissate alla creazione del backend: leggerle dal thread del server non tocca la fotocamera.
+        backend = self._app._backend
+        if backend is None:
+            return {}
+        return {"photos": backend.photo_dir, "videos": backend.video_dir, "audio": backend.audio_dir}
+
+
 def encoder_health(encoder: LatestFrameEncoder) -> tuple[bool, str]:
     if not encoder.is_alive:
         return False, "thread mjpeg-encoder terminato"
@@ -2219,7 +2562,8 @@ class GiocoCameraApp(App):
             self._encoder.start()
             self._backend.attach_encoder(self._encoder)
         self._stream_token = new_token()
-        self._server = MjpegServer(self._broker, self._stream_info, token=self._stream_token)
+        api = CommandApi(AppController(self), MainThreadRunner())
+        self._server = MjpegServer(self._broker, self._stream_info, token=self._stream_token, api=api)
         try:
             self._server.start()
             # Per adb forward dal PC, che non vede la scheda sul telefono. Logcat è leggibile solo via adb.
@@ -2375,8 +2719,51 @@ class GiocoCameraApp(App):
             self._request_permissions()
 
     def _take_photo(self):
-        if self._backend is None or not self._backend.is_open:
+        try:
+            self._photo()
+        except CommandError:
             return
+
+    def _toggle_video(self):
+        if self._mode == MODE_VIDEO:
+            self._stop_recording()
+            return
+        try:
+            self._start_video()
+        except CommandError:
+            return
+
+    def _toggle_audio(self):
+        if self._mode == MODE_AUDIO:
+            self._stop_recording()
+            return
+        try:
+            self._start_audio()
+        except CommandError:
+            return
+
+    def _require_backend(self):
+        if self._backend is None:
+            raise CommandError(503, "non_disponibile", "fotocamera e microfono disponibili solo su Android")
+
+    def _require_camera(self):
+        self._require_backend()
+        if not self._backend.is_open:
+            raise CommandError(409, "fotocamera_chiusa", "fotocamera non aperta: app in pausa o permesso negato")
+
+    def _require_idle(self, wanted: str):
+        if self._mode == wanted:
+            raise CommandError(409, "gia_attivo", f"registrazione {wanted} già in corso")
+        if self._mode != MODE_IDLE:
+            raise CommandError(409, "occupato", f"registrazione {self._mode} in corso")
+
+    def _require_microphone(self):
+        if not self._mic_allowed:
+            raise CommandError(409, "microfono_negato", "permesso microfono negato")
+
+    def _photo(self) -> str:
+        """Thread di Kivy. Restituisce il percorso della foto o solleva CommandError."""
+        self._require_camera()
         path = os.path.join(self._backend.photo_dir, media_filename("IMG", "png", datetime.now()))
         try:
             self._backend.take_photo(path)
@@ -2384,39 +2771,99 @@ class GiocoCameraApp(App):
             # I provider immagine di Kivy sollevano eccezioni di tipo diverso a seconda del backend.
             Logger.exception("Camera: salvataggio foto fallito")
             self.notify(f"Errore foto: {exc}")
-            return
+            if not self._backend.has_frame:
+                raise CommandError(409, "nessun_fotogramma", str(exc)) from exc
+            raise CommandError(500, "errore", f"salvataggio foto fallito: {exc}") from exc
         self._preview.flash()
         self.notify(f"Foto salvata:\n{path}")
+        return path
 
-    def _toggle_video(self):
-        if self._mode == MODE_VIDEO:
-            self._stop_recording()
-            return
-        if self._mode != MODE_IDLE or self._backend is None or not self._backend.is_open:
-            return
+    def _start_video(self) -> str:
+        """Thread di Kivy. Restituisce il percorso del video o solleva CommandError."""
+        self._require_idle(MODE_VIDEO)
+        self._require_camera()
+        self._require_microphone()
         path = os.path.join(self._backend.video_dir, media_filename("VID", "mp4", datetime.now()))
         try:
             self._backend.start_video(path)
         except CAMERA_ERRORS as exc:
             Logger.exception("Camera: avvio video fallito")
             self.notify(f"Errore avvio video: {exc}")
-            return
+            raise CommandError(500, "errore", f"avvio video fallito: {exc}") from exc
         self._enter_recording(MODE_VIDEO)
+        return path
 
-    def _toggle_audio(self):
-        if self._mode == MODE_AUDIO:
-            self._stop_recording()
-            return
-        if self._mode != MODE_IDLE or self._backend is None:
-            return
+    def _start_audio(self) -> str:
+        """Thread di Kivy. Restituisce il percorso dell'audio o solleva CommandError."""
+        self._require_idle(MODE_AUDIO)
+        self._require_backend()
+        self._require_microphone()
         path = os.path.join(self._backend.audio_dir, media_filename("AUD", "m4a", datetime.now()))
         try:
             self._backend.start_audio(path)
         except CAMERA_ERRORS as exc:
             Logger.exception("Camera: avvio audio fallito")
             self.notify(f"Errore avvio audio: {exc}")
-            return
+            raise CommandError(500, "errore", f"avvio audio fallito: {exc}") from exc
         self._enter_recording(MODE_AUDIO)
+        return path
+
+    def _stop_mode(self, mode: str, dirname: str) -> dict:
+        """Thread di Kivy. Ferma la registrazione di quel tipo o solleva CommandError."""
+        if self._mode != mode:
+            raise CommandError(409, "non_attivo", f"nessuna registrazione {mode} in corso")
+        result = self._stop_recording()
+        return {
+            "mode": MODE_IDLE,
+            "saved": result["saved"],
+            "seconds": round(result["seconds"], 1),
+            "file": media_entry(dirname, result["path"]) if result["saved"] else None,
+        }
+
+    def _set_torch(self, on: bool) -> bool:
+        """Thread di Kivy. Restituisce lo stato della torcia dopo il comando."""
+        self._require_camera()
+        try:
+            self._backend.set_torch(on)
+        except TorchUnavailable as exc:
+            raise CommandError(409, "torcia_non_disponibile", str(exc)) from exc
+        except CAMERA_ERRORS as exc:
+            Logger.exception("Camera: torcia fallita")
+            raise CommandError(500, "errore", f"torcia: {exc}") from exc
+        self.notify("Torcia accesa" if on else "Torcia spenta")
+        return self._backend.torch_on
+
+    def _remote_status(self) -> dict:
+        """Thread di Kivy: legge lo stato dell'app e della fotocamera senza modificarlo."""
+        backend = self._backend
+        camera = {
+            "open": False,
+            "has_frame": False,
+            "preview_mode": PREVIEW_MODE,
+            "preview_size": None,
+            "rotation": None,
+            "torch": False,
+        }
+        if backend is not None:
+            camera.update(
+                open=backend.is_open,
+                has_frame=backend.has_frame,
+                preview_mode=backend.mode,
+                preview_size=list(backend.preview_size) if backend.preview_size else None,
+                rotation=backend.stream_info().get("rotation"),
+                torch=backend.torch_on,
+            )
+        recording = time.monotonic() - self._record_started if self._mode != MODE_IDLE else 0.0
+        return {
+            "platform": "android" if IS_ANDROID else "desktop",
+            "mode": self._mode,
+            "recording_seconds": round(recording, 1),
+            "battery": battery_status(),
+            "storage": storage_status(backend.photo_dir if backend is not None else os.getcwd()),
+            "camera": camera,
+            "permissions": {"camera": self._camera_allowed, "microphone": self._mic_allowed},
+            "stream": {"clients": self._broker.clients, "port": self._server.port},
+        }
 
     def _enter_recording(self, mode):
         self._mode = mode
@@ -2437,7 +2884,8 @@ class GiocoCameraApp(App):
             saved, path = self._backend.stop_audio()
             label = "Audio"
         else:
-            return
+            return None
+        seconds = time.monotonic() - self._record_started
         self._mode = MODE_IDLE
         if self._timer_event is not None:
             self._timer_event.cancel()
@@ -2448,6 +2896,7 @@ class GiocoCameraApp(App):
             self.notify(f"{label} salvato:\n{path}")
         else:
             self.notify("Registrazione troppo breve: file scartato")
+        return {"mode": mode, "saved": saved, "path": path, "seconds": seconds}
 
     def _release_everything(self):
         if self._mode != MODE_IDLE:
