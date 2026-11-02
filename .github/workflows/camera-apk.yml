@@ -64,6 +64,19 @@ jobs:
       - name: Compila l'APK
         run: yes | buildozer -v android debug
 
+      - name: Controlla l'APK
+        # Stampa nel log cosa c'è davvero dentro: permessi, modalità di anteprima e file Python impacchettati.
+        run: |
+          set -euo pipefail
+          apk=$(ls bin/*.apk)
+          ls -l "$apk"
+          aapt=$(ls ~/.buildozer/android/platform/android-sdk/build-tools/*/aapt | tail -n 1)
+          "$aapt" dump badging "$apk" | grep -E "^(package|sdkVersion|targetSdkVersion|uses-permission|native-code)"
+          mkdir -p /tmp/apk && unzip -q -o "$apk" -d /tmp/apk
+          tar -tf /tmp/apk/assets/private.tar | grep -vE "^(_python_bundle|lib)/" | sort
+          if tar -tf /tmp/apk/assets/private.tar | grep -q "pc_controllo"; then echo "ERRORE: pc_controllo nell'APK"; exit 1; fi
+          tar -tf /tmp/apk/assets/private.tar | grep -E "^main\.pyc?$"
+
       - uses: actions/upload-artifact@v4
         with:
           name: gioco-apk-${{ env.PREVIEW_MODE }}-${{ github.sha }}

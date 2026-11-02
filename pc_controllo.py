@@ -17,6 +17,7 @@ import platform
 import queue
 import re
 import shlex
+import shutil
 import subprocess
 import threading
 import time
@@ -24,6 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
+import zipfile
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -68,6 +70,13 @@ TOKEN_WAIT_SECONDS = 30.0
 TOKEN_POLL_SECONDS = 1.0
 OUTPUT_TAIL_LINES = 400
 ERROR_TAIL_LINES = 15
+GITHUB_API = "https://api.github.com"
+DEFAULT_REPO = "maikbarre2401-svg/gioco"
+DEFAULT_BRANCH = "claude/festive-brahmagupta-vdj2r9"
+WORKFLOW_FILE = "camera-apk.yml"
+ARTIFACT_PREFIX = "gioco-apk"
+RUNS_TO_SCAN = 10
+GITHUB_TIMEOUT = 30.0
 # Riga che main.py scrive all'avvio del server; Kivy la riformatta come "[INFO   ] [Stream      ] token=… porta=…".
 SERVER_LINE = re.compile(r"\] token=([A-Za-z0-9_-]+) porta=(\d+)")
 
@@ -264,6 +273,25 @@ class DeployError(Exception):
     pass
 
 
+# Testo del pulsante e descrizione dell'attività in corso, per modalità.
+ACTION_LABELS = {
+    "github": {
+        "check": ("Verifica", "verifica di GitHub e del telefono"),
+        "build": ("Scarica APK da GitHub", "download dell'APK"),
+        "install": ("Installa sul telefono", "download e installazione"),
+        "launch": ("Avvia e connetti", "avvio"),
+        "everything": ("Tutto: scarica, installa, avvia", "download, installazione e avvio"),
+    },
+    "wsl": {
+        "check": ("Verifica", "verifica di WSL e del telefono"),
+        "build": ("Genera APK", "compilazione"),
+        "install": ("Installa sul telefono", "installazione"),
+        "launch": ("Avvia e connetti", "avvio"),
+        "everything": ("Tutto: genera, installa, avvia", "compilazione, installazione e avvio"),
+    },
+}
+
+
 def detect_host() -> str:
     if os.name == "nt":
         return "windows"
@@ -424,6 +452,27 @@ class Deployer:
     def adb(self, *args: str, label: str | None = None) -> list[str]:
         return self._call([self.settings.adb, *args], label or f"adb {args[0]}")
 
+    def phone_problems(self) -> list[str]:
+        problems = []
+        try:
+            ready, bad = parse_devices(self.adb("devices"))
+        except DeployError as exc:
+            return [f"adb non utilizzabile: {exc}"]
+        if bad:
+            problems.append("telefono non pronto: " + ", ".join(bad) + " (accetta l'impronta RSA sul telefono)")
+        if not ready:
+            problems.append("nessun telefono collegato con il debug USB attivo")
+        elif len(ready) > 1:
+            problems.append(f"più telefoni collegati ({', '.join(ready)}): lasciane collegato uno")
+        return problems
+
+    def report(self, problems: list[str], ready_text: str) -> list[str]:
+        for problem in problems:
+            self._log(f"PROBLEMA: {problem}")
+        if not problems:
+            self._log(ready_text)
+        return problems
+
     def check(self) -> list[str]:
         problems = []
         lines = self._call(linux_command(self.settings, check_script(self.settings)), "controllo di WSL")
@@ -432,22 +481,8 @@ class Deployer:
                 problems.append(f"in WSL manca: {line[6:]} ({self.settings.project_dir}, {self.settings.buildozer})")
         if "FINE" not in lines and not problems:
             problems.append("WSL non ha risposto come previsto: " + " | ".join(lines[-3:]))
-        try:
-            ready, bad = parse_devices(self.adb("devices"))
-        except DeployError as exc:
-            problems.append(f"adb non utilizzabile: {exc}")
-        else:
-            if bad:
-                problems.append("telefono non pronto: " + ", ".join(bad) + " (accetta l'impronta RSA sul telefono)")
-            if not ready:
-                problems.append("nessun telefono collegato con il debug USB attivo")
-            elif len(ready) > 1:
-                problems.append(f"più telefoni collegati ({', '.join(ready)}): lasciane collegato uno")
-        for problem in problems:
-            self._log(f"PROBLEMA: {problem}")
-        if not problems:
-            self._log("Pronto: progetto e buildozer in WSL, un telefono collegato.")
-        return problems
+        problems += self.phone_problems()
+        return self.report(problems, "Pronto: progetto e buildozer in WSL, un telefono collegato.")
 
     def build(self) -> None:
         self._log("Compilazione dell'APK in WSL: la prima volta dura 20-40 minuti.")
@@ -461,7 +496,9 @@ class Deployer:
         return paths[-1]
 
     def install(self) -> None:
-        path = self.apk_path()
+        self.install_apk(self.apk_path())
+
+    def install_apk(self, path: str) -> None:
         lines = self.adb("install", "-r", path, label="installazione")
         if not any("Success" in line for line in lines):
             raise DeployError("installazione non confermata da adb:\n" + "\n".join(lines[-ERROR_TAIL_LINES:]))
@@ -500,6 +537,212 @@ class Deployer:
         return self.launch()
 
 
+class _DropAuthOnRedirect(urllib.request.HTTPRedirectHandler):
+    """GitHub rimanda il download a un archivio esterno firmato: lì il token GitHub va tolto, altrimenti rifiuta."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and urllib.parse.urlsplit(newurl).netloc != urllib.parse.urlsplit(req.full_url).netloc:
+            new.remove_header("Authorization")
+        return new
+
+
+_GITHUB_OPENER = urllib.request.build_opener(_DropAuthOnRedirect)
+
+
+def default_apk_dir() -> str:
+    downloads = os.path.join(os.path.expanduser("~"), "Downloads")
+    base = downloads if os.path.isdir(downloads) else os.path.expanduser("~")
+    return os.path.join(base, "gioco-apk")
+
+
+def extract_apk(archive: str, target_dir: str) -> str:
+    """Estrae il primo .apk di uno zip (come quelli scaricati da GitHub) e ne restituisce il percorso."""
+    try:
+        bundle = zipfile.ZipFile(archive)
+    except zipfile.BadZipFile:
+        raise DeployError(f"{archive} non è uno zip valido") from None
+    with bundle:
+        members = [name for name in bundle.namelist() if name.lower().endswith(".apk")]
+        if not members:
+            raise DeployError(f"l'archivio non contiene un APK: {bundle.namelist()}")
+        os.makedirs(target_dir, exist_ok=True)
+        # Solo il nome del file: un percorso dentro lo zip non deve poter uscire dalla cartella.
+        path = os.path.join(target_dir, os.path.basename(members[0]))
+        with bundle.open(members[0]) as source, open(path, "wb") as target:
+            shutil.copyfileobj(source, target)
+    return path
+
+
+def apk_from_file(path: str, work_dir: str) -> str:
+    """Un .apk si installa così com'è; lo zip scaricato dalla pagina di GitHub va prima aperto."""
+    if path.lower().endswith(".zip"):
+        return extract_apk(path, work_dir)
+    return path
+
+
+class GitHubBuilds:
+    """APK compilati da GitHub Actions (workflow camera-apk.yml). Blocca: solo da un thread di lavoro."""
+
+    def __init__(self, repo: str, branch: str, token: str, workflow: str = WORKFLOW_FILE, api: str = GITHUB_API):
+        if repo.count("/") != 1 or not all(repo.split("/")):
+            raise DeployError(f"repository nella forma proprietario/nome, ricevuto: {repo!r}")
+        self.repo = repo
+        self.branch = branch
+        self.token = token
+        self.workflow = workflow
+        self.api = api.rstrip("/")
+
+    def page_url(self) -> str:
+        query = urllib.parse.quote(f"branch:{self.branch}")
+        return f"https://github.com/{self.repo}/actions/workflows/{self.workflow}?query={query}"
+
+    def _request(self, url: str) -> urllib.request.Request:
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "gioco-pc-controllo",
+        }
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        return urllib.request.Request(url, headers=headers)
+
+    def _open(self, url: str):
+        try:
+            return _GITHUB_OPENER.open(self._request(url), timeout=GITHUB_TIMEOUT)
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", "replace")
+            if exc.code == 401:
+                raise DeployError("token GitHub non valido o scaduto") from None
+            if exc.code == 403 and "rate limit" in body.lower():
+                raise DeployError("limite di richieste a GitHub raggiunto: inserisci un token GitHub") from None
+            if exc.code == 403:
+                raise DeployError("GitHub nega l'accesso: il token deve avere il permesso Actions: Read") from None
+            if exc.code == 404:
+                raise DeployError(f"non trovato su GitHub: {self.repo}, branch {self.branch}, {self.workflow}") from None
+            raise DeployError(f"GitHub ha risposto {exc.code}: {body[:200]}") from None
+        except (urllib.error.URLError, OSError) as exc:
+            raise DeployError(f"GitHub non raggiungibile: {getattr(exc, 'reason', exc)}") from None
+
+    def _json(self, url: str) -> dict:
+        with self._open(url) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    def _runs(self, **params) -> list[dict]:
+        query = urllib.parse.urlencode({"branch": self.branch, **params})
+        url = f"{self.api}/repos/{self.repo}/actions/workflows/{self.workflow}/runs?{query}"
+        return self._json(url).get("workflow_runs", [])
+
+    def latest_build(self) -> dict:
+        for run in self._runs(status="success", per_page=RUNS_TO_SCAN):
+            artifacts = self._json(f"{self.api}/repos/{self.repo}/actions/runs/{run['id']}/artifacts")
+            for artifact in artifacts.get("artifacts", []):
+                if artifact["name"].startswith(ARTIFACT_PREFIX) and not artifact.get("expired"):
+                    return {
+                        "run_id": run["id"],
+                        "sha": run.get("head_sha", ""),
+                        "created_at": run.get("created_at", ""),
+                        "run_url": run.get("html_url", ""),
+                        "artifact_id": artifact["id"],
+                        "artifact_name": artifact["name"],
+                        "size": artifact.get("size_in_bytes"),
+                        "download_url": artifact["archive_download_url"],
+                    }
+        raise DeployError(f"nessun APK pronto su GitHub per il branch {self.branch}{self._latest_run_note()}")
+
+    def _latest_run_note(self) -> str:
+        runs = self._runs(per_page=1)
+        if not runs:
+            return ": il workflow non è mai partito su questo branch"
+        run = runs[0]
+        if run.get("status") != "completed":
+            return f": compilazione in corso dal {run.get('created_at')}, riprova tra qualche minuto ({run.get('html_url')})"
+        return f": l'ultima compilazione è finita con '{run.get('conclusion')}' ({run.get('html_url')})"
+
+    def download_apk(self, build: dict, dest_dir: str, log=None, should_stop=None) -> str:
+        target_dir = os.path.join(dest_dir, str(build["artifact_id"]))
+        if os.path.isdir(target_dir):
+            for name in os.listdir(target_dir):
+                if name.lower().endswith(".apk"):
+                    path = os.path.join(target_dir, name)
+                    if log is not None:
+                        log(f"APK già scaricato: {path}")
+                    return path
+        if not self.token:
+            raise DeployError(
+                "per scaricare l'APK da GitHub serve un token con Actions: Read; in alternativa scaricalo "
+                "dalla pagina delle compilazioni e usa 'Installa APK da file...'"
+            )
+        os.makedirs(target_dir, exist_ok=True)
+        archive = target_dir + ".zip.part"
+        received = 0
+        reported = 0
+        with self._open(build["download_url"]) as response, open(archive, "wb") as handle:
+            while True:
+                if should_stop is not None and should_stop():
+                    raise DeployError("interrotto")
+                chunk = response.read(DOWNLOAD_CHUNK_BYTES)
+                if not chunk:
+                    break
+                handle.write(chunk)
+                received += len(chunk)
+                if log is not None and received - reported >= PROGRESS_STEP_BYTES:
+                    reported = received
+                    log(f"  scaricati {human_size(received)}")
+        try:
+            path = extract_apk(archive, target_dir)
+        finally:
+            os.remove(archive)
+        if log is not None:
+            log(f"APK salvato in {path}")
+        return path
+
+
+class GitHubPipeline:
+    """Le stesse azioni di Deployer, ma l'APK arriva già compilato da GitHub Actions: sul PC basta adb."""
+
+    def __init__(self, deployer: Deployer, builds: GitHubBuilds, dest_dir: str, log, should_stop=None):
+        self.deployer = deployer
+        self.builds = builds
+        self.dest_dir = dest_dir
+        self._log = log
+        self._should_stop = should_stop
+
+    def check(self) -> list[str]:
+        problems = []
+        try:
+            build = self.builds.latest_build()
+        except DeployError as exc:
+            problems.append(str(exc))
+        else:
+            self._log(
+                f"Ultimo APK su GitHub: {build['artifact_name']} ({human_size(build['size'])}), "
+                f"commit {build['sha'][:7]} del {build['created_at']}"
+            )
+            if not self.builds.token:
+                problems.append("manca il token GitHub: senza, l'APK non si può scaricare da qui")
+        problems += self.deployer.phone_problems()
+        return self.deployer.report(problems, "Pronto: APK disponibile su GitHub, un telefono collegato.")
+
+    def build(self) -> str:
+        build = self.builds.latest_build()
+        self._log(f"Scarico {build['artifact_name']} (commit {build['sha'][:7]}, {build['created_at']})")
+        return self.builds.download_apk(build, self.dest_dir, self._log, self._should_stop)
+
+    def install(self) -> None:
+        self.deployer.install_apk(self.build())
+
+    def launch(self) -> tuple[str, int]:
+        return self.deployer.launch()
+
+    def everything(self) -> tuple[str, int]:
+        problems = self.check()
+        if problems:
+            raise DeployError("controllo iniziale fallito: " + "; ".join(problems))
+        self.install()
+        return self.launch()
+
+
 class ControlPanel:
     """Finestra Tk. Regola: i thread di rete mettono messaggi in coda, solo _pump (thread Tk) tocca i widget."""
 
@@ -532,39 +775,74 @@ class ControlPanel:
         root.columnconfigure(0, weight=1)
         root.rowconfigure(2, weight=1)
 
-        deploy = ttk.LabelFrame(root, text="Telefono e APK (buildozer in WSL2, adb via USB)", padding=8)
+        deploy = ttk.LabelFrame(root, text="Telefono e APK (adb via USB)", padding=8)
         deploy.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
+        # Su Windows buildozer non gira: lì la strada predefinita è l'APK già compilato da GitHub.
+        self.mode_var = tk.StringVar(value="github" if self._host == "windows" else "wsl")
+        self.adb_var = tk.StringVar(value=default_adb(self._host))
+        mode_row = ttk.Frame(deploy)
+        mode_row.grid(row=0, column=0, sticky="w")
+        ttk.Label(mode_row, text="APK da:").grid(row=0, column=0, padx=(0, 6))
+        ttk.Radiobutton(
+            mode_row, text="GitHub (compilato online, niente WSL)", variable=self.mode_var, value="github",
+            command=self._on_mode_change,
+        ).grid(row=0, column=1, padx=(0, 12))
+        ttk.Radiobutton(
+            mode_row, text="WSL2 (buildozer su questo PC)", variable=self.mode_var, value="wsl",
+            command=self._on_mode_change,
+        ).grid(row=0, column=2, padx=(0, 24))
+        ttk.Label(mode_row, text="adb").grid(row=0, column=3, padx=(0, 4))
+        ttk.Entry(mode_row, textvariable=self.adb_var, width=12).grid(row=0, column=4)
+
+        self.repo_var = tk.StringVar(value=DEFAULT_REPO)
+        self.branch_var = tk.StringVar(value=DEFAULT_BRANCH)
+        self.github_token_var = tk.StringVar(value=os.environ.get("GITHUB_TOKEN", ""))
+        self.apk_dir_var = tk.StringVar(value=default_apk_dir())
+        self.github_fields = ttk.Frame(deploy)
+        self.github_fields.grid(row=1, column=0, sticky="w", pady=(6, 0))
+        for column, (label, variable, width, secret) in enumerate(
+            (
+                ("Repository", self.repo_var, 24, False),
+                ("Branch", self.branch_var, 30, False),
+                ("Token GitHub", self.github_token_var, 18, True),
+                ("Cartella APK", self.apk_dir_var, 26, False),
+            )
+        ):
+            ttk.Label(self.github_fields, text=label).grid(row=0, column=column * 2, padx=(0, 4), sticky="w")
+            ttk.Entry(self.github_fields, textvariable=variable, width=width, show="•" if secret else "").grid(
+                row=0, column=column * 2 + 1, padx=(0, 12)
+            )
+
         self.project_var = tk.StringVar(value=DEFAULT_PROJECT_DIR)
         self.buildozer_var = tk.StringVar(value=DEFAULT_BUILDOZER)
         self.distro_var = tk.StringVar(value="")
-        self.adb_var = tk.StringVar(value=default_adb(self._host))
+        self.wsl_fields = ttk.Frame(deploy)
+        self.wsl_fields.grid(row=1, column=0, sticky="w", pady=(6, 0))
         fields = [("Progetto in WSL", self.project_var, 18), ("buildozer", self.buildozer_var, 30)]
         if self._host == "windows":
             fields.append(("Distribuzione WSL (vuoto = predefinita)", self.distro_var, 14))
-        fields.append(("adb", self.adb_var, 10))
         for column, (label, variable, width) in enumerate(fields):
-            ttk.Label(deploy, text=label).grid(row=0, column=column * 2, padx=(0, 4), sticky="w")
-            ttk.Entry(deploy, textvariable=variable, width=width).grid(row=0, column=column * 2 + 1, padx=(0, 12))
+            ttk.Label(self.wsl_fields, text=label).grid(row=0, column=column * 2, padx=(0, 4), sticky="w")
+            ttk.Entry(self.wsl_fields, textvariable=variable, width=width).grid(row=0, column=column * 2 + 1, padx=(0, 12))
+
         actions = ttk.Frame(deploy)
-        actions.grid(row=1, column=0, columnspan=len(fields) * 2, sticky="w", pady=(6, 0))
-        self.deploy_buttons = []
-        for column, (label, action) in enumerate(
-            (
-                ("Verifica", "check"),
-                ("Genera APK", "build"),
-                ("Installa sul telefono", "install"),
-                ("Avvia e connetti", "launch"),
-                ("Tutto: genera, installa, avvia", "everything"),
-            )
-        ):
-            button = ttk.Button(actions, text=label, command=lambda name=action: self.deploy(name))
+        actions.grid(row=2, column=0, sticky="w", pady=(6, 0))
+        self.action_buttons = {}
+        for column, action in enumerate(("check", "build", "install", "launch", "everything")):
+            button = ttk.Button(actions, command=lambda name=action: self.deploy(name))
             button.grid(row=0, column=column, padx=(0, 6))
-            self.deploy_buttons.append(button)
+            self.action_buttons[action] = button
+        self.install_file_button = ttk.Button(actions, text="Installa APK da file...", command=self.install_from_file)
+        self.install_file_button.grid(row=0, column=5, padx=(0, 6))
+        self.builds_page_button = ttk.Button(actions, text="Pagina compilazioni", command=self.open_builds_page)
+        self.builds_page_button.grid(row=0, column=6, padx=(0, 6))
+        self.deploy_buttons = list(self.action_buttons.values()) + [self.install_file_button]
         self.cancel_button = ttk.Button(actions, text="Interrompi", command=self.cancel_deploy)
-        self.cancel_button.grid(row=0, column=6, padx=(12, 0))
+        self.cancel_button.grid(row=0, column=7, padx=(12, 0))
         self.cancel_button.state(["disabled"])
         self.deploy_var = tk.StringVar(value="")
-        ttk.Label(actions, textvariable=self.deploy_var).grid(row=0, column=7, padx=(12, 0))
+        ttk.Label(actions, textvariable=self.deploy_var).grid(row=0, column=8, padx=(12, 0))
+        self._on_mode_change()
 
         connection = ttk.LabelFrame(root, text="Connessione", padding=8)
         connection.grid(row=1, column=0, sticky="ew", padx=8, pady=4)
@@ -799,29 +1077,75 @@ class ControlPanel:
             adb=self.adb_var.get().strip() or default_adb(self._host),
         )
 
-    def deploy(self, action: str):
+    def _on_mode_change(self):
+        github = self.mode_var.get() == "github"
+        if github:
+            self.wsl_fields.grid_remove()
+            self.github_fields.grid()
+            self.builds_page_button.grid()
+        else:
+            self.github_fields.grid_remove()
+            self.wsl_fields.grid()
+            self.builds_page_button.grid_remove()
+        for action, button in self.action_buttons.items():
+            button.configure(text=ACTION_LABELS[self.mode_var.get()][action][0])
+
+    def _github_builds(self) -> GitHubBuilds:
+        return GitHubBuilds(
+            self.repo_var.get().strip() or DEFAULT_REPO,
+            self.branch_var.get().strip() or DEFAULT_BRANCH,
+            self.github_token_var.get().strip(),
+        )
+
+    def open_builds_page(self):
+        try:
+            url = self._github_builds().page_url()
+        except DeployError as exc:
+            self.log(str(exc))
+            return
+        webbrowser.open(url)
+        self.log(f"Aperta la pagina delle compilazioni: {url}")
+
+    def install_from_file(self):
+        path = filedialog.askopenfilename(
+            title="APK da installare (o zip scaricato da GitHub)",
+            filetypes=[("APK o zip di GitHub", "*.apk *.zip"), ("Tutti i file", "*.*")],
+        )
+        if path:
+            self.deploy("install_file", apk_path=path)
+
+    def deploy(self, action: str, apk_path: str | None = None):
         if self._runner is not None:
             return
         settings = self._deploy_settings()
+        mode = self.mode_var.get()
+        try:
+            builds = self._github_builds() if mode == "github" else None
+        except DeployError as exc:
+            self.log(str(exc))
+            return
+        dest_dir = self.apk_dir_var.get().strip() or default_apk_dir()
         runner = ProcessRunner()
         self._runner = runner
         for button in self.deploy_buttons:
             button.state(["disabled"])
         self.cancel_button.state(["!disabled"])
-        labels = {
-            "check": "verifica",
-            "build": "compilazione",
-            "install": "installazione",
-            "launch": "avvio",
-            "everything": "compilazione, installazione e avvio",
-        }
-        self.deploy_var.set(f"In corso: {labels[action]}...")
+        if action == "install_file":
+            self.deploy_var.set("In corso: installazione da file...")
+        else:
+            self.deploy_var.set(f"In corso: {ACTION_LABELS[mode][action][1]}...")
 
         def emit(line):
             self.events.put(("log", line, None))
 
         def work():
             deployer = Deployer(settings, runner, emit)
+            if action == "install_file":
+                deployer.install_apk(apk_from_file(apk_path, os.path.join(dest_dir, "da-file")))
+                return action, None
+            if builds is not None:
+                pipeline = GitHubPipeline(deployer, builds, dest_dir, emit, lambda: runner.cancelled)
+                return action, getattr(pipeline, action)()
             return action, getattr(deployer, action)()
 
         self.run_in_thread("apk", work, self._deploy_done)
@@ -830,6 +1154,10 @@ class ControlPanel:
         action, value = result
         if action == "check":
             self._deploy_finished("pronto" if not value else f"{len(value)} problemi: vedi il log")
+            return
+        if action == "build" and value:
+            self._deploy_finished("APK pronto")
+            self.log(f"APK: {value}")
             return
         if action in ("launch", "everything"):
             token, port = value
