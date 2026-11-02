@@ -56,6 +56,7 @@ TOKEN_PARAM = "t"
 HTTP_TIMEOUT = 15.0
 STREAM_TIMEOUT = 10.0
 STREAM_RETRY_SECONDS = 2.0
+STREAM_RETRY_MAX_SECONDS = 10.0
 STATUS_INTERVAL_MS = 2000
 PUMP_INTERVAL_MS = 30
 # Massimo lavoro per giro della coda: con buildozer -v arrivano migliaia di righe e Tk deve restare reattivo.
@@ -66,6 +67,8 @@ PROGRESS_STEP_BYTES = 2 * 1024 * 1024
 MAX_PART_BYTES = 20 * 1024 * 1024
 MEDIA_DIRS = (("photos", "Foto"), ("videos", "Video"), ("audio", "Audio"))
 VIDEO_MIN_SIZE = (640, 480)
+# Dimensione richiesta dal riquadro video: piccola, così su schermi bassi lo spazio va prima ai pannelli laterali.
+VIDEO_REQUEST_SIZE = (480, 270)
 LOG_MAX_LINES = 4000
 
 APP_PACKAGE = "org.maikbarre.gioco"
@@ -230,6 +233,178 @@ def iter_mjpeg(stream, stop=None):
         if data is None:
             return
         yield data
+
+
+def fit_size(source: tuple[int, int], box: tuple[int, int], rotation: int) -> tuple[int, int]:
+    """Dimensione, prima della rotazione, che fa stare il fotogramma ruotato nel riquadro senza deformarlo."""
+    source_w, source_h = source
+    box_w, box_h = box
+    if min(source_w, source_h, box_w, box_h) <= 0:
+        return max(source_w, 1), max(source_h, 1)
+    turned = rotation % 180 == 90
+    rotated_w, rotated_h = (source_h, source_w) if turned else (source_w, source_h)
+    scale = min(box_w / rotated_w, box_h / rotated_h)
+    return max(1, round(source_w * scale)), max(1, round(source_h * scale))
+
+
+def decode_frame(jpeg: bytes, rotation: int, box: tuple[int, int]):
+    """JPEG dello stream -> immagine Pillow ruotata e adattata al riquadro. Richiede Pillow."""
+    image = Image.open(io.BytesIO(jpeg))
+    target = fit_size(image.size, box, rotation)
+    if target[0] < image.size[0]:
+        # draft fa decodificare a libjpeg direttamente a 1/2, 1/4 o 1/8: molta meno CPU sui fotogrammi grandi.
+        image.draft("RGB", target)
+    image = image.convert("RGB")
+    if image.size != target:
+        image = image.resize(target, _RESAMPLE_BILINEAR)
+    turn = rotation % 360
+    if turn in _TRANSPOSE_CLOCKWISE:
+        image = image.transpose(_TRANSPOSE_CLOCKWISE[turn])
+    elif turn:
+        # Lo stream esce con l'orientamento del sensore: Pillow ruota in senso antiorario, quindi il segno è negativo.
+        image = image.rotate(-turn, expand=True)
+    return image
+
+
+if Image is not None:
+    _RESAMPLE_BILINEAR = getattr(getattr(Image, "Resampling", Image), "BILINEAR")
+    _TRANSPOSE = getattr(Image, "Transpose", Image)
+    # Rotazioni orarie esatte: transpose non interpola ed è molto più veloce di rotate.
+    _TRANSPOSE_CLOCKWISE = {90: _TRANSPOSE.ROTATE_270, 180: _TRANSPOSE.ROTATE_180, 270: _TRANSPOSE.ROTATE_90}
+else:
+    _RESAMPLE_BILINEAR = None
+    _TRANSPOSE_CLOCKWISE = {}
+
+
+class FrameSink:
+    """Ponte tra il thread dello stream e Tk: decodifica e conserva solo l'ultimo fotogramma."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._latest = None
+        self._decoded = 0
+        self.bad_frames = 0
+        # Scritti dal thread Tk, letti dal thread dello stream: valori semplici, non widget.
+        self.box: tuple[int, int] = VIDEO_MIN_SIZE
+        self.rotation = 0
+
+    def push(self, jpeg: bytes) -> str | None:
+        """Decodifica un JPEG. Restituisce il motivo se il fotogramma è illeggibile e va scartato."""
+        try:
+            image = decode_frame(jpeg, self.rotation, self.box)
+        except Exception as exc:
+            # Pillow solleva tipi diversi (OSError, ValueError, SyntaxError...) per i JPEG troncati o corrotti.
+            with self._lock:
+                self.bad_frames += 1
+            return f"{type(exc).__name__}: {exc}"
+        with self._lock:
+            self._latest = image
+            self._decoded += 1
+        return None
+
+    def take(self):
+        with self._lock:
+            image, self._latest = self._latest, None
+        return image
+
+    def take_count(self) -> int:
+        with self._lock:
+            count, self._decoded = self._decoded, 0
+        return count
+
+    def reset(self) -> None:
+        with self._lock:
+            self._latest = None
+            self._decoded = 0
+            self.bad_frames = 0
+
+
+class StreamWorker:
+    """Legge /stream.mjpg in un thread suo e si ricollega da solo. Parla con l'esterno solo via callback."""
+
+    def __init__(
+        self,
+        client: PhoneClient,
+        on_frame: Callable[[bytes], None],
+        on_event: Callable[[str], None],
+        on_state: Callable[[bool], None] | None = None,
+        retry_seconds: float = STREAM_RETRY_SECONDS,
+        max_retry_seconds: float = STREAM_RETRY_MAX_SECONDS,
+    ) -> None:
+        self._client = client
+        self._on_frame = on_frame
+        self._on_event = on_event
+        self._on_state = on_state or (lambda alive: None)
+        self._retry = retry_seconds
+        self._max_retry = max_retry_seconds
+        self._stop = threading.Event()
+        self._lock = threading.Lock()
+        self._response = None
+        self._thread: threading.Thread | None = None
+
+    @property
+    def stopped(self) -> bool:
+        return self._stop.is_set()
+
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self._run, name="rete-stream", daemon=True)
+        self._thread.start()
+
+    def stop(self, wait: float = 0.0) -> None:
+        self._stop.set()
+        with self._lock:
+            response, self._response = self._response, None
+        if response is not None:
+            # Chiudere la risposta sblocca la readline del thread dello stream.
+            try:
+                response.close()
+            except Exception:
+                pass
+        if wait and self._thread is not None and self._thread is not threading.current_thread():
+            self._thread.join(wait)
+
+    def _run(self) -> None:
+        delay = self._retry
+        failing = False
+        ever_connected = False
+        while not self._stop.is_set():
+            response = None
+            try:
+                response = self._client.open_stream()
+                with self._lock:
+                    if self._stop.is_set():
+                        response.close()
+                        break
+                    self._response = response
+                self._on_event("Stream ripristinato" if failing else "Stream collegato")
+                self._on_state(True)
+                failing = False
+                ever_connected = True
+                delay = self._retry
+                with response:
+                    for jpeg in iter_mjpeg(response, self._stop):
+                        self._on_frame(jpeg)
+                if not self._stop.is_set():
+                    self._on_event("Stream chiuso dal telefono, riprovo")
+                    self._on_state(False)
+            except Exception as exc:
+                if self._stop.is_set():
+                    break
+                if not failing:
+                    # Solo il primo errore va nel log: con il telefono spento si riproverebbe all'infinito.
+                    self._on_event(f"Stream interrotto: {exc}. Riprovo in automatico")
+                    self._on_state(False)
+                failing = True
+            finally:
+                with self._lock:
+                    if self._response is response:
+                        self._response = None
+            if self._stop.wait(delay):
+                break
+            if failing:
+                delay = min(delay * 2, self._max_retry)
+        if ever_connected:
+            self._on_state(False)
 
 
 def format_timestamp(value: Any) -> str:
@@ -788,15 +963,12 @@ class ControlPanel:
         # Cambia a ogni connessione e disconnessione: le risposte di una sessione vecchia vengono scartate.
         self._session = 0
         self.status = {}
-        self.rotation = 0
-        self._stream_stop = None
-        self._stream_response = None
-        self._frame_lock = threading.Lock()
-        self._latest_frame = None
-        self._frames = 0
+        self._sink = FrameSink()
+        self._stream: StreamWorker | None = None
         self._fps_since = time.monotonic()
         self._photo_image = None
-        self._video_box = VIDEO_MIN_SIZE
+        self._photo_size: tuple[int, int] | None = None
+        self._bad_frames_logged = 0
         self._status_job = None
         self._status_busy = False
         self._host = detect_host()
@@ -906,9 +1078,16 @@ class ControlPanel:
         video_frame.grid(row=0, column=0, sticky="nsew")
         video_frame.columnconfigure(0, weight=1)
         video_frame.rowconfigure(0, weight=1)
-        self.video_label = tk.Label(video_frame, background="black", foreground="#cccccc", text="Non connesso")
-        self.video_label.grid(row=0, column=0, sticky="nsew")
-        self.video_label.bind("<Configure>", self._on_video_resize)
+        # Contenitore a dimensione fissa e etichetta piazzata dentro: l'immagine non può più far crescere la finestra.
+        self.video_area = tk.Frame(video_frame, background="black", width=VIDEO_REQUEST_SIZE[0], height=VIDEO_REQUEST_SIZE[1])
+        self.video_area.grid(row=0, column=0, sticky="nsew")
+        self.video_area.grid_propagate(False)
+        self.video_label = tk.Label(
+            self.video_area, background="black", foreground="#cccccc", text="Non connesso", borderwidth=0,
+            highlightthickness=0,
+        )
+        self.video_label.place(relx=0, rely=0, relwidth=1, relheight=1)
+        self.video_area.bind("<Configure>", self._on_video_resize)
         self.fps_var = tk.StringVar(value="")
         ttk.Label(video_frame, textvariable=self.fps_var).grid(row=1, column=0, sticky="w")
 
@@ -997,9 +1176,16 @@ class ControlPanel:
         for widget in self.command_buttons + (self.refresh_button, self.download_button):
             widget.state(["!disabled"] if connected else ["disabled"])
 
+    @property
+    def rotation(self) -> int:
+        return self._sink.rotation
+
+    @rotation.setter
+    def rotation(self, value: int) -> None:
+        self._sink.rotation = value
+
     def _on_video_resize(self, event):
-        # Dimensione letta dal thread dello stream: è una tupla Python, non un widget.
-        self._video_box = (max(event.width, 1), max(event.height, 1))
+        self._sink.box = (max(event.width, 1), max(event.height, 1))
 
     def _read_fields(self):
         host = self.host_var.get().strip()
@@ -1079,18 +1265,23 @@ class ControlPanel:
         self.log(f"errore nell'interfaccia: {last}")
 
     def _show_latest_frame(self):
-        with self._frame_lock:
-            frame, self._latest_frame = self._latest_frame, None
+        frame = self._sink.take()
         if frame is not None and ImageTk is not None:
-            self._photo_image = ImageTk.PhotoImage(frame)
-            self.video_label.configure(image=self._photo_image, text="")
+            if self._photo_image is not None and self._photo_size == frame.size:
+                # Stessa dimensione: si riscrivono i pixel invece di creare una nuova immagine Tk a ogni fotogramma.
+                self._photo_image.paste(frame)
+            else:
+                self._photo_image = ImageTk.PhotoImage(frame)
+                self._photo_size = frame.size
+                self.video_label.configure(image=self._photo_image, text="")
         now = time.monotonic()
         if now - self._fps_since >= FPS_INTERVAL_SECONDS:
-            fps = self._frames / (now - self._fps_since)
-            self._frames = 0
+            fps = self._sink.take_count() / (now - self._fps_since)
             self._fps_since = now
-            if self._stream_stop is not None and not self._stream_stop.is_set():
-                self.fps_var.set(f"{fps:.1f} fotogrammi/s, rotazione {self.rotation}°")
+            if self._stream is not None and not self._stream.stopped:
+                bad = self._sink.bad_frames
+                bad_text = f", {bad} illeggibili scartati" if bad else ""
+                self.fps_var.set(f"{fps:.1f} fotogrammi/s, rotazione {self.rotation}°{bad_text}")
 
     def toggle_connection(self):
         if self.client is not None:
@@ -1127,15 +1318,7 @@ class ControlPanel:
     def disconnect(self):
         self._session += 1
         self._status_busy = False
-        if self._stream_stop is not None:
-            self._stream_stop.set()
-        response = self._stream_response
-        if response is not None:
-            # Chiudere la risposta sblocca la readline del thread dello stream.
-            try:
-                response.close()
-            except Exception:
-                pass
+        self._stop_stream()
         if self._status_job is not None:
             self.root.after_cancel(self._status_job)
             self._status_job = None
@@ -1143,6 +1326,7 @@ class ControlPanel:
         self._set_connected(False)
         self.video_label.configure(image="", text="Non connesso")
         self._photo_image = None
+        self._photo_size = None
         self.fps_var.set("")
         self.log("Disconnesso")
 
@@ -1410,10 +1594,32 @@ class ControlPanel:
         if Image is None or ImageTk is None:
             self.video_label.configure(text="Pillow non installato: usa 'Apri nel browser'")
             return
-        stop = threading.Event()
-        self._stream_stop = stop
-        client = self.client
-        threading.Thread(target=self._stream_loop, args=(client, stop), name="rete-stream", daemon=True).start()
+        self._stop_stream()
+        self._sink.reset()
+        self._bad_frames_logged = 0
+        self.video_label.configure(text="Stream in arrivo...")
+        session = self._session
+
+        def on_event(text: str) -> None:
+            self.ui_call(self._stream_event, session, text)
+
+        self._stream = StreamWorker(self.client, self._on_stream_frame, on_event)
+        self._stream.start()
+
+    def _stop_stream(self) -> None:
+        if self._stream is not None:
+            self._stream.stop()
+            self._stream = None
+
+    def _stream_event(self, session: int, text: str) -> None:
+        if session == self._session:
+            self.log(text)
+
+    def _on_stream_frame(self, jpeg: bytes) -> None:
+        """Thread dello stream: decodifica e basta. Un fotogramma illeggibile si scarta senza chiudere lo stream."""
+        problem = self._sink.push(jpeg)
+        if problem is not None and self._sink.bad_frames in (1, 10, 100, 1000):
+            self.log_from_thread(f"Fotogramma illeggibile scartato ({self._sink.bad_frames} in tutto): {problem}")
 
     def close(self):
         if self._runner is not None:
@@ -1422,39 +1628,6 @@ class ControlPanel:
             self.disconnect()
         self._closing = True
         self.root.destroy()
-
-    # --- thread di rete: niente widget, solo coda e frame condiviso -------------------------------
-
-    def _stream_loop(self, client: PhoneClient, stop: threading.Event):
-        while not stop.is_set():
-            try:
-                response = client.open_stream()
-                self._stream_response = response
-                self.log_from_thread("Stream collegato")
-                with response:
-                    for jpeg in iter_mjpeg(response, stop):
-                        self._decode(jpeg)
-                if not stop.is_set():
-                    self.log_from_thread("Stream chiuso dal telefono, riprovo")
-            except Exception as exc:
-                if stop.is_set():
-                    return
-                self.log_from_thread(f"Stream interrotto: {exc}. Riprovo tra {STREAM_RETRY_SECONDS:.0f} s")
-            finally:
-                self._stream_response = None
-            stop.wait(STREAM_RETRY_SECONDS)
-
-    def _decode(self, jpeg: bytes):
-        image = Image.open(io.BytesIO(jpeg))
-        image.load()
-        if self.rotation:
-            # Lo stream esce con l'orientamento del sensore: Pillow ruota in senso antiorario, quindi il segno è negativo.
-            image = image.rotate(-self.rotation, expand=True)
-        width, height = self._video_box
-        image.thumbnail((width, height))
-        with self._frame_lock:
-            self._latest_frame = image
-        self._frames += 1
 
 
 def main():

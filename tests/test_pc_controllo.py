@@ -1,5 +1,6 @@
 import io
 import threading
+import time
 
 import pytest
 
@@ -248,3 +249,123 @@ def test_format_timestamp_invalid(value):
 
 def test_format_timestamp_valid():
     assert len(format_timestamp(1_700_000_000)) == len("2023-11-14 22:13")
+
+
+# --- stream: geometria, decodifica e thread -------------------------------------------------------
+
+from pc_controllo import FrameSink, StreamWorker, decode_frame, fit_size  # noqa: E402
+
+
+def jpeg_bytes(size=(640, 480), color=(200, 30, 30)):
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", size, color).save(buffer, "JPEG", quality=80)
+    return buffer.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("source", "box", "rotation", "expected"),
+    [
+        ((640, 480), (640, 480), 0, (640, 480)),
+        ((1920, 1080), (960, 540), 0, (960, 540)),
+        ((1920, 1080), (540, 960), 90, (960, 540)),
+        ((640, 480), (1280, 960), 0, (1280, 960)),
+        ((640, 480), (300, 1000), 270, (400, 300)),
+        ((640, 480), (0, 100), 0, (640, 480)),
+    ],
+)
+def test_fit_size(source, box, rotation, expected):
+    assert fit_size(source, box, rotation) == expected
+
+
+@pytest.mark.parametrize(("rotation", "expected"), [(0, (400, 300)), (90, (225, 300)), (180, (400, 300)), (270, (225, 300))])
+def test_decode_frame_fits_box_after_rotation(rotation, expected):
+    image = decode_frame(jpeg_bytes((1600, 1200)), rotation, (400, 300))
+    assert image.size == expected
+    assert image.mode == "RGB"
+
+
+def test_decode_frame_rotates_clockwise():
+    from PIL import Image
+
+    source = Image.new("RGB", (64, 32), (0, 0, 0))
+    source.paste((255, 255, 255), (0, 0, 32, 32))
+    buffer = io.BytesIO()
+    source.save(buffer, "JPEG", quality=95)
+    rotated = decode_frame(buffer.getvalue(), 90, (32, 64))
+    assert rotated.size == (32, 64)
+    assert rotated.getpixel((16, 8))[0] > 200
+    assert rotated.getpixel((16, 56))[0] < 50
+
+
+def test_frame_sink_keeps_latest_and_counts():
+    sink = FrameSink()
+    sink.box = (320, 240)
+    assert sink.push(jpeg_bytes(color=(10, 10, 10))) is None
+    assert sink.push(jpeg_bytes(color=(250, 250, 250))) is None
+    image = sink.take()
+    assert image.getpixel((5, 5))[0] > 200
+    assert sink.take() is None
+    assert sink.take_count() == 2
+    assert sink.take_count() == 0
+
+
+def test_frame_sink_discards_corrupt_jpeg():
+    sink = FrameSink()
+    problem = sink.push(b"\xff\xd8 non e' un jpeg")
+    assert problem is not None
+    assert sink.bad_frames == 1
+    assert sink.take() is None
+
+
+class ClosableStream(io.BytesIO):
+    pass
+
+
+class FakeStreamClient:
+    def __init__(self, scripts):
+        self.scripts = list(scripts)
+        self.opened = 0
+
+    def open_stream(self):
+        self.opened += 1
+        if not self.scripts:
+            raise ApiError(0, "rete", "telefono non raggiungibile: spento")
+        item = self.scripts.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return ClosableStream(item)
+
+
+def mjpeg(*frames):
+    return b"".join(b"--gioco-frame\r\nContent-Length: %d\r\n\r\n%s\r\n" % (len(f), f) for f in frames)
+
+
+def test_stream_worker_delivers_frames_and_logs_failures_once():
+    client = FakeStreamClient([mjpeg(b"A", b"B"), ApiError(0, "rete", "giu"), mjpeg(b"C")])
+    frames, events, states = [], [], []
+    worker = StreamWorker(client, frames.append, events.append, states.append, retry_seconds=0.01, max_retry_seconds=0.02)
+    worker.start()
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline and client.opened < 6:
+        time.sleep(0.01)
+    worker.stop(wait=2)
+    assert frames == [b"A", b"B", b"C"]
+    assert events[0] == "Stream collegato"
+    assert events[1] == "Stream chiuso dal telefono, riprovo"
+    assert events[2].startswith("Stream interrotto: giu")
+    assert events[3] == "Stream ripristinato"
+    assert sum(1 for event in events if event.startswith("Stream interrotto")) == 2
+    assert states[0] is True and states[-1] is False
+
+
+def test_stream_worker_stop_is_prompt_while_waiting():
+    client = FakeStreamClient([])
+    worker = StreamWorker(client, lambda f: None, lambda e: None, retry_seconds=30)
+    worker.start()
+    time.sleep(0.1)
+    started = time.monotonic()
+    worker.stop(wait=2)
+    assert time.monotonic() - started < 1
+    assert worker.stopped
