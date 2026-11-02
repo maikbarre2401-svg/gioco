@@ -52,6 +52,9 @@ class FakeGitHub:
         self.latest_any = None
         self.zip_bytes = apk_zip()
         self.require_token = True
+        # Quante richieste all'elenco delle compilazioni falliscono con 502 prima di rispondere.
+        self.flaky_runs = 0
+        self.garbage_runs = False
         outer = self
 
         class Api(BaseHTTPRequestHandler):
@@ -71,7 +74,16 @@ class FakeGitHub:
                 query = parse_qs(parts.query)
                 outer.requests.append((parts.path, query, self.headers.get("Authorization")))
                 if parts.path == f"/repos/{REPO}/actions/workflows/camera-apk.yml/runs":
-                    if query.get("branch") != [BRANCH]:
+                    if outer.flaky_runs > 0:
+                        outer.flaky_runs -= 1
+                        self._json(502, {"message": "Bad Gateway"})
+                    elif outer.garbage_runs:
+                        body = b"<html>manutenzione</html>"
+                        self.send_response(200)
+                        self.send_header("Content-Length", str(len(body)))
+                        self.end_headers()
+                        self.wfile.write(body)
+                    elif query.get("branch") != [BRANCH]:
                         self._json(200, {"workflow_runs": []})
                     elif query.get("status") == ["success"]:
                         self._json(200, {"workflow_runs": outer.runs})
@@ -152,8 +164,9 @@ def github():
     fake.close()
 
 
-def builds(fake, token=TOKEN, repo=REPO):
-    return GitHubBuilds(repo, BRANCH, token, api=fake.api_base)
+def builds(fake, token=TOKEN, repo=REPO, sleeps=None):
+    sleep = sleeps.append if sleeps is not None else (lambda seconds: None)
+    return GitHubBuilds(repo, BRANCH, token, api=fake.api_base, sleep=sleep)
 
 
 def test_latest_build_picks_newest_run_with_apk(github):
@@ -347,3 +360,41 @@ def test_failed_download_leaves_no_archive(github, tmp_path):
         client.download_apk(client.latest_build(), str(tmp_path))
     assert not (tmp_path / "201.zip.part").exists()
     assert [p.name for p in (tmp_path / "201").iterdir()] == []
+
+
+def test_temporary_github_errors_are_retried(github):
+    github.add_run(40, [(400, f"{ARTIFACT_PREFIX}-surface-abc", False)])
+    github.flaky_runs = 2
+    sleeps = []
+    assert builds(github, sleeps=sleeps).latest_build()["run_id"] == 40
+    assert sleeps == [1.0, 2.0]
+
+
+def test_github_gives_up_after_retries(github):
+    github.flaky_runs = 10
+    sleeps = []
+    with pytest.raises(DeployError, match="GitHub ha risposto 502") as error:
+        builds(github, sleeps=sleeps).latest_build()
+    assert error.value.retryable
+    assert len(sleeps) == 2
+
+
+def test_client_errors_are_not_retried(github):
+    sleeps = []
+    with pytest.raises(DeployError, match="non trovato su GitHub"):
+        builds(github, repo="nessuno/nulla", sleeps=sleeps).latest_build()
+    assert sleeps == []
+
+
+def test_unreachable_github_is_retryable(tmp_path):
+    sleeps = []
+    unreachable = GitHubBuilds(REPO, BRANCH, TOKEN, api="http://127.0.0.1:9", sleep=sleeps.append)
+    with pytest.raises(DeployError, match="GitHub non raggiungibile"):
+        unreachable.latest_build()
+    assert len(sleeps) == 2
+
+
+def test_non_json_github_answer_is_clear(github):
+    github.garbage_runs = True
+    with pytest.raises(DeployError, match="non è JSON"):
+        builds(github).latest_build()

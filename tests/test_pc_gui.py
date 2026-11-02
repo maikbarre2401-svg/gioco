@@ -229,3 +229,124 @@ def test_settings_persist_between_runs(tmp_path, monkeypatch):
         assert third.github_token_var.get() == "segreto"
     finally:
         third.close()
+
+
+class FakeEvent:
+    def __init__(self, widget, state=0):
+        self.widget = widget
+        self.state = state
+
+
+def entries(widget):
+    for child in widget.winfo_children():
+        if isinstance(child, pc_controllo.ttk.Entry):
+            yield child
+        yield from entries(child)
+
+
+def test_every_shortcut_is_bound(panel):
+    for shortcut in pc_controllo.SHORTCUTS.values():
+        for sequence in pc_controllo.shortcut_sequences(shortcut):
+            assert panel.root.bind(sequence), sequence
+
+
+def test_shortcut_sequences_cover_caps_lock():
+    assert pc_controllo.shortcut_sequences(pc_controllo.Shortcut("Control-f", "Ctrl+F")) == ["<Control-f>", "<Control-F>"]
+    assert pc_controllo.shortcut_sequences(pc_controllo.Shortcut("F5", "F5")) == ["<F5>"]
+    assert pc_controllo.shortcut_sequences(pc_controllo.Shortcut("Escape", "Esc")) == ["<Escape>"]
+
+
+def test_editing_shortcuts_do_not_fire_while_typing(panel):
+    calls = []
+    token_entry = next(entry for entry in entries(panel.root) if str(entry.cget("textvariable")) == str(panel.token_var))
+    unsafe = panel._shortcut_handler(pc_controllo.SHORTCUTS["photo"], lambda: calls.append("foto"))
+    safe = panel._shortcut_handler(pc_controllo.SHORTCUTS["save_settings"], lambda: calls.append("salva"))
+    assert unsafe(FakeEvent(token_entry)) is None
+    assert safe(FakeEvent(token_entry)) == "break"
+    assert unsafe(FakeEvent(panel.files_tree)) == "break"
+    assert unsafe(FakeEvent(panel.dir_box)) == "break"
+    assert unsafe(FakeEvent(panel.log_text)) == "break"
+    assert calls == ["salva", "foto", "foto", "foto"]
+
+
+def test_shortcut_ignores_disabled_command(panel):
+    seen = []
+    panel.client = pc_controllo.PhoneClient("127.0.0.1", 9, "t")
+    panel._refresh_command_buttons()
+    panel.photo_button.configure(command=lambda: seen.append("foto"))
+    panel._busy_commands.add("foto")
+    panel._refresh_command_buttons()
+    panel._shortcut_actions()["photo"]()
+    assert seen == []
+    panel._busy_commands.clear()
+    panel._refresh_command_buttons()
+    panel._shortcut_actions()["photo"]()
+    assert seen == ["foto"]
+
+
+def test_ctrl_return_in_field_is_left_to_shortcut(panel, monkeypatch):
+    calls = []
+    monkeypatch.setattr(panel, "toggle_connection", lambda: calls.append("connetti"))
+    panel._on_field_return(FakeEvent(panel.host_box, state=0x4))
+    assert calls == []
+    panel._on_field_return(FakeEvent(panel.host_box))
+    assert calls == ["connetti"]
+
+
+def test_escape_cancels_download_first_and_asks_before_stopping_deploy(panel, monkeypatch):
+    asked = []
+    monkeypatch.setattr(pc_controllo.messagebox, "askyesno", lambda *args, **kwargs: asked.append(args) or False)
+    batch = pc_controllo.DownloadBatch(FakeDownloadClient(), [], lambda *args: None, lambda text: None)
+    panel._download_batch = batch
+    panel._runner = pc_controllo.ProcessRunner()
+    panel.cancel_current()
+    assert batch.cancelled and asked == [] and not panel._runner.cancelled
+    panel._download_batch = None
+    panel.cancel_current()
+    assert len(asked) == 1 and not panel._runner.cancelled
+    monkeypatch.setattr(pc_controllo.messagebox, "askyesno", lambda *args, **kwargs: True)
+    panel.cancel_current()
+    assert panel._runner.cancelled
+    panel._runner = None
+
+
+def test_menu_mirrors_buttons(panel):
+    panel.client = pc_controllo.PhoneClient("127.0.0.1", 9, "t")
+    panel._set_connected(True)
+    panel.status = {"mode": "video"}
+    panel._refresh_command_buttons()
+    panel.video_button.configure(text="Ferma video")
+    phone = panel.menubar.nametowidget(panel.menubar.entrycget(1, "menu"))
+    # Il postcommand è ciò che Tk esegue appena prima di aprire il menu.
+    panel.root.tk.call(phone.cget("postcommand"))
+    labels = {
+        phone.entrycget(i, "label"): str(phone.entrycget(i, "state"))
+        for i in range(phone.index("end") + 1)
+        if phone.type(i) == "command"
+    }
+    assert labels["Ferma video"] == "normal"
+    assert labels["Avvia audio"] == "disabled"
+    assert labels["Disconnetti"] == "normal"
+
+
+def test_log_can_be_cleared_and_exported(panel, tmp_path, monkeypatch):
+    panel.log("riga da esportare")
+    target = tmp_path / "log.txt"
+    monkeypatch.setattr(pc_controllo.filedialog, "asksaveasfilename", lambda **kwargs: str(target))
+    panel.export_log()
+    assert "riga da esportare" in target.read_text(encoding="utf-8")
+    panel.clear_log()
+    assert log_text(panel).strip() == ""
+
+
+def test_about_lists_versions_and_settings_path(panel):
+    text = panel.about_text()
+    assert pc_controllo.__version__ in text
+    assert panel.settings_store.path in text
+    assert "Python" in text and "Tk" in text
+
+
+def test_close_leaves_no_pending_after_jobs(panel):
+    panel._schedule_status(60000)
+    panel.close()
+    assert panel.root.tk.call("after", "info") in ("", ())

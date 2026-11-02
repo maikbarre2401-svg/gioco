@@ -12,6 +12,8 @@ del telefono, apre adb forward e si connette da sola.
 
 from __future__ import annotations
 
+__version__ = "2.0.0"
+
 import io
 import json
 import os
@@ -21,6 +23,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import traceback
@@ -36,7 +39,7 @@ from typing import Any
 
 try:
     import tkinter as tk
-    from tkinter import filedialog, ttk
+    from tkinter import filedialog, messagebox, ttk
 except ImportError:
     # La parte di rete resta importabile (e testabile) anche dove Tk non è installato.
     tk = None
@@ -97,6 +100,10 @@ WORKFLOW_FILE = "camera-apk.yml"
 ARTIFACT_PREFIX = "gioco-apk"
 RUNS_TO_SCAN = 10
 GITHUB_TIMEOUT = 30.0
+GITHUB_RETRIES = 2
+GITHUB_RETRY_DELAY = 1.0
+# Dopo terminate() un processo che non esce entro questo tempo viene chiuso con kill().
+PROCESS_KILL_SECONDS = 5.0
 # Riga che main.py scrive all'avvio del server; Kivy la riformatta come "[INFO   ] [Stream      ] token=… porta=…".
 SERVER_LINE = re.compile(r"\] token=([A-Za-z0-9_-]+) porta=(\d+)")
 
@@ -772,7 +779,11 @@ def valid_geometry(geometry: Any, screen_width: int, screen_height: int) -> str 
 
 
 class DeployError(Exception):
-    pass
+    """Errore di compilazione, installazione o GitHub. retryable indica un problema temporaneo (rete, 5xx)."""
+
+    def __init__(self, message: str, retryable: bool = False):
+        super().__init__(message)
+        self.retryable = retryable
 
 
 # Testo del pulsante e descrizione dell'attività in corso, per modalità.
@@ -907,6 +918,8 @@ class ProcessRunner:
             )
         except FileNotFoundError:
             raise DeployError(f"comando non trovato: {args[0]}") from None
+        except OSError as exc:
+            raise DeployError(f"impossibile avviare {args[0]}: {exc}") from None
         with self._lock:
             self._process = process
         tail = []
@@ -929,8 +942,23 @@ class ProcessRunner:
         self.cancelled = True
         with self._lock:
             process = self._process
-        if process is not None and process.poll() is None:
+        if process is None or process.poll() is not None:
+            return
+        try:
             process.terminate()
+        except OSError:
+            return
+
+        def kill_if_stuck() -> None:
+            try:
+                process.wait(PROCESS_KILL_SECONDS)
+            except subprocess.TimeoutExpired:
+                try:
+                    process.kill()
+                except OSError:
+                    pass
+
+        threading.Thread(target=kill_if_stuck, name="kill-processo", daemon=True).start()
 
 
 class Deployer:
@@ -1016,8 +1044,17 @@ class Deployer:
             raise DeployError("avvio rifiutato:\n" + "\n".join(lines))
         deadline = self._clock() + TOKEN_WAIT_SECONDS
         found = None
+        reported_error = False
         while found is None:
-            found = parse_server_line("\n".join(self.adb("logcat", "-d", "-s", "python:I", label="lettura del log")))
+            try:
+                lines = self.adb("logcat", "-d", "-s", "python:I", label="lettura del log")
+            except DeployError as exc:
+                # adb a volte risponde 'device offline' per un attimo mentre l'app parte: si riprova fino alla scadenza.
+                if not reported_error:
+                    self._log(f"lettura del log non riuscita, riprovo: {exc}")
+                    reported_error = True
+                lines = []
+            found = parse_server_line("\n".join(lines))
             if found is None:
                 if self._clock() >= deadline:
                     raise DeployError(
@@ -1092,7 +1129,16 @@ def apk_from_file(path: str, work_dir: str) -> str:
 class GitHubBuilds:
     """APK compilati da GitHub Actions (workflow camera-apk.yml). Blocca: solo da un thread di lavoro."""
 
-    def __init__(self, repo: str, branch: str, token: str, workflow: str = WORKFLOW_FILE, api: str = GITHUB_API):
+    def __init__(
+        self,
+        repo: str,
+        branch: str,
+        token: str,
+        workflow: str = WORKFLOW_FILE,
+        api: str = GITHUB_API,
+        sleep: Callable[[float], None] = time.sleep,
+    ):
+        self._sleep = sleep
         if repo.count("/") != 1 or not all(repo.split("/")):
             raise DeployError(f"repository nella forma proprietario/nome, ricevuto: {repo!r}")
         self.repo = repo
@@ -1128,13 +1174,34 @@ class GitHubBuilds:
                 raise DeployError("GitHub nega l'accesso: il token deve avere il permesso Actions: Read") from None
             if exc.code == 404:
                 raise DeployError(f"non trovato su GitHub: {self.repo}, branch {self.branch}, {self.workflow}") from None
-            raise DeployError(f"GitHub ha risposto {exc.code}: {body[:200]}") from None
+            raise DeployError(f"GitHub ha risposto {exc.code}: {body[:200]}", retryable=exc.code >= 500) from None
         except (urllib.error.URLError, OSError) as exc:
-            raise DeployError(f"GitHub non raggiungibile: {getattr(exc, 'reason', exc)}") from None
+            raise DeployError(f"GitHub non raggiungibile: {getattr(exc, 'reason', exc)}", retryable=True) from None
 
     def _json(self, url: str) -> dict:
-        with self._open(url) as response:
-            return json.loads(response.read().decode("utf-8"))
+        """Lettura dall'API di GitHub, ripetuta sugli errori temporanei (rete, 5xx) con attesa crescente."""
+        attempt = 0
+        while True:
+            try:
+                with self._open(url) as response:
+                    raw = response.read()
+                break
+            except DeployError as exc:
+                error = exc
+            except OSError as exc:
+                # La connessione può cadere anche a metà della risposta, dopo che _open è riuscita.
+                error = DeployError(f"GitHub non raggiungibile: {exc}", retryable=True)
+            if not error.retryable or attempt >= GITHUB_RETRIES:
+                raise error
+            attempt += 1
+            self._sleep(GITHUB_RETRY_DELAY * attempt)
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            raise DeployError("risposta di GitHub non valida: non è JSON") from None
+        if not isinstance(payload, dict):
+            raise DeployError("risposta di GitHub non valida: JSON inatteso")
+        return payload
 
     def _runs(self, **params) -> list[dict]:
         query = urllib.parse.urlencode({"branch": self.branch, **params})
@@ -1278,6 +1345,75 @@ class GitHubPipeline:
         return self.launch()
 
 
+@dataclass(frozen=True)
+class Shortcut:
+    key: str
+    accelerator: str
+    # Tk usa molti Ctrl+lettera per modificare il testo (Ctrl+F avanti di un carattere, Ctrl+T scambia...):
+    # mentre si scrive in un campo scattano solo le scorciatoie marcate come sicure.
+    text_safe: bool = False
+
+
+SHORTCUTS: dict[str, Shortcut] = {
+    "save_settings": Shortcut("Control-s", "Ctrl+S", True),
+    "export_log": Shortcut("Control-e", "Ctrl+E"),
+    "quit": Shortcut("Control-q", "Ctrl+Q", True),
+    "connect": Shortcut("Control-Return", "Ctrl+Invio", True),
+    "photo": Shortcut("Control-f", "Ctrl+F"),
+    "video": Shortcut("Control-r", "Ctrl+R"),
+    "audio": Shortcut("Control-m", "Ctrl+M"),
+    "torch": Shortcut("Control-t", "Ctrl+T"),
+    "snapshot": Shortcut("Control-i", "Ctrl+I"),
+    "browser": Shortcut("Control-b", "Ctrl+B"),
+    "refresh_files": Shortcut("F5", "F5", True),
+    "download": Shortcut("Control-d", "Ctrl+D"),
+    "clear_log": Shortcut("Control-l", "Ctrl+L"),
+    "cancel": Shortcut("Escape", "Esc", True),
+    "help": Shortcut("F1", "F1", True),
+}
+
+SHORTCUT_HELP = (
+    ("connect", "Connetti o disconnetti"),
+    ("photo", "Foto"),
+    ("video", "Avvia o ferma il video"),
+    ("audio", "Avvia o ferma l'audio"),
+    ("torch", "Torcia"),
+    ("snapshot", "Istantanea sul PC"),
+    ("browser", "Apri lo stream nel browser"),
+    ("refresh_files", "Aggiorna i file sul telefono"),
+    ("download", "Scarica i file selezionati"),
+    ("cancel", "Annulla il download in corso, o la compilazione dopo conferma"),
+    ("save_settings", "Salva le impostazioni"),
+    ("export_log", "Esporta il log"),
+    ("clear_log", "Pulisci il log"),
+    ("quit", "Esci"),
+    ("help", "Questo elenco"),
+)
+
+
+def shortcut_sequences(shortcut: Shortcut) -> list[str]:
+    """Con il Bloc Maiusc attivo Tk riceve la lettera maiuscola: si legano entrambe."""
+    sequences = [f"<{shortcut.key}>"]
+    modifier, _, letter = shortcut.key.rpartition("-")
+    if modifier and len(letter) == 1 and letter.isalpha():
+        sequences.append(f"<{modifier}-{letter.upper()}>")
+    return sequences
+
+
+def is_text_input(widget: Any) -> bool:
+    """True se il widget è un campo in cui si sta scrivendo (non disabilitato né in sola lettura)."""
+    if tk is None or not isinstance(widget, tk.Misc):
+        return False
+    try:
+        if isinstance(widget, ttk.Entry):
+            return bool(widget.instate(["!disabled", "!readonly"]))
+        if isinstance(widget, (tk.Entry, tk.Text, tk.Spinbox)):
+            return str(widget.cget("state")) == "normal"
+    except tk.TclError:
+        return False
+    return False
+
+
 class ControlPanel:
     """Finestra Tk. Regola: i thread di rete mettono messaggi in coda, solo _pump (thread Tk) tocca i widget."""
 
@@ -1311,7 +1447,7 @@ class ControlPanel:
         self._load_settings()
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.root.report_callback_exception = self._report_tk_exception
-        self.root.after(PUMP_INTERVAL_MS, self._pump)
+        self._pump_job: str | None = self.root.after(PUMP_INTERVAL_MS, self._pump)
 
     def _build(self):
         root = self.root
@@ -1412,8 +1548,8 @@ class ControlPanel:
             ttk.Label(connection, text=label).grid(row=0, column=column * 2, padx=(0, 4))
             entry = ttk.Entry(connection, textvariable=variable, width=width)
             entry.grid(row=0, column=column * 2 + 1, padx=(0, 12))
-            entry.bind("<Return>", lambda event: self.toggle_connection() if self.client is None else None)
-        self.host_box.bind("<Return>", lambda event: self.toggle_connection() if self.client is None else None)
+            entry.bind("<Return>", self._on_field_return)
+        self.host_box.bind("<Return>", self._on_field_return)
         self.connect_button = ttk.Button(connection, text="Connetti", command=self.toggle_connection)
         self.connect_button.grid(row=0, column=6, padx=(0, 8))
         ttk.Button(connection, text="Apri nel browser", command=self.open_browser).grid(row=0, column=7)
@@ -1528,8 +1664,119 @@ class ControlPanel:
 
         self.connection_state = "disconnected"
         self._set_connected(False)
+        self._build_menu()
+        self._bind_shortcuts()
         if Image is None or ImageTk is None:
             self.log("Pillow non installato: lo stream non si vede qui. pip install pillow, oppure 'Apri nel browser'.")
+
+    def _shortcut_actions(self) -> dict[str, Callable[[], Any]]:
+        return {
+            "save_settings": self.save_settings,
+            "export_log": self.export_log,
+            "quit": self.close,
+            "connect": lambda: self._invoke(self.connect_button),
+            "photo": lambda: self._invoke(self.photo_button),
+            "video": lambda: self._invoke(self.video_button),
+            "audio": lambda: self._invoke(self.audio_button),
+            "torch": lambda: self._invoke(self.torch_button),
+            "snapshot": lambda: self._invoke(self.snapshot_button),
+            "browser": self.open_browser,
+            "refresh_files": lambda: self._invoke(self.refresh_button),
+            "download": lambda: self._invoke(self.download_button),
+            "clear_log": self.clear_log,
+            "cancel": self.cancel_current,
+            "help": self.show_shortcuts,
+        }
+
+    def _build_menu(self) -> None:
+        actions = self._shortcut_actions()
+        menubar = tk.Menu(self.root)
+        # Voci di menu legate a un pulsante: prima di aprire il menu ne copiano testo e stato.
+        self._menu_mirrors: list[tuple[tk.Menu, int, ttk.Button]] = []
+
+        def add(menu: tk.Menu, label: str, name: str, button: ttk.Button | None = None) -> None:
+            menu.add_command(label=label, command=actions[name], accelerator=SHORTCUTS[name].accelerator)
+            if button is not None:
+                self._menu_mirrors.append((menu, menu.index("end"), button))
+
+        def mirror() -> None:
+            for menu, index, button in self._menu_mirrors:
+                menu.entryconfigure(
+                    index, label=str(button.cget("text")), state="normal" if button.instate(["!disabled"]) else "disabled"
+                )
+
+        file_menu = tk.Menu(menubar, tearoff=False)
+        add(file_menu, "Salva impostazioni", "save_settings")
+        add(file_menu, "Esporta log...", "export_log")
+        file_menu.add_separator()
+        add(file_menu, "Esci", "quit")
+        menubar.add_cascade(label="File", menu=file_menu)
+
+        phone = tk.Menu(menubar, tearoff=False, postcommand=mirror)
+        add(phone, "Connetti", "connect", self.connect_button)
+        phone.add_separator()
+        add(phone, "Foto", "photo", self.photo_button)
+        add(phone, "Avvia video", "video", self.video_button)
+        add(phone, "Avvia audio", "audio", self.audio_button)
+        add(phone, "Accendi torcia", "torch", self.torch_button)
+        add(phone, "Istantanea sul PC", "snapshot", self.snapshot_button)
+        phone.add_separator()
+        add(phone, "Apri nel browser", "browser")
+        add(phone, "Aggiorna i file", "refresh_files", self.refresh_button)
+        add(phone, "Scarica selezionati", "download", self.download_button)
+        menubar.add_cascade(label="Telefono", menu=phone)
+
+        apk = tk.Menu(menubar, tearoff=False, postcommand=mirror)
+        for action, button in self.action_buttons.items():
+            apk.add_command(label=str(button.cget("text")), command=button.invoke)
+            self._menu_mirrors.append((apk, apk.index("end"), button))
+        apk.add_command(label="Installa APK da file...", command=self.install_from_file)
+        self._menu_mirrors.append((apk, apk.index("end"), self.install_file_button))
+        apk.add_command(label="Pagina compilazioni", command=self.open_builds_page)
+        apk.add_separator()
+        apk.add_command(label="Interrompi", command=self.cancel_deploy)
+        self._menu_mirrors.append((apk, apk.index("end"), self.cancel_button))
+        menubar.add_cascade(label="APK", menu=apk)
+
+        view = tk.Menu(menubar, tearoff=False)
+        add(view, "Pulisci log", "clear_log")
+        menubar.add_cascade(label="Visualizza", menu=view)
+
+        help_menu = tk.Menu(menubar, tearoff=False)
+        add(help_menu, "Scorciatoie da tastiera", "help")
+        help_menu.add_command(label="Informazioni", command=self.show_about)
+        menubar.add_cascade(label="Aiuto", menu=help_menu)
+
+        self.root.configure(menu=menubar)
+        self.menubar = menubar
+
+    def _bind_shortcuts(self) -> None:
+        for name, action in self._shortcut_actions().items():
+            handler = self._shortcut_handler(SHORTCUTS[name], action)
+            for sequence in shortcut_sequences(SHORTCUTS[name]):
+                self.root.bind(sequence, handler)
+
+    def _shortcut_handler(self, shortcut: Shortcut, action: Callable[[], Any]) -> Callable[[Any], str | None]:
+        def handler(event: Any) -> str | None:
+            if not shortcut.text_safe and is_text_input(getattr(event, "widget", None)):
+                return None
+            action()
+            return "break"
+
+        return handler
+
+    def _on_field_return(self, event: Any) -> None:
+        # Tk passa anche Ctrl+Invio a un legame su <Return>: quello lo gestisce la scorciatoia, o si connetterebbe due volte.
+        if getattr(event, "state", 0) & 0x4:
+            return
+        if self.client is None:
+            self.toggle_connection()
+
+    @staticmethod
+    def _invoke(button: ttk.Button) -> None:
+        """Come un clic: un pulsante disabilitato (comando in corso, non connesso) non fa nulla."""
+        if button.instate(["!disabled"]):
+            button.invoke()
 
     # --- thread Tk ---------------------------------------------------------------------------------
 
@@ -1544,6 +1791,60 @@ class ControlPanel:
             self.log_text.delete("1.0", f"{lines - LOG_MAX_LINES}.0")
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
+
+    def clear_log(self) -> None:
+        self.log_text.configure(state="normal")
+        self.log_text.delete("1.0", "end")
+        self.log_text.configure(state="disabled")
+
+    def export_log(self) -> None:
+        dest = filedialog.asksaveasfilename(
+            initialfile=f"gioco_log_{datetime.now():%Y%m%d_%H%M%S}.txt", initialdir=self.download_dir,
+            defaultextension=".txt", filetypes=[("Testo", "*.txt")], title="Esporta il log",
+        )
+        if not dest:
+            return
+        try:
+            write_bytes_atomic(dest, self.log_text.get("1.0", "end-1c").encode("utf-8"))
+        except OSError as exc:
+            self.log(f"Log non esportato: {exc}")
+            return
+        self.log(f"Log esportato in {dest}")
+
+    def cancel_current(self) -> None:
+        """Esc: il download si annulla subito, la compilazione (che può durare minuti) solo dopo conferma."""
+        if self._download_batch is not None:
+            self.cancel_downloads()
+            return
+        if self._runner is not None and messagebox.askyesno(
+            "Interrompere?", "Interrompere l'operazione sull'APK in corso?", parent=self.root
+        ):
+            self.cancel_deploy()
+
+    def show_shortcuts(self) -> None:
+        lines = [f"{SHORTCUTS[name].accelerator}:  {text}" for name, text in SHORTCUT_HELP]
+        lines.append("")
+        lines.append("Mentre scrivi in un campo valgono solo Ctrl+S, Ctrl+Q, Ctrl+Invio, F1, F5 ed Esc.")
+        messagebox.showinfo("Scorciatoie da tastiera", "\n".join(lines), parent=self.root)
+
+    def about_text(self) -> str:
+        pillow = "non installato"
+        if Image is not None:
+            import PIL
+
+            pillow = getattr(PIL, "__version__", "?")
+        return "\n".join(
+            (
+                f"Gioco - controllo telefono {__version__}",
+                f"Python {platform.python_version()} ({sys.platform})",
+                f"Tk {self.root.tk.call('info', 'patchlevel')}",
+                f"Pillow {pillow}",
+                f"Impostazioni: {self.settings_store.path}",
+            )
+        )
+
+    def show_about(self) -> None:
+        messagebox.showinfo("Informazioni", self.about_text(), parent=self.root)
 
     def _set_connected(self, connected: bool):
         self.connect_button.configure(text="Disconnetti" if connected else "Connetti")
@@ -1751,7 +2052,7 @@ class ControlPanel:
             self._show_latest_frame()
         finally:
             if not self._closing:
-                self.root.after(PUMP_INTERVAL_MS, self._pump)
+                self._pump_job = self.root.after(PUMP_INTERVAL_MS, self._pump)
 
     def _log_exception(self, context: str) -> None:
         details = traceback.format_exc().strip().splitlines()
@@ -2284,6 +2585,13 @@ class ControlPanel:
             self.disconnect()
         self.save_settings(quiet=True)
         self._closing = True
+        # Un after rimasto in coda scatterebbe su un comando Tcl già cancellato da destroy().
+        for job in (self._pump_job, self._status_job):
+            if job is not None:
+                try:
+                    self.root.after_cancel(job)
+                except tk.TclError:
+                    pass
         self.root.destroy()
 
 

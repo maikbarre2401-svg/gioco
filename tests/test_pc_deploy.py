@@ -342,3 +342,56 @@ def test_real_processes_with_fake_buildozer_and_adb(tmp_path):
     adb_log = log_file.read_text().splitlines()
     assert adb_log[1] == f"install -r {project}/bin/gioco-0.3.0-arm64-v8a-debug.apk"
     assert adb_log[-1] == "forward tcp:8080 tcp:8080"
+
+
+def test_launch_tolerates_logcat_hiccups():
+    responses = ok_responses()
+    attempts = {"count": 0}
+
+    def flaky_logcat():
+        attempts["count"] += 1
+        if attempts["count"] <= 3:
+            return 1, ["error: device offline"]
+        return 0, [KIVY_LINE]
+
+    responses[5] = ("logcat -d", flaky_logcat)
+    deployer, run, logs, _ = make(responses=responses)
+    assert deployer.launch() == ("Ab3_x9Qz", 8080)
+    assert sum("lettura del log non riuscita" in line for line in logs) == 1
+    assert any(call[1:2] == ["forward"] for call in run.calls)
+
+
+def test_launch_gives_up_when_logcat_never_answers():
+    responses = ok_responses()
+    responses[5] = ("logcat -d", (1, ["error: no devices/emulators found"]))
+    deployer, _, _, clock = make(responses=responses)
+    with pytest.raises(DeployError, match="token non trovato"):
+        deployer.launch()
+    assert clock.now >= 30
+
+
+def test_process_runner_kills_process_that_ignores_terminate(monkeypatch):
+    monkeypatch.setattr("pc_controllo.PROCESS_KILL_SECONDS", 0.5)
+    runner = ProcessRunner()
+
+    def on_line(line):
+        if line == "via":
+            threading.Timer(0.1, runner.cancel).start()
+
+    script = (
+        "import signal, time\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "print('via', flush=True)\n"
+        "time.sleep(30)\n"
+    )
+    started = time.monotonic()
+    with pytest.raises(DeployError, match="interrotto"):
+        runner([sys.executable, "-c", script], on_line)
+    assert time.monotonic() - started < 10
+
+
+def test_process_runner_cancel_before_start():
+    runner = ProcessRunner()
+    runner.cancel()
+    with pytest.raises(DeployError, match="interrotto"):
+        runner([sys.executable, "-c", "print('mai')"])
