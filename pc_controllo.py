@@ -54,6 +54,11 @@ except ImportError:
 DEFAULT_PORT = 8080
 TOKEN_PARAM = "t"
 HTTP_TIMEOUT = 15.0
+# Più corto dei comandi: serve ad accorgersi presto che il telefono non risponde più.
+STATUS_TIMEOUT = 5.0
+READ_RETRIES = 1
+READ_RETRY_DELAY = 0.5
+STATUS_MAX_INTERVAL_MS = 15000
 STREAM_TIMEOUT = 10.0
 STREAM_RETRY_SECONDS = 2.0
 STREAM_RETRY_MAX_SECONDS = 10.0
@@ -116,12 +121,45 @@ def _api_error_from_http(exc: urllib.error.HTTPError) -> ApiError:
         return ApiError(exc.code, "http", raw.decode("utf-8", "replace").strip() or exc.reason)
 
 
+def format_host(host: str) -> str:
+    """Host per un URL: gli IPv6 vanno tra parentesi quadre."""
+    if ":" in host and not host.startswith("["):
+        return f"[{host}]"
+    return host
+
+
+def parse_phone_address(text: str) -> tuple[str, int | None, str | None]:
+    """Host, porta e token da quello che l'utente scrive o incolla nel campo IP.
+
+    Accetta '192.168.1.23', '192.168.1.23:8080', '[fe80::1]:8080', 'fe80::1' e l'URL completo
+    mostrato dalla scheda sul telefono ('http://192.168.1.23:8080/?t=Ab3_x9Qz').
+    """
+    text = text.strip()
+    if not text:
+        raise ValueError("indirizzo vuoto")
+    if "://" in text:
+        parts = urllib.parse.urlsplit(text)
+        if not parts.hostname:
+            raise ValueError(f"URL senza host: {text}")
+        token = urllib.parse.parse_qs(parts.query).get(TOKEN_PARAM, [None])[0]
+        return parts.hostname, parts.port, token
+    if text.startswith("["):
+        host, _, rest = text[1:].partition("]")
+        port_text = rest[1:] if rest.startswith(":") else ""
+        return host, int(port_text) if port_text else None, None
+    if text.count(":") == 1:
+        host, _, port_text = text.partition(":")
+        return host, int(port_text), None
+    return text, None, None
+
+
 class PhoneClient:
     """Client HTTP del telefono. Ogni metodo blocca: va chiamato da un thread di rete, mai da Tk."""
 
-    def __init__(self, host: str, port: int, token: str):
-        self.base = f"http://{host}:{port}"
+    def __init__(self, host: str, port: int, token: str, sleep: Callable[[float], None] = time.sleep):
+        self.base = f"http://{format_host(host)}:{port}"
         self.token = token
+        self._sleep = sleep
 
     def url(self, endpoint: str, **params) -> str:
         # "endpoint" e non "path": /files/get ha un parametro di query che si chiama proprio path.
@@ -140,18 +178,37 @@ class PhoneClient:
             reason = getattr(exc, "reason", exc)
             raise ApiError(0, "rete", f"telefono non raggiungibile: {reason}") from None
 
-    def _json(self, request: urllib.request.Request) -> dict:
-        with self._open(request, HTTP_TIMEOUT) as response:
-            return json.loads(response.read().decode("utf-8"))
+    def _json(self, request: urllib.request.Request, timeout: float = HTTP_TIMEOUT, retries: int = 0) -> dict:
+        """Risposta JSON. retries ripete solo gli errori di rete: da usare solo per le letture, mai per i comandi."""
+        attempt = 0
+        while True:
+            try:
+                with self._open(request, timeout) as response:
+                    raw = response.read()
+                    status = response.status
+                break
+            except ApiError as exc:
+                if exc.code != "rete" or attempt >= retries:
+                    raise
+                attempt += 1
+                self._sleep(READ_RETRY_DELAY * attempt)
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            raise ApiError(status, "risposta", "risposta non valida dal telefono: non è JSON") from None
+        if not isinstance(payload, dict):
+            raise ApiError(status, "risposta", "risposta non valida dal telefono: JSON inatteso")
+        return payload
 
-    def post(self, endpoint: str, body: bytes = b"", **params) -> dict:
-        return self._json(urllib.request.Request(self.url(endpoint, **params), data=body, method="POST"))
+    def post(self, endpoint: str, body: bytes = b"", timeout: float = HTTP_TIMEOUT, retries: int = 0, **params) -> dict:
+        request = urllib.request.Request(self.url(endpoint, **params), data=body, method="POST")
+        return self._json(request, timeout, retries)
 
     def info(self) -> dict:
-        return self._json(urllib.request.Request(self.url("/info.json"), method="GET"))
+        return self._json(urllib.request.Request(self.url("/info.json"), method="GET"), retries=READ_RETRIES)
 
     def status(self) -> dict:
-        return self.post("/status")
+        return self.post("/status", timeout=STATUS_TIMEOUT)
 
     def photo(self) -> dict:
         return self.post("/cmd/photo")
@@ -166,7 +223,7 @@ class PhoneClient:
         return self.post("/cmd/torch", b"on" if on else b"off")
 
     def files(self, dirname: str) -> dict:
-        return self.post("/files", dir=dirname)
+        return self.post("/files", retries=READ_RETRIES, dir=dirname)
 
     def download(self, dirname: str, name: str, dest: str, progress=None, cancel=None) -> int:
         request = urllib.request.Request(self.url("/files/get", path=f"{dirname}/{name}"), data=b"", method="POST")
@@ -405,6 +462,23 @@ class StreamWorker:
                 delay = min(delay * 2, self._max_retry)
         if ever_connected:
             self._on_state(False)
+
+
+# Stato della connessione mostrato accanto ai campi: (testo, colore).
+CONNECTION_STATES = {
+    "disconnected": ("Disconnesso", "#808080"),
+    "connecting": ("Connessione...", "#d08000"),
+    "connected": ("Connesso", "#1a9a3a"),
+    "unreachable": ("Telefono irraggiungibile, riprovo", "#c03030"),
+    "rejected": ("Token rifiutato: inserisci quello nuovo", "#c03030"),
+}
+
+
+def status_retry_delay_ms(failures: int) -> int:
+    """Intervallo fino al prossimo /status: normale se va tutto bene, raddoppia a ogni errore fino a 15 s."""
+    if failures <= 0:
+        return STATUS_INTERVAL_MS
+    return min(STATUS_INTERVAL_MS * 2 ** (failures - 1), STATUS_MAX_INTERVAL_MS)
 
 
 def format_timestamp(value: Any) -> str:
@@ -971,6 +1045,8 @@ class ControlPanel:
         self._bad_frames_logged = 0
         self._status_job = None
         self._status_busy = False
+        self._status_failures = 0
+        self._busy_commands: set[str] = set()
         self._host = detect_host()
         self._runner = None
         self._closing = False
@@ -1068,6 +1144,9 @@ class ControlPanel:
         self.connect_button = ttk.Button(connection, text="Connetti", command=self.toggle_connection)
         self.connect_button.grid(row=0, column=6, padx=(0, 8))
         ttk.Button(connection, text="Apri nel browser", command=self.open_browser).grid(row=0, column=7)
+        self.state_label = tk.Label(connection, text="", anchor="w")
+        self.state_label.grid(row=0, column=8, padx=(16, 0), sticky="w")
+        connection.columnconfigure(8, weight=1)
 
         body = ttk.Frame(root)
         body.grid(row=2, column=0, sticky="nsew", padx=8, pady=4)
@@ -1101,6 +1180,12 @@ class ControlPanel:
         self.audio_button = ttk.Button(commands, text="Avvia audio", command=self.toggle_audio)
         self.torch_button = ttk.Button(commands, text="Accendi torcia", command=self.toggle_torch)
         self.command_buttons = (self.photo_button, self.video_button, self.audio_button, self.torch_button)
+        self.command_button_map = {
+            "foto": self.photo_button,
+            "video": self.video_button,
+            "audio": self.audio_button,
+            "torcia": self.torch_button,
+        }
         for row, button in enumerate(self.command_buttons):
             button.grid(row=row, column=0, sticky="ew", pady=2)
 
@@ -1153,6 +1238,7 @@ class ControlPanel:
         scrollbar.grid(row=0, column=1, sticky="ns")
         self.log_text.configure(yscrollcommand=scrollbar.set)
 
+        self.connection_state = "disconnected"
         self._set_connected(False)
         if Image is None or ImageTk is None:
             self.log("Pillow non installato: lo stream non si vede qui. pip install pillow, oppure 'Apri nel browser'.")
@@ -1173,8 +1259,30 @@ class ControlPanel:
 
     def _set_connected(self, connected: bool):
         self.connect_button.configure(text="Disconnetti" if connected else "Connetti")
-        for widget in self.command_buttons + (self.refresh_button, self.download_button):
+        for widget in (self.refresh_button, self.download_button):
             widget.state(["!disabled"] if connected else ["disabled"])
+        self._refresh_command_buttons()
+        if not connected:
+            self._set_state("disconnected")
+
+    def _set_state(self, state: str, detail: str = "") -> None:
+        text, color = CONNECTION_STATES[state]
+        self.connection_state = state
+        self.state_label.configure(text=f"● {text}{f' - {detail}' if detail else ''}", foreground=color)
+
+    def _refresh_command_buttons(self) -> None:
+        """Abilita i comandi solo da connessi, non mentre sono già in corso e non se lo stato li renderebbe inutili."""
+        connected = self.client is not None
+        mode = self.status.get("mode") if connected else None
+        blocked = {
+            "foto": False,
+            "video": mode == "audio",
+            "audio": mode == "video",
+            "torcia": False,
+        }
+        for label, button in self.command_button_map.items():
+            enabled = connected and label not in self._busy_commands and not blocked[label]
+            button.state(["!disabled"] if enabled else ["disabled"])
 
     @property
     def rotation(self) -> int:
@@ -1188,7 +1296,18 @@ class ControlPanel:
         self._sink.box = (max(event.width, 1), max(event.height, 1))
 
     def _read_fields(self):
-        host = self.host_var.get().strip()
+        try:
+            host, parsed_port, parsed_token = parse_phone_address(self.host_var.get())
+        except ValueError as exc:
+            self.log(f"Indirizzo non valido: {exc}")
+            return None
+        # Se nel campo IP è stato incollato l'URL della scheda, porta e token vengono presi da lì.
+        if parsed_port is not None:
+            self.port_var.set(str(parsed_port))
+        if parsed_token:
+            self.token_var.set(parsed_token)
+        if parsed_port is not None or parsed_token:
+            self.host_var.set(host)
         token = self.token_var.get().strip()
         try:
             port = int(self.port_var.get().strip())
@@ -1292,6 +1411,7 @@ class ControlPanel:
             return
         self.log(f"Connessione a {client.base} ...")
         self.connect_button.state(["disabled"])
+        self._set_state("connecting")
         self._session += 1
 
         def work():
@@ -1300,13 +1420,20 @@ class ControlPanel:
         def failed(exc: Exception) -> None:
             self.connect_button.state(["!disabled"])
             self.log(f"connessione: {exc}")
+            if isinstance(exc, ApiError) and exc.code == "token":
+                self._set_state("rejected")
+            else:
+                self._set_state("disconnected", "connessione non riuscita")
 
         def connected(result):
             info, status = result
             self.client = client
             self.rotation = as_int(_as_dict(info).get("rotation"))
             self.connect_button.state(["!disabled"])
+            self._status_failures = 0
+            self._busy_commands.clear()
             self._set_connected(True)
+            self._set_state("connected", client.base.removeprefix("http://"))
             self.log(f"Connesso: {info.get('width')}x{info.get('height')}, rotazione {self.rotation}°")
             self._apply_status(status)
             self._start_stream()
@@ -1318,6 +1445,8 @@ class ControlPanel:
     def disconnect(self):
         self._session += 1
         self._status_busy = False
+        self._status_failures = 0
+        self._busy_commands.clear()
         self._stop_stream()
         if self._status_job is not None:
             self.root.after_cancel(self._status_job)
@@ -1454,31 +1583,61 @@ class ControlPanel:
             webbrowser.open(client.page_url())
             self.log(f"Aperto nel browser: {client.page_url()}")
 
-    def _schedule_status(self):
-        self._status_job = self.root.after(STATUS_INTERVAL_MS, self._poll_status)
+    def _schedule_status(self, delay_ms: int = STATUS_INTERVAL_MS):
+        if self._status_job is not None:
+            self.root.after_cancel(self._status_job)
+        self._status_job = self.root.after(delay_ms, self._poll_status)
 
     def _poll_status(self):
         self._status_job = None
         if self.client is None:
             return
-        if not self._status_busy:
-            self.refresh_status()
-        self._schedule_status()
+        if self._status_busy:
+            self._schedule_status()
+            return
+        self.refresh_status(reschedule=True)
 
-    def refresh_status(self):
-        if self.client is None:
+    def refresh_status(self, reschedule: bool = False):
+        """Chiede /status. Con reschedule il prossimo controllo parte quando arriva questo, con l'attesa giusta."""
+        if self.client is None or self._status_busy:
             return
         self._status_busy = True
         client = self.client
 
+        def done(status: dict) -> None:
+            self._apply_status(status)
+            if reschedule:
+                self._schedule_status(status_retry_delay_ms(0))
+
         def failed(exc: Exception) -> None:
             self._status_busy = False
-            self.log(f"stato: {exc}")
+            self._status_failed(exc)
+            if reschedule:
+                self._schedule_status(status_retry_delay_ms(self._status_failures))
 
-        self.run_in_thread("stato", client.status, self._apply_status, failed, session=self._session)
+        self.run_in_thread("stato", client.status, done, failed, session=self._session)
+
+    def _status_failed(self, exc: Exception) -> None:
+        self._status_failures += 1
+        if isinstance(exc, ApiError) and exc.code == "token":
+            if self.connection_state != "rejected":
+                self.log("Token rifiutato: l'app sul telefono è stata riavviata? Inserisci il nuovo token e riconnetti.")
+            self._set_state("rejected")
+            return
+        if self._status_failures == 1:
+            self.log(f"stato: {exc}")
+        else:
+            if self.connection_state != "unreachable":
+                self.log("Il telefono non risponde: continuo a riprovare con attese più lunghe.")
+            self._set_state("unreachable", str(exc))
 
     def _apply_status(self, status: dict):
         self._status_busy = False
+        if self._status_failures and self.client is not None:
+            self.log("Telefono di nuovo raggiungibile.")
+        self._status_failures = 0
+        if self.client is not None and self.connection_state != "connected":
+            self._set_state("connected", self.client.base.removeprefix("http://"))
         status = _as_dict(status)
         self.status = status
         camera = _as_dict(status.get("camera"))
@@ -1492,18 +1651,31 @@ class ControlPanel:
         self.video_button.configure(text="Ferma video" if mode == "video" else "Avvia video")
         self.audio_button.configure(text="Ferma audio" if mode == "audio" else "Avvia audio")
         self.torch_button.configure(text="Spegni torcia" if torch else "Accendi torcia")
+        self._refresh_command_buttons()
 
     def _command(self, label: str, work, describe):
+        """Manda un comando al telefono; il suo pulsante resta disattivato finché non arriva la risposta."""
         client = self.client
-        if client is None:
+        if client is None or label in self._busy_commands:
             return
+        self._busy_commands.add(label)
+        self._refresh_command_buttons()
+
+        def finished() -> None:
+            self._busy_commands.discard(label)
+            self._refresh_command_buttons()
+            self.refresh_status()
 
         def done(result):
-            self.log(describe(result))
-            self.refresh_status()
+            finished()
+            self.log(describe(_as_dict(result)))
             self.refresh_files()
 
-        self.run_in_thread(label, lambda: work(client), done, session=self._session)
+        def failed(exc: Exception) -> None:
+            finished()
+            self.log(f"{label}: {exc}")
+
+        self.run_in_thread(label, lambda: work(client), done, failed, session=self._session)
 
     def take_photo(self):
         self._command("foto", lambda c: c.photo(), lambda r: f"Foto salvata: {self._file_text(r.get('file'))}")

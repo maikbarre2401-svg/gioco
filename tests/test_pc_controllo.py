@@ -369,3 +369,77 @@ def test_stream_worker_stop_is_prompt_while_waiting():
     worker.stop(wait=2)
     assert time.monotonic() - started < 1
     assert worker.stopped
+
+
+# --- indirizzi, letture ripetute e risposte non valide ---------------------------------------------
+
+from pc_controllo import format_host, parse_phone_address, status_retry_delay_ms  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("192.168.1.23", ("192.168.1.23", None, None)),
+        (" 192.168.1.23:8081 ", ("192.168.1.23", 8081, None)),
+        ("http://192.168.1.23:8080/?t=Ab3_x9Qz", ("192.168.1.23", 8080, "Ab3_x9Qz")),
+        ("http://10.0.0.5:8080/", ("10.0.0.5", 8080, None)),
+        ("[fe80::1]:8080", ("fe80::1", 8080, None)),
+        ("fe80::1", ("fe80::1", None, None)),
+        ("http://[fe80::1]:8082/?t=xyz", ("fe80::1", 8082, "xyz")),
+    ],
+)
+def test_parse_phone_address(text, expected):
+    assert parse_phone_address(text) == expected
+
+
+@pytest.mark.parametrize("text", ["", "   ", "192.168.1.23:porta", "http:///?t=x"])
+def test_parse_phone_address_rejects(text):
+    with pytest.raises(ValueError):
+        parse_phone_address(text)
+
+
+def test_format_host_and_ipv6_client_url():
+    assert format_host("192.168.1.23") == "192.168.1.23"
+    assert format_host("fe80::1") == "[fe80::1]"
+    assert PhoneClient("fe80::1", 8080, "t").page_url() == "http://[fe80::1]:8080/?t=t"
+
+
+@pytest.mark.parametrize(("failures", "delay"), [(0, 2000), (1, 2000), (2, 4000), (3, 8000), (4, 15000), (10, 15000)])
+def test_status_retry_delay(failures, delay):
+    assert status_retry_delay_ms(failures) == delay
+
+
+class FakeResponse(io.BytesIO):
+    status = 200
+
+
+def test_reads_retry_network_errors_but_commands_do_not(monkeypatch):
+    sleeps = []
+    client = PhoneClient("127.0.0.1", 9, TOKEN, sleep=sleeps.append)
+    attempts = {"count": 0}
+
+    def flaky_open(request, timeout):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise ApiError(0, "rete", "telefono non raggiungibile: timeout")
+        return FakeResponse(b'{"ok": true, "dir": "photos", "files": []}')
+
+    monkeypatch.setattr(client, "_open", flaky_open)
+    assert client.files("photos")["dir"] == "photos"
+    assert attempts["count"] == 2 and sleeps == [0.5]
+
+    attempts["count"] = 0
+    with pytest.raises(ApiError):
+        client.photo()
+    assert attempts["count"] == 1
+
+
+def test_non_json_answer_is_clear_error(monkeypatch):
+    client = PhoneClient("127.0.0.1", 9, TOKEN)
+    monkeypatch.setattr(client, "_open", lambda request, timeout: FakeResponse(b"<html>captive portal</html>"))
+    with pytest.raises(ApiError) as info:
+        client.status()
+    assert info.value.code == "risposta"
+    monkeypatch.setattr(client, "_open", lambda request, timeout: FakeResponse(b"[1, 2]"))
+    with pytest.raises(ApiError, match="JSON inatteso"):
+        client.status()
