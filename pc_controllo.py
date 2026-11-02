@@ -69,6 +69,8 @@ PUMP_BUDGET_SECONDS = 0.02
 FPS_INTERVAL_SECONDS = 1.0
 DOWNLOAD_CHUNK_BYTES = 256 * 1024
 PROGRESS_STEP_BYTES = 2 * 1024 * 1024
+# L'avanzamento si aggiorna al massimo 10 volte al secondo: abbastanza fluido, senza intasare la coda di Tk.
+PROGRESS_INTERVAL_SECONDS = 0.1
 MAX_PART_BYTES = 20 * 1024 * 1024
 MEDIA_DIRS = (("photos", "Foto"), ("videos", "Video"), ("audio", "Audio"))
 VIDEO_MIN_SIZE = (640, 480)
@@ -119,6 +121,54 @@ def _api_error_from_http(exc: urllib.error.HTTPError) -> ApiError:
         return ApiError(exc.code, payload.get("error", "errore"), payload.get("message", ""))
     except (ValueError, AttributeError):
         return ApiError(exc.code, "http", raw.decode("utf-8", "replace").strip() or exc.reason)
+
+
+def write_bytes_atomic(path: str, data: bytes) -> None:
+    """Scrive in un file temporaneo e poi lo rinomina: un errore a metà non lascia un file troncato."""
+    partial = path + ".part"
+    try:
+        with open(partial, "wb") as handle:
+            handle.write(data)
+        os.replace(partial, path)
+    except BaseException:
+        _remove_quietly(partial)
+        raise
+
+
+def _remove_quietly(path: str) -> None:
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def unique_path(directory: str, name: str, taken: set[str] | None = None) -> str:
+    """Percorso libero in directory: 'VID.mp4', poi 'VID (2).mp4', 'VID (3).mp4'... Non sovrascrive mai."""
+    taken = taken if taken is not None else set()
+    stem, ext = os.path.splitext(os.path.basename(name))
+    candidate = os.path.join(directory, f"{stem}{ext}")
+    counter = 2
+    while os.path.exists(candidate) or candidate in taken:
+        candidate = os.path.join(directory, f"{stem} ({counter}){ext}")
+        counter += 1
+    return candidate
+
+
+class ProgressThrottle:
+    """Lascia passare un aggiornamento di avanzamento al massimo ogni PROGRESS_INTERVAL_SECONDS, più l'ultimo."""
+
+    def __init__(self, callback: Callable[[int, int], None] | None, clock: Callable[[], float] = time.monotonic):
+        self._callback = callback
+        self._clock = clock
+        self._last = float("-inf")
+
+    def __call__(self, done: int, total: int, final: bool = False) -> None:
+        if self._callback is None:
+            return
+        now = self._clock()
+        if final or now - self._last >= PROGRESS_INTERVAL_SECONDS:
+            self._last = now
+            self._callback(done, total)
 
 
 def format_host(host: str) -> str:
@@ -225,29 +275,47 @@ class PhoneClient:
     def files(self, dirname: str) -> dict:
         return self.post("/files", retries=READ_RETRIES, dir=dirname)
 
-    def download(self, dirname: str, name: str, dest: str, progress=None, cancel=None) -> int:
+    def download(
+        self,
+        dirname: str,
+        name: str,
+        dest: str,
+        progress: Callable[[int, int], None] | None = None,
+        cancel: threading.Event | None = None,
+    ) -> int:
+        """Scarica un file del telefono in dest passando da dest.part: errori e annullamenti non lasciano resti."""
         request = urllib.request.Request(self.url("/files/get", path=f"{dirname}/{name}"), data=b"", method="POST")
         partial = dest + ".part"
+        report = ProgressThrottle(progress)
         received = 0
-        reported = 0
-        with self._open(request, HTTP_TIMEOUT) as response, open(partial, "wb") as handle:
-            total = int(response.headers.get("Content-Length") or 0)
-            while True:
-                if cancel is not None and cancel.is_set():
-                    raise ApiError(0, "annullato", "download annullato")
-                chunk = response.read(DOWNLOAD_CHUNK_BYTES)
-                if not chunk:
-                    break
-                handle.write(chunk)
-                received += len(chunk)
-                if progress is not None and received - reported >= PROGRESS_STEP_BYTES:
-                    reported = received
-                    progress(received, total)
-        if total and received != total:
-            os.remove(partial)
-            raise ApiError(0, "incompleto", f"ricevuti {received} byte su {total}")
-        os.replace(partial, dest)
+        try:
+            with self._open(request, HTTP_TIMEOUT) as response, open(partial, "wb") as handle:
+                total = as_int(response.headers.get("Content-Length"))
+                while True:
+                    if cancel is not None and cancel.is_set():
+                        raise ApiError(0, "annullato", "download annullato")
+                    try:
+                        chunk = response.read(DOWNLOAD_CHUNK_BYTES)
+                    except OSError as exc:
+                        raise ApiError(0, "rete", f"download interrotto: {exc}") from None
+                    if not chunk:
+                        break
+                    handle.write(chunk)
+                    received += len(chunk)
+                    report(received, total)
+            if total and received != total:
+                raise ApiError(0, "incompleto", f"ricevuti {received} byte su {total}")
+            os.replace(partial, dest)
+        except BaseException:
+            _remove_quietly(partial)
+            raise
+        report(received, total or received, final=True)
         return received
+
+    def snapshot(self) -> bytes:
+        """Ultimo fotogramma dello stream in JPEG, così come lo serve il telefono."""
+        with self._open(urllib.request.Request(self.url("/snapshot.jpg"), method="GET"), HTTP_TIMEOUT) as response:
+            return response.read()
 
     def open_stream(self):
         return self._open(urllib.request.Request(self.url("/stream.mjpg"), method="GET"), STREAM_TIMEOUT)
@@ -552,6 +620,76 @@ def describe_status(status: dict) -> dict:
     }
 
 
+@dataclass
+class DownloadItem:
+    dirname: str
+    name: str
+    dest: str
+    size: int | None = None
+
+
+@dataclass
+class DownloadReport:
+    completed: list[DownloadItem]
+    failed: list[tuple[DownloadItem, str]]
+    cancelled: bool
+
+
+class DownloadBatch:
+    """Scarica uno o più file del telefono in sequenza. Nessun widget: avanzamento e righe di log via callback."""
+
+    def __init__(
+        self,
+        client: PhoneClient,
+        items: list[DownloadItem],
+        on_progress: Callable[[int, int, str, int, int], None],
+        on_log: Callable[[str], None],
+    ) -> None:
+        self.client = client
+        self.items = items
+        self._on_progress = on_progress
+        self._on_log = on_log
+        self._cancel = threading.Event()
+
+    def cancel(self) -> None:
+        self._cancel.set()
+
+    @property
+    def cancelled(self) -> bool:
+        return self._cancel.is_set()
+
+    def run(self) -> DownloadReport:
+        total = sum(item.size or 0 for item in self.items)
+        done_bytes = 0
+        completed: list[DownloadItem] = []
+        failed: list[tuple[DownloadItem, str]] = []
+        count = len(self.items)
+        for index, item in enumerate(self.items):
+            if self._cancel.is_set():
+                break
+            base = done_bytes
+
+            def progress(received: int, size: int, item=item, index=index, base=base) -> None:
+                self._on_progress(base + received, max(total, base + size), item.name, index, count)
+
+            try:
+                size = self.client.download(item.dirname, item.name, item.dest, progress=progress, cancel=self._cancel)
+            except ApiError as exc:
+                if exc.code == "annullato":
+                    break
+                failed.append((item, str(exc)))
+                self._on_log(f"  {item.name}: {exc}")
+            except OSError as exc:
+                # Disco pieno, cartella senza permessi: si annota e si passa al file successivo.
+                failed.append((item, f"{type(exc).__name__}: {exc}"))
+                self._on_log(f"  {item.name}: impossibile scrivere {item.dest}: {exc}")
+            else:
+                completed.append(item)
+                done_bytes += size
+                self._on_log(f"  Scaricato {item.name} ({human_size(size)}) in {item.dest}")
+        return DownloadReport(completed, failed, self._cancel.is_set())
+
+
 class DeployError(Exception):
     pass
 
@@ -852,8 +990,14 @@ def extract_apk(archive: str, target_dir: str) -> str:
         os.makedirs(target_dir, exist_ok=True)
         # Solo il nome del file: un percorso dentro lo zip non deve poter uscire dalla cartella.
         path = os.path.join(target_dir, os.path.basename(members[0]))
-        with bundle.open(members[0]) as source, open(path, "wb") as target:
-            shutil.copyfileobj(source, target)
+        partial = path + ".part"
+        try:
+            with bundle.open(members[0]) as source, open(partial, "wb") as target:
+                shutil.copyfileobj(source, target)
+            os.replace(partial, path)
+        except BaseException:
+            _remove_quietly(partial)
+            raise
     return path
 
 
@@ -942,15 +1086,26 @@ class GitHubBuilds:
             return f": compilazione in corso dal {run.get('created_at')}, riprova tra qualche minuto ({run.get('html_url')})"
         return f": l'ultima compilazione è finita con '{run.get('conclusion')}' ({run.get('html_url')})"
 
-    def download_apk(self, build: dict, dest_dir: str, log=None, should_stop=None) -> str:
+    def download_apk(
+        self,
+        build: dict,
+        dest_dir: str,
+        log: Callable[[str], None] | None = None,
+        should_stop: Callable[[], bool] | None = None,
+        progress: Callable[[int, int], None] | None = None,
+    ) -> str:
         target_dir = os.path.join(dest_dir, str(build["artifact_id"]))
         if os.path.isdir(target_dir):
             for name in os.listdir(target_dir):
-                if name.lower().endswith(".apk"):
-                    path = os.path.join(target_dir, name)
+                if not name.lower().endswith(".apk"):
+                    continue
+                path = os.path.join(target_dir, name)
+                # Un APK è uno zip: se non si apre è un resto di un'estrazione fallita e va riscaricato.
+                if zipfile.is_zipfile(path):
                     if log is not None:
                         log(f"APK già scaricato: {path}")
                     return path
+                _remove_quietly(path)
         if not self.token:
             raise DeployError(
                 "per scaricare l'APK da GitHub serve un token con Actions: Read; in alternativa scaricalo "
@@ -960,22 +1115,29 @@ class GitHubBuilds:
         archive = target_dir + ".zip.part"
         received = 0
         reported = 0
-        with self._open(build["download_url"]) as response, open(archive, "wb") as handle:
-            while True:
-                if should_stop is not None and should_stop():
-                    raise DeployError("interrotto")
-                chunk = response.read(DOWNLOAD_CHUNK_BYTES)
-                if not chunk:
-                    break
-                handle.write(chunk)
-                received += len(chunk)
-                if log is not None and received - reported >= PROGRESS_STEP_BYTES:
-                    reported = received
-                    log(f"  scaricati {human_size(received)}")
+        report = ProgressThrottle(progress)
         try:
+            with self._open(build["download_url"]) as response, open(archive, "wb") as handle:
+                total = as_int(response.headers.get("Content-Length")) or as_int(build.get("size"))
+                while True:
+                    if should_stop is not None and should_stop():
+                        raise DeployError("interrotto")
+                    try:
+                        chunk = response.read(DOWNLOAD_CHUNK_BYTES)
+                    except OSError as exc:
+                        raise DeployError(f"download da GitHub interrotto: {exc}") from None
+                    if not chunk:
+                        break
+                    handle.write(chunk)
+                    received += len(chunk)
+                    report(received, total)
+                    if log is not None and received - reported >= PROGRESS_STEP_BYTES:
+                        reported = received
+                        log(f"  scaricati {human_size(received)}")
+            report(received, total or received, final=True)
             path = extract_apk(archive, target_dir)
         finally:
-            os.remove(archive)
+            _remove_quietly(archive)
         if log is not None:
             log(f"APK salvato in {path}")
         return path
@@ -984,12 +1146,21 @@ class GitHubBuilds:
 class GitHubPipeline:
     """Le stesse azioni di Deployer, ma l'APK arriva già compilato da GitHub Actions: sul PC basta adb."""
 
-    def __init__(self, deployer: Deployer, builds: GitHubBuilds, dest_dir: str, log, should_stop=None):
+    def __init__(
+        self,
+        deployer: Deployer,
+        builds: GitHubBuilds,
+        dest_dir: str,
+        log: Callable[[str], None],
+        should_stop: Callable[[], bool] | None = None,
+        progress: Callable[[int, int], None] | None = None,
+    ):
         self.deployer = deployer
         self.builds = builds
         self.dest_dir = dest_dir
         self._log = log
         self._should_stop = should_stop
+        self._progress = progress
 
     def check(self) -> list[str]:
         problems = []
@@ -1010,7 +1181,7 @@ class GitHubPipeline:
     def build(self) -> str:
         build = self.builds.latest_build()
         self._log(f"Scarico {build['artifact_name']} (commit {build['sha'][:7]}, {build['created_at']})")
-        return self.builds.download_apk(build, self.dest_dir, self._log, self._should_stop)
+        return self.builds.download_apk(build, self.dest_dir, self._log, self._should_stop, self._progress)
 
     def install(self) -> None:
         self.deployer.install_apk(self.build())
@@ -1047,6 +1218,9 @@ class ControlPanel:
         self._status_busy = False
         self._status_failures = 0
         self._busy_commands: set[str] = set()
+        self._download_batch: DownloadBatch | None = None
+        self._file_sizes: dict[str, int | None] = {}
+        self.download_dir = os.path.expanduser("~")
         self._host = detect_host()
         self._runner = None
         self._closing = False
@@ -1127,8 +1301,11 @@ class ControlPanel:
         self.cancel_button = ttk.Button(actions, text="Interrompi", command=self.cancel_deploy)
         self.cancel_button.grid(row=0, column=7, padx=(12, 0))
         self.cancel_button.state(["disabled"])
+        self.deploy_progress = ttk.Progressbar(actions, mode="indeterminate", length=140, maximum=1000)
+        self.deploy_progress.grid(row=0, column=8, padx=(12, 0))
+        self.deploy_progress.grid_remove()
         self.deploy_var = tk.StringVar(value="")
-        ttk.Label(actions, textvariable=self.deploy_var).grid(row=0, column=8, padx=(12, 0))
+        ttk.Label(actions, textvariable=self.deploy_var).grid(row=0, column=9, padx=(12, 0))
         self._on_mode_change()
 
         connection = ttk.LabelFrame(root, text="Connessione", padding=8)
@@ -1179,12 +1356,16 @@ class ControlPanel:
         self.video_button = ttk.Button(commands, text="Avvia video", command=self.toggle_video)
         self.audio_button = ttk.Button(commands, text="Avvia audio", command=self.toggle_audio)
         self.torch_button = ttk.Button(commands, text="Accendi torcia", command=self.toggle_torch)
-        self.command_buttons = (self.photo_button, self.video_button, self.audio_button, self.torch_button)
+        self.snapshot_button = ttk.Button(commands, text="Istantanea sul PC", command=self.save_snapshot)
+        self.command_buttons = (
+            self.photo_button, self.video_button, self.audio_button, self.torch_button, self.snapshot_button
+        )
         self.command_button_map = {
             "foto": self.photo_button,
             "video": self.video_button,
             "audio": self.audio_button,
             "torcia": self.torch_button,
+            "istantanea": self.snapshot_button,
         }
         for row, button in enumerate(self.command_buttons):
             button.grid(row=row, column=0, sticky="ew", pady=2)
@@ -1217,7 +1398,7 @@ class ControlPanel:
         self.dir_box.bind("<<ComboboxSelected>>", lambda event: self.refresh_files())
         self.refresh_button = ttk.Button(files, text="Aggiorna", command=self.refresh_files)
         self.refresh_button.grid(row=0, column=1, sticky="e")
-        self.files_tree = ttk.Treeview(files, columns=("size", "date"), height=8, selectmode="browse")
+        self.files_tree = ttk.Treeview(files, columns=("size", "date"), height=8, selectmode="extended")
         self.files_tree.heading("#0", text="Nome")
         self.files_tree.heading("size", text="Dimensione")
         self.files_tree.heading("date", text="Data")
@@ -1226,8 +1407,19 @@ class ControlPanel:
         self.files_tree.column("date", width=120)
         self.files_tree.grid(row=1, column=0, columnspan=2, sticky="nsew", pady=4)
         files.rowconfigure(1, weight=1)
-        self.download_button = ttk.Button(files, text="Scarica", command=self.download_selected)
+        self.files_tree.bind("<Double-1>", self._on_file_double_click)
+        self.download_button = ttk.Button(files, text="Scarica selezionati", command=self.download_selected)
         self.download_button.grid(row=2, column=0, columnspan=2, sticky="ew")
+        transfer = ttk.Frame(files)
+        transfer.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        transfer.columnconfigure(0, weight=1)
+        self.transfer_bar = ttk.Progressbar(transfer, mode="determinate", maximum=1000)
+        self.transfer_bar.grid(row=0, column=0, sticky="ew")
+        self.transfer_cancel = ttk.Button(transfer, text="Annulla", width=8, command=self.cancel_downloads)
+        self.transfer_cancel.grid(row=0, column=1, padx=(4, 0))
+        self.transfer_cancel.state(["disabled"])
+        self.transfer_var = tk.StringVar(value="")
+        ttk.Label(transfer, textvariable=self.transfer_var, wraplength=330).grid(row=1, column=0, columnspan=2, sticky="w")
 
         log_frame = ttk.LabelFrame(root, text="Log", padding=4)
         log_frame.grid(row=3, column=0, sticky="ew", padx=8, pady=(4, 8))
@@ -1279,6 +1471,7 @@ class ControlPanel:
             "video": mode == "audio",
             "audio": mode == "video",
             "torcia": False,
+            "istantanea": False,
         }
         for label, button in self.command_button_map.items():
             enabled = connected and label not in self._busy_commands and not blocked[label]
@@ -1448,6 +1641,7 @@ class ControlPanel:
         self._status_failures = 0
         self._busy_commands.clear()
         self._stop_stream()
+        self.cancel_downloads()
         if self._status_job is not None:
             self.root.after_cancel(self._status_job)
             self._status_job = None
@@ -1521,6 +1715,9 @@ class ControlPanel:
         for button in self.deploy_buttons:
             button.state(["disabled"])
         self.cancel_button.state(["!disabled"])
+        self.deploy_progress.configure(mode="indeterminate", value=0)
+        self.deploy_progress.grid()
+        self.deploy_progress.start(15)
         if action == "install_file":
             self.deploy_var.set("In corso: installazione da file...")
         else:
@@ -1534,7 +1731,10 @@ class ControlPanel:
                 deployer.install_apk(apk_from_file(apk_path, os.path.join(dest_dir, "da-file")))
                 return action, None
             if builds is not None:
-                pipeline = GitHubPipeline(deployer, builds, dest_dir, emit, lambda: runner.cancelled)
+                pipeline = GitHubPipeline(
+                    deployer, builds, dest_dir, emit, lambda: runner.cancelled,
+                    lambda done, total: self.ui_call(self._deploy_download_progress, done, total),
+                )
                 return action, getattr(pipeline, action)()
             return action, getattr(deployer, action)()
 
@@ -1565,7 +1765,19 @@ class ControlPanel:
             return
         self._deploy_finished("fatto")
 
+    def _deploy_download_progress(self, done: int, total: int) -> None:
+        if self._runner is None:
+            return
+        if total > 0:
+            if str(self.deploy_progress.cget("mode")) != "determinate":
+                self.deploy_progress.stop()
+                self.deploy_progress.configure(mode="determinate")
+            self.deploy_progress.configure(value=min(1000, int(done * 1000 / total)))
+        self.deploy_var.set(f"Download dell'APK: {human_size(done)} di {human_size(total) if total else '?'}")
+
     def _deploy_finished(self, text: str):
+        self.deploy_progress.stop()
+        self.deploy_progress.grid_remove()
         self._runner = None
         for button in self.deploy_buttons:
             button.state(["!disabled"])
@@ -1727,40 +1939,124 @@ class ControlPanel:
         if result.get("dir") != self._selected_dir():
             return
         self.files_tree.delete(*self.files_tree.get_children())
+        self._file_sizes = {}
         files = result.get("files")
         for entry in files if isinstance(files, list) else []:
             entry = _as_dict(entry)
             name = entry.get("name")
             if not isinstance(name, str) or not name:
                 continue
+            self._file_sizes[name] = as_int(entry.get("size")) or None
             self.files_tree.insert(
                 "", "end", text=name, values=(human_size(entry.get("size")), format_timestamp(entry.get("modified")))
             )
 
+    def _on_file_double_click(self, event) -> None:
+        item = self.files_tree.identify_row(event.y)
+        if item:
+            self.files_tree.selection_set(item)
+            self.download_selected()
+
     def download_selected(self):
+        """Un file: si sceglie dove salvarlo. Più file: si sceglie la cartella e i nomi restano unici."""
         if self.client is None:
             return
-        selection = self.files_tree.selection()
-        if not selection:
-            self.log("Seleziona un file nell'elenco.")
+        if self._download_batch is not None:
+            self.log("C'è già un download in corso: aspetta che finisca o premi Annulla.")
             return
-        name = self.files_tree.item(selection[0], "text")
+        names = [self.files_tree.item(item, "text") for item in self.files_tree.selection()]
+        if not names:
+            self.log("Seleziona uno o più file nell'elenco (Ctrl o Maiusc per selezionarne più di uno).")
+            return
         dirname = self._selected_dir()
-        dest = filedialog.asksaveasfilename(initialfile=name, title="Salva il file del telefono")
+        if len(names) == 1:
+            dest = filedialog.asksaveasfilename(
+                initialfile=names[0], initialdir=self.download_dir, title="Salva il file del telefono"
+            )
+            if not dest:
+                return
+            self.download_dir = os.path.dirname(dest)
+            items = [DownloadItem(dirname, names[0], dest, self._file_sizes.get(names[0]))]
+        else:
+            directory = filedialog.askdirectory(initialdir=self.download_dir, title=f"Cartella per {len(names)} file")
+            if not directory:
+                return
+            self.download_dir = directory
+            taken: set[str] = set()
+            items = []
+            for name in names:
+                dest = unique_path(directory, name, taken)
+                taken.add(dest)
+                items.append(DownloadItem(dirname, name, dest, self._file_sizes.get(name)))
+        self._start_downloads(items)
+
+    def _start_downloads(self, items: list[DownloadItem]) -> None:
+        session = self._session
+
+        def on_progress(done: int, total: int, name: str, index: int, count: int) -> None:
+            self.ui_call(self._show_transfer, session, done, total, name, index, count)
+
+        batch = DownloadBatch(self.client, items, on_progress, self.log_from_thread)
+        self._download_batch = batch
+        self.download_button.state(["disabled"])
+        self.transfer_cancel.state(["!disabled"])
+        self.transfer_bar.configure(value=0)
+        self.transfer_var.set(f"Download di {len(items)} file...")
+        self.log(f"Download di {len(items)} file da {items[0].dirname} ...")
+
+        def finished(report: DownloadReport) -> None:
+            self._download_batch = None
+            self.transfer_cancel.state(["disabled"])
+            if self.client is not None:
+                self.download_button.state(["!disabled"])
+            parts = [f"{len(report.completed)} scaricati"]
+            if report.failed:
+                parts.append(f"{len(report.failed)} non riusciti")
+            if report.cancelled:
+                parts.append("annullato")
+            summary = ", ".join(parts)
+            self.transfer_var.set(summary)
+            if not report.cancelled and not report.failed:
+                self.transfer_bar.configure(value=1000)
+            self.log(f"Download finito: {summary}.")
+
+        def failed(exc: Exception) -> None:
+            finished(DownloadReport([], [(item, str(exc)) for item in items], batch.cancelled))
+
+        self.run_in_thread("download", batch.run, finished, failed)
+
+    def _show_transfer(self, session: int, done: int, total: int, name: str, index: int, count: int) -> None:
+        if self._download_batch is None:
+            return
+        if total > 0:
+            self.transfer_bar.configure(value=min(1000, int(done * 1000 / total)))
+        total_text = human_size(total) if total else "?"
+        position = f" ({index + 1}/{count})" if count > 1 else ""
+        self.transfer_var.set(f"{name}{position}: {human_size(done)} di {total_text}")
+
+    def cancel_downloads(self) -> None:
+        if self._download_batch is not None:
+            self._download_batch.cancel()
+            self.transfer_var.set("Annullamento...")
+
+    def save_snapshot(self) -> None:
+        if self.client is None:
+            return
+        name = f"istantanea_{datetime.now():%Y%m%d_%H%M%S}.jpg"
+        dest = filedialog.asksaveasfilename(
+            initialfile=name, initialdir=self.download_dir, defaultextension=".jpg",
+            filetypes=[("JPEG", "*.jpg")], title="Salva l'istantanea dello stream",
+        )
         if not dest:
             return
-        client = self.client
-        self.log(f"Download di {dirname}/{name} ...")
+        self.download_dir = os.path.dirname(dest)
 
-        def progress(received, total):
-            total_text = human_size(total) if total else "?"
-            self.log_from_thread(f"  {name}: {human_size(received)} di {total_text}")
+        def work(client: PhoneClient) -> dict:
+            data = client.snapshot()
+            write_bytes_atomic(dest, data)
+            return {"size": len(data)}
 
-        self.run_in_thread(
-            "download",
-            lambda: client.download(dirname, name, dest, progress=progress),
-            lambda size: self.log(f"Scaricato {name} ({human_size(size)}) in {dest}"),
-        )
+        self._command("istantanea", work, lambda r: f"Istantanea salvata in {dest} ({human_size(r.get('size'))})")
 
     def _start_stream(self):
         if Image is None or ImageTk is None:

@@ -443,3 +443,96 @@ def test_non_json_answer_is_clear_error(monkeypatch):
     monkeypatch.setattr(client, "_open", lambda request, timeout: FakeResponse(b"[1, 2]"))
     with pytest.raises(ApiError, match="JSON inatteso"):
         client.status()
+
+
+# --- download: file parziali, più file insieme, avanzamento, istantanea ----------------------------
+
+from pc_controllo import (  # noqa: E402
+    DownloadBatch,
+    DownloadItem,
+    ProgressThrottle,
+    unique_path,
+    write_bytes_atomic,
+)
+
+
+def test_unique_path_never_overwrites(tmp_path):
+    (tmp_path / "VID.mp4").write_bytes(b"x")
+    (tmp_path / "VID (2).mp4").write_bytes(b"x")
+    taken = {str(tmp_path / "VID (3).mp4")}
+    assert unique_path(str(tmp_path), "VID.mp4", taken) == str(tmp_path / "VID (4).mp4")
+    assert unique_path(str(tmp_path), "nuovo.png") == str(tmp_path / "nuovo.png")
+    assert unique_path(str(tmp_path), "../fuori.png") == str(tmp_path / "fuori.png")
+
+
+def test_write_bytes_atomic(tmp_path):
+    target = tmp_path / "istantanea.jpg"
+    write_bytes_atomic(str(target), b"jpeg")
+    assert target.read_bytes() == b"jpeg"
+    assert not (tmp_path / "istantanea.jpg.part").exists()
+
+
+def test_progress_throttle_limits_rate_but_keeps_final():
+    now = {"t": 0.0}
+    seen = []
+    report = ProgressThrottle(lambda done, total: seen.append(done), clock=lambda: now["t"])
+    for step in range(10):
+        now["t"] = step * 0.03
+        report(step, 10)
+    report(10, 10, final=True)
+    assert seen == [0, 4, 8, 10]
+
+
+def test_download_cancelled_leaves_no_partial_file(phone, tmp_path):
+    client, _, _ = phone
+    cancel = threading.Event()
+    cancel.set()
+    dest = tmp_path / "video.mp4"
+    with pytest.raises(ApiError) as info:
+        client.download("videos", "VID_1.mp4", str(dest), cancel=cancel)
+    assert info.value.code == "annullato"
+    assert not dest.exists() and not (tmp_path / "video.mp4.part").exists()
+
+
+def test_download_reports_final_progress(phone, tmp_path):
+    client, _, _ = phone
+    seen = []
+    client.download("photos", "IMG_1.png", str(tmp_path / "foto.png"), progress=lambda d, t: seen.append((d, t)))
+    assert seen[-1] == (4, 4)
+
+
+def test_download_batch_continues_after_a_failure(phone, tmp_path):
+    client, _, _ = phone
+    items = [
+        DownloadItem("photos", "IMG_1.png", str(tmp_path / "a.png"), 4),
+        DownloadItem("photos", "IMG_mai.png", str(tmp_path / "b.png"), 10),
+        DownloadItem("videos", "VID_1.mp4", str(tmp_path / "c.mp4"), 256 * 20_000),
+    ]
+    progress, logs = [], []
+    report = DownloadBatch(client, items, lambda *args: progress.append(args), logs.append).run()
+    assert [item.name for item in report.completed] == ["IMG_1.png", "VID_1.mp4"]
+    assert [item.name for item, _ in report.failed] == ["IMG_mai.png"]
+    assert not report.cancelled
+    assert (tmp_path / "c.mp4").stat().st_size == 256 * 20_000
+    dones = [entry[0] for entry in progress]
+    assert dones == sorted(dones)
+    assert progress[-1][2:] == ("VID_1.mp4", 2, 3)
+    assert any("IMG_mai.png" in line for line in logs)
+
+
+def test_download_batch_cancel_stops_before_next_file(phone, tmp_path):
+    client, _, _ = phone
+    items = [DownloadItem("photos", "IMG_1.png", str(tmp_path / f"{i}.png"), 4) for i in range(3)]
+    batch = DownloadBatch(client, items, lambda *args: batch.cancel(), lambda line: None)
+    report = batch.run()
+    assert report.cancelled
+    assert len(report.completed) <= 1
+
+
+def test_snapshot(phone):
+    client, _, broker = phone
+    with pytest.raises(ApiError) as info:
+        client.snapshot()
+    assert info.value.status == 503
+    broker.publish(b"\xff\xd8jpeg\xff\xd9")
+    assert client.snapshot() == b"\xff\xd8jpeg\xff\xd9"

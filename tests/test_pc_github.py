@@ -21,7 +21,17 @@ from pc_controllo import (
 REPO = "maik/gioco"
 BRANCH = "claude/festive-brahmagupta-vdj2r9"
 TOKEN = "ghp_finto"
-APK_BYTES = b"PK\x03\x04 finto apk " * 1000
+
+
+def _fake_apk() -> bytes:
+    # Un APK è uno zip: il pannello lo verifica prima di riusare una copia già scaricata.
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as apk:
+        apk.writestr("AndroidManifest.xml", b"finto manifest " * 500)
+    return buffer.getvalue()
+
+
+APK_BYTES = _fake_apk()
 
 
 def apk_zip(name="gioco-0.3.0-arm64-v8a-debug.apk", content=APK_BYTES):
@@ -314,3 +324,26 @@ def test_extract_apk_rejects_non_zip(tmp_path):
     bogus.write_bytes(b"non sono uno zip")
     with pytest.raises(DeployError, match="non è uno zip valido"):
         extract_apk(str(bogus), str(tmp_path / "x"))
+
+
+def test_download_replaces_corrupt_cached_apk_and_reports_progress(github, tmp_path):
+    github.add_run(20, [(201, f"{ARTIFACT_PREFIX}-surface-abc", False)])
+    cache = tmp_path / "201"
+    cache.mkdir()
+    (cache / "gioco-0.3.0-arm64-v8a-debug.apk").write_bytes(b"troncato")
+    client = builds(github)
+    seen = []
+    path = client.download_apk(client.latest_build(), str(tmp_path), progress=lambda d, t: seen.append((d, t)))
+    assert open(path, "rb").read() == APK_BYTES
+    assert seen and seen[-1][0] == seen[-1][1] == len(github.zip_bytes)
+    assert github.blob_requests == [None]
+
+
+def test_failed_download_leaves_no_archive(github, tmp_path):
+    github.add_run(20, [(201, f"{ARTIFACT_PREFIX}-surface-abc", False)])
+    github.zip_bytes = b"non zip"
+    client = builds(github)
+    with pytest.raises(DeployError):
+        client.download_apk(client.latest_build(), str(tmp_path))
+    assert not (tmp_path / "201.zip.part").exists()
+    assert [p.name for p in (tmp_path / "201").iterdir()] == []

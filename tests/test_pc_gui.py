@@ -128,3 +128,47 @@ def test_pasted_phone_url_fills_fields(panel):
     client = panel._read_fields()
     assert client.base == "http://192.168.1.23:8081"
     assert (panel.host_var.get(), panel.port_var.get(), panel.token_var.get()) == ("192.168.1.23", "8081", "Ab3_x9Qz")
+
+
+class FakeDownloadClient:
+    base = "http://127.0.0.1:9"
+
+    def __init__(self, fail=()):
+        self.fail = set(fail)
+
+    def download(self, dirname, name, dest, progress=None, cancel=None):
+        if name in self.fail:
+            raise pc_controllo.ApiError(404, "file_non_trovato", f"{dirname}/{name} non esiste")
+        with open(dest, "wb") as handle:
+            handle.write(b"x" * 10)
+        if progress is not None:
+            progress(10, 10)
+        return 10
+
+
+def test_multi_download_uses_unique_names_and_reports(panel, tmp_path, monkeypatch):
+    (tmp_path / "IMG_1.png").write_bytes(b"gia presente")
+    panel.client = FakeDownloadClient(fail={"IMG_3.png"})
+    panel._set_connected(True)
+    panel._show_files({"dir": "photos", "files": [{"name": n, "size": 10} for n in ("IMG_1.png", "IMG_2.png", "IMG_3.png")]})
+    panel.files_tree.selection_set(panel.files_tree.get_children())
+    monkeypatch.setattr(pc_controllo.filedialog, "askdirectory", lambda **kwargs: str(tmp_path))
+    panel.download_selected()
+    assert pump_until(panel, lambda: panel._download_batch is None and "Download finito" in log_text(panel))
+    assert (tmp_path / "IMG_1.png").read_bytes() == b"gia presente"
+    assert (tmp_path / "IMG_1 (2).png").read_bytes() == b"x" * 10
+    assert (tmp_path / "IMG_2.png").exists() and not (tmp_path / "IMG_3.png").exists()
+    assert panel.transfer_var.get() == "2 scaricati, 1 non riusciti"
+    assert panel.download_dir == str(tmp_path)
+
+
+def test_single_download_asks_file_name(panel, tmp_path, monkeypatch):
+    panel.client = FakeDownloadClient()
+    panel._set_connected(True)
+    panel._show_files({"dir": "photos", "files": [{"name": "IMG_1.png", "size": 10}]})
+    panel.files_tree.selection_set(panel.files_tree.get_children())
+    target = tmp_path / "scelto.png"
+    monkeypatch.setattr(pc_controllo.filedialog, "asksaveasfilename", lambda **kwargs: str(target))
+    panel.download_selected()
+    assert pump_until(panel, lambda: target.exists() and panel._download_batch is None)
+    assert panel.transfer_var.get() == "1 scaricati"
