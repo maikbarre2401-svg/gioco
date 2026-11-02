@@ -16,6 +16,7 @@ from pc_controllo import (
     GitHubPipeline,
     apk_from_file,
     extract_apk,
+    resolve_sources,
 )
 
 REPO = "maik/gioco"
@@ -55,6 +56,7 @@ class FakeGitHub:
         # Quante richieste all'elenco delle compilazioni falliscono con 502 prima di rispondere.
         self.flaky_runs = 0
         self.garbage_runs = False
+        self.sources = {}
         outer = self
 
         class Api(BaseHTTPRequestHandler):
@@ -100,6 +102,16 @@ class FakeGitHub:
                     self.send_header("Location", f"{outer.blob_base}/firmato.zip?sig=abc")
                     self.send_header("Content-Length", "0")
                     self.end_headers()
+                elif parts.path.startswith(f"/repos/{REPO}/contents/"):
+                    name = parts.path.rsplit("/", 1)[-1]
+                    if name not in outer.sources or self.headers.get("Accept") != "application/vnd.github.raw":
+                        self._json(404, {"message": "Not Found"})
+                        return
+                    body = outer.sources[name]
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
                 elif parts.path == "/repos/nessuno/nulla/actions/workflows/camera-apk.yml/runs":
                     self._json(404, {"message": "Not Found"})
                 elif parts.path == "/limite/x/actions/workflows/camera-apk.yml/runs":
@@ -405,3 +417,40 @@ def test_malformed_runs_and_artifacts_are_skipped(github):
     github.runs.insert(0, {"senza": "id"})
     github.artifacts[50].insert(0, {"name": f"{ARTIFACT_PREFIX}-rotto"})
     assert builds(github).latest_build()["artifact_id"] == 500
+
+
+def test_download_sources_from_branch(github, tmp_path):
+    github.sources = {"main.py": b"print('telefono')\n", "buildozer.spec": b"[app]\n"}
+    target = builds(github).download_sources(str(tmp_path / "sorgenti"))
+    assert (tmp_path / "sorgenti" / "main.py").read_bytes() == b"print('telefono')\n"
+    assert (tmp_path / "sorgenti" / "buildozer.spec").read_bytes() == b"[app]\n"
+    assert target == str(tmp_path / "sorgenti")
+    paths = [(path, query.get("ref")) for path, query, _ in github.requests if "/contents/" in path]
+    assert paths == [(f"/repos/{REPO}/contents/main.py", [BRANCH]), (f"/repos/{REPO}/contents/buildozer.spec", [BRANCH])]
+
+
+def test_download_sources_missing_file_suggests_local_folder(github, tmp_path):
+    github.sources = {"main.py": b"x"}
+    with pytest.raises(DeployError, match="buildozer.spec non scaricato da GitHub.*cartella Sorgenti"):
+        builds(github).download_sources(str(tmp_path / "sorgenti"))
+
+
+def test_resolve_sources_prefers_local_folder(tmp_path):
+    local = tmp_path / "locale"
+    local.mkdir()
+    for name in ("main.py", "buildozer.spec"):
+        (local / name).write_text("x")
+    logs = []
+
+    def no_github():
+        raise AssertionError("GitHub non serve")
+
+    assert resolve_sources(str(local), no_github, str(tmp_path / "apk"), logs.append) == str(local)
+
+
+def test_resolve_sources_falls_back_to_github(github, tmp_path):
+    github.sources = {"main.py": b"x", "buildozer.spec": b"y"}
+    logs = []
+    folder = resolve_sources(str(tmp_path / "vuota"), lambda: builds(github), str(tmp_path / "apk"), logs.append)
+    assert folder == str(tmp_path / "apk" / "sorgenti")
+    assert any("li scarico da GitHub" in line for line in logs)

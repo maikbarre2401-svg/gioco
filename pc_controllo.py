@@ -108,6 +108,24 @@ GITHUB_RETRIES = 2
 GITHUB_RETRY_DELAY = 1.0
 # Dopo terminate() un processo che non esce entro questo tempo viene chiuso con kill().
 PROCESS_KILL_SECONDS = 5.0
+# Ambiente di compilazione in WSL: stessi pacchetti e versioni del workflow GitHub che produce l'APK funzionante.
+SYSTEM_PACKAGES = (
+    "git", "curl", "ca-certificates", "build-essential", "python3-venv", "openjdk-17-jdk-headless",
+    "autoconf", "automake", "libtool", "libltdl-dev", "pkg-config", "zlib1g-dev", "libncurses-dev",
+    "cmake", "libffi-dev", "libssl-dev", "zip", "unzip",
+)
+# Il workflow compila con Python 3.11: Ubuntu 24.04 ha solo il 3.12, quindi il 3.11 arriva con uv.
+BUILD_PYTHON = "3.11"
+BUILD_PIP_PACKAGES = ("buildozer==1.6.0", "cython==0.29.37", "setuptools==84.0.0")
+UV_PIP_PACKAGE = "uv==0.11.32"
+UV_TOOL_DIR = "~/.venvs/gioco-uv"
+SOURCE_FILES = ("main.py", "buildozer.spec")
+# La modalità di anteprima verificata sul telefono: la stessa che il workflow imposta prima di compilare.
+BUILD_PREVIEW_MODE = "surface"
+WSL_INSTALL_HINT = (
+    "WSL2 non è pronto. Apri PowerShell come amministratore ed esegui: wsl --install -d Ubuntu-24.04 ; "
+    "riavvia il PC, apri Ubuntu dal menu Start una volta per creare utente e password, poi premi di nuovo Genera APK"
+)
 # Riga che main.py scrive all'avvio del server; Kivy la riformatta come "[INFO   ] [Stream      ] token=… porta=…".
 SERVER_LINE = re.compile(r"\] token=([A-Za-z0-9_-]+) porta=(\d+)")
 
@@ -809,7 +827,7 @@ ACTION_LABELS = {
     },
     "wsl": {
         "check": ("Verifica", "verifica di WSL e del telefono"),
-        "build": ("Genera APK", "compilazione"),
+        "build": ("Genera APK", "compilazione dell'APK su questo PC"),
         "install": ("Installa sul telefono", "installazione"),
         "launch": ("Avvia e connetti", "avvio"),
         "everything": ("Tutto: genera, installa, avvia", "compilazione, installazione e avvio"),
@@ -837,6 +855,10 @@ class DeploySettings:
     buildozer: str = DEFAULT_BUILDOZER
     wsl_distro: str = ""
     adb: str = "adb"
+    # Cartella sul PC con main.py e buildozer.spec, copiati nel progetto in WSL prima di compilare (vuota = non copiare).
+    source_dir: str = ""
+    # Cartella sul PC dove finisce l'APK compilato (vuota = resta in bin/ dentro WSL).
+    apk_dir: str = ""
 
 
 def bash_path(path: str) -> str:
@@ -851,18 +873,122 @@ def bash_path(path: str) -> str:
     return shlex.quote(path)
 
 
-def linux_command(settings: DeploySettings, script: str) -> list[str]:
+def linux_command(settings: DeploySettings, script: str, root: bool = False) -> list[str]:
+    """Comando che esegue script in bash: dentro WSL su Windows, direttamente altrove. root serve solo ad apt-get."""
     if settings.host == "windows":
         args = ["wsl.exe"]
         if settings.wsl_distro:
             args += ["-d", settings.wsl_distro]
+        if root:
+            # wsl -u root non chiede la password: l'utente di Windows è già amministratore della sua distribuzione.
+            args += ["-u", "root"]
         return args + ["--", "bash", "-lc", script]
+    if root and hasattr(os, "geteuid") and os.geteuid() != 0:
+        return ["sudo", "-n", "bash", "-lc", script]
     return ["bash", "-lc", script]
+
+
+def host_path_expr(settings: DeploySettings, path: str) -> str:
+    """Espressione bash per un percorso del PC: su Windows passa da wslpath (C:\\... diventa /mnt/c/...)."""
+    if settings.host == "windows":
+        return f'"$(wslpath -u {shlex.quote(path)})"'
+    return shlex.quote(path)
+
+
+def buildozer_venv(settings: DeploySettings) -> str | None:
+    """Cartella dell'ambiente Python di buildozer, se il percorso ha la forma <ambiente>/bin/buildozer."""
+    suffix = "/bin/buildozer"
+    if settings.buildozer.endswith(suffix) and len(settings.buildozer) > len(suffix):
+        return settings.buildozer[: -len(suffix)]
+    return None
+
+
+def missing_packages_script() -> str:
+    packages = " ".join(SYSTEM_PACKAGES)
+    return (
+        "command -v apt-get >/dev/null || { echo SENZA_APT; exit 0; }; "
+        f"for p in {packages}; do "
+        "dpkg-query -W -f='${Status}' \"$p\" 2>/dev/null | grep -q 'install ok installed' || echo \"MANCA_PACCHETTO $p\"; "
+        "done; echo PACCHETTI_CONTROLLATI"
+    )
+
+
+def install_packages_script(packages: list[str]) -> str:
+    return (
+        "export DEBIAN_FRONTEND=noninteractive && apt-get update && "
+        f"apt-get install -y --no-install-recommends {' '.join(shlex.quote(p) for p in packages)}"
+    )
+
+
+def toolchain_script(settings: DeploySettings) -> str:
+    """Installa buildozer in un ambiente Python 3.11 se manca. Non cancella mai nulla di esistente."""
+    venv = buildozer_venv(settings)
+    if venv is None:
+        return (
+            f"test -x {bash_path(settings.buildozer)} || {{ echo 'buildozer non trovato in {settings.buildozer} "
+            f"e non lo so installare lì: svuota il campo buildozer per usare {DEFAULT_BUILDOZER}'; exit 5; }}"
+        )
+    pip_packages = " ".join(shlex.quote(p) for p in BUILD_PIP_PACKAGES)
+    return "\n".join(
+        (
+            "set -e",
+            f"if [ -x {bash_path(settings.buildozer)} ]; then echo BUILDOZER_PRESENTE; exit 0; fi",
+            f"venv={bash_path(venv)}",
+            f"uvdir={bash_path(UV_TOOL_DIR)}",
+            f'echo "Installo buildozer in $venv (Python {BUILD_PYTHON}): qualche minuto, solo la prima volta"',
+            'if [ -e "$venv" ] && [ ! -f "$venv/pyvenv.cfg" ]; then',
+            '  echo "ERRORE: $venv esiste ma non è un ambiente Python: non lo tocco" >&2; exit 3',
+            "fi",
+            'if [ ! -x "$uvdir/bin/uv" ]; then',
+            '  python3 -m venv "$uvdir"',
+            f'  "$uvdir/bin/pip" install -q --disable-pip-version-check {shlex.quote(UV_PIP_PACKAGE)}',
+            "fi",
+            f'if [ ! -e "$venv" ]; then "$uvdir/bin/uv" venv --seed --python {BUILD_PYTHON} "$venv"; fi',
+            f'"$uvdir/bin/uv" pip install --python "$venv/bin/python" {pip_packages}',
+            f"test -x {bash_path(settings.buildozer)}",
+            "echo BUILDOZER_PRONTO",
+        )
+    )
+
+
+def sync_sources_script(settings: DeploySettings) -> str:
+    """Copia main.py e buildozer.spec dal PC nel progetto in WSL e imposta l'anteprima verificata sul telefono."""
+    files = " ".join(f'"$src/{name}"' for name in SOURCE_FILES)
+    mode = BUILD_PREVIEW_MODE
+    return "\n".join(
+        (
+            "set -e",
+            f"src={host_path_expr(settings, settings.source_dir)}",
+            f"dest={bash_path(settings.project_dir)}",
+            'mkdir -p "$dest"',
+            f'cp {files} "$dest/"',
+            'cd "$dest"',
+            f"sed -i 's/^PREVIEW_MODE = check_preview_mode(\"[a-z]*\")$/PREVIEW_MODE = check_preview_mode(\"{mode}\")/' main.py",
+            f"if grep -q '^PREVIEW_MODE = check_preview_mode(\"{mode}\")$' main.py; "
+            "then echo ANTEPRIMA_IMPOSTATA; else echo ANTEPRIMA_NON_TROVATA; fi",
+        )
+    )
+
+
+def export_apk_script(settings: DeploySettings) -> str:
+    """Copia l'APK più recente da bin/ nella cartella del PC e ne stampa il nome."""
+    return "\n".join(
+        (
+            "set -e",
+            f"cd {bash_path(settings.project_dir)}",
+            'f=$(ls -t bin/*.apk 2>/dev/null | head -n 1)',
+            'test -n "$f" || { echo "nessun APK in bin/"; exit 4; }',
+            f"out={host_path_expr(settings, settings.apk_dir)}",
+            'mkdir -p "$out"',
+            'cp "$f" "$out/"',
+            'basename "$f"',
+        )
+    )
 
 
 def check_script(settings: DeploySettings) -> str:
     return (
-        f"if ! cd {bash_path(settings.project_dir)} 2>/dev/null; then echo 'MANCA cartella del progetto'; exit 0; fi; "
+        f"if ! cd {bash_path(settings.project_dir)} 2>/dev/null; then echo 'MANCA cartella del progetto'; echo FINE; exit 0; fi; "
         "for f in main.py buildozer.spec; do test -f \"$f\" || echo \"MANCA $f\"; done; "
         f"test -x {bash_path(settings.buildozer)} || echo 'MANCA buildozer'; "
         "echo FINE"
@@ -870,7 +996,49 @@ def check_script(settings: DeploySettings) -> str:
 
 
 def build_script(settings: DeploySettings) -> str:
-    return f"cd {bash_path(settings.project_dir)} && {bash_path(settings.buildozer)} -v android debug"
+    # Senza l'ambiente attivato buildozer installa le dipendenze di p4a con pip --user, che dentro un venv fallisce.
+    return (
+        f"cd {bash_path(settings.project_dir)} && b={bash_path(settings.buildozer)} && "
+        'if [ -f "$(dirname "$b")/activate" ]; then . "$(dirname "$b")/activate"; fi && '
+        # yes risponde alle domande (licenze SDK, avviso se l'utente di WSL è root) come nel workflow;
+        # PIPESTATUS tiene il codice di uscita di buildozer e non quello di yes.
+        'yes | "$b" -v android debug; exit "${PIPESTATUS[1]}"'
+    )
+
+
+def has_sources(directory: str) -> bool:
+    return bool(directory) and all(os.path.isfile(os.path.join(directory, name)) for name in SOURCE_FILES)
+
+
+def default_source_dir() -> str:
+    """La cartella di pc_controllo.py: nel repository main.py e buildozer.spec sono lì accanto."""
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def resolve_sources(
+    source_dir: str, builds: Callable[[], GitHubBuilds], apk_dir: str, log: Callable[[str], None]
+) -> str:
+    """Cartella con main.py e buildozer.spec: quella indicata se li contiene, altrimenti una copia da GitHub."""
+    if has_sources(source_dir):
+        log(f"Sorgenti dal PC: {source_dir}")
+        return source_dir
+    target = os.path.join(apk_dir, "sorgenti")
+    where = f"in {source_dir}" if source_dir else "nella cartella Sorgenti"
+    log(f"{' e '.join(SOURCE_FILES)} non ci sono {where}: li scarico da GitHub in {target}")
+    return builds().download_sources(target, log)
+
+
+def open_folder(path: str) -> None:
+    """Apre la cartella nel gestore file del sistema; se non si può, non fa nulla."""
+    try:
+        if hasattr(os, "startfile"):
+            os.startfile(path)  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", path])
+        else:
+            subprocess.Popen(["xdg-open", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        pass
 
 
 def needs_windows_path(settings: DeploySettings) -> bool:
@@ -1022,20 +1190,97 @@ class Deployer:
             self._log(ready_text)
         return problems
 
+    def ensure_linux(self) -> None:
+        """Verifica che WSL (o bash) risponda; su Windows senza distribuzione spiega come installarla."""
+        try:
+            code, lines = self._run(linux_command(self.settings, "echo WSL_OK"), None)
+        except DeployError as exc:
+            if self.settings.host == "windows":
+                raise DeployError(f"{WSL_INSTALL_HINT} ({exc})") from None
+            raise
+        if code != 0 or "WSL_OK" not in lines:
+            detail = " | ".join(line for line in lines[-3:] if line.strip())
+            if self.settings.host == "windows":
+                raise DeployError(f"{WSL_INSTALL_HINT}" + (f" (WSL ha risposto: {detail})" if detail else ""))
+            raise DeployError(f"bash non risponde (uscita {code}): {detail}")
+
+    def missing_packages(self) -> list[str]:
+        lines = self._call(linux_command(self.settings, missing_packages_script()), "controllo dei pacchetti")
+        if "SENZA_APT" in lines:
+            raise DeployError("la distribuzione Linux non ha apt-get: per compilare usa Ubuntu (wsl --install -d Ubuntu-24.04)")
+        return [line.split(" ", 1)[1] for line in lines if line.startswith("MANCA_PACCHETTO ")]
+
+    def prepare(self) -> None:
+        """Installa ciò che manca per compilare: pacchetti di sistema (come root) e buildozer (come utente)."""
+        missing = self.missing_packages()
+        if missing:
+            self._log(f"Installo i pacchetti di sistema che mancano: {' '.join(missing)}")
+            try:
+                self._call(
+                    linux_command(self.settings, install_packages_script(missing), root=True),
+                    "installazione dei pacchetti", stream=True,
+                )
+            except DeployError as exc:
+                if self.settings.host == "windows":
+                    raise
+                raise DeployError(
+                    f"{exc}\nServono i permessi di amministratore: esegui una volta nel terminale\n"
+                    f"sudo apt-get install -y {' '.join(missing)}"
+                ) from None
+        self._call(linux_command(self.settings, toolchain_script(self.settings)), "installazione di buildozer", stream=True)
+
+    def sync_sources(self) -> None:
+        self._log(f"Copio {' e '.join(SOURCE_FILES)} da {self.settings.source_dir} in {self.settings.project_dir}")
+        lines = self._call(linux_command(self.settings, sync_sources_script(self.settings)), "copia dei sorgenti")
+        if "ANTEPRIMA_NON_TROVATA" in lines:
+            self._log("ATTENZIONE: in main.py non trovo la riga PREVIEW_MODE: l'anteprima resta quella del file.")
+
+    def export_apk(self) -> str:
+        lines = self._call(linux_command(self.settings, export_apk_script(self.settings)), "copia dell'APK sul PC")
+        names = [line.strip() for line in lines if line.strip()]
+        if not names:
+            raise DeployError("APK compilato ma non copiato sul PC")
+        path = os.path.join(self.settings.apk_dir, os.path.basename(names[-1].replace("\\", "/")))
+        self._log(f"APK pronto: {path}")
+        return path
+
     def check(self) -> list[str]:
         problems = []
-        lines = self._call(linux_command(self.settings, check_script(self.settings)), "controllo di WSL")
-        for line in lines:
-            if line.startswith("MANCA "):
-                problems.append(f"in WSL manca: {line[6:]} ({self.settings.project_dir}, {self.settings.buildozer})")
-        if "FINE" not in lines and not problems:
-            problems.append("WSL non ha risposto come previsto: " + " | ".join(lines[-3:]))
+        try:
+            self.ensure_linux()
+            missing = self.missing_packages()
+            lines = self._call(linux_command(self.settings, check_script(self.settings)), "controllo di WSL")
+        except DeployError as exc:
+            problems.append(str(exc))
+        else:
+            if missing:
+                self._log(f"NOTA: mancano {len(missing)} pacchetti di sistema: li installa Genera APK.")
+            for line in lines:
+                if not line.startswith("MANCA "):
+                    continue
+                what = line[6:]
+                if what == "buildozer" and buildozer_venv(self.settings) is not None:
+                    self._log("NOTA: buildozer non c'è ancora: lo installa Genera APK (qualche minuto).")
+                elif what != "buildozer" and self.settings.source_dir:
+                    self._log(f"NOTA: in WSL manca {what}: lo copia Genera APK.")
+                else:
+                    problems.append(f"in WSL manca: {what} ({self.settings.project_dir}, {self.settings.buildozer})")
+            if "FINE" not in lines and not problems:
+                problems.append("WSL non ha risposto come previsto: " + " | ".join(lines[-3:]))
         problems += self.phone_problems()
-        return self.report(problems, "Pronto: progetto e buildozer in WSL, un telefono collegato.")
+        return self.report(problems, "Pronto: WSL funziona, un telefono collegato.")
 
-    def build(self) -> None:
-        self._log("Compilazione dell'APK in WSL: la prima volta dura 20-40 minuti.")
+    def build(self) -> str:
+        """Prepara WSL se serve, copia i sorgenti, compila e porta l'APK sul PC. Restituisce il percorso dell'APK."""
+        self.ensure_linux()
+        self.prepare()
+        if self.settings.source_dir:
+            self.sync_sources()
+        self._log("Compilazione dell'APK con buildozer: la prima volta scarica SDK e NDK e dura 20-40 minuti.")
         self._call(linux_command(self.settings, build_script(self.settings)), "buildozer", stream=True)
+        if self.settings.apk_dir:
+            return self.export_apk()
+        return self.apk_path()
 
     def apk_path(self) -> str:
         lines = self._call(linux_command(self.settings, apk_path_script(self.settings)), "ricerca dell'APK")
@@ -1048,6 +1293,10 @@ class Deployer:
         self.install_apk(self.apk_path())
 
     def install_apk(self, path: str) -> None:
+        if self.settings.host == "wsl" and needs_windows_path(self.settings) and path.startswith("/"):
+            # adb.exe è un programma Windows: un percorso Linux non lo trova.
+            converted = self._call(["wslpath", "-w", path], "conversione del percorso dell'APK")
+            path = next((line.strip() for line in reversed(converted) if line.strip()), path)
         lines = self.adb("install", "-r", path, label="installazione")
         if not any("Success" in line for line in lines):
             raise DeployError("installazione non confermata da adb:\n" + "\n".join(lines[-ERROR_TAIL_LINES:]))
@@ -1090,8 +1339,7 @@ class Deployer:
         problems = self.check()
         if problems:
             raise DeployError("controllo iniziale fallito: " + "; ".join(problems))
-        self.build()
-        self.install()
+        self.install_apk(self.build())
         return self.launch()
 
 
@@ -1170,9 +1418,9 @@ class GitHubBuilds:
         query = urllib.parse.quote(f"branch:{self.branch}")
         return f"https://github.com/{self.repo}/actions/workflows/{self.workflow}?query={query}"
 
-    def _request(self, url: str) -> urllib.request.Request:
+    def _request(self, url: str, accept: str = "application/vnd.github+json") -> urllib.request.Request:
         headers = {
-            "Accept": "application/vnd.github+json",
+            "Accept": accept,
             "X-GitHub-Api-Version": "2022-11-28",
             "User-Agent": "gioco-pc-controllo",
         }
@@ -1180,9 +1428,9 @@ class GitHubBuilds:
             headers["Authorization"] = f"Bearer {self.token}"
         return urllib.request.Request(url, headers=headers)
 
-    def _open(self, url: str) -> Any:
+    def _open(self, url: str, accept: str = "application/vnd.github+json") -> Any:
         try:
-            return _GITHUB_OPENER.open(self._request(url), timeout=GITHUB_TIMEOUT)
+            return _GITHUB_OPENER.open(self._request(url, accept), timeout=GITHUB_TIMEOUT)
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", "replace")
             if exc.code == 401:
@@ -1197,14 +1445,13 @@ class GitHubBuilds:
         except (urllib.error.URLError, OSError) as exc:
             raise DeployError(f"GitHub non raggiungibile: {getattr(exc, 'reason', exc)}", retryable=True) from None
 
-    def _json(self, url: str) -> dict:
+    def _read(self, url: str, accept: str = "application/vnd.github+json") -> bytes:
         """Lettura dall'API di GitHub, ripetuta sugli errori temporanei (rete, 5xx) con attesa crescente."""
         attempt = 0
         while True:
             try:
-                with self._open(url) as response:
-                    raw = response.read()
-                break
+                with self._open(url, accept) as response:
+                    return response.read()
             except DeployError as exc:
                 error = exc
             except OSError as exc:
@@ -1214,6 +1461,9 @@ class GitHubBuilds:
                 raise error
             attempt += 1
             self._sleep(GITHUB_RETRY_DELAY * attempt)
+
+    def _json(self, url: str) -> dict:
+        raw = self._read(url)
         try:
             payload = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, ValueError):
@@ -1221,6 +1471,24 @@ class GitHubBuilds:
         if not isinstance(payload, dict):
             raise DeployError("risposta di GitHub non valida: JSON inatteso")
         return payload
+
+    def download_sources(self, dest_dir: str, log: Callable[[str], None] | None = None) -> str:
+        """Scarica main.py e buildozer.spec del branch in dest_dir, per compilare sul PC senza il repository."""
+        os.makedirs(dest_dir, exist_ok=True)
+        ref = urllib.parse.quote(self.branch, safe="")
+        for name in SOURCE_FILES:
+            url = f"{self.api}/repos/{self.repo}/contents/{name}?ref={ref}"
+            try:
+                data = self._read(url, accept="application/vnd.github.raw")
+            except DeployError as exc:
+                raise DeployError(
+                    f"{name} non scaricato da GitHub ({self.repo}, branch {self.branch}): {exc}. "
+                    f"In alternativa metti {' e '.join(SOURCE_FILES)} nella cartella Sorgenti"
+                ) from None
+            write_bytes_atomic(os.path.join(dest_dir, name), data)
+            if log is not None:
+                log(f"  {name} da GitHub ({human_size(len(data))})")
+        return dest_dir
 
     def _runs(self, **params: Any) -> list[dict]:
         query = urllib.parse.urlencode({"branch": self.branch, **params})
@@ -1488,17 +1756,17 @@ class ControlPanel:
         deploy.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
         self.deploy_frame = deploy
         # Su Windows buildozer non gira: lì la strada predefinita è l'APK già compilato da GitHub.
-        self.mode_var = tk.StringVar(value="github" if self._host == "windows" else "wsl")
+        self.mode_var = tk.StringVar(value="wsl")
         self.adb_var = tk.StringVar(value=default_adb(self._host))
         mode_row = ttk.Frame(deploy)
         mode_row.grid(row=0, column=0, sticky="w")
         ttk.Label(mode_row, text="APK da:").grid(row=0, column=0, padx=(0, 6))
         ttk.Radiobutton(
-            mode_row, text="GitHub (compilato online, niente WSL)", variable=self.mode_var, value="github",
+            mode_row, text="GitHub (già compilato online)", variable=self.mode_var, value="github",
             command=self._on_mode_change,
         ).grid(row=0, column=1, padx=(0, 12))
         ttk.Radiobutton(
-            mode_row, text="WSL2 (buildozer su questo PC)", variable=self.mode_var, value="wsl",
+            mode_row, text="Questo PC (compila con buildozer in WSL2)", variable=self.mode_var, value="wsl",
             command=self._on_mode_change,
         ).grid(row=0, column=2, padx=(0, 24))
         ttk.Label(mode_row, text="adb").grid(row=0, column=3, padx=(0, 4))
@@ -1530,14 +1798,24 @@ class ControlPanel:
         self.project_var = tk.StringVar(value=DEFAULT_PROJECT_DIR)
         self.buildozer_var = tk.StringVar(value=DEFAULT_BUILDOZER)
         self.distro_var = tk.StringVar(value="")
+        self.source_var = tk.StringVar(value=default_source_dir())
         self.wsl_fields = ttk.Frame(deploy)
         self.wsl_fields.grid(row=1, column=0, sticky="w", pady=(6, 0))
-        fields = [("Progetto in WSL", self.project_var, 18), ("buildozer", self.buildozer_var, 30)]
+        rows = [
+            # Sorgenti: la cartella con main.py e buildozer.spec; se non li contiene si scaricano da GitHub.
+            [("Sorgenti", self.source_var, 30), ("Cartella APK", self.apk_dir_var, 30)],
+            [("Progetto in WSL", self.project_var, 14), ("buildozer", self.buildozer_var, 30)],
+        ]
         if self._host == "windows":
-            fields.append(("Distribuzione WSL (vuoto = predefinita)", self.distro_var, 14))
-        for column, (label, variable, width) in enumerate(fields):
-            ttk.Label(self.wsl_fields, text=label).grid(row=0, column=column * 2, padx=(0, 4), sticky="w")
-            ttk.Entry(self.wsl_fields, textvariable=variable, width=width).grid(row=0, column=column * 2 + 1, padx=(0, 12))
+            rows[1].append(("Distribuzione WSL", self.distro_var, 12))
+        for row, fields in enumerate(rows):
+            for column, (label, variable, width) in enumerate(fields):
+                ttk.Label(self.wsl_fields, text=label).grid(
+                    row=row, column=column * 2, padx=(0, 4), pady=(0, 4), sticky="w"
+                )
+                ttk.Entry(self.wsl_fields, textvariable=variable, width=width).grid(
+                    row=row, column=column * 2 + 1, padx=(0, 12), pady=(0, 4), sticky="w"
+                )
 
         actions = ttk.Frame(deploy)
         actions.grid(row=2, column=0, sticky="w", pady=(6, 0))
@@ -1550,6 +1828,7 @@ class ControlPanel:
         self.install_file_button.grid(row=0, column=5, padx=(0, 6))
         self.builds_page_button = ttk.Button(actions, text="Pagina compilazioni", command=self.open_builds_page)
         self.builds_page_button.grid(row=0, column=6, padx=(0, 6))
+        ttk.Button(actions, text="Apri cartella APK", command=self.open_apk_dir).grid(row=0, column=10, padx=(12, 0))
         self.deploy_buttons = list(self.action_buttons.values()) + [self.install_file_button]
         self.cancel_button = ttk.Button(actions, text="Interrompi", command=self.cancel_deploy)
         self.cancel_button.grid(row=0, column=7, padx=(12, 0))
@@ -1914,6 +2193,7 @@ class ControlPanel:
             "project_dir": self.project_var,
             "buildozer": self.buildozer_var,
             "wsl_distro": self.distro_var,
+            "source_dir": self.source_var,
             "media_dir": self.dir_var,
         }
 
@@ -1926,7 +2206,7 @@ class ControlPanel:
             if isinstance(value, str) and value:
                 variable.set(value)
         if self.mode_var.get() not in ACTION_LABELS:
-            self.mode_var.set("github" if self._host == "windows" else "wsl")
+            self.mode_var.set("wsl")
         if self.dir_var.get() not in [label for _, label in MEDIA_DIRS]:
             self.dir_var.set(MEDIA_DIRS[0][1])
         self.remember_github_token_var.set(bool(data.get("remember_github_token")))
@@ -2252,6 +2532,11 @@ class ControlPanel:
             self.log(str(exc))
             return
         dest_dir = self.apk_dir_var.get().strip() or default_apk_dir()
+        settings.apk_dir = dest_dir
+        source_dir = self.source_var.get().strip()
+        # Per Verifica: i sorgenti arriveranno dal PC o da GitHub, quindi in WSL possono ancora mancare.
+        settings.source_dir = source_dir if has_sources(source_dir) else os.path.join(dest_dir, "sorgenti")
+        builds_factory = self._github_builds
         runner = ProcessRunner()
         self._runner = runner
         for button in self.deploy_buttons:
@@ -2272,6 +2557,9 @@ class ControlPanel:
             if action == "install_file":
                 deployer.install_apk(apk_from_file(apk_path, os.path.join(dest_dir, "da-file")))
                 return action, None
+            if builds is None and action in ("build", "everything"):
+                os.makedirs(dest_dir, exist_ok=True)
+                settings.source_dir = resolve_sources(source_dir, builds_factory, dest_dir, emit)
             if builds is not None:
                 pipeline = GitHubPipeline(
                     deployer, builds, dest_dir, emit, lambda: runner.cancelled,
@@ -2292,8 +2580,10 @@ class ControlPanel:
             self._deploy_finished("pronto" if not value else f"{len(value)} problemi: vedi il log")
             return
         if action == "build" and value:
-            self._deploy_finished("APK pronto")
-            self.log(f"APK: {value}")
+            self._deploy_finished("APK pronto: cartella aperta")
+            self.log(f"APK pronto da copiare sul telefono: {value}")
+            if os.path.isfile(value):
+                open_folder(os.path.dirname(value))
             return
         if action in ("launch", "everything"):
             token, port = value
@@ -2325,6 +2615,16 @@ class ControlPanel:
             button.state(["!disabled"])
         self.cancel_button.state(["disabled"])
         self.deploy_var.set(text)
+
+    def open_apk_dir(self) -> None:
+        path = self.apk_dir_var.get().strip() or default_apk_dir()
+        try:
+            os.makedirs(path, exist_ok=True)
+        except OSError as exc:
+            self.log(f"Cartella APK non creata: {exc}")
+            return
+        open_folder(path)
+        self.log(f"Cartella APK: {path}")
 
     def cancel_deploy(self) -> None:
         if self._runner is not None:

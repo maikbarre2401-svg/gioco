@@ -381,3 +381,32 @@ def test_hidden_sections_persist_and_deploy_shows_its_section(tmp_path, monkeypa
         assert second.show_deploy_var.get() and second.deploy_frame.winfo_manager() == "grid"
     finally:
         second.close()
+
+
+def test_generate_apk_on_pc_resolves_sources_and_opens_folder(panel, tmp_path, monkeypatch):
+    sources = tmp_path / "sorgenti"
+    sources.mkdir()
+    for name in ("main.py", "buildozer.spec"):
+        (sources / name).write_text("x")
+    apk = tmp_path / "apk" / "gioco.apk"
+    seen = {}
+    opened = []
+
+    def fake_build(self):
+        seen["settings"] = self.settings
+        apk.parent.mkdir(parents=True, exist_ok=True)
+        apk.write_bytes(b"apk")
+        return str(apk)
+
+    monkeypatch.setattr(pc_controllo.Deployer, "build", fake_build)
+    monkeypatch.setattr(pc_controllo, "open_folder", opened.append)
+    assert panel.mode_var.get() == "wsl"
+    panel.source_var.set(str(sources))
+    panel.apk_dir_var.set(str(tmp_path / "apk"))
+    panel.deploy("build")
+    assert pump_until(panel, lambda: panel._runner is None)
+    assert seen["settings"].source_dir == str(sources)
+    assert seen["settings"].apk_dir == str(tmp_path / "apk")
+    assert opened == [str(tmp_path / "apk")]
+    assert panel.deploy_var.get() == "APK pronto: cartella aperta"
+    assert f"APK pronto da copiare sul telefono: {apk}" in log_text(panel)
