@@ -359,19 +359,38 @@ class Engine(threading.Thread):
             sox, soy = self._screen_ox, self._screen_oy
             fov_r = self._cfg.fov_px
             fov_dim = self._dim_hex(skel_hex, 0.35)
+            fov_bright = self._dim_hex(skel_hex, 0.7)
             overlay_items.append(("cross", scx + sox, scy + soy, 10, main_hex))
             overlay_items.append(("circle", scx + sox, scy + soy, fov_r, fov_dim))
 
             cv2.drawMarker(ann, (scx, scy), main_color, cv2.MARKER_CROSS, 16, 1, cv2.LINE_AA)
             cv2.circle(ann, (scx, scy), fov_r, self._hex_bgr(skel_hex), 1, cv2.LINE_AA)
 
+            fov_detections: List[Detection] = []
+            for x1, y1, x2, y2, conf in detections:
+                mx = (x1 + x2) / 2.0
+                my = (y1 + y2) / 2.0
+                dist_to_center = math.hypot(mx - scx, my - scy)
+                if dist_to_center <= fov_r:
+                    fov_detections.append((x1, y1, x2, y2, conf))
+
             if self._cfg.overlay_boxes:
-                for x1, y1, x2, y2, conf in detections:
+                for x1, y1, x2, y2, conf in fov_detections:
                     cv2.rectangle(ann, (int(x1), int(y1)), (int(x2), int(y2)), main_color, 2)
                     overlay_items.append(("box", int(x1) + sox, int(y1) + soy, int(x2) + sox, int(y2) + soy, main_hex))
 
+            n_in_fov = len(fov_detections)
+            if n_in_fov > 0:
+                cv2.circle(ann, (scx, scy), fov_r, self._hex_bgr(fov_bright), 2, cv2.LINE_AA)
+                overlay_items.append(("circle", scx + sox, scy + soy, fov_r + 2, fov_bright))
+                label = str(n_in_fov)
+                lx = scx + fov_r - 12
+                ly = scy - fov_r + 14
+                cv2.putText(ann, label, (lx, ly), cv2.FONT_HERSHEY_SIMPLEX, 0.4, self._hex_bgr(fov_bright), 1, cv2.LINE_AA)
+                overlay_items.append(("text", lx + sox, ly + soy, label, fov_bright, 10))
+
             self._aim.set_frame(frame)
-            picked = self._aim.pick(detections, w, h)
+            picked = self._aim.pick(fov_detections, w, h)
 
             smooth_kps: Optional[np.ndarray] = None
             target_point: Optional[Tuple[float, float]] = None
