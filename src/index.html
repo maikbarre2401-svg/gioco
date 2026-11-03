@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<meta name="description" content="OJO DE DEUS v100 — monitor di intelligence globale 3D con dati pubblici reali: aerei ADS-B, satelliti, terremoti, meteo spaziale, notizie, mercati.">
+<meta name="theme-color" content="#000000">
+<title>OJO DE DEUS v100 · Global Intelligence Monitor 3D</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='40' fill='none' stroke='%2300ff41' stroke-width='8'/%3E%3Ccircle cx='50' cy='50' r='12' fill='%23ff2244'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&family=Rajdhani:wght@500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/ojo.css" data-inline>
+</head>
+<body>
+
+<!-- ═════════════ BOOT ═════════════ -->
+<div id="boot">
+  <svg id="boot-globe" viewBox="0 0 100 100" aria-hidden="true">
+    <circle cx="50" cy="50" r="38" fill="none" stroke="rgba(0,255,65,0.18)" stroke-width="1"/>
+    <ellipse cx="50" cy="50" rx="38" ry="15" fill="none" stroke="rgba(0,255,65,0.14)" stroke-width=".7"/>
+    <ellipse cx="50" cy="50" rx="15" ry="38" fill="none" stroke="rgba(0,255,65,0.14)" stroke-width=".7"/>
+    <ellipse cx="50" cy="50" rx="38" ry="27" fill="none" stroke="rgba(0,255,65,0.09)" stroke-width=".7"/>
+    <line x1="12" y1="50" x2="88" y2="50" stroke="rgba(0,255,65,0.1)" stroke-width=".7"/>
+    <circle cx="50" cy="50" r="3" fill="rgba(0,255,65,0.9)"/>
+    <circle cx="50" cy="50" r="38" fill="none" stroke="rgba(0,255,65,0.5)" stroke-width="1.5" stroke-dasharray="8 4"/>
+  </svg>
+  <div id="boot-logo">OJO DE <em>DEUS</em></div>
+  <div id="boot-sub">v100 · Global Intelligence Monitor 3D · solo dati reali, etichettati</div>
+  <div id="boot-cfg">
+    <div class="bc-label">🌐 Cesium ion token <span class="dstat off">opzionale</span></div>
+    <div class="bc-hint">Senza token: globo 3D reale con terreno 3D gratuito (AWS Terrain), immagini satellitari Esri e luci notturne NASA.
+      Con token gratuito (<a href="https://ion.cesium.com/signup" target="_blank" rel="noopener">ion.cesium.com</a> → Access Tokens): terreno mondiale ad alta risoluzione, <b>edifici 3D OSM</b> e <b>città fotorealistiche 3D</b>.</div>
+    <input id="cfg-ion" class="bc-input" type="password" placeholder="eyJhbGciOiJIUzI1NiIs..." autocomplete="off" spellcheck="false">
+    <div class="bc-label">🔥 NASA FIRMS map key <span class="dstat off">opzionale</span></div>
+    <div class="bc-hint">Per i punti di incendio satellitari: chiave gratuita su <a href="https://firms.modaps.eosdis.nasa.gov/api/map_key/" target="_blank" rel="noopener">firms.modaps.eosdis.nasa.gov</a>. Senza chiave gli incendi arrivano comunque da NASA EONET.</div>
+    <input id="cfg-firms" class="bc-input" type="password" placeholder="abcdef0123456789..." autocomplete="off" spellcheck="false">
+    <div class="bc-row">
+      <button id="boot-start" type="button">▶ AVVIA OJO DE DEUS</button>
+      <span id="boot-auto"></span>
+    </div>
+  </div>
+  <div id="boot-bar-wrap"><div id="boot-bar"></div></div>
+  <div id="boot-status">PRONTO</div>
+  <div id="boot-lines"></div>
+</div>
+<div id="scanline"></div><div id="vignette"></div>
+
+<div id="app">
+<!-- ═════════════ TOPBAR ═════════════ -->
+<div id="topbar">
+  <div class="t-logo"><div class="t-logo-main">OJO DE <em>DEUS</em></div><div class="t-logo-sub">v100 · Intelligence Monitor 3D</div></div>
+  <div class="t-sep"></div>
+  <button class="threat lv5" id="threat-badge" type="button" title="Indice di allerta calcolato da OJO (non ufficiale). Clicca per il briefing.">ALLERTA 5<small>--/100</small></button>
+  <div class="t-sep"></div>
+  <div id="hotnav"></div>
+  <div id="omni-wrap">
+    <input id="omni" type="text" placeholder="Cerca luogo, volo, satellite, coordinate… ( / )" autocomplete="off" spellcheck="false">
+    <div id="omni-sug" class="hidden"></div>
+  </div>
+  <div id="t-right">
+    <span class="tst">✈ <b id="st-ac">0</b></span>
+    <span class="tst">🛰 <b id="st-sat">0</b></span>
+    <span class="tst">🌍 <b id="st-eq">0</b></span>
+    <button class="tbtn" id="btn-layers" type="button" title="Layer (L)">🗂 LAYER</button>
+    <button class="tbtn" id="btn-health" type="button" title="Stato dei feed (S)">📊 <span id="st-feeds">0/0</span></button>
+    <button class="tbtn" id="btn-brief" type="button" title="Briefing (B)">🧠</button>
+    <button class="tbtn" id="btn-tts" type="button" title="Voce italiana (T)">🔇</button>
+    <button class="tbtn" id="btn-settings" type="button" title="Impostazioni">⚙</button>
+    <button class="tbtn" id="btn-help" type="button" title="Aiuto e scorciatoie (?)">?</button>
+    <div id="t-clk">--:--:-- UTC<small>--:--:-- locale</small></div>
+  </div>
+</div>
+
+<!-- ═════════════ MAP ═════════════ -->
+<div id="map-section">
+  <div id="globe3d"></div>
+  <div id="map2d"></div>
+  <div id="map-msg"><div class="spinner"></div><div id="map-msg-txt">Caricamento motore 3D…</div></div>
+
+  <div id="layer-panel" class="sidepanel">
+    <div class="sp-hdr"><span class="sp-title">🗂 LAYER</span><button class="sp-close" data-close="layer-panel" type="button">✕</button></div>
+    <div class="sp-body" id="layer-list"></div>
+    <div class="sp-foot">
+      <span class="dstat live">LIVE</span> dato reale in tempo reale ·
+      <span class="dstat calc">CALC</span> calcolato da dati reali ·
+      <span class="dstat ref">REF</span> riferimento statico pubblico ·
+      <span class="dstat est">STIMA</span> zona indicativa ·
+      <span class="dstat key">KEY</span> richiede chiave
+    </div>
+  </div>
+  <div id="health-panel" class="sidepanel">
+    <div class="sp-hdr"><span class="sp-title">📊 STATO FEED</span><button class="sp-close" data-close="health-panel" type="button">✕</button></div>
+    <div class="sp-body" id="health-list"></div>
+    <div class="sp-foot">Ogni feed prova prima la connessione diretta, poi i proxy CORS (e il tuo proxy personale, se impostato in ⚙). Se una fonte è offline il pannello lo dice: nessun dato viene inventato.</div>
+  </div>
+
+  <div class="hc tl"></div><div class="hc tr"></div><div class="hc bl"></div><div class="hc br"></div>
+  <div id="xhair"><div id="xh-dot"></div></div>
+  <div class="mov" id="m-info">🌍 --</div>
+  <div class="mov" id="m-coords">--</div>
+
+  <div id="mode-bar">
+    <div class="mc-group">
+      <button class="mc act" data-scene="3d" type="button" title="Globo 3D (1)">🌍 3D</button>
+      <button class="mc" data-scene="cv" type="button" title="Vista 2.5D (2)">🗺 2.5D</button>
+      <button class="mc" data-scene="2d" type="button" title="Mappa 2D (3)">▦ 2D</button>
+    </div>
+    <div class="mc-group">
+      <button class="mc" id="btn-home" type="button" title="Vista orbitale (H)">🛰 ORBITA</button>
+      <button class="mc" id="btn-spin" type="button" title="Rotazione automatica (R)">⟲ SPIN</button>
+      <button class="mc" id="btn-me" type="button" title="La mia posizione (G)">📍 IO</button>
+      <button class="mc" id="btn-full" type="button" title="Mappa a schermo intero (F)">⛶</button>
+    </div>
+  </div>
+  <div id="vis-bar">
+    <div class="mc-group">
+      <button class="mc act" data-vis="nrm" type="button" title="Normale">NRM</button>
+      <button class="mc" data-vis="nvg" type="button" title="Visore notturno">NVG</button>
+      <button class="mc" data-vis="flir" type="button" title="Termico FLIR">FLIR</button>
+      <button class="mc" data-vis="crt" type="button" title="Tattico (contorni)">CRT</button>
+    </div>
+    <select class="mselect" id="base-sel" title="Mappa di base"></select>
+    <label class="mc" title="Esagerazione del rilievo 3D" style="cursor:default">⛰ <input class="mrange" id="exag" type="range" min="1" max="5" step="0.5" value="1.5"> <span id="exag-v">1.5×</span></label>
+  </div>
+
+  <div id="trkp" class="hidden"></div>
+  <div id="alert-pop"></div>
+  <div id="credits"></div>
+  <div id="ticker"><div id="ticker-lbl">⚡ LIVE</div><div id="ticker-track"><span class="tk">In attesa delle notizie…</span></div></div>
+</div>
+<div id="resizer" title="Trascina per ridimensionare la mappa"></div>
+
+<!-- ═════════════ DASHBOARD ═════════════ -->
+<div id="dash">
+<!-- COL 1 -->
+<div class="col" id="c1">
+  <div class="sh c-war" data-sec="sb-hot"><span class="sh-icon">⚔</span><span class="sh-title">Zone calde · indice live</span><span class="dstat calc">CALC</span><span class="sh-arrow">▼</span></div>
+  <div class="sb" id="sb-hot">
+    <div class="note">Punteggio = base storica + notizie reali + attività militare ADS-B nell'area. Clicca per il dossier.</div>
+    <div id="hot-list"></div>
+  </div>
+  <div class="sh c-blu" data-sec="sb-adsb"><span class="sh-icon">✈</span><span class="sh-title">ADS-B aerei reali</span><span class="dstat wait" data-h="adsb">WAIT</span><span class="sh-cnt" id="ac-hdr">0</span><span class="sh-arrow">▼</span></div>
+  <div class="sb" id="sb-adsb">
+    <div class="sg">
+      <div class="sc"><div class="sc-l">Totali</div><div class="sc-v cyn" id="ac-tot">--</div></div>
+      <div class="sc"><div class="sc-l">Militari</div><div class="sc-v orn" id="ac-mil">--</div></div>
+      <div class="sc"><div class="sc-l">ISR/Tanker</div><div class="sc-v pur" id="ac-isr">--</div></div>
+      <div class="sc"><div class="sc-l">Emergenze</div><div class="sc-v red" id="ac-emg">--</div></div>
+    </div>
+    <div class="note" style="display:flex;gap:6px;flex-wrap:wrap"><span>Fonte: <b id="ac-src" class="blu">--</b></span><span style="margin-left:auto">Agg.: <b id="ac-upd">--</b></span></div>
+    <div class="fp">
+      <button class="fp-btn act" data-acf="all" type="button">TUTTI</button>
+      <button class="fp-btn" data-acf="mil" type="button">MIL</button>
+      <button class="fp-btn" data-acf="fighter" type="button">CACCIA</button>
+      <button class="fp-btn" data-acf="isr" type="button">ISR</button>
+      <button class="fp-btn" data-acf="tanker" type="button">TANKER</button>
+      <button class="fp-btn" data-acf="transport" type="button">CARGO</button>
+      <button class="fp-btn" data-acf="helo" type="button">ELI</button>
+      <button class="fp-btn" data-acf="emerg" type="button" style="color:#ff6680">SOS</button>
+    </div>
+    <div class="inp-row"><input class="inp" id="ac-q" placeholder="Filtra callsign / tipo / registrazione / hex…"></div>
+    <div id="ac-list" style="max-height:240px;overflow-y:auto"></div>
+  </div>
+  <div class="sh c-pur" data-sec="sb-nuke"><span class="sh-icon">☢</span><span class="sh-title">Siti nucleari</span><span class="dstat ref">REF</span><span class="sh-arrow">▼</span></div>
+  <div class="sb" id="sb-nuke"><div id="nuke-list" style="max-height:220px;overflow-y:auto"></div></div>
+  <div class="sh c-grn" data-sec="sb-geo"><span class="sh-icon">🌐</span><span class="sh-title">IP / DNS GeoTrace</span><span class="dstat wait" data-h="geoip">PRONTO</span><span class="sh-arrow">▼</span></div>
+  <div class="sb" id="sb-geo">
+    <div class="inp-row"><input class="inp" id="ip-inp" placeholder="IP o dominio (es. 8.8.8.8, rai.it)…"><button class="inp-btn" id="ip-btn" type="button">TRACE</button><button class="inp-btn" id="ip-me" type="button" title="Il mio IP">IO</button></div>
+    <div id="geo-result" class="terminal"><div class="t-line dim">// risolve domini via DNS-over-HTTPS e geolocalizza l'IP; traccia l'arco sul globo</div></div>
+  </div>
+</div>
+
+<!-- COL 2 -->
+<div class="col" id="c2">
+  <div class="sh c-cyn" data-sec="sb-brief"><span class="sh-icon">🧠</span><span class="sh-title">Briefing automatico</span><span class="dstat calc">CALC</span><span class="sh-arrow">▼</span></div>
+  <div class="sb" id="sb-brief">
+    <div class="brief" id="brief-text">In attesa dei primi dati…</div>
+    <div class="fp"><button class="fp-btn" id="brief-read" type="button">🔊 LEGGI</button><button class="fp-btn" id="brief-open" type="button">⤢ COMPLETO</button><span style="margin-left:auto;font-size:10px;color:var(--gf)" id="brief-time">--</span></div>
+    <div class="tv-cat">🚨 Allerte rilevate <span id="alert-cnt">0</span></div>
+    <div id="alert-list" style="max-height:170px;overflow-y:auto"><div class="empty">Nessuna anomalia rilevata</div></div>
+  </div>
+  <div class="sh c-cyn" data-sec="sb-iss"><span class="sh-icon">🛰</span><span class="sh-title">ISS &amp; satelliti</span><span class="dstat wait" data-h="iss">WAIT</span><span class="dstat wait" data-h="sats">WAIT</span><span class="sh-arrow">▼</span></div>
+  <div class="sb" id="sb-iss">
+    <div class="iss-wrap">
+      <div class="iss-r" title="Posizione ISS (proiezione equirettangolare)"><div class="r-ring r1"></div><div class="r-ring r2"></div><div class="r-ring r3"></div><div class="iss-beam"></div><div class="iss-dot" id="iss-dot"></div></div>
+      <div class="iss-side"><div id="iss-over">Sopra: --</div><div id="iss-vis" style="color:var(--gf)">--</div><button class="fp-btn" id="iss-follow" type="button" style="margin-top:4px">🎯 SEGUI ISS</button></div>
+    </div>
+    <div class="sg">
+      <div class="sc"><div class="sc-l">Lat</div><div class="sc-v cyn" id="iss-lat">--</div></div>
+      <div class="sc"><div class="sc-l">Lon</div><div class="sc-v cyn" id="iss-lon">--</div></div>
+      <div class="sc"><div class="sc-l">Alt km</div><div class="sc-v" id="iss-alt">--</div></div>
+      <div class="sc"><div class="sc-l">km/h</div><div class="sc-v orn" id="iss-vel">--</div></div>
+    </div>
+    <div class="tv-cat">📡 Prossimi passaggi ISS sopra di te <button class="fp-btn" id="iss-pass-btn" type="button">📍 CALCOLA</button></div>
+    <div id="iss-pass"><div class="empty">Premi “Calcola” (usa la tua posizione)</div></div>
+    <div class="tv-cat">🛰 Satelliti in orbita <span id="sat-tot">0</span></div>
+    <div class="sg g3" id="sat-groups"></div>
+    <div class="inp-row"><input class="inp" id="sat-q" placeholder="Cerca satellite (nome o NORAD)…"></div>
+    <div id="sat-list" style="max-height:150px;overflow-y:auto"></div>
+  </div>
+  <div class="sh c-yel" data-sec="sb-solar"><span class="sh-icon">☀</span><span class="sh-title">Meteo spaziale NOAA</span><span class="dstat wait" data-h="space">WAIT</span><span class="sh-arrow">▼</span></div>
+  <div class="sb" id="sb-solar">
+    <div class="sol-row"><div class="sol-l">Indice Kp (stima 1 min)</div><div class="sol-v" id="kp-v">--</div></div>
+    <div class="sol-row"><div class="sol-l">Kp ultimi 3 giorni</div><canvas class="spark" id="kp-spark" width="160" height="30" style="width:160px;height:30px"></canvas></div>
+    <div class="sol-row"><div class="sol-l">Scale NOAA (R / S / G)</div><div class="sol-v" id="scale-v">--</div></div>
+    <div class="sol-row"><div class="sol-l">Vento solare</div><div class="sol-v orn" id="sw-v">--</div></div>
+    <div class="sol-row"><div class="sol-l">Campo IMF Bt / Bz</div><div class="sol-v yel" id="bz-v">--</div></div>
+    <div class="sol-row"><div class="sol-l">Raggi X (classe brillamento)</div><div class="sol-v" id="xr-v">--</div></div>
+    <div class="sol-row"><div class="sol-l">Aurora (max probabilità)</div><div class="sol-v cyn" id="aur-v">--</div></div>
+  </div>
+</div>
+
+<!-- COL 3 -->
+<div class="col" id="c3">
+  <div class="sh c-grn" data-sec="sb-news"><span class="sh-icon">📰</span><span class="sh-title">Notizie globali</span><span class="dstat wait" data-h="news">WAIT</span><span class="sh-cnt" id="news-cnt">--</span><span class="sh-arrow">▼</span></div>
+  <div class="sb" id="sb-news">
+    <div class="fp">
+      <button class="fp-btn act" data-nf="all" type="button">🌍 TUTTE</button>
+      <button class="fp-btn" data-nf="war" type="button" style="color:#ff6680">💥 CRISI</button>
+      <button class="fp-btn" data-nf="geo" type="button" title="Solo notizie geolocalizzate">📍 GEO</button>
+      <button class="fp-btn" data-nf="it" type="button">🇮🇹</button>
+      <button class="fp-btn" data-nf="uk" type="button">🇬🇧</button>
+      <button class="fp-btn" data-nf="us" type="button">🇺🇸</button>
+      <button class="fp-btn" data-nf="eu" type="button">🇪🇺</button>
+      <button class="fp-btn" data-nf="gl" type="button">📡</button>
+    </div>
+    <div class="inp-row"><input class="inp" id="news-q" placeholder="Cerca nelle notizie…"></div>
+    <div id="news-list" style="max-height:330px;overflow-y:auto"><div class="empty">Caricamento feed RSS…</div></div>
+  </div>
+  <div class="sh c-orn" data-sec="sb-eq"><span class="sh-icon">🌍</span><span class="sh-title">Terremoti USGS</span><span class="dstat wait" data-h="quakes">WAIT</span><span class="sh-cnt" id="eq-hdr">--</span><span class="sh-arrow">▼</span></div>
+  <div class="sb" id="sb-eq">
+    <div class="inp-row"><select class="inp" id="eq-feed">
+      <option value="all_day">Ultime 24 ore · tutti</option>
+      <option value="2.5_week">Ultima settimana · M2.5+</option>
+      <option value="4.5_month">Ultimo mese · M4.5+</option>
+      <option value="significant_month">Ultimo mese · significativi</option>
+      <option value="all_hour">Ultima ora · tutti</option>
+    </select></div>
+    <div class="sg">
+      <div class="sc"><div class="sc-l">M5+</div><div class="sc-v red" id="eq-m5">--</div></div>
+      <div class="sc"><div class="sc-l">Totale</div><div class="sc-v" id="eq-tot">--</div></div>
+      <div class="sc"><div class="sc-l">Max</div><div class="sc-v orn" id="eq-max">--</div></div>
+      <div class="sc"><div class="sc-l">Tsunami</div><div class="sc-v yel" id="eq-tsu">--</div></div>
+    </div>
+    <div id="eq-list" style="max-height:200px;overflow-y:auto"></div>
+  </div>
+  <div class="sh c-orn" data-sec="sb-eo"><span class="sh-icon">🔥</span><span class="sh-title">Eventi naturali NASA EONET</span><span class="dstat wait" data-h="eonet">WAIT</span><span class="sh-cnt" id="eo-hdr">--</span><span class="sh-arrow">▼</span></div>
+  <div class="sb" id="sb-eo"><div class="fp" id="eo-filter"></div><div id="eo-list" style="max-height:180px;overflow-y:auto"></div></div>
+  <div class="sh c-pur" data-sec="sb-log"><span class="sh-icon">📋</span><span class="sh-title">Log eventi sistema</span><span class="sh-cnt" id="log-cnt">0</span><span class="sh-arrow">▼</span></div>
+  <div class="sb" id="sb-log"><div id="event-log" style="max-height:170px;overflow-y:auto"></div></div>
+</div>
+
+<!-- COL 4 -->
+<div class="col" id="c4">
+  <div class="sh c-yel" data-sec="sb-mkt"><span class="sh-icon">📈</span><span class="sh-title">Mercati &amp; asset</span><span class="dstat wait" data-h="markets">WAIT</span><span class="dstat wait" data-h="crypto">WAIT</span><span class="sh-arrow">▼</span></div>
+  <div class="sb" id="sb-mkt">
+    <div class="tabs" data-tabs="mkt">
+      <button class="tab act" data-tab="mkt-idx" type="button">Indici</button>
+      <button class="tab" data-tab="mkt-com" type="button">Materie</button>
+      <button class="tab" data-tab="mkt-cry" type="button">Crypto</button>
+      <button class="tab" data-tab="mkt-def" type="button">Difesa</button>
+      <button class="tab" data-tab="mkt-fx" type="button">Valute</button>
+    </div>
+    <div id="mkt-idx" class="tb act"></div>
+    <div id="mkt-com" class="tb"></div>
+    <div id="mkt-cry" class="tb"></div>
+    <div id="mkt-def" class="tb"></div>
+    <div id="mkt-fx" class="tb"></div>
+    <div class="note" id="mkt-note">Azioni e materie prime: Yahoo Finance/Stooq via proxy (possono essere in ritardo di 15 min). Crypto: CoinGecko. Valute: BCE (Frankfurter).</div>
+  </div>
+  <div class="sh c-blu" data-sec="sb-wx"><span class="sh-icon">🌦</span><span class="sh-title">Meteo Open-Meteo</span><span class="dstat wait" data-h="weather">PRONTO</span><span class="sh-arrow">▼</span></div>
+  <div class="sb" id="sb-wx">
+    <div class="inp-row"><input class="inp" id="wx-inp" placeholder="Città (es. Roma) — o clicca sulla mappa"><button class="inp-btn" id="wx-btn" type="button">METEO</button><button class="inp-btn" id="wx-here" type="button" title="Meteo al centro della mappa">⌖</button></div>
+    <div id="wx-result" class="terminal"><div class="t-line dim">// meteo reale, qualità dell'aria e previsione 24h</div></div>
+  </div>
+  <div class="sh c-cyn" data-sec="sb-sky"><span class="sh-icon">🌗</span><span class="sh-title">Sole &amp; luce sul globo</span><span class="dstat calc">CALC</span><span class="sh-arrow">▼</span></div>
+  <div class="sb" id="sb-sky">
+    <div class="sol-row"><div class="sol-l">Punto subsolare</div><div class="sol-v" id="sun-sub">--</div></div>
+    <div class="sol-row"><div class="sol-l">Sole al centro mappa</div><div class="sol-v" id="sun-here">--</div></div>
+    <div class="sol-row"><div class="sol-l">Fase lunare</div><div class="sol-v" id="sun-dark">--</div></div>
+  </div>
+</div>
+
+<!-- COL 5 -->
+<div class="col" id="c5">
+  <div class="sh c-mg" data-sec="sb-tv"><span class="sh-icon">📺</span><span class="sh-title">Live TV · YouTube</span><span class="dstat est">VERIFICA</span><span class="sh-arrow">▼</span></div>
+  <div class="sb" id="sb-tv">
+    <div class="player" id="tv-player">
+      <iframe id="tv-iframe" src="about:blank" title="Live TV" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+      <div class="player-bar"><span class="pl-badge">● LIVE</span><span class="pl-name" id="tv-name">Seleziona canale</span><span><button class="pl-btn" id="tv-yt" type="button" title="Apri su YouTube">↗</button> <button class="pl-btn" id="tv-edit" type="button" title="Modifica canali">✎</button> <button class="pl-btn" id="tv-expand" type="button" title="Grande">⤢</button></span></div>
+      <div class="placeholder" id="tv-ph"><div style="font-size:26px;opacity:.4">📺</div><div>Clicca un canale. Viene caricata la diretta <b>attuale</b> del canale ufficiale.<br>Se compare “Errore 153”, apri la pagina via http(s) e non da file.</div></div>
+    </div>
+    <div class="tv-cat">🌍 News globali</div><div class="tv-grid" id="tv-grid-news"></div>
+    <div class="tv-cat war">⚔ Geopolitica / regioni</div><div class="tv-grid" id="tv-grid-war"></div>
+    <div class="tv-cat sci">🔭 Scienza / spazio</div><div class="tv-grid" id="tv-grid-sci"></div>
+  </div>
+  <div class="sh c-blu" data-sec="sb-cams"><span class="sh-icon">📹</span><span class="sh-title">Webcam &amp; Windy</span><span class="dstat est">VERIFICA</span><span class="sh-arrow">▼</span></div>
+  <div class="sb" id="sb-cams">
+    <div class="player" id="wc-player">
+      <iframe id="wc-iframe" src="about:blank" title="Webcam" allow="autoplay; encrypted-media; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+      <div class="player-bar"><span class="pl-name" id="wc-name">Seleziona città</span><span><button class="pl-btn" id="wc-search" type="button" title="Cerca webcam live su YouTube">🔎</button> <button class="pl-btn" id="wc-edit" type="button" title="Modifica webcam">✎</button></span></div>
+      <div class="placeholder" id="wc-ph"><div style="font-size:22px;opacity:.4">📹</div><div>Seleziona una città. Gli ID video delle webcam scadono: usa ✎ per aggiornarli, 🔎 per cercarne di nuove.</div></div>
+    </div>
+    <div class="wc-grid" id="wc-grid"></div>
+    <div class="windy-btns">
+      <button class="w-btn" data-windy="wind" type="button">🌬 Vento</button>
+      <button class="w-btn" data-windy="rain" type="button">🌧 Pioggia</button>
+      <button class="w-btn" data-windy="temp" type="button">🌡 Temp</button>
+      <button class="w-btn" data-windy="clouds" type="button">☁ Nuvole</button>
+      <button class="w-btn" data-windy="waves" type="button">🌊 Onde</button>
+    </div>
+    <iframe id="windy-frame" src="about:blank" title="Windy" loading="lazy"></iframe>
+  </div>
+  <div class="sh c-grn" data-sec="sb-term"><span class="sh-icon">💻</span><span class="sh-title">Terminale</span><span class="sh-arrow">▼</span></div>
+  <div class="sb" id="sb-term">
+    <div id="hk-out" class="terminal" style="max-height:190px;overflow-y:auto">
+      <div class="t-line"><span class="red">ojo@v100</span><span class="dim">:~$</span> <span class="ok">sistema pronto</span></div>
+      <div class="t-line dim">digita <span class="ok">help</span> per l'elenco dei comandi</div>
+    </div>
+    <div class="inp-row"><input class="inp" id="hk-inp" placeholder="$ comando…" autocomplete="off" spellcheck="false"><button class="inp-btn" id="hk-btn" type="button">EXEC</button></div>
+  </div>
+</div>
+</div>
+
+<!-- ═════════════ STATUSBAR ═════════════ -->
+<div id="sb">
+  <span class="si">OJO <b>v100</b></span>
+  <span class="si">MOTORE <b id="sb-engine">INIT</b></span>
+  <span class="si">CAM <b id="sb-cam">--</b></span>
+  <span class="si">✈ <b id="sb-ac">0</b></span>
+  <span class="si">🛰 <b id="sb-sat">0</b></span>
+  <span class="si">EQ <b id="sb-eqn">0</b></span>
+  <span class="si">BTC <b id="sb-btc">--</b></span>
+  <span class="si">FPS <b id="sb-fps">--</b></span>
+  <span id="sb-pulse">● Dati reali etichettati onestamente</span>
+</div>
+</div>
+
+<!-- ═════════════ MODALS ═════════════ -->
+<div id="modal" class="modal" role="dialog" aria-modal="true">
+  <div class="modal-box" id="modal-box">
+    <div class="modal-hdr"><span class="modal-title" id="modal-title">--</span><button class="modal-close" data-close-modal type="button">✕ CHIUDI</button></div>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="modal-foot" id="modal-foot"></div>
+  </div>
+</div>
+<div id="media-modal" class="modal" role="dialog" aria-modal="true">
+  <div class="modal-box wide">
+    <div class="modal-hdr"><span class="modal-title" id="media-title">📺 LIVE</span><button class="modal-close" id="media-close" type="button">✕ CHIUDI</button></div>
+    <div class="media-grid">
+      <div class="media-list" id="media-list"></div>
+      <div class="media-main"><iframe id="media-iframe" src="about:blank" title="Media" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe></div>
+    </div>
+  </div>
+</div>
+
+<script src="js/00-core.js" data-inline></script>
+<script src="js/10-data.js" data-inline></script>
+<script src="js/20-globe3d.js" data-inline></script>
+<script src="js/25-map2d.js" data-inline></script>
+<script src="js/30-feeds.js" data-inline></script>
+<script src="js/40-intel.js" data-inline></script>
+<script src="js/50-ui.js" data-inline></script>
+</body>
+</html>
