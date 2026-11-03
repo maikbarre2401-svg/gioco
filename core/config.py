@@ -65,7 +65,9 @@ class Config:
     recoil: float = 0.0
     hold_button: str = "x2"
     toggle_mode: bool = False
-    always_active: bool = False
+    always_active: bool = True
+    crosshair_offset_x: int = 0
+    crosshair_offset_y: int = 0
     overlay: bool = True
     overlay_skeleton: bool = True
     overlay_boxes: bool = True

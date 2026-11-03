@@ -23,7 +23,7 @@ from core.skeleton import (
     BONES, bone_point, draw as draw_skeleton, draw_overlay_items,
     heuristic_point, head_radius, body_center, body_radius,
 )
-from core.utils import clamp, foreground_exe
+from core.utils import clamp, foreground_exe, screen_size
 from core.vision import Detection, Vision
 
 logger = logging.getLogger(__name__)
@@ -238,6 +238,8 @@ class Engine(threading.Thread):
         self._cached_smooth_kps: Optional[np.ndarray] = None
         self._snap_start: float = 0.0
         self._snap_active: bool = False
+        self._screen_ox: int = 0
+        self._screen_oy: int = 0
 
     @property
     def enabled(self) -> bool:
@@ -309,6 +311,14 @@ class Engine(threading.Thread):
         self._log("Initialising vision...")
         self._vision = Vision(self._cfg, self._log)
         self._async_pose.start(self._vision)
+        try:
+            sw, sh = screen_size()
+            cap = self._cfg.capture
+            self._screen_ox = (sw - cap) // 2
+            self._screen_oy = (sh - cap) // 2
+        except Exception:
+            self._screen_ox = 0
+            self._screen_oy = 0
         self._log("Engine ready")
 
     def _loop(self) -> None:
@@ -341,11 +351,14 @@ class Engine(threading.Thread):
             main_hex = self._cfg.overlay_color
             skel_hex = self._cfg.overlay_skeleton_color
 
-            scx, scy = w // 2, h // 2
+            cox = self._cfg.crosshair_offset_x
+            coy = self._cfg.crosshair_offset_y
+            scx, scy = w // 2 + cox, h // 2 + coy
+            sox, soy = self._screen_ox, self._screen_oy
             fov_r = self._cfg.fov_px
             fov_dim = self._dim_hex(skel_hex, 0.35)
-            overlay_items.append(("cross", scx, scy, 10, main_hex))
-            overlay_items.append(("circle", scx, scy, fov_r, fov_dim))
+            overlay_items.append(("cross", scx + sox, scy + soy, 10, main_hex))
+            overlay_items.append(("circle", scx + sox, scy + soy, fov_r, fov_dim))
 
             cv2.drawMarker(ann, (scx, scy), main_color, cv2.MARKER_CROSS, 16, 1, cv2.LINE_AA)
             cv2.circle(ann, (scx, scy), fov_r, self._hex_bgr(skel_hex), 1, cv2.LINE_AA)
@@ -353,7 +366,7 @@ class Engine(threading.Thread):
             if self._cfg.overlay_boxes:
                 for x1, y1, x2, y2, conf in detections:
                     cv2.rectangle(ann, (int(x1), int(y1)), (int(x2), int(y2)), main_color, 2)
-                    overlay_items.append(("box", int(x1), int(y1), int(x2), int(y2), main_hex))
+                    overlay_items.append(("box", int(x1) + sox, int(y1) + soy, int(x2) + sox, int(y2) + soy, main_hex))
 
             self._aim.set_frame(frame)
             picked = self._aim.pick(detections, w, h)
@@ -435,7 +448,8 @@ class Engine(threading.Thread):
                             color_hex=skel_hex,
                             draw_fov_circle=self._cfg.overlay_aim_circle,
                         )
-                        overlay_items.extend(ov_items)
+                        for oi in ov_items:
+                            overlay_items.append(self._offset_item(oi, sox, soy))
 
                 if target_point is None:
                     target_point = heuristic_point(active_bone, display_box)
@@ -444,12 +458,12 @@ class Engine(threading.Thread):
                         ann, (int(px), int(py)), main_color,
                         cv2.MARKER_CROSS, 14, 2, cv2.LINE_AA,
                     )
-                    overlay_items.append(("cross", int(px), int(py), 8, main_hex))
+                    overlay_items.append(("cross", int(px) + sox, int(py) + soy, 8, main_hex))
                 else:
                     px, py = target_point
                     cv2.circle(ann, (int(px), int(py)), 5, main_color, -1, cv2.LINE_AA)
                     cv2.circle(ann, (int(px), int(py)), 3, (255, 255, 255), -1, cv2.LINE_AA)
-                    overlay_items.append(("dot", int(px), int(py), 5, main_hex))
+                    overlay_items.append(("dot", int(px) + sox, int(py) + soy, 5, main_hex))
 
                 dt = tick_s
                 active = self._enabled and self._aiming and (self._focused or self._cfg.always_active)
@@ -461,6 +475,7 @@ class Engine(threading.Thread):
                         self._cfg.omega = self._cfg.snap_omega
                         self._cfg.zeta = self._cfg.snap_zeta
                         self._cfg.human = True
+                        self._humanizer.skip_reaction()
 
                     dx, dy, dist = self._aim.step(target_point, w, h, dt, self._ads_mult)
 
@@ -542,3 +557,27 @@ class Engine(threading.Thread):
         h = hex_color.lstrip("#")
         r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
         return f"#{int(r * factor):02x}{int(g * factor):02x}{int(b * factor):02x}"
+
+    @staticmethod
+    def _offset_item(item: tuple, ox: int, oy: int) -> tuple:
+        """Offset an overlay item from frame coordinates to screen coordinates."""
+        kind = item[0]
+        if kind == "line":
+            _, x1, y1, x2, y2, color, width = item
+            return ("line", x1 + ox, y1 + oy, x2 + ox, y2 + oy, color, width)
+        elif kind == "dot":
+            _, x, y, r, color = item
+            return ("dot", x + ox, y + oy, r, color)
+        elif kind == "box":
+            _, x1, y1, x2, y2, color = item
+            return ("box", x1 + ox, y1 + oy, x2 + ox, y2 + oy, color)
+        elif kind == "circle":
+            _, x, y, r, color = item
+            return ("circle", x + ox, y + oy, r, color)
+        elif kind == "cross":
+            _, x, y, s, color = item
+            return ("cross", x + ox, y + oy, s, color)
+        elif kind == "text":
+            _, x, y, text_str, color, size = item
+            return ("text", x + ox, y + oy, text_str, color, size)
+        return item

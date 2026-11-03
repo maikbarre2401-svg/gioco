@@ -58,7 +58,8 @@ class Aim:
         self, dets: List[Detection], w: int, h: int
     ) -> Optional[Tuple[float, float, float, float]]:
         """Pick best target using IoU continuity + ReID appearance + distance."""
-        cx, cy = w / 2.0, h / 2.0
+        cx = w / 2.0 + self._cfg.crosshair_offset_x
+        cy = h / 2.0 + self._cfg.crosshair_offset_y
         fov = self._cfg.fov_px
 
         candidates = []
@@ -131,10 +132,12 @@ class Aim:
 
     def begin(self) -> None:
         if self._target_box is not None:
-            cx = (self._target_box[0] + self._target_box[2]) / 2.0
-            cy = (self._target_box[1] + self._target_box[3]) / 2.0
-            self._tracker.reset(cx, cy)
-            dist = math.hypot(cx - 320, cy - 320)
+            tx = (self._target_box[0] + self._target_box[2]) / 2.0
+            ty = (self._target_box[1] + self._target_box[3]) / 2.0
+            self._tracker.reset(tx, ty)
+            ref_cx = self._cfg.capture / 2.0 + self._cfg.crosshair_offset_x
+            ref_cy = self._cfg.capture / 2.0 + self._cfg.crosshair_offset_y
+            dist = math.hypot(tx - ref_cx, ty - ref_cy)
             self._human.start_engagement(dist)
         self._engaged = True
 
@@ -146,7 +149,8 @@ class Aim:
         dt: float,
         ads: float,
     ) -> Tuple[float, float, float]:
-        cx, cy = w / 2.0, h / 2.0
+        cx = w / 2.0 + self._cfg.crosshair_offset_x
+        cy = h / 2.0 + self._cfg.crosshair_offset_y
         px, py = point
 
         self._tracker.feed(px, py, dt)

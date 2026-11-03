@@ -61,6 +61,10 @@ class Humanizer:
         """Return True if still within the reaction delay period."""
         return time.monotonic() < self._reaction_deadline
 
+    def skip_reaction(self) -> None:
+        """Clear the reaction deadline immediately (used during snap phase)."""
+        self._reaction_deadline = 0
+
     def fatigue(self) -> float:
         """Return fatigue multiplier 1.0..2.2 based on engagement and session duration."""
         if not self._cfg.fatigue:

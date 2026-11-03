@@ -63,6 +63,7 @@ class App:
         self._aiming = False
         self._toggle_aim_state = False
         self._listener = None
+        self._ctrl_held = False
 
         self._build_gui()
         self._setup_hotkeys()
@@ -399,6 +400,39 @@ class App:
 
             def on_key_press(key: keyboard.Key | keyboard.KeyCode) -> None:
                 try:
+                    if key in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):
+                        self._ctrl_held = True
+                    if self._ctrl_held:
+                        step = 5
+                        if key == keyboard.Key.up:
+                            self._cfg.crosshair_offset_y = max(-200, self._cfg.crosshair_offset_y - step)
+                            self._root.after(0, lambda: self._log_gui(
+                                f"Crosshair offset: ({self._cfg.crosshair_offset_x}, {self._cfg.crosshair_offset_y})"
+                            ))
+                            return
+                        elif key == keyboard.Key.down:
+                            self._cfg.crosshair_offset_y = min(200, self._cfg.crosshair_offset_y + step)
+                            self._root.after(0, lambda: self._log_gui(
+                                f"Crosshair offset: ({self._cfg.crosshair_offset_x}, {self._cfg.crosshair_offset_y})"
+                            ))
+                            return
+                        elif key == keyboard.Key.left:
+                            self._cfg.crosshair_offset_x = max(-200, self._cfg.crosshair_offset_x - step)
+                            self._root.after(0, lambda: self._log_gui(
+                                f"Crosshair offset: ({self._cfg.crosshair_offset_x}, {self._cfg.crosshair_offset_y})"
+                            ))
+                            return
+                        elif key == keyboard.Key.right:
+                            self._cfg.crosshair_offset_x = min(200, self._cfg.crosshair_offset_x + step)
+                            self._root.after(0, lambda: self._log_gui(
+                                f"Crosshair offset: ({self._cfg.crosshair_offset_x}, {self._cfg.crosshair_offset_y})"
+                            ))
+                            return
+                        elif key == keyboard.Key.home:
+                            self._cfg.crosshair_offset_x = 0
+                            self._cfg.crosshair_offset_y = 0
+                            self._root.after(0, lambda: self._log_gui("Crosshair offset reset to (0, 0)"))
+                            return
                     if key == keyboard.Key.f8:
                         self._root.after(0, self._on_aim_toggle)
                     elif key == keyboard.Key.f9:
@@ -412,11 +446,18 @@ class App:
                 except Exception:
                     pass
 
+            def on_key_release(key: keyboard.Key | keyboard.KeyCode) -> None:
+                try:
+                    if key in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):
+                        self._ctrl_held = False
+                except Exception:
+                    pass
+
             self._mouse_listener = mouse.Listener(on_click=on_mouse_click)
             self._mouse_listener.daemon = True
             self._mouse_listener.start()
 
-            self._kb_listener = keyboard.Listener(on_press=on_key_press)
+            self._kb_listener = keyboard.Listener(on_press=on_key_press, on_release=on_key_release)
             self._kb_listener.daemon = True
             self._kb_listener.start()
         except Exception:
