@@ -39,6 +39,8 @@ class Capturer:
             cam = dxcam.create(output_color="BGR")
             if cam is None:
                 raise RuntimeError("dxcam.create returned None")
+            if cam.is_capturing:
+                cam.stop()
             cam.start(target_fps=300, region=self._bbox)
             self._dxcam_cam = cam
             logger.info("dxcam capture initialised")

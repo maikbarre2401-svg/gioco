@@ -174,6 +174,9 @@ class Engine(threading.Thread):
 
     def _init_systems(self) -> None:
         """Initialise capture and vision systems."""
+        if self._capturer is not None:
+            self._capturer.release()
+            self._capturer = None
         self._log("Initialising capture...")
         self._capturer = Capturer(self._cfg.capture)
         self._log("Initialising vision...")

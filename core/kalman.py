@@ -39,15 +39,22 @@ class Axis:
         if not self._initialised:
             self.reset(measurement)
             return measurement
-        H = np.array([[1.0, 0.0]], dtype=np.float64)
-        S = float(H @ self._P @ H.T + self._R)
+        S = self._P[0, 0] + self._R
         if abs(S) < 1e-12:
             S = 1e-12
-        K = (self._P @ H.T) / S
-        y = measurement - float(H @ self._x)
-        self._x = self._x + K.flatten() * y
-        I = np.eye(2, dtype=np.float64)
-        self._P = (I - K @ H) @ self._P
+        K0 = self._P[0, 0] / S
+        K1 = self._P[1, 0] / S
+        y = measurement - self._x[0]
+        self._x[0] += K0 * y
+        self._x[1] += K1 * y
+        p00 = self._P[0, 0]
+        p01 = self._P[0, 1]
+        p10 = self._P[1, 0]
+        p11 = self._P[1, 1]
+        self._P[0, 0] = p00 - K0 * p00
+        self._P[0, 1] = p01 - K0 * p01
+        self._P[1, 0] = p10 - K1 * p00
+        self._P[1, 1] = p11 - K1 * p01
         return float(self._x[0])
 
     def lead(self, seconds: float) -> float:

@@ -23,18 +23,13 @@ class Vision:
         self._cfg = cfg
         self._log = log
         self._device = self._resolve_device()
-        self._half = self._device != "cpu"
-        log(f"Vision device: {self._device} (half={self._half})")
+        log(f"Vision device: {self._device}")
 
         self._det_model = YOLO(cfg.det_model)
         self._det_model.to(self._device)
-        if self._half:
-            self._det_model.model.half()
 
         self._pose_model = YOLO(cfg.pose_model)
         self._pose_model.to(self._device)
-        if self._half:
-            self._pose_model.model.half()
 
         log("Models loaded")
 
@@ -53,7 +48,6 @@ class Vision:
             imgsz=self._cfg.imgsz,
             conf=self._cfg.conf,
             device=self._device,
-            half=self._half,
             verbose=False,
             classes=[0],
         )
@@ -94,7 +88,6 @@ class Vision:
             imgsz=self._cfg.pose_imgsz,
             conf=self._cfg.kp_conf,
             device=self._device,
-            half=self._half,
             verbose=False,
         )
 
