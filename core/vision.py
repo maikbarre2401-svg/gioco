@@ -117,21 +117,20 @@ class Vision:
     def keypoints(
         self, frame: np.ndarray, box: Tuple[float, float, float, float]
     ) -> Optional[np.ndarray]:
-        """Run pose on adaptive crop, select best person by IoU with target box."""
+        """Run pose on adaptive crop with enhanced person selection."""
         x1, y1, x2, y2 = box
         bw = x2 - x1
         bh = y2 - y1
         min_dim = min(bw, bh)
 
-        if min_dim < 40:
-            expand_x = bw * 0.60
-            expand_y = bh * 0.45
-        elif min_dim < 80:
-            expand_x = bw * 0.35
-            expand_y = bh * 0.25
+        if min_dim < 30:
+            expand_x, expand_y = bw * 0.70, bh * 0.55
+        elif min_dim < 60:
+            expand_x, expand_y = bw * 0.50, bh * 0.35
+        elif min_dim < 100:
+            expand_x, expand_y = bw * 0.30, bh * 0.20
         else:
-            expand_x = bw * 0.15
-            expand_y = bh * 0.10
+            expand_x, expand_y = bw * 0.15, bh * 0.10
 
         fh, fw = frame.shape[:2]
         cx1 = max(0, int(x1 - expand_x))
@@ -144,20 +143,24 @@ class Vision:
             return None
 
         pose_sz = self._cfg.pose_imgsz
-        if min_dim < 50:
+        if min_dim < 35:
+            pose_sz = max(pose_sz, 544)
+        elif min_dim < 60:
             pose_sz = max(pose_sz, 480)
-        elif min_dim < 80:
+        elif min_dim < 100:
             pose_sz = max(pose_sz, 384)
 
         results = self._pose_model.predict(
             crop,
             imgsz=pose_sz,
-            conf=self._cfg.kp_conf,
+            conf=max(0.15, self._cfg.kp_conf - 0.10),
             device=self._device,
             verbose=False,
         )
 
         target_in_crop = (x1 - cx1, y1 - cy1, x2 - cx1, y2 - cy1)
+        tcx = (target_in_crop[0] + target_in_crop[2]) / 2
+        tcy = (target_in_crop[1] + target_in_crop[3]) / 2
 
         best_kps: Optional[np.ndarray] = None
         best_score = -1.0
@@ -171,21 +174,29 @@ class Vision:
                 if person_kps.shape[0] < 17:
                     continue
 
-                mean_conf = float(person_kps[:, 2].mean())
-
-                valid_x = []
-                valid_y = []
+                valid_x, valid_y, valid_c = [], [], []
                 for k in range(17):
-                    if float(person_kps[k, 2]) > 0.1:
+                    if float(person_kps[k, 2]) > 0.08:
                         valid_x.append(float(person_kps[k, 0]))
                         valid_y.append(float(person_kps[k, 1]))
+                        valid_c.append(float(person_kps[k, 2]))
 
-                if len(valid_x) >= 3:
-                    kp_box = (min(valid_x), min(valid_y), max(valid_x), max(valid_y))
-                    iou = _iou(kp_box, target_in_crop)
-                    score = iou * 0.55 + mean_conf * 0.45
-                else:
-                    score = mean_conf * 0.3
+                if len(valid_x) < 3:
+                    continue
+
+                mean_conf = sum(valid_c) / len(valid_c)
+                n_valid = len(valid_x) / 17.0
+
+                kp_box = (min(valid_x), min(valid_y), max(valid_x), max(valid_y))
+                iou = _iou(kp_box, target_in_crop)
+
+                kp_cx = sum(valid_x) / len(valid_x)
+                kp_cy = sum(valid_y) / len(valid_y)
+                crop_diag = max(1.0, (cx2 - cx1 + cy2 - cy1) / 2.0)
+                center_dist = ((kp_cx - tcx) ** 2 + (kp_cy - tcy) ** 2) ** 0.5
+                proximity = max(0.0, 1.0 - center_dist / crop_diag)
+
+                score = iou * 0.40 + mean_conf * 0.25 + n_valid * 0.15 + proximity * 0.20
 
                 if score > best_score:
                     best_score = score

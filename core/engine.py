@@ -56,12 +56,12 @@ class _BoxSmoother:
 
 
 class _KpSmoother:
-    """Per-keypoint Kalman smoothing for 17 COCO joints (x, y each)."""
+    """Per-keypoint Kalman smoothing with confidence-adaptive noise for 17 COCO joints."""
 
     def __init__(self, n_kp: int = 17) -> None:
         self._n = n_kp
-        self._axes_x: List[Axis] = [Axis(process_noise=60.0, measurement_noise=6.0) for _ in range(n_kp)]
-        self._axes_y: List[Axis] = [Axis(process_noise=60.0, measurement_noise=6.0) for _ in range(n_kp)]
+        self._axes_x: List[Axis] = [Axis(process_noise=50.0, measurement_noise=5.0) for _ in range(n_kp)]
+        self._axes_y: List[Axis] = [Axis(process_noise=50.0, measurement_noise=5.0) for _ in range(n_kp)]
         self._last_kps: Optional[np.ndarray] = None
         self._valid = False
 
@@ -84,7 +84,7 @@ class _KpSmoother:
                         self._axes_y[k].predict(dt)
                         out[k, 0] = self._axes_x[k]._x[0]
                         out[k, 1] = self._axes_y[k]._x[0]
-                        out[k, 2] *= 0.92
+                        out[k, 2] *= 0.93
                 self._last_kps = out
                 return out
             return None
@@ -92,8 +92,10 @@ class _KpSmoother:
         out = kps.copy()
         for k in range(self._n):
             conf = float(kps[k, 2])
-            if conf < 0.1:
+            if conf < 0.08:
                 continue
+            self._axes_x[k]._R = max(1.0, 12.0 - conf * 14.0)
+            self._axes_y[k]._R = max(1.0, 12.0 - conf * 14.0)
             self._axes_x[k].predict(dt)
             self._axes_y[k].predict(dt)
             sx = self._axes_x[k].update(float(kps[k, 0]))
@@ -461,9 +463,26 @@ class Engine(threading.Thread):
                     overlay_items.append(("cross", int(px) + sox, int(py) + soy, 8, main_hex))
                 else:
                     px, py = target_point
-                    cv2.circle(ann, (int(px), int(py)), 5, main_color, -1, cv2.LINE_AA)
-                    cv2.circle(ann, (int(px), int(py)), 3, (255, 255, 255), -1, cv2.LINE_AA)
-                    overlay_items.append(("dot", int(px) + sox, int(py) + soy, 5, main_hex))
+                    cv2.circle(ann, (int(px), int(py)), 6, self._hex_bgr(self._dim_hex(self._cfg.overlay_color, 0.3)), -1, cv2.LINE_AA)
+                    cv2.circle(ann, (int(px), int(py)), 4, main_color, -1, cv2.LINE_AA)
+                    cv2.circle(ann, (int(px), int(py)), 2, (255, 255, 255), -1, cv2.LINE_AA)
+                    overlay_items.append(("dot", int(px) + sox, int(py) + soy, 7, self._dim_hex(main_hex, 0.3)))
+                    overlay_items.append(("dot", int(px) + sox, int(py) + soy, 4, main_hex))
+
+                active = self._enabled and self._aiming and (self._focused or self._cfg.always_active)
+                if active and target_point is not None:
+                    aim_c = self._hex_bgr(self._dim_hex(main_hex, 0.4))
+                    cv2.line(ann, (scx, scy), (int(px), int(py)), aim_c, 1, cv2.LINE_AA)
+                    overlay_items.append(("line", scx + sox, scy + soy, int(px) + sox, int(py) + soy, self._dim_hex(main_hex, 0.25), 1))
+
+                if smooth_kps is not None:
+                    avg_conf = float(smooth_kps[:, 2].mean())
+                    bar_len = int(min(40, avg_conf * 50))
+                    bar_x = int(display_box[2]) + 4
+                    bar_y = int(display_box[1])
+                    cv2.rectangle(ann, (bar_x, bar_y), (bar_x + 4, bar_y + 40), (40, 40, 40), -1)
+                    bar_color = (0, 255, 100) if avg_conf > 0.5 else (0, 180, 255)
+                    cv2.rectangle(ann, (bar_x, bar_y + 40 - bar_len), (bar_x + 4, bar_y + 40), bar_color, -1)
 
                 dt = tick_s
                 active = self._enabled and self._aiming and (self._focused or self._cfg.always_active)
