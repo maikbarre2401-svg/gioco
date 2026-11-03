@@ -108,7 +108,7 @@ const Globe3D = (() => {
     sat: { name: '🛰 Satellite (Esri)', make: () => tmpl('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', 19, 'Immagini © Esri, Maxar, Earthstar Geographics') },
     today: { name: '📅 NASA VIIRS (ieri)', probe: 'today', make: u => tmpl(u, 9, 'NASA GIBS / VIIRS') },
     modis: { name: '📅 NASA MODIS (ieri)', probe: 'modis', make: u => tmpl(u, 9, 'NASA GIBS / MODIS') },
-    dark: { name: '🌑 Scura (CARTO)', make: () => tmpl('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png', 19, '© OpenStreetMap © CARTO', 'abcd') },
+    dark: { name: '🌑 Scura (Esri)', make: () => tmpl('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', 16, '© Esri, HERE, Garmin, OpenStreetMap') },
     topo: { name: '⛰ Topografica (Esri)', make: () => tmpl('https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', 19, '© Esri') },
     osm: { name: '🗺 OpenStreetMap', make: () => tmpl('https://tile.openstreetmap.org/{z}/{x}/{y}.png', 19, '© OpenStreetMap contributors') },
     night: { name: '🌃 Luci notturne (NASA)', probe: 'night', make: u => tmpl(u, 8, 'NASA Earth Observatory / Black Marble') },
@@ -316,7 +316,8 @@ const Globe3D = (() => {
       addOverlay('night', BASES.night.make(u), l => { l.dayAlpha = 0.0; l.nightAlpha = 0.95; l.brightness = 1.7; });
       viewer.imageryLayers.lowerToBottom(imagery.night); viewer.imageryLayers.raise(imagery.night);   // sopra la base, sotto le etichette
     });
-    addOverlay('labels', tmpl('https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}.png', 19, '© CARTO', 'abcd'), l => { l.alpha = 0.85; });
+    // nomi e confini: Esri Reference (gratuito, senza chiave; CARTO ora richiede una API key)
+    addOverlay('labels', tmpl('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', 18, '© Esri, HERE, Garmin'), l => { l.alpha = 0.9; });
 
     // primitive collections
     const P = scene.primitives;
@@ -380,6 +381,10 @@ const Globe3D = (() => {
       let url;
       if (b.probe) { url = await firstOk(b.probe); if (!url) { Toast.show('⚠ ' + b.name + ': servizio NASA non raggiungibile ora', 'orn'); if (!imagery.base) return setBase('sat'); return; } }
       const layer = b.ion ? C.ImageryLayer.fromProviderAsync(b.make()) : new C.ImageryLayer(trackImagery(b.make(url), 'base:' + key));
+      if (b.ion) {
+        layer.readyEvent.addEventListener(p => { trackImagery(p, 'base:' + key); watchBase(key); });
+        layer.errorEvent.addEventListener(err => { Toast.show(`⚠ ${b.name} rifiutato da ion (${err?.message || 'token/asset'}): torno al satellite Esri`, 'orn', 7000); triedBase.add(key); setBase('sat'); });
+      }
       viewer.imageryLayers.add(layer, 0);
       const old = imagery.base; imagery.base = layer;
       if (old) setTimeout(() => viewer.imageryLayers.remove(old, true), 1500);
@@ -714,9 +719,9 @@ const Globe3D = (() => {
     auroraPts.removeAll();
     const nfs = new C.NearFarScalar(1e6, 2.2, 3e7, 1.0);
     for (const [lon, lat, v] of grid) {
-      if (v < 8) continue;
-      const a = clamp(v / 140, 0.05, 0.5), c = v > 60 ? '#ff4fd8' : v > 30 ? '#7dffb0' : '#00ff88';
-      auroraPts.add({ position: cart(lat, lon > 180 ? lon - 360 : lon, 110000), pixelSize: 7, color: col(c, a), scaleByDistance: nfs });
+      if (v < 12) continue;
+      const a = clamp(v / 220, 0.04, 0.32), c = v > 60 ? '#ff4fd8' : v > 30 ? '#7dffb0' : '#00ff88';
+      auroraPts.add({ position: cart(lat, lon > 180 ? lon - 360 : lon, 110000), pixelSize: 5, color: col(c, a), scaleByDistance: nfs });
     }
     auroraPts.show = state.layers.aurora !== false;
   }

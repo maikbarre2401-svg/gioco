@@ -1460,7 +1460,17 @@ DATA.LAND_EXTRA = [   // punti aggiuntivi per paesi molto estesi
   ['Australia', -20, 120], ['Australia', -32, 148], ['Australia', -17, 145], ['Argentina', -45, -68], ['Kazakistan', 48, 67], ['Mongolia', 46.8, 103],
   ['India', 28, 77], ['India', 13, 78], ['Indonesia', 0, 102], ['Indonesia', -4, 138], ['Arabia Saudita', 24, 45], ['Groenlandia', 72, -40],
   ['Antartide', -80, 0], ['Antartide', -75, 120], ['Antartide', -75, -100], ['Algeria', 28, 3], ['Libia', 27, 17], ['Niger', 17, 9], ['Mauritania', 20, -10],
-  ['Angola', -12, 18], ['Madagascar', -19, 47], ['Nuova Zelanda', -41, 174], ['Giappone', 43, 142], ['Islanda', 65, -18], ['Perù', -10, -75], ['Bolivia', -17, -64]
+  ['Angola', -12, 18], ['Madagascar', -19, 47], ['Nuova Zelanda', -41, 174], ['Giappone', 43, 142], ['Islanda', 65, -18], ['Perù', -10, -75], ['Bolivia', -17, -64],
+  // Europa e Mediterraneo: più punti, per non confondere paesi vicini
+  ['Francia', 48.8, 2.3], ['Francia', 45.7, 4.8], ['Francia', 43.6, 1.4], ['Francia', 47.2, -1.6], ['Francia', 43.3, 5.4], ['Francia', 48.6, 7.7],
+  ['Germania', 52.5, 13.4], ['Germania', 48.1, 11.6], ['Germania', 50.9, 6.9], ['Germania', 53.5, 10.0], ['Germania', 49.4, 8.7],
+  ['Italia', 45.5, 9.2], ['Italia', 45.4, 12.3], ['Italia', 40.8, 14.3], ['Italia', 38.1, 13.4], ['Italia', 39.2, 9.1], ['Italia', 44.5, 11.3], ['Italia', 41.1, 16.9],
+  ['Spagna', 41.4, 2.2], ['Spagna', 37.4, -6.0], ['Spagna', 43.3, -2.9], ['Spagna', 39.5, -0.4], ['Regno Unito', 51.5, -0.1], ['Regno Unito', 55.9, -3.2], ['Regno Unito', 53.5, -2.2],
+  ['Polonia', 52.2, 21.0], ['Polonia', 50.1, 19.9], ['Polonia', 54.4, 18.6], ['Ucraina', 50.45, 30.5], ['Ucraina', 46.5, 30.7], ['Ucraina', 48.5, 35.0], ['Ucraina', 49.8, 24.0],
+  ['Turchia', 41.0, 29.0], ['Turchia', 39.9, 32.9], ['Turchia', 37.0, 35.3], ['Turchia', 38.4, 27.1], ['Paesi Bassi', 52.4, 4.9], ['Svizzera', 47.4, 8.5], ['Austria', 48.2, 16.4],
+  ['Grecia', 38.0, 23.7], ['Grecia', 40.6, 22.9], ['Portogallo', 38.7, -9.1], ['Portogallo', 41.15, -8.6], ['Romania', 44.4, 26.1], ['Svezia', 59.3, 18.0], ['Svezia', 57.7, 12.0],
+  ['Svezia', 63.8, 20.3], ['Norvegia', 59.9, 10.7], ['Norvegia', 63.4, 10.4], ['Norvegia', 69.6, 19.0], ['Finlandia', 60.2, 24.9], ['Finlandia', 65.0, 25.5], ['Repubblica Ceca', 50.1, 14.4],
+  ['Ungheria', 47.5, 19.0], ['Serbia', 44.8, 20.5], ['Croazia', 45.8, 16.0], ['Slovenia', 46.05, 14.5], ['Bielorussia', 53.9, 27.6], ['Irlanda', 53.35, -6.26]
 ];
 
 /* ── ADS-B: classificazione per tipo ICAO e callsign ── */
@@ -1692,7 +1702,7 @@ const Globe3D = (() => {
     sat: { name: '🛰 Satellite (Esri)', make: () => tmpl('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', 19, 'Immagini © Esri, Maxar, Earthstar Geographics') },
     today: { name: '📅 NASA VIIRS (ieri)', probe: 'today', make: u => tmpl(u, 9, 'NASA GIBS / VIIRS') },
     modis: { name: '📅 NASA MODIS (ieri)', probe: 'modis', make: u => tmpl(u, 9, 'NASA GIBS / MODIS') },
-    dark: { name: '🌑 Scura (CARTO)', make: () => tmpl('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png', 19, '© OpenStreetMap © CARTO', 'abcd') },
+    dark: { name: '🌑 Scura (Esri)', make: () => tmpl('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', 16, '© Esri, HERE, Garmin, OpenStreetMap') },
     topo: { name: '⛰ Topografica (Esri)', make: () => tmpl('https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', 19, '© Esri') },
     osm: { name: '🗺 OpenStreetMap', make: () => tmpl('https://tile.openstreetmap.org/{z}/{x}/{y}.png', 19, '© OpenStreetMap contributors') },
     night: { name: '🌃 Luci notturne (NASA)', probe: 'night', make: u => tmpl(u, 8, 'NASA Earth Observatory / Black Marble') },
@@ -1900,7 +1910,8 @@ const Globe3D = (() => {
       addOverlay('night', BASES.night.make(u), l => { l.dayAlpha = 0.0; l.nightAlpha = 0.95; l.brightness = 1.7; });
       viewer.imageryLayers.lowerToBottom(imagery.night); viewer.imageryLayers.raise(imagery.night);   // sopra la base, sotto le etichette
     });
-    addOverlay('labels', tmpl('https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}.png', 19, '© CARTO', 'abcd'), l => { l.alpha = 0.85; });
+    // nomi e confini: Esri Reference (gratuito, senza chiave; CARTO ora richiede una API key)
+    addOverlay('labels', tmpl('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', 18, '© Esri, HERE, Garmin'), l => { l.alpha = 0.9; });
 
     // primitive collections
     const P = scene.primitives;
@@ -1964,6 +1975,10 @@ const Globe3D = (() => {
       let url;
       if (b.probe) { url = await firstOk(b.probe); if (!url) { Toast.show('⚠ ' + b.name + ': servizio NASA non raggiungibile ora', 'orn'); if (!imagery.base) return setBase('sat'); return; } }
       const layer = b.ion ? C.ImageryLayer.fromProviderAsync(b.make()) : new C.ImageryLayer(trackImagery(b.make(url), 'base:' + key));
+      if (b.ion) {
+        layer.readyEvent.addEventListener(p => { trackImagery(p, 'base:' + key); watchBase(key); });
+        layer.errorEvent.addEventListener(err => { Toast.show(`⚠ ${b.name} rifiutato da ion (${err?.message || 'token/asset'}): torno al satellite Esri`, 'orn', 7000); triedBase.add(key); setBase('sat'); });
+      }
       viewer.imageryLayers.add(layer, 0);
       const old = imagery.base; imagery.base = layer;
       if (old) setTimeout(() => viewer.imageryLayers.remove(old, true), 1500);
@@ -2298,9 +2313,9 @@ const Globe3D = (() => {
     auroraPts.removeAll();
     const nfs = new C.NearFarScalar(1e6, 2.2, 3e7, 1.0);
     for (const [lon, lat, v] of grid) {
-      if (v < 8) continue;
-      const a = clamp(v / 140, 0.05, 0.5), c = v > 60 ? '#ff4fd8' : v > 30 ? '#7dffb0' : '#00ff88';
-      auroraPts.add({ position: cart(lat, lon > 180 ? lon - 360 : lon, 110000), pixelSize: 7, color: col(c, a), scaleByDistance: nfs });
+      if (v < 12) continue;
+      const a = clamp(v / 220, 0.04, 0.32), c = v > 60 ? '#ff4fd8' : v > 30 ? '#7dffb0' : '#00ff88';
+      auroraPts.add({ position: cart(lat, lon > 180 ? lon - 360 : lon, 110000), pixelSize: 5, color: col(c, a), scaleByDistance: nfs });
     }
     auroraPts.show = state.layers.aurora !== false;
   }
@@ -2491,7 +2506,7 @@ const Map2D = (() => {
   let cv = null, ctx = null, acData = [], satData = [], sel = null, follow = null, traceLayer = null;
   const BASES = {
     sat: ['🛰 Satellite (Esri)', 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', '© Esri, Maxar', 19],
-    dark: ['🌑 Scura (CARTO)', 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', '© OpenStreetMap © CARTO', 19],
+    dark: ['🌑 Scura (Esri)', 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', '© Esri, HERE, Garmin, OpenStreetMap', 16],
     topo: ['⛰ Topografica (Esri)', 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', '© Esri', 19],
     osm: ['🗺 OpenStreetMap', 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', '© OpenStreetMap contributors', 19],
     night: ['🌃 Luci notturne (NASA)', 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_CityLights_2012/default/2012-01-01/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpg', 'NASA', 8]
@@ -2543,7 +2558,7 @@ const Map2D = (() => {
     map = L.map(container, { center: [35, 20], zoom: 3, worldCopyJump: true, zoomControl: true, attributionControl: true, preferCanvas: true, minZoom: 2 });
     map.attributionControl.setPrefix('Leaflet');
     setBase(BASES[Settings.get('base')] ? Settings.get('base') : 'sat');
-    tiles.labels = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png', { subdomains: 'abcd', maxZoom: 19, opacity: 0.85, attribution: '© CARTO' });
+    tiles.labels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, maxNativeZoom: 18, opacity: 0.9, attribution: '© Esri' });
     if (state.layers.labels !== false) tiles.labels.addTo(map);
     const Overlay = L.Layer.extend({
       onAdd(m) { cv = L.DomUtil.create('canvas', 'leaflet-zoom-hide'); cv.style.pointerEvents = 'none'; m.getPanes().overlayPane.appendChild(cv); ctx = cv.getContext('2d'); m.on('move zoom resize viewreset', draw); draw(); },
@@ -3752,7 +3767,7 @@ const UI = (() => {
     const th = MapCtl.engine?.terrainHeight?.(lat, lon);
     const zones = [...DATA.CONFLICT_ZONES.map((z, i) => ['conflict', i, z, '⚔']), ...DATA.GPS_ZONES.map((z, i) => ['gps', i, z, '📡'])]
       .filter(([k, , z]) => MapCtl.isOn(k) && Geo.dist(lat, lon, z.lat, z.lon) <= z.r);
-    openPanel({ title: '⌖ ANALISI PUNTO', icon: '⌖', name: Intel.nearest(lat, lon).label, nameCol: '#00ffcc', tags: [['CALCOLO + DATI LIVE', '#00ffcc']],
+    openPanel({ title: '⌖ ANALISI PUNTO', icon: '⌖', name: '≈ ' + Intel.nearest(lat, lon).label, nameCol: '#00ffcc', tags: [['CALCOLO + DATI LIVE', '#00ffcc']],
       kv: [['Lat / Lon', `${lat.toFixed(5)}, ${lon.toFixed(5)}`, true], ['DMS', `${Fmt.dms(lat, true)} ${Fmt.dms(lon, false)}`, true],
         ['Quota terreno', h('span', { id: 'pt-elev' }, th != null && isFinite(th) ? Fmt.n(th) + ' m' : '…')], ['Sole', `${se.toFixed(1)}° ${se > 0 ? '☀ giorno' : se > -6 ? '🌆 crepuscolo civile' : se > -18 ? '🌌 crepuscolo' : '🌑 notte'}`],
         ['Luna', `${moon.name} ${Math.round(moon.illum * 100)}%`], ['Zona calda più vicina', `${hs.x.flag} ${hs.x.name} · ${Fmt.n(hs.d)} km`],
@@ -3769,7 +3784,11 @@ const UI = (() => {
     if (el != null) setText('pt-elev', Fmt.n(el) + ' m');
     const box = $('pt-geo'); if (!box) return;
     const nodes = [];
-    if (geo) nodes.push(h('div', { style: 'font-size:13px;color:var(--gd)' }, '📍 ' + ([geo.name, geo.region, geo.country].filter(Boolean).join(', ') || geo.ocean || 'Acque internazionali')));
+    if (geo) {
+      nodes.push(h('div', { style: 'font-size:13px;color:var(--gd)' }, '📍 ' + ([geo.name, geo.region, geo.country].filter(Boolean).join(', ') || geo.ocean || 'Acque internazionali')));
+      const nm = document.querySelector('#trkp .trk-name');   // titolo preciso dal geocoding inverso (non dal paese “più vicino”)
+      if (nm) nm.textContent = geo.country ? (geo.name ? `${geo.name}, ${geo.country}` : geo.country) : (geo.ocean || 'Acque internazionali');
+    }
     if (wx?.current) {
       const c = wx.current;
       nodes.push(h('div', null, `${Weather.ICON(c.weather_code)} ${Weather.WMO[c.weather_code] || '--'} · ${c.temperature_2m}°C (percepiti ${c.apparent_temperature}°C) · 💧${c.relative_humidity_2m}% · 💨 ${c.wind_speed_10m} km/h ${Geo.dir(c.wind_direction_10m)} (raff. ${c.wind_gusts_10m}) · ${c.pressure_msl} hPa · ☁ ${c.cloud_cover}%`),
@@ -3881,7 +3900,7 @@ const UI = (() => {
       h('h4', null, 'Onestà dei dati'),
       h('p', null, 'LIVE = dato reale da API pubblica. CALC = calcolato da dati reali (orbite SGP4, indice OJO, sole). REF = riferimento statico pubblico. STIMA = area indicativa. Molti voli militari non trasmettono ADS-B: l\'assenza di un aereo non significa che non ci sia.'),
       h('h4', null, 'Fonti'),
-      h('p', null, 'ADS-B: adsb.lol, airplanes.live, adsb.fi, OpenSky · Satelliti: CelesTrak + satellite.js · Terremoti: USGS · Eventi: NASA EONET/FIRMS · Spazio: NOAA SWPC · Radar: RainViewer · Notizie: BBC, Al Jazeera, ANSA, RaiNews, DW, Guardian, France24, NYT, NPR, Sky, Defense News, Times of Israel, GDELT · Mercati: Yahoo/Stooq, CoinGecko, BCE · Meteo: Open-Meteo · Geocoding: BigDataCloud · Mappe: Esri, CARTO, OSM, NASA GIBS · Terreno: AWS Terrain Tiles / Cesium ion · Motore: CesiumJS.')
+      h('p', null, 'ADS-B: adsb.lol, airplanes.live, adsb.fi, OpenSky · Satelliti: CelesTrak + satellite.js · Terremoti: USGS · Eventi: NASA EONET/FIRMS · Spazio: NOAA SWPC · Radar: RainViewer · Notizie: BBC, Al Jazeera, ANSA, RaiNews, DW, Guardian, France24, NYT, NPR, Sky, Defense News, Times of Israel, GDELT · Mercati: Yahoo/Stooq, CoinGecko, BCE · Meteo: Open-Meteo · Geocoding: BigDataCloud · Mappe: Esri, OSM, NASA GIBS · Terreno: AWS Terrain Tiles / Cesium ion · Motore: CesiumJS.')
     ], [h('button', { class: 'btn', type: 'button', onclick: closeModal }, 'OK')], true);
   }
 
@@ -4144,7 +4163,27 @@ const UI = (() => {
     if (FROM_FILE) { ytPopup(c); fileNotice($('wc-ph'), c, 'La webcam'); return true; }
     $('wc-ph').classList.add('hidden');
     $('wc-iframe').src = `https://www.youtube.com/embed/${c.yt}?autoplay=1&mute=1&rel=0&playsinline=1`;
+    checkVideo(c.yt).then(alive => {         // gli ID delle webcam scadono: lo verifichiamo e lo diciamo chiaramente
+      if (alive !== false || camActive !== i) return;
+      $('wc-iframe').src = 'about:blank';
+      const ph = $('wc-ph'); ph.classList.remove('hidden');
+      ph.replaceChildren(h('div', { style: 'font-size:22px' }, '📹'), h('div', null, h('b', null, `La webcam di ${c.city} non esiste più su YouTube`), ' (l\'ID ', h('code', null, c.yt), ' è scaduto).'),
+        h('div', null, h('button', { class: 'pl-btn', type: 'button', onclick: () => $('wc-search').click() }, '🔎 CERCA UNA WEBCAM LIVE'), ' ', h('button', { class: 'pl-btn', type: 'button', onclick: () => editList('cam') }, '✎ INCOLLA IL NUOVO LINK')));
+    });
     return true;
+  }
+  const vidCache = new Map();
+  async function checkVideo(id) {   // true = esiste, false = rimosso/privato, null = non verificabile
+    if (!id) return false;
+    if (vidCache.has(id)) return vidCache.get(id);
+    const u = encodeURIComponent(`https://www.youtube.com/watch?v=${id}`);
+    let res = null;
+    try {
+      const r = await Net.get(`https://noembed.com/embed?url=${u}`, { timeout: 7000, noProxy: true });
+      res = r.data && !r.data.error ? true : /not found|unauthorized|private|404|401|403/i.test(r.data?.error || '') ? false : null;
+    } catch {}
+    if (res === null) try { await Net.get(`https://www.youtube.com/oembed?url=${u}&format=json`, { timeout: 7000 }); res = true; } catch (e) { if (e.status === 404 || e.status === 401 || e.status === 403) res = false; }
+    vidCache.set(id, res); return res;
   }
   function setWindy(overlay, lat, lon) {
     const v = view(); lat = lat ?? v.lat; lon = lon ?? v.lon;
@@ -4252,7 +4291,7 @@ const UI = (() => {
     const ion = !!(Settings.get('ionToken') || '').trim();
     $('layer-list').replaceChildren(...Object.entries(groups).flatMap(([g, ls]) => [h('div', { class: 'lgrp' }, g), ...ls.map(l => {
       const dis = (l.only3d && !MapCtl.is3d) || (l.ion && !ion);
-      const tag = l.key === 'fires' && !(Settings.get('firmsKey') || '').trim() ? 'key' : l.tag;
+      const tag = l.key === 'fires' ? ((Settings.get('firmsKey') || '').trim() ? 'live' : 'key') : l.tag;
       return h('div', { class: 'layer-item' + (MapCtl.isOn(l.key) ? ' active' : '') + (dis ? ' disabled' : ''), dataset: { layer: l.key }, title: dis ? (l.ion ? 'Richiede token Cesium ion (⚙)' : 'Solo nel globo 3D') : '',
         onclick: () => { if (dis) { Toast.show(l.ion ? '🔑 Serve un token Cesium ion (⚙ Impostazioni)' : 'Disponibile solo nel globo 3D', 'orn'); return; } const on = MapCtl.toggle(l.key); Toast.show(`${on ? '☑' : '☐'} ${l.label}`, on ? 'ok' : ''); } },
         h('div', { class: 'layer-cb' }), h('span', { class: 'layer-ico' }, l.icon), h('span', { class: 'layer-name' }, l.label, ' ', h('span', { class: 'dstat ' + tag }, { live: 'LIVE', calc: 'CALC', ref: 'REF', est: 'STIMA', key: 'KEY' }[tag])),

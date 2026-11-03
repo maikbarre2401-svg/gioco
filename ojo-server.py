@@ -15,6 +15,7 @@ ALLOW = {
     'api.coingecko.com', 'api.binance.com', 'api.frankfurter.dev', 'api.frankfurter.app', 'ipwho.is', 'ipapi.co',
     'feeds.bbci.co.uk', 'www.aljazeera.com', 'www.ansa.it', 'www.rainews.it', 'rss.dw.com', 'www.theguardian.com',
     'www.france24.com', 'rss.nytimes.com', 'feeds.npr.org', 'feeds.skynews.com', 'www.defensenews.com', 'www.timesofisrael.com',
+    'noembed.com', 'www.youtube.com',
 }
 UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36'
 

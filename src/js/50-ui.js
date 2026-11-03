@@ -191,7 +191,7 @@ const UI = (() => {
     const th = MapCtl.engine?.terrainHeight?.(lat, lon);
     const zones = [...DATA.CONFLICT_ZONES.map((z, i) => ['conflict', i, z, '⚔']), ...DATA.GPS_ZONES.map((z, i) => ['gps', i, z, '📡'])]
       .filter(([k, , z]) => MapCtl.isOn(k) && Geo.dist(lat, lon, z.lat, z.lon) <= z.r);
-    openPanel({ title: '⌖ ANALISI PUNTO', icon: '⌖', name: Intel.nearest(lat, lon).label, nameCol: '#00ffcc', tags: [['CALCOLO + DATI LIVE', '#00ffcc']],
+    openPanel({ title: '⌖ ANALISI PUNTO', icon: '⌖', name: '≈ ' + Intel.nearest(lat, lon).label, nameCol: '#00ffcc', tags: [['CALCOLO + DATI LIVE', '#00ffcc']],
       kv: [['Lat / Lon', `${lat.toFixed(5)}, ${lon.toFixed(5)}`, true], ['DMS', `${Fmt.dms(lat, true)} ${Fmt.dms(lon, false)}`, true],
         ['Quota terreno', h('span', { id: 'pt-elev' }, th != null && isFinite(th) ? Fmt.n(th) + ' m' : '…')], ['Sole', `${se.toFixed(1)}° ${se > 0 ? '☀ giorno' : se > -6 ? '🌆 crepuscolo civile' : se > -18 ? '🌌 crepuscolo' : '🌑 notte'}`],
         ['Luna', `${moon.name} ${Math.round(moon.illum * 100)}%`], ['Zona calda più vicina', `${hs.x.flag} ${hs.x.name} · ${Fmt.n(hs.d)} km`],
@@ -208,7 +208,11 @@ const UI = (() => {
     if (el != null) setText('pt-elev', Fmt.n(el) + ' m');
     const box = $('pt-geo'); if (!box) return;
     const nodes = [];
-    if (geo) nodes.push(h('div', { style: 'font-size:13px;color:var(--gd)' }, '📍 ' + ([geo.name, geo.region, geo.country].filter(Boolean).join(', ') || geo.ocean || 'Acque internazionali')));
+    if (geo) {
+      nodes.push(h('div', { style: 'font-size:13px;color:var(--gd)' }, '📍 ' + ([geo.name, geo.region, geo.country].filter(Boolean).join(', ') || geo.ocean || 'Acque internazionali')));
+      const nm = document.querySelector('#trkp .trk-name');   // titolo preciso dal geocoding inverso (non dal paese “più vicino”)
+      if (nm) nm.textContent = geo.country ? (geo.name ? `${geo.name}, ${geo.country}` : geo.country) : (geo.ocean || 'Acque internazionali');
+    }
     if (wx?.current) {
       const c = wx.current;
       nodes.push(h('div', null, `${Weather.ICON(c.weather_code)} ${Weather.WMO[c.weather_code] || '--'} · ${c.temperature_2m}°C (percepiti ${c.apparent_temperature}°C) · 💧${c.relative_humidity_2m}% · 💨 ${c.wind_speed_10m} km/h ${Geo.dir(c.wind_direction_10m)} (raff. ${c.wind_gusts_10m}) · ${c.pressure_msl} hPa · ☁ ${c.cloud_cover}%`),
@@ -320,7 +324,7 @@ const UI = (() => {
       h('h4', null, 'Onestà dei dati'),
       h('p', null, 'LIVE = dato reale da API pubblica. CALC = calcolato da dati reali (orbite SGP4, indice OJO, sole). REF = riferimento statico pubblico. STIMA = area indicativa. Molti voli militari non trasmettono ADS-B: l\'assenza di un aereo non significa che non ci sia.'),
       h('h4', null, 'Fonti'),
-      h('p', null, 'ADS-B: adsb.lol, airplanes.live, adsb.fi, OpenSky · Satelliti: CelesTrak + satellite.js · Terremoti: USGS · Eventi: NASA EONET/FIRMS · Spazio: NOAA SWPC · Radar: RainViewer · Notizie: BBC, Al Jazeera, ANSA, RaiNews, DW, Guardian, France24, NYT, NPR, Sky, Defense News, Times of Israel, GDELT · Mercati: Yahoo/Stooq, CoinGecko, BCE · Meteo: Open-Meteo · Geocoding: BigDataCloud · Mappe: Esri, CARTO, OSM, NASA GIBS · Terreno: AWS Terrain Tiles / Cesium ion · Motore: CesiumJS.')
+      h('p', null, 'ADS-B: adsb.lol, airplanes.live, adsb.fi, OpenSky · Satelliti: CelesTrak + satellite.js · Terremoti: USGS · Eventi: NASA EONET/FIRMS · Spazio: NOAA SWPC · Radar: RainViewer · Notizie: BBC, Al Jazeera, ANSA, RaiNews, DW, Guardian, France24, NYT, NPR, Sky, Defense News, Times of Israel, GDELT · Mercati: Yahoo/Stooq, CoinGecko, BCE · Meteo: Open-Meteo · Geocoding: BigDataCloud · Mappe: Esri, OSM, NASA GIBS · Terreno: AWS Terrain Tiles / Cesium ion · Motore: CesiumJS.')
     ], [h('button', { class: 'btn', type: 'button', onclick: closeModal }, 'OK')], true);
   }
 
@@ -583,7 +587,27 @@ const UI = (() => {
     if (FROM_FILE) { ytPopup(c); fileNotice($('wc-ph'), c, 'La webcam'); return true; }
     $('wc-ph').classList.add('hidden');
     $('wc-iframe').src = `https://www.youtube.com/embed/${c.yt}?autoplay=1&mute=1&rel=0&playsinline=1`;
+    checkVideo(c.yt).then(alive => {         // gli ID delle webcam scadono: lo verifichiamo e lo diciamo chiaramente
+      if (alive !== false || camActive !== i) return;
+      $('wc-iframe').src = 'about:blank';
+      const ph = $('wc-ph'); ph.classList.remove('hidden');
+      ph.replaceChildren(h('div', { style: 'font-size:22px' }, '📹'), h('div', null, h('b', null, `La webcam di ${c.city} non esiste più su YouTube`), ' (l\'ID ', h('code', null, c.yt), ' è scaduto).'),
+        h('div', null, h('button', { class: 'pl-btn', type: 'button', onclick: () => $('wc-search').click() }, '🔎 CERCA UNA WEBCAM LIVE'), ' ', h('button', { class: 'pl-btn', type: 'button', onclick: () => editList('cam') }, '✎ INCOLLA IL NUOVO LINK')));
+    });
     return true;
+  }
+  const vidCache = new Map();
+  async function checkVideo(id) {   // true = esiste, false = rimosso/privato, null = non verificabile
+    if (!id) return false;
+    if (vidCache.has(id)) return vidCache.get(id);
+    const u = encodeURIComponent(`https://www.youtube.com/watch?v=${id}`);
+    let res = null;
+    try {
+      const r = await Net.get(`https://noembed.com/embed?url=${u}`, { timeout: 7000, noProxy: true });
+      res = r.data && !r.data.error ? true : /not found|unauthorized|private|404|401|403/i.test(r.data?.error || '') ? false : null;
+    } catch {}
+    if (res === null) try { await Net.get(`https://www.youtube.com/oembed?url=${u}&format=json`, { timeout: 7000 }); res = true; } catch (e) { if (e.status === 404 || e.status === 401 || e.status === 403) res = false; }
+    vidCache.set(id, res); return res;
   }
   function setWindy(overlay, lat, lon) {
     const v = view(); lat = lat ?? v.lat; lon = lon ?? v.lon;
@@ -691,7 +715,7 @@ const UI = (() => {
     const ion = !!(Settings.get('ionToken') || '').trim();
     $('layer-list').replaceChildren(...Object.entries(groups).flatMap(([g, ls]) => [h('div', { class: 'lgrp' }, g), ...ls.map(l => {
       const dis = (l.only3d && !MapCtl.is3d) || (l.ion && !ion);
-      const tag = l.key === 'fires' && !(Settings.get('firmsKey') || '').trim() ? 'key' : l.tag;
+      const tag = l.key === 'fires' ? ((Settings.get('firmsKey') || '').trim() ? 'live' : 'key') : l.tag;
       return h('div', { class: 'layer-item' + (MapCtl.isOn(l.key) ? ' active' : '') + (dis ? ' disabled' : ''), dataset: { layer: l.key }, title: dis ? (l.ion ? 'Richiede token Cesium ion (⚙)' : 'Solo nel globo 3D') : '',
         onclick: () => { if (dis) { Toast.show(l.ion ? '🔑 Serve un token Cesium ion (⚙ Impostazioni)' : 'Disponibile solo nel globo 3D', 'orn'); return; } const on = MapCtl.toggle(l.key); Toast.show(`${on ? '☑' : '☐'} ${l.label}`, on ? 'ok' : ''); } },
         h('div', { class: 'layer-cb' }), h('span', { class: 'layer-ico' }, l.icon), h('span', { class: 'layer-name' }, l.label, ' ', h('span', { class: 'dstat ' + tag }, { live: 'LIVE', calc: 'CALC', ref: 'REF', est: 'STIMA', key: 'KEY' }[tag])),

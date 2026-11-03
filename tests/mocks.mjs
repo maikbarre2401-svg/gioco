@@ -175,7 +175,7 @@ export function respond(url) {
   const u = new URL(url), host = u.host, p = u.pathname, q = u.searchParams;
   if (/arcgisonline|cartocdn|openstreetmap|gibs\.earthdata|tilecache\.rainviewer/.test(host)) {
     const m = p.match(/(\d+)\/(\d+)\/(\d+)/), [z, a, b] = m ? m.slice(1).map(Number) : [0, 0, 0];
-    const kind = /rainviewer/.test(host) ? 'radar' : /only_labels/.test(p) ? 'label' : /CityLights|Black_Marble/.test(p) ? 'night' : /gibs/.test(host) ? 'gibs' : /dark_all/.test(p) ? 'dark' : 'sat';
+    const kind = /rainviewer/.test(host) ? 'radar' : /only_labels|World_Boundaries_and_Places/.test(p) ? 'label' : /CityLights|Black_Marble/.test(p) ? 'night' : /gibs/.test(host) ? 'gibs' : /dark_all|Dark_Gray/.test(p) ? 'dark' : 'sat';
     return { status: 200, contentType: 'image/png', body: imageryTile(kind, z, a, b) };
   }
   if (host === 's3.amazonaws.com' && p.includes('terrarium')) { const [z, x, y] = p.match(/(\d+)\/(\d+)\/(\d+)\.png/).slice(1).map(Number); return { status: 200, contentType: 'image/png', body: terrariumTile(z, x, y) }; }
@@ -207,6 +207,7 @@ export function respond(url) {
   if (host === 'ipwho.is') return J(p.length > 1 ? { success: true, ip: decodeURIComponent(p.slice(1)), type: 'IPv4', city: 'Mountain View', region: 'California', country: 'United States', country_code: 'US', latitude: 37.39, longitude: -122.08, connection: { asn: 15169, org: 'Google LLC', isp: 'Google LLC' }, timezone: { id: 'America/Los_Angeles' } }
     : { success: true, ip: '93.40.1.2', type: 'IPv4', city: 'Roma', region: 'Lazio', country: 'Italy', country_code: 'IT', latitude: 41.9, longitude: 12.5, connection: { asn: 3269, org: 'Telecom Italia', isp: 'TIM' }, timezone: { id: 'Europe/Rome' } });
   if (host === 'dns.google') return J({ Status: 0, Answer: [{ name: q.get('name') + '.', type: 1, TTL: 300, data: '151.101.1.1' }] });
+  if (host === 'noembed.com') return J(/kfWVnQiUJ_4/.test(decodeURIComponent(u.search)) ? { error: '404 Not Found', url: q.get('url') } : { title: 'Live webcam', provider_name: 'YouTube', type: 'video' });
   if (/youtube|windy/.test(host)) return T(`<!doctype html><body style="background:#111;color:#0f0;font:14px monospace">EMBED ${host}${p}</body>`, 'text/html');
   if (host === 'fonts.googleapis.com') return T('', 'text/css');
   return null;

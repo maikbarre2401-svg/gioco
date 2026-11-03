@@ -30,7 +30,7 @@ const srv = createServer((req, res) => {
 }).listen(0);
 const PORT = srv.address().port;
 
-const errors = [], unknown = new Set(), proxied = new Set(), log = [];
+const errors = [], unknown = new Set(), proxied = new Set(), log = [], requested = new Set();
 let pass = 0, fail = 0;
 const ok = (c, m) => { if (c) { pass++; console.log('  ✓', m); } else { fail++; console.log('  ✗', m); } };
 
@@ -40,7 +40,7 @@ await ctx.route('**/*', async route => {
   const url = route.request().url();
   if (url.startsWith(`http://localhost:${PORT}`) || url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('file:')) return route.continue();
   const local = cdnLocal(url, LIBS); if (local) return route.fulfill({ status: local.status, body: local.body, headers: { 'content-type': local.contentType, 'access-control-allow-origin': '*' } });
-  const u = new URL(url);
+  const u = new URL(url); requested.add(u.host);
   if (PROXY.test(u.host)) {
     const target = u.searchParams.get('url') || u.searchParams.get('quest');
     proxied.add(new URL(target).host);
@@ -99,7 +99,7 @@ ok((await page.$$('#alert-list .al-row')).length >= 2, 'allerte automatiche: ' +
 ok((await txt('#brief-text')).length > 60, 'briefing generato');
 ok(/[A-Z]/.test(await txt('#ticker-track')), 'ticker notizie');
 if (LOCALPROXY) {
-  ok(/locale/.test((await page.evaluate(() => Health.all().find(f => f.id === 'proxy').msg)) || ''), 'proxy locale dell\'avviatore rilevato');
+  ok(/avviatore/.test((await page.evaluate(() => Health.all().find(f => f.id === 'proxy').msg)) || ''), 'proxy locale dell\'avviatore rilevato');
   ok([...localHits].some(h => /bbci|nytimes/.test(h)) && ![...proxied].some(h => /bbci/.test(h)), 'RSS senza CORS passati dal proxy LOCALE: ' + [...localHits].join(', '));
 } else ok([...proxied].some(h => /bbci|nytimes/.test(h)), 'RSS senza CORS recuperati via proxy: ' + [...proxied].join(', '));
 
@@ -151,11 +151,13 @@ if (!MODE2D) {
     return p ? { x: p.x, y: p.y, hex: a.hex } : null;
   });
   let hit = null;
-  if (pickedAc) {
+  for (let attempt = 0; pickedAc && attempt < 3 && !/AEREO/.test(await txt('#trkp .trk-h')); attempt++) {   // il renderer software è lento: riprova
     await page.evaluate(() => window.scrollTo(0, 0)); await wait(300);
+    const p = attempt ? await page.evaluate(hex => { const C = Globe3D.C, v = Globe3D.viewer, e = S.ac.get(hex); const w = e && C.SceneTransforms.worldToWindowCoordinates(v.scene, C.Cartesian3.fromDegrees(e.plon ?? e.lon, e.plat ?? e.lat, e.altM)); return w ? { x: w.x, y: w.y } : null; }, pickedAc.hex) : pickedAc;
+    if (!p) break;
     const r = await page.$eval('#globe3d canvas', c => c.getBoundingClientRect().toJSON());
-    hit = await page.evaluate(([x, y]) => { const el = document.elementFromPoint(x, y); return el ? (el.id || el.className || el.tagName) : null; }, [r.x + pickedAc.x, r.y + pickedAc.y]);
-    await page.mouse.click(r.x + pickedAc.x, r.y + pickedAc.y); await wait(900);
+    hit = await page.evaluate(([x, y]) => { const el = document.elementFromPoint(x, y); return el ? (el.id || el.className || el.tagName) : null; }, [r.x + p.x, r.y + p.y]);
+    await page.mouse.click(r.x + p.x, r.y + p.y); await wait(1200);
   }
   ok(/AEREO/.test(await txt('#trkp .trk-h')), `picking 3D di un aereo cliccandolo sul globo (${JSON.stringify(pickedAc)} → elemento ${hit} → ${await txt('#trkp .trk-h')})`);
   await page.keyboard.press('Escape');
@@ -223,6 +225,11 @@ await page.keyboard.press('?'); await wait(200); await page.keyboard.press('Esca
 await wait(2500);
 await shot('09-final');
 
+if (!FILE) {
+  await page.fill('#hk-inp', 'cam 5'); await page.keyboard.press('Enter'); await wait(2500);
+  ok(/non esiste più/.test(await txt('#wc-ph')), 'webcam con ID scaduto riconosciuta e spiegata: ' + (await txt('#wc-ph')).slice(0, 60));
+}
+ok(![...requested].some(h => /cartocdn/.test(h)), 'nessuna richiesta a CARTO (ora richiede API key)');
 console.log('— errori');
 const fps = await txt('#sb-fps');
 console.log('    fps (SwiftShader software):', fps);

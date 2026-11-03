@@ -12,7 +12,7 @@ const Map2D = (() => {
   let cv = null, ctx = null, acData = [], satData = [], sel = null, follow = null, traceLayer = null;
   const BASES = {
     sat: ['🛰 Satellite (Esri)', 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', '© Esri, Maxar', 19],
-    dark: ['🌑 Scura (CARTO)', 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', '© OpenStreetMap © CARTO', 19],
+    dark: ['🌑 Scura (Esri)', 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', '© Esri, HERE, Garmin, OpenStreetMap', 16],
     topo: ['⛰ Topografica (Esri)', 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', '© Esri', 19],
     osm: ['🗺 OpenStreetMap', 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', '© OpenStreetMap contributors', 19],
     night: ['🌃 Luci notturne (NASA)', 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_CityLights_2012/default/2012-01-01/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpg', 'NASA', 8]
@@ -64,7 +64,7 @@ const Map2D = (() => {
     map = L.map(container, { center: [35, 20], zoom: 3, worldCopyJump: true, zoomControl: true, attributionControl: true, preferCanvas: true, minZoom: 2 });
     map.attributionControl.setPrefix('Leaflet');
     setBase(BASES[Settings.get('base')] ? Settings.get('base') : 'sat');
-    tiles.labels = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png', { subdomains: 'abcd', maxZoom: 19, opacity: 0.85, attribution: '© CARTO' });
+    tiles.labels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, maxNativeZoom: 18, opacity: 0.9, attribution: '© Esri' });
     if (state.layers.labels !== false) tiles.labels.addTo(map);
     const Overlay = L.Layer.extend({
       onAdd(m) { cv = L.DomUtil.create('canvas', 'leaflet-zoom-hide'); cv.style.pointerEvents = 'none'; m.getPanes().overlayPane.appendChild(cv); ctx = cv.getContext('2d'); m.on('move zoom resize viewreset', draw); draw(); },

@@ -17,7 +17,8 @@ const ALLOW = [
   'services.swpc.noaa.gov', 'api.rainviewer.com', 'api.gdeltproject.org', 'query1.finance.yahoo.com', 'stooq.com',
   'api.coingecko.com', 'api.binance.com', 'api.frankfurter.dev', 'api.frankfurter.app', 'ipwho.is', 'ipapi.co',
   'feeds.bbci.co.uk', 'www.aljazeera.com', 'www.ansa.it', 'www.rainews.it', 'rss.dw.com', 'www.theguardian.com',
-  'www.france24.com', 'rss.nytimes.com', 'feeds.npr.org', 'feeds.skynews.com', 'www.defensenews.com', 'www.timesofisrael.com'
+  'www.france24.com', 'rss.nytimes.com', 'feeds.npr.org', 'feeds.skynews.com', 'www.defensenews.com', 'www.timesofisrael.com',
+  'noembed.com', 'www.youtube.com'
 ];
 const CORS = {
   'access-control-allow-origin': '*',

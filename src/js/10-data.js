@@ -224,7 +224,17 @@ DATA.LAND_EXTRA = [   // punti aggiuntivi per paesi molto estesi
   ['Australia', -20, 120], ['Australia', -32, 148], ['Australia', -17, 145], ['Argentina', -45, -68], ['Kazakistan', 48, 67], ['Mongolia', 46.8, 103],
   ['India', 28, 77], ['India', 13, 78], ['Indonesia', 0, 102], ['Indonesia', -4, 138], ['Arabia Saudita', 24, 45], ['Groenlandia', 72, -40],
   ['Antartide', -80, 0], ['Antartide', -75, 120], ['Antartide', -75, -100], ['Algeria', 28, 3], ['Libia', 27, 17], ['Niger', 17, 9], ['Mauritania', 20, -10],
-  ['Angola', -12, 18], ['Madagascar', -19, 47], ['Nuova Zelanda', -41, 174], ['Giappone', 43, 142], ['Islanda', 65, -18], ['Perù', -10, -75], ['Bolivia', -17, -64]
+  ['Angola', -12, 18], ['Madagascar', -19, 47], ['Nuova Zelanda', -41, 174], ['Giappone', 43, 142], ['Islanda', 65, -18], ['Perù', -10, -75], ['Bolivia', -17, -64],
+  // Europa e Mediterraneo: più punti, per non confondere paesi vicini
+  ['Francia', 48.8, 2.3], ['Francia', 45.7, 4.8], ['Francia', 43.6, 1.4], ['Francia', 47.2, -1.6], ['Francia', 43.3, 5.4], ['Francia', 48.6, 7.7],
+  ['Germania', 52.5, 13.4], ['Germania', 48.1, 11.6], ['Germania', 50.9, 6.9], ['Germania', 53.5, 10.0], ['Germania', 49.4, 8.7],
+  ['Italia', 45.5, 9.2], ['Italia', 45.4, 12.3], ['Italia', 40.8, 14.3], ['Italia', 38.1, 13.4], ['Italia', 39.2, 9.1], ['Italia', 44.5, 11.3], ['Italia', 41.1, 16.9],
+  ['Spagna', 41.4, 2.2], ['Spagna', 37.4, -6.0], ['Spagna', 43.3, -2.9], ['Spagna', 39.5, -0.4], ['Regno Unito', 51.5, -0.1], ['Regno Unito', 55.9, -3.2], ['Regno Unito', 53.5, -2.2],
+  ['Polonia', 52.2, 21.0], ['Polonia', 50.1, 19.9], ['Polonia', 54.4, 18.6], ['Ucraina', 50.45, 30.5], ['Ucraina', 46.5, 30.7], ['Ucraina', 48.5, 35.0], ['Ucraina', 49.8, 24.0],
+  ['Turchia', 41.0, 29.0], ['Turchia', 39.9, 32.9], ['Turchia', 37.0, 35.3], ['Turchia', 38.4, 27.1], ['Paesi Bassi', 52.4, 4.9], ['Svizzera', 47.4, 8.5], ['Austria', 48.2, 16.4],
+  ['Grecia', 38.0, 23.7], ['Grecia', 40.6, 22.9], ['Portogallo', 38.7, -9.1], ['Portogallo', 41.15, -8.6], ['Romania', 44.4, 26.1], ['Svezia', 59.3, 18.0], ['Svezia', 57.7, 12.0],
+  ['Svezia', 63.8, 20.3], ['Norvegia', 59.9, 10.7], ['Norvegia', 63.4, 10.4], ['Norvegia', 69.6, 19.0], ['Finlandia', 60.2, 24.9], ['Finlandia', 65.0, 25.5], ['Repubblica Ceca', 50.1, 14.4],
+  ['Ungheria', 47.5, 19.0], ['Serbia', 44.8, 20.5], ['Croazia', 45.8, 16.0], ['Slovenia', 46.05, 14.5], ['Bielorussia', 53.9, 27.6], ['Irlanda', 53.35, -6.26]
 ];
 
 /* ── ADS-B: classificazione per tipo ICAO e callsign ── */
