@@ -54,6 +54,9 @@
   "overlay_color": "#ff2fd0",
   "overlay_skeleton_color": "#7a5cff",
   "overlay_aim_circle": true,
+  "snap_duration_ms": 250,
+  "snap_omega": 55.0,
+  "snap_zeta": 0.85,
   "process": "fortniteclient-win64-shipping.exe",
   "log_metrics": true,
   "ads_mult": {

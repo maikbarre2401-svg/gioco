@@ -236,6 +236,8 @@ class Engine(threading.Thread):
 
         self._last_pose_stamp: float = 0.0
         self._cached_smooth_kps: Optional[np.ndarray] = None
+        self._snap_start: float = 0.0
+        self._snap_active: bool = False
 
     @property
     def enabled(self) -> bool:
@@ -257,9 +259,13 @@ class Engine(threading.Thread):
     @aiming.setter
     def aiming(self, value: bool) -> None:
         self._aiming = value
-        if not value:
+        if value:
+            self._snap_start = time.perf_counter()
+            self._snap_active = True
+        else:
             self._mouse.release()
             self._aim.release()
+            self._snap_active = False
 
     def get_annotated_frame(self) -> Optional[np.ndarray]:
         with self._frame_lock:
@@ -333,6 +339,16 @@ class Engine(threading.Thread):
 
             main_color = self._hex_bgr(self._cfg.overlay_color)
             main_hex = self._cfg.overlay_color
+            skel_hex = self._cfg.overlay_skeleton_color
+
+            scx, scy = w // 2, h // 2
+            fov_r = self._cfg.fov_px
+            fov_dim = self._dim_hex(skel_hex, 0.35)
+            overlay_items.append(("cross", scx, scy, 10, main_hex))
+            overlay_items.append(("circle", scx, scy, fov_r, fov_dim))
+
+            cv2.drawMarker(ann, (scx, scy), main_color, cv2.MARKER_CROSS, 16, 1, cv2.LINE_AA)
+            cv2.circle(ann, (scx, scy), fov_r, self._hex_bgr(skel_hex), 1, cv2.LINE_AA)
 
             if self._cfg.overlay_boxes:
                 for x1, y1, x2, y2, conf in detections:
@@ -379,7 +395,16 @@ class Engine(threading.Thread):
                                 self._cached_smooth_kps = smooth_kps
 
                 display_box = (bx1, by1, bx2, by2)
-                active_bone = self._aim.auto_bone(h)
+
+                snap_phase = False
+                if self._snap_active:
+                    snap_elapsed = time.perf_counter() - self._snap_start
+                    if snap_elapsed < self._cfg.snap_duration_ms / 1000.0:
+                        snap_phase = True
+                    else:
+                        self._snap_active = False
+
+                active_bone = "head" if snap_phase else self._aim.auto_bone(h)
 
                 if smooth_kps is not None:
                     skel_point = bone_point(smooth_kps, active_bone, display_box)
@@ -429,7 +454,20 @@ class Engine(threading.Thread):
                 dt = tick_s
                 active = self._enabled and self._aiming and (self._focused or self._cfg.always_active)
                 if active and target_point is not None:
+                    if snap_phase:
+                        saved_omega = self._cfg.omega
+                        saved_zeta = self._cfg.zeta
+                        saved_human = self._cfg.human
+                        self._cfg.omega = self._cfg.snap_omega
+                        self._cfg.zeta = self._cfg.snap_zeta
+                        self._cfg.human = True
+
                     dx, dy, dist = self._aim.step(target_point, w, h, dt, self._ads_mult)
+
+                    if snap_phase:
+                        self._cfg.omega = saved_omega
+                        self._cfg.zeta = saved_zeta
+                        self._cfg.human = saved_human
                     if abs(dx) > 0.5 or abs(dy) > 0.5:
                         self._mouse.move(int(round(dx)), int(round(dy)))
 
@@ -498,3 +536,9 @@ class Engine(threading.Thread):
         h = hex_color.lstrip("#")
         r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
         return (b, g, r)
+
+    @staticmethod
+    def _dim_hex(hex_color: str, factor: float) -> str:
+        h = hex_color.lstrip("#")
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        return f"#{int(r * factor):02x}{int(g * factor):02x}{int(b * factor):02x}"
