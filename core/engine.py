@@ -339,6 +339,7 @@ class Engine(threading.Thread):
                     cv2.rectangle(ann, (int(x1), int(y1)), (int(x2), int(y2)), main_color, 2)
                     overlay_items.append(("box", int(x1), int(y1), int(x2), int(y2), main_hex))
 
+            self._aim.set_frame(frame)
             picked = self._aim.pick(detections, w, h)
 
             smooth_kps: Optional[np.ndarray] = None
@@ -346,6 +347,7 @@ class Engine(threading.Thread):
 
             if picked is not None:
                 raw_box = picked
+                self._aim.update_reid(frame)
 
                 if not self._aim.engaged:
                     self._aim.begin()
@@ -377,9 +379,25 @@ class Engine(threading.Thread):
                                 self._cached_smooth_kps = smooth_kps
 
                 display_box = (bx1, by1, bx2, by2)
+                active_bone = self._aim.auto_bone(h)
 
                 if smooth_kps is not None:
-                    target_point = bone_point(smooth_kps, self._cfg.bone, display_box)
+                    skel_point = bone_point(smooth_kps, active_bone, display_box)
+                    heur_point = heuristic_point(active_bone, display_box)
+
+                    if skel_point is not None:
+                        avg_conf = float(smooth_kps[:, 2].mean())
+                        if avg_conf >= 0.55:
+                            target_point = skel_point
+                        elif avg_conf >= 0.25:
+                            blend = (avg_conf - 0.25) / 0.30
+                            target_point = (
+                                skel_point[0] * blend + heur_point[0] * (1.0 - blend),
+                                skel_point[1] * blend + heur_point[1] * (1.0 - blend),
+                            )
+                        else:
+                            target_point = heur_point
+
                     if self._cfg.overlay_skeleton:
                         skel_hex = self._cfg.overlay_skeleton_color
                         draw_skeleton(
@@ -395,7 +413,7 @@ class Engine(threading.Thread):
                         overlay_items.extend(ov_items)
 
                 if target_point is None:
-                    target_point = heuristic_point(self._cfg.bone, display_box)
+                    target_point = heuristic_point(active_bone, display_box)
                     px, py = target_point
                     cv2.drawMarker(
                         ann, (int(px), int(py)), main_color,

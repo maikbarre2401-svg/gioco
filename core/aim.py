@@ -1,4 +1,4 @@
-"""Aim controller: IoU target tracking, Kalman prediction, humanised movement."""
+"""Aim controller: ReID + IoU tracking, auto bone, Kalman prediction, humanised movement."""
 
 from __future__ import annotations
 
@@ -6,9 +6,12 @@ import math
 import time
 from typing import List, Optional, Tuple
 
+import numpy as np
+
 from core.config import Config
 from core.human import Humanizer
 from core.kalman import Tracker
+from core.reid import AppearanceTracker
 from core.utils import clamp
 
 Detection = Tuple[float, float, float, float, float]
@@ -19,27 +22,25 @@ def _iou(a: Tuple[float, float, float, float], b: Tuple[float, float, float, flo
     iy1 = max(a[1], b[1])
     ix2 = min(a[2], b[2])
     iy2 = min(a[3], b[3])
-    iw = max(0.0, ix2 - ix1)
-    ih = max(0.0, iy2 - iy1)
-    inter = iw * ih
+    inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
     aa = max(0.0, (a[2] - a[0]) * (a[3] - a[1]))
     ab = max(0.0, (b[2] - b[0]) * (b[3] - b[1]))
     union = aa + ab - inter
-    if union < 1e-6:
-        return 0.0
-    return inter / union
+    return inter / union if union > 1e-6 else 0.0
 
 
 class Aim:
-    """Picks targets from detections and computes per-tick aim deltas."""
+    """Picks targets with ReID + IoU, computes per-tick aim deltas."""
 
     def __init__(self, cfg: Config, human: Humanizer) -> None:
         self._cfg = cfg
         self._human = human
         self._tracker = Tracker()
+        self._reid = AppearanceTracker()
         self._target_box: Optional[Tuple[float, float, float, float]] = None
         self._last_switch: float = 0.0
         self._engaged: bool = False
+        self._frame_ref: Optional[np.ndarray] = None
 
     @property
     def target_box(self) -> Optional[Tuple[float, float, float, float]]:
@@ -49,10 +50,14 @@ class Aim:
     def engaged(self) -> bool:
         return self._engaged
 
+    def set_frame(self, frame: np.ndarray) -> None:
+        """Store current frame reference for ReID scoring."""
+        self._frame_ref = frame
+
     def pick(
         self, dets: List[Detection], w: int, h: int
     ) -> Optional[Tuple[float, float, float, float]]:
-        """Pick best target using IoU continuity + distance + confidence scoring."""
+        """Pick best target using IoU continuity + ReID appearance + distance."""
         cx, cy = w / 2.0, h / 2.0
         fov = self._cfg.fov_px
 
@@ -73,16 +78,25 @@ class Aim:
         cooldown_ok = (now - self._last_switch) * 1000.0 >= self._cfg.switch_cooldown_ms
 
         if self._target_box is not None and cooldown_ok:
-            best_iou_cand = None
-            best_iou_val = 0.0
-            for c in candidates:
-                iou = _iou((c[0], c[1], c[2], c[3]), self._target_box)
-                if iou > best_iou_val:
-                    best_iou_val = iou
-                    best_iou_cand = c
+            best_score = -1.0
+            best_cand = None
 
-            if best_iou_cand is not None and best_iou_val > 0.25:
-                c = best_iou_cand
+            for c in candidates:
+                cbox = (c[0], c[1], c[2], c[3])
+                iou = _iou(cbox, self._target_box)
+
+                reid_s = 0.5
+                if self._reid.ready and self._frame_ref is not None:
+                    reid_s = self._reid.score(self._frame_ref, cbox)
+
+                score = iou * 0.40 + reid_s * 0.45 + (1.0 - c[5] / fov) * 0.15
+
+                if score > best_score:
+                    best_score = score
+                    best_cand = c
+
+            if best_cand is not None and best_score > 0.30:
+                c = best_cand
                 self._target_box = (c[0], c[1], c[2], c[3])
                 return self._target_box
 
@@ -93,9 +107,27 @@ class Aim:
             iou_with_prev = _iou(new_box, self._target_box)
             if iou_with_prev < 0.1:
                 self._last_switch = now
+                self._reid.reset()
 
         self._target_box = new_box
         return self._target_box
+
+    def update_reid(self, frame: np.ndarray) -> None:
+        """Feed current target appearance to the ReID model."""
+        if self._target_box is not None:
+            self._reid.update(frame, self._target_box)
+
+    def auto_bone(self, h: int) -> str:
+        """Choose aim bone automatically based on target distance (box size vs frame)."""
+        if not self._cfg.bone_by_distance or self._target_box is None:
+            return self._cfg.bone
+        box_h = self._target_box[3] - self._target_box[1]
+        ratio = box_h / h
+        if ratio < 0.12:
+            return "chest"
+        if ratio < 0.22:
+            return "neck"
+        return self._cfg.bone
 
     def begin(self) -> None:
         if self._target_box is not None:
@@ -164,3 +196,4 @@ class Aim:
     def release(self) -> None:
         self._target_box = None
         self._engaged = False
+        self._reid.reset()
