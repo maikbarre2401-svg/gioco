@@ -7,6 +7,8 @@
   "capture": 640,
   "conf": 0.35,
   "kp_conf": 0.30,
+  "multiscale": true,
+  "imgsz_far": 960,
   "device": "auto",
   "use_pose": true,
   "bone": "head",

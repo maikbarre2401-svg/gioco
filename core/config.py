@@ -25,6 +25,8 @@ class Config:
     capture: int = 640
     conf: float = 0.35
     kp_conf: float = 0.30
+    multiscale: bool = True
+    imgsz_far: int = 960
     device: str = "auto"
     use_pose: bool = True
     bone: str = "head"

@@ -1,4 +1,4 @@
-"""YOLO detection and pose estimation."""
+"""YOLO detection and pose estimation with multi-scale and IoU tracking."""
 
 from __future__ import annotations
 
@@ -14,6 +14,40 @@ from core.config import Config
 logger = logging.getLogger(__name__)
 
 Detection = Tuple[float, float, float, float, float]
+
+
+def _iou(a: Tuple[float, float, float, float], b: Tuple[float, float, float, float]) -> float:
+    """Compute IoU between two (x1, y1, x2, y2) boxes."""
+    ix1 = max(a[0], b[0])
+    iy1 = max(a[1], b[1])
+    ix2 = min(a[2], b[2])
+    iy2 = min(a[3], b[3])
+    iw = max(0.0, ix2 - ix1)
+    ih = max(0.0, iy2 - iy1)
+    inter = iw * ih
+    aa = max(0.0, (a[2] - a[0]) * (a[3] - a[1]))
+    ab = max(0.0, (b[2] - b[0]) * (b[3] - b[1]))
+    union = aa + ab - inter
+    if union < 1e-6:
+        return 0.0
+    return inter / union
+
+
+def _nms(dets: List[Detection], iou_thr: float = 0.5) -> List[Detection]:
+    """Simple greedy NMS on a list of (x1, y1, x2, y2, conf)."""
+    if not dets:
+        return []
+    dets = sorted(dets, key=lambda d: d[4], reverse=True)
+    keep: List[Detection] = []
+    for d in dets:
+        suppress = False
+        for k in keep:
+            if _iou(d[:4], k[:4]) > iou_thr:
+                suppress = True
+                break
+        if not suppress:
+            keep.append(d)
+    return keep
 
 
 class Vision:
@@ -34,15 +68,28 @@ class Vision:
         log("Models loaded")
 
     def _resolve_device(self) -> str:
-        """Resolve 'auto' device to cuda:0 if available."""
         if self._cfg.device == "auto":
             if torch.cuda.is_available():
                 return "0"
             return "cpu"
         return self._cfg.device
 
+    def _parse_results(self, results) -> List[Detection]:
+        """Extract person detections from YOLO results."""
+        dets: List[Detection] = []
+        for r in results:
+            if r.boxes is None:
+                continue
+            for box in r.boxes:
+                if int(box.cls[0]) != 0:
+                    continue
+                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().tolist()
+                conf = float(box.conf[0])
+                dets.append((x1, y1, x2, y2, conf))
+        return dets
+
     def detect(self, frame: np.ndarray) -> List[Detection]:
-        """Run detection, return list of (x1, y1, x2, y2, conf) for class 0 (person)."""
+        """Run detection with optional multi-scale for distant targets."""
         results = self._det_model.predict(
             frame,
             imgsz=self._cfg.imgsz,
@@ -51,28 +98,41 @@ class Vision:
             verbose=False,
             classes=[0],
         )
-        detections: List[Detection] = []
-        for r in results:
-            if r.boxes is None:
-                continue
-            for box in r.boxes:
-                cls_id = int(box.cls[0])
-                if cls_id != 0:
-                    continue
-                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().tolist()
-                conf = float(box.conf[0])
-                detections.append((x1, y1, x2, y2, conf))
+        detections = self._parse_results(results)
+
+        if self._cfg.multiscale and self._cfg.imgsz_far > self._cfg.imgsz:
+            results_far = self._det_model.predict(
+                frame,
+                imgsz=self._cfg.imgsz_far,
+                conf=max(0.20, self._cfg.conf - 0.10),
+                device=self._device,
+                verbose=False,
+                classes=[0],
+            )
+            dets_far = self._parse_results(results_far)
+            detections = _nms(detections + dets_far, iou_thr=0.50)
+
         return detections
 
     def keypoints(
         self, frame: np.ndarray, box: Tuple[float, float, float, float]
     ) -> Optional[np.ndarray]:
-        """Run pose on an expanded crop, return (17, 3) keypoints in frame coords or None."""
+        """Run pose on adaptive crop, select best person by IoU with target box."""
         x1, y1, x2, y2 = box
         bw = x2 - x1
         bh = y2 - y1
-        expand_x = bw * 0.15
-        expand_y = bh * 0.10
+        min_dim = min(bw, bh)
+
+        if min_dim < 40:
+            expand_x = bw * 0.60
+            expand_y = bh * 0.45
+        elif min_dim < 80:
+            expand_x = bw * 0.35
+            expand_y = bh * 0.25
+        else:
+            expand_x = bw * 0.15
+            expand_y = bh * 0.10
+
         fh, fw = frame.shape[:2]
         cx1 = max(0, int(x1 - expand_x))
         cy1 = max(0, int(y1 - expand_y))
@@ -83,16 +143,24 @@ class Vision:
         if crop.size == 0:
             return None
 
+        pose_sz = self._cfg.pose_imgsz
+        if min_dim < 50:
+            pose_sz = max(pose_sz, 480)
+        elif min_dim < 80:
+            pose_sz = max(pose_sz, 384)
+
         results = self._pose_model.predict(
             crop,
-            imgsz=self._cfg.pose_imgsz,
+            imgsz=pose_sz,
             conf=self._cfg.kp_conf,
             device=self._device,
             verbose=False,
         )
 
+        target_in_crop = (x1 - cx1, y1 - cy1, x2 - cx1, y2 - cy1)
+
         best_kps: Optional[np.ndarray] = None
-        best_conf = -1.0
+        best_score = -1.0
 
         for r in results:
             if r.keypoints is None:
@@ -102,9 +170,25 @@ class Vision:
                 person_kps = kp_data[i]
                 if person_kps.shape[0] < 17:
                     continue
+
                 mean_conf = float(person_kps[:, 2].mean())
-                if mean_conf > best_conf:
-                    best_conf = mean_conf
+
+                valid_x = []
+                valid_y = []
+                for k in range(17):
+                    if float(person_kps[k, 2]) > 0.1:
+                        valid_x.append(float(person_kps[k, 0]))
+                        valid_y.append(float(person_kps[k, 1]))
+
+                if len(valid_x) >= 3:
+                    kp_box = (min(valid_x), min(valid_y), max(valid_x), max(valid_y))
+                    iou = _iou(kp_box, target_in_crop)
+                    score = iou * 0.55 + mean_conf * 0.45
+                else:
+                    score = mean_conf * 0.3
+
+                if score > best_score:
+                    best_score = score
                     best_kps = person_kps.copy()
 
         if best_kps is None:
