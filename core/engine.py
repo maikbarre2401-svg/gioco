@@ -21,7 +21,7 @@ from core.metrics import MetricsCollector
 from core.output import MouseOutput
 from core.skeleton import (
     BONES, bone_point, draw as draw_skeleton, draw_overlay_items,
-    heuristic_point, head_radius,
+    heuristic_point, head_radius, body_center, body_radius,
 )
 from core.utils import clamp, foreground_exe
 from core.vision import Detection, Vision
@@ -381,8 +381,17 @@ class Engine(threading.Thread):
                 if smooth_kps is not None:
                     target_point = bone_point(smooth_kps, self._cfg.bone, display_box)
                     if self._cfg.overlay_skeleton:
-                        draw_skeleton(ann, smooth_kps, (0, 0, 0), th=2, min_conf=self._cfg.kp_conf)
-                        ov_items = draw_overlay_items(smooth_kps, self._cfg.kp_conf, display_box)
+                        skel_hex = self._cfg.overlay_skeleton_color
+                        draw_skeleton(
+                            ann, smooth_kps, skel_hex, display_box,
+                            th=2, min_conf=self._cfg.kp_conf,
+                            draw_fov_circle=self._cfg.overlay_aim_circle,
+                        )
+                        ov_items = draw_overlay_items(
+                            smooth_kps, self._cfg.kp_conf, display_box,
+                            color_hex=skel_hex,
+                            draw_fov_circle=self._cfg.overlay_aim_circle,
+                        )
                         overlay_items.extend(ov_items)
 
                 if target_point is None:

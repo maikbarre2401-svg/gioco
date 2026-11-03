@@ -165,7 +165,8 @@ class App:
         checks = [
             ("trigger", "Trigger"), ("human", "Human"), ("use_pose", "Pose"),
             ("overlay", "Overlay"), ("overlay_skeleton", "Skeleton"),
-            ("overlay_boxes", "Boxes"), ("always_active", "Always Active"),
+            ("overlay_boxes", "Boxes"), ("overlay_aim_circle", "FOV Circle"),
+            ("always_active", "Always Active"),
             ("toggle_mode", "Toggle Mode"), ("fatigue", "Fatigue"),
             ("log_metrics", "Log Metrics"),
         ]

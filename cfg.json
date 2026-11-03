@@ -51,6 +51,7 @@
   "overlay_boxes": true,
   "overlay_color": "#ff2fd0",
   "overlay_skeleton_color": "#7a5cff",
+  "overlay_aim_circle": true,
   "process": "fortniteclient-win64-shipping.exe",
   "log_metrics": true,
   "ads_mult": {

@@ -69,6 +69,7 @@ class Config:
     overlay_boxes: bool = True
     overlay_color: str = "#ff2fd0"
     overlay_skeleton_color: str = "#7a5cff"
+    overlay_aim_circle: bool = True
     process: str = "fortniteclient-win64-shipping.exe"
     log_metrics: bool = True
     ads_mult: Dict[str, float] = field(
