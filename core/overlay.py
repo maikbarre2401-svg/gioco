@@ -1,4 +1,4 @@
-"""Transparent click-through overlay window for skeleton and aim visualisation."""
+"""Transparent click-through overlay with glow-capable drawing."""
 
 from __future__ import annotations
 
@@ -20,12 +20,6 @@ DrawItem = Union[
     Tuple[str, int, int, int, int, str],
     Tuple[str, int, int, str, str, int],
 ]
-
-
-def _hex_to_rgb(h: str) -> Tuple[int, int, int]:
-    """Convert '#rrggbb' to (r, g, b)."""
-    h = h.lstrip("#")
-    return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
 
 
 class Overlay:
@@ -86,32 +80,42 @@ class Overlay:
                 if kind == "line":
                     _, x1, y1, x2, y2, color, width = item
                     self._canvas.create_line(
-                        x1, y1, x2, y2, fill=color, width=width, smooth=True
+                        x1, y1, x2, y2,
+                        fill=color, width=width,
+                        smooth=True, capstyle="round",
                     )
                 elif kind == "dot":
                     _, x, y, r, color = item
                     self._canvas.create_oval(
-                        x - r, y - r, x + r, y + r, fill=color, outline=""
+                        x - r, y - r, x + r, y + r,
+                        fill=color, outline="",
                     )
                 elif kind == "box":
                     _, x1, y1, x2, y2, color = item
                     self._canvas.create_rectangle(
-                        x1, y1, x2, y2, outline=color, width=2
+                        x1, y1, x2, y2, outline=color, width=2, dash=(6, 3),
                     )
                 elif kind == "circle":
                     _, x, y, r, color = item
                     self._canvas.create_oval(
-                        x - r, y - r, x + r, y + r, outline=color, width=2
+                        x - r, y - r, x + r, y + r,
+                        outline=color, width=2,
                     )
                 elif kind == "cross":
                     _, x, y, s, color = item
-                    self._canvas.create_line(x - s, y, x + s, y, fill=color, width=2)
-                    self._canvas.create_line(x, y - s, x, y + s, fill=color, width=2)
+                    self._canvas.create_line(
+                        x - s, y, x + s, y,
+                        fill=color, width=2, capstyle="round",
+                    )
+                    self._canvas.create_line(
+                        x, y - s, x, y + s,
+                        fill=color, width=2, capstyle="round",
+                    )
                 elif kind == "text":
                     _, x, y, text_str, color, size = item
                     self._canvas.create_text(
                         x, y, text=text_str, fill=color,
-                        font=("Consolas", size), anchor="nw"
+                        font=("Consolas", size), anchor="nw",
                     )
             except Exception:
                 pass

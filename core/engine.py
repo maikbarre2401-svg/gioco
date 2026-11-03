@@ -1,4 +1,4 @@
-"""Main engine thread: capture -> detect -> aim -> output loop."""
+"""Main engine thread: capture -> detect -> aim -> output loop with smooth skeleton."""
 
 from __future__ import annotations
 
@@ -16,14 +16,68 @@ from core.aim import Aim
 from core.capture import Capturer
 from core.config import Config
 from core.human import Humanizer
-from core.kalman import Tracker
+from core.kalman import Axis, Tracker
 from core.metrics import MetricsCollector
 from core.output import MouseOutput
-from core.skeleton import bone_point, draw as draw_skeleton, heuristic_point, BONES
+from core.skeleton import (
+    BONES, bone_point, draw as draw_skeleton, draw_overlay_items,
+    heuristic_point, head_radius,
+)
 from core.utils import clamp, foreground_exe
 from core.vision import Detection, Vision
 
 logger = logging.getLogger(__name__)
+
+
+class _KpSmoother:
+    """Per-keypoint Kalman smoothing for 17 COCO joints (x, y each)."""
+
+    def __init__(self, n_kp: int = 17) -> None:
+        self._n = n_kp
+        self._axes_x: List[Axis] = [Axis(process_noise=60.0, measurement_noise=6.0) for _ in range(n_kp)]
+        self._axes_y: List[Axis] = [Axis(process_noise=60.0, measurement_noise=6.0) for _ in range(n_kp)]
+        self._last_kps: Optional[np.ndarray] = None
+        self._valid = False
+
+    def reset(self) -> None:
+        for ax in self._axes_x:
+            ax._initialised = False
+        for ay in self._axes_y:
+            ay._initialised = False
+        self._last_kps = None
+        self._valid = False
+
+    def feed(self, kps: Optional[np.ndarray], dt: float) -> Optional[np.ndarray]:
+        """Feed raw keypoints, return smoothed (17,3) array or last valid if kps is None."""
+        if kps is None or kps.shape[0] < self._n:
+            if self._valid and self._last_kps is not None:
+                out = self._last_kps.copy()
+                for k in range(self._n):
+                    if out[k, 2] > 0.1:
+                        self._axes_x[k].predict(dt)
+                        self._axes_y[k].predict(dt)
+                        out[k, 0] = self._axes_x[k]._x[0]
+                        out[k, 1] = self._axes_y[k]._x[0]
+                        out[k, 2] *= 0.92
+                self._last_kps = out
+                return out
+            return None
+
+        out = kps.copy()
+        for k in range(self._n):
+            conf = float(kps[k, 2])
+            if conf < 0.1:
+                continue
+            self._axes_x[k].predict(dt)
+            self._axes_y[k].predict(dt)
+            sx = self._axes_x[k].update(float(kps[k, 0]))
+            sy = self._axes_y[k].update(float(kps[k, 1]))
+            out[k, 0] = sx
+            out[k, 1] = sy
+
+        self._last_kps = out
+        self._valid = True
+        return out
 
 
 class Engine(threading.Thread):
@@ -49,6 +103,7 @@ class Engine(threading.Thread):
         self._mouse = MouseOutput()
         self._humanizer = Humanizer(cfg)
         self._aim = Aim(cfg, self._humanizer)
+        self._kp_smoother = _KpSmoother()
 
         self._frame_lock = threading.Lock()
         self._annotated_frame: Optional[np.ndarray] = None
@@ -69,6 +124,7 @@ class Engine(threading.Thread):
         if not value:
             self._mouse.release()
             self._aim.release()
+            self._kp_smoother.reset()
 
     @property
     def aiming(self) -> bool:
@@ -151,9 +207,7 @@ class Engine(threading.Thread):
             overlay_items: list = []
             ann = frame.copy()
 
-            skel_color = self._hex_bgr(self._cfg.overlay_skeleton_color)
             main_color = self._hex_bgr(self._cfg.overlay_color)
-            skel_hex = self._cfg.overlay_skeleton_color
             main_hex = self._cfg.overlay_color
 
             if self._cfg.overlay_boxes:
@@ -163,7 +217,8 @@ class Engine(threading.Thread):
 
             picked = self._aim.pick(detections, w, h)
 
-            kps: Optional[np.ndarray] = None
+            raw_kps: Optional[np.ndarray] = None
+            smooth_kps: Optional[np.ndarray] = None
             target_point: Optional[Tuple[float, float]] = None
 
             if picked is not None:
@@ -172,31 +227,36 @@ class Engine(threading.Thread):
                 if not self._aim.engaged:
                     self._aim.begin()
                     self._metrics.lock()
+                    self._kp_smoother.reset()
 
                 if self._cfg.use_pose and self._vision:
                     try:
-                        kps = self._vision.keypoints(frame, picked)
+                        raw_kps = self._vision.keypoints(frame, picked)
                     except Exception:
-                        kps = None
+                        raw_kps = None
 
-                if kps is not None:
-                    target_point = bone_point(kps, self._cfg.bone, picked)
+                smooth_kps = self._kp_smoother.feed(raw_kps, tick_s)
+
+                if smooth_kps is not None:
+                    target_point = bone_point(smooth_kps, self._cfg.bone, picked)
                     if self._cfg.overlay_skeleton:
-                        draw_skeleton(ann, kps, skel_color, th=2, min_conf=self._cfg.kp_conf)
-                        self._add_skeleton_overlay(overlay_items, kps, skel_hex, self._cfg.kp_conf)
+                        draw_skeleton(ann, smooth_kps, (0, 0, 0), th=2, min_conf=self._cfg.kp_conf)
+                        ov_items = draw_overlay_items(smooth_kps, self._cfg.kp_conf, picked)
+                        overlay_items.extend(ov_items)
 
                 if target_point is None:
                     target_point = heuristic_point(self._cfg.bone, picked)
                     px, py = target_point
                     cv2.drawMarker(
                         ann, (int(px), int(py)), main_color,
-                        cv2.MARKER_CROSS, 12, 2, cv2.LINE_AA
+                        cv2.MARKER_CROSS, 14, 2, cv2.LINE_AA,
                     )
                     overlay_items.append(("cross", int(px), int(py), 8, main_hex))
                 else:
                     px, py = target_point
-                    cv2.circle(ann, (int(px), int(py)), 4, main_color, -1, cv2.LINE_AA)
-                    overlay_items.append(("dot", int(px), int(py), 4, main_hex))
+                    cv2.circle(ann, (int(px), int(py)), 5, main_color, -1, cv2.LINE_AA)
+                    cv2.circle(ann, (int(px), int(py)), 3, (255, 255, 255), -1, cv2.LINE_AA)
+                    overlay_items.append(("dot", int(px), int(py), 5, main_hex))
 
                 dt = tick_s
                 active = self._enabled and self._aiming and (self._focused or self._cfg.always_active)
@@ -217,6 +277,7 @@ class Engine(threading.Thread):
                 self._aim.release()
                 self._mouse.release()
                 self._trigger_pending = False
+                self._kp_smoother.reset()
 
             self._overlay_items = overlay_items
             with self._frame_lock:
@@ -263,30 +324,6 @@ class Engine(threading.Thread):
             crop = cv2.resize(crop, (200, 200), interpolation=cv2.INTER_AREA)
             with self._frame_lock:
                 self._target_crop = crop
-
-    def _add_skeleton_overlay(
-        self,
-        items: list,
-        kps: np.ndarray,
-        color: str,
-        min_conf: float,
-    ) -> None:
-        """Add skeleton lines and dots to overlay items list."""
-        if kps is None or kps.shape[0] < 17:
-            return
-        for i, j in BONES:
-            if float(kps[i, 2]) < min_conf or float(kps[j, 2]) < min_conf:
-                continue
-            items.append((
-                "line",
-                int(kps[i, 0]), int(kps[i, 1]),
-                int(kps[j, 0]), int(kps[j, 1]),
-                color, 2,
-            ))
-        for k in range(17):
-            if float(kps[k, 2]) < min_conf:
-                continue
-            items.append(("dot", int(kps[k, 0]), int(kps[k, 1]), 3, color))
 
     @staticmethod
     def _hex_bgr(hex_color: str) -> Tuple[int, int, int]:
