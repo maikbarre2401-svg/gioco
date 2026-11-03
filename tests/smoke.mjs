@@ -38,7 +38,7 @@ const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--ena
 const ctx = await browser.newContext(MOBILE ? { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true } : { viewport: { width: 1600, height: 1000 } });
 await ctx.route('**/*', async route => {
   const url = route.request().url();
-  if (url.startsWith(`http://localhost:${PORT}`) || url.startsWith('data:') || url.startsWith('blob:')) return route.continue();
+  if (url.startsWith(`http://localhost:${PORT}`) || url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('file:')) return route.continue();
   const local = cdnLocal(url, LIBS); if (local) return route.fulfill({ status: local.status, body: local.body, headers: { 'content-type': local.contentType, 'access-control-allow-origin': '*' } });
   const u = new URL(url);
   if (PROXY.test(u.host)) {
