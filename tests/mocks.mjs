@@ -149,7 +149,7 @@ function eonet() {
 function swpc(path) {
   const t = i => new Date(NOW() - i * 60000).toISOString().replace('T', ' ').slice(0, 19);
   if (path.includes('planetary_k_index_1m')) return Array.from({ length: 10 }, (_, i) => ({ time_tag: t(10 - i), kp_index: 3, estimated_kp: 3.33, kp: '3P' }));
-  if (path.includes('noaa-planetary-k-index')) return [['time_tag', 'Kp', 'a_running', 'station_count'], ...Array.from({ length: 24 }, (_, i) => [t((24 - i) * 180), (2 + Math.sin(i / 3) * 1.5).toFixed(2), '9', '8'])];
+  if (path.includes('noaa-planetary-k-index')) return Array.from({ length: 24 }, (_, i) => ({ time_tag: t((24 - i) * 180), Kp: +(2 + Math.sin(i / 3) * 1.5).toFixed(2), a_running: 9, station_count: 8 }));  // nuovo formato 2026
   if (path.includes('plasma-5-minute')) return [['time_tag', 'density', 'speed', 'temperature'], [t(10), '4.10', '455.2', '98000'], [t(5), '4.31', '461.7', '101000']];
   if (path.includes('mag-5-minute')) return [['time_tag', 'bx_gsm', 'by_gsm', 'bz_gsm', 'lon_gsm', 'lat_gsm', 'bt'], [t(5), '2.1', '-3.0', '-4.2', '300', '-30', '5.6']];
   if (path.includes('noaa-scales')) return { 0: { DateStamp: '2026-11-03', R: { Scale: '0' }, S: { Scale: '0' }, G: { Scale: '1' } } };
@@ -207,6 +207,11 @@ export function respond(url) {
   if (host === 'ipwho.is') return J(p.length > 1 ? { success: true, ip: decodeURIComponent(p.slice(1)), type: 'IPv4', city: 'Mountain View', region: 'California', country: 'United States', country_code: 'US', latitude: 37.39, longitude: -122.08, connection: { asn: 15169, org: 'Google LLC', isp: 'Google LLC' }, timezone: { id: 'America/Los_Angeles' } }
     : { success: true, ip: '93.40.1.2', type: 'IPv4', city: 'Roma', region: 'Lazio', country: 'Italy', country_code: 'IT', latitude: 41.9, longitude: 12.5, connection: { asn: 3269, org: 'Telecom Italia', isp: 'TIM' }, timezone: { id: 'Europe/Rome' } });
   if (host === 'dns.google') return J({ Status: 0, Answer: [{ name: q.get('name') + '.', type: 1, TTL: 300, data: '151.101.1.1' }] });
+  if (host === 'www.youtube.com' && p.startsWith('/feeds/videos.xml')) {
+    const ch = q.get('channel_id') || '';
+    if (/^UC0{22}$/.test(ch)) return { status: 404, contentType: 'text/html', body: '<html>404</html>' };
+    return T(`<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><title>${ch === 'UCNye-wNBqNL5ZzHSJj3l8Bg' ? 'Al Jazeera English' : 'Canale ' + ch.slice(2, 8)}</title><entry><title>Live</title></entry></feed>`, 'application/atom+xml');
+  }
   if (host === 'noembed.com') return J(/kfWVnQiUJ_4/.test(decodeURIComponent(u.search)) ? { error: '404 Not Found', url: q.get('url') } : { title: 'Live webcam', provider_name: 'YouTube', type: 'video' });
   if (/youtube|windy/.test(host)) return T(`<!doctype html><body style="background:#111;color:#0f0;font:14px monospace">EMBED ${host}${p}</body>`, 'text/html');
   if (host === 'fonts.googleapis.com') return T('', 'text/css');

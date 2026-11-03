@@ -294,7 +294,7 @@ const UI = (() => {
       chk('st-fly', 'Vola automaticamente sulle allerte gravi', Settings.get('autoFlyAlerts')), chk('st-labels', 'Etichette degli aerei militari', Settings.get('labels') !== false),
       chk('st-auto', 'Avvio automatico (salta la schermata iniziale)', Settings.get('autostart')),
       h('h4', null, 'Prestazioni'),
-      h('label', null, 'Qualità grafica'), h('select', { id: 'st-q' }, [['auto', 'Automatica'], ['low', 'Bassa (PC lenti)']].map(([v, l]) => h('option', { value: v, selected: Settings.get('quality') === v }, l))),
+      h('label', null, 'Qualità grafica'), h('select', { id: 'st-q' }, [['auto', 'Normale (consigliata)'], ['high', 'Alta (GPU potenti: antialiasing 4×)'], ['low', 'Bassa (PC lenti)']].map(([v, l]) => h('option', { value: v, selected: Settings.get('quality') === v }, l))),
       h('label', null, 'Numero massimo di aerei disegnati'), inp('st-max', String(Settings.get('maxAircraft')), 'number'),
       chk('st-2d', 'Forza la mappa 2D (per computer senza GPU)', Store.get('force2d'))
     ], [
@@ -558,19 +558,41 @@ const UI = (() => {
     $('tv-ph').classList.add('hidden');
     $('tv-iframe').src = tvURL(c, 1);
     Toast.show(`📺 ${c.label} (audio disattivato: attivalo dal player)`, 'ok');
+    if (c.ch) checkChannel(c.ch).then(r => {
+      if (tvActive !== id) return;
+      if (r.ok && r.title) setText('tv-name', `${c.flag || ''} ${r.title} ✓`);
+      if (r.ok === false) deadNotice($('tv-ph'), $('tv-iframe'), `Il canale “${c.label}” non esiste su YouTube`, 'l\'ID ' + c.ch + ' è sbagliato o il canale è stato chiuso', 'tv');
+    });
     return true;
+  }
+  function deadNotice(ph, frame, title, why, kind) {
+    frame.src = 'about:blank'; ph.classList.remove('hidden');
+    ph.replaceChildren(h('div', { style: 'font-size:22px' }, kind === 'tv' ? '📺' : '📹'), h('div', null, h('b', null, title), ` (${why}).`),
+      h('div', null, h('button', { class: 'pl-btn', type: 'button', onclick: () => kind === 'tv' ? $('tv-yt').click() : $('wc-search').click() }, '🔎 CERCA SU YOUTUBE'), ' ',
+        h('button', { class: 'pl-btn', type: 'button', onclick: () => editList(kind === 'tv' ? 'tv' : 'cam') }, '✎ CORREGGI')));
+  }
+  const chCache = new Map();
+  async function checkChannel(ch) {    // feed RSS ufficiale del canale: {ok:true,title} | {ok:false} | {ok:null}
+    if (chCache.has(ch)) return chCache.get(ch);
+    let res = { ok: null };
+    try {
+      const r = await Net.get(`https://www.youtube.com/feeds/videos.xml?channel_id=${encodeURIComponent(ch)}`, { type: 'text', timeout: 9000, validate: t => /<feed[\s>]/.test(t) });
+      const m = r.data.match(/<title>([^<]{1,120})<\/title>/); res = { ok: true, title: m ? m[1].replace(/&amp;/g, '&') : '' };
+    } catch (e) { if (e.status === 404 || e.status === 410) res = { ok: false }; }
+    chCache.set(ch, res); return res;
   }
   function editList(kind) {
     const isTV = kind === 'tv';
-    const lines = isTV ? tvList().map(c => [c.cat, c.label, c.video ? 'video:' + c.video : c.ch, c.flag || ''].join(' | ')) : camList().map(c => [c.city, c.lat, c.lon, c.yt, c.flag || ''].join(' | '));
+    const lines = isTV ? tvList().map(c => [c.cat, c.label, c.video ? 'video:' + c.video : c.ch, c.flag || ''].join(' | ')) : camList().map(c => [c.city, c.lat, c.lon, c.ch ? 'channel:' + c.ch : c.yt, c.flag || ''].join(' | '));
     const ta = h('textarea', { id: 'ed-ta', style: 'min-height:260px' }); ta.value = lines.join('\n');
     modal(isTV ? '✎ CANALI TV' : '✎ WEBCAM', [
-      h('div', { class: 'hint' }, isTV ? 'Una riga per canale: categoria (news|war|sci) | nome | ID canale YouTube (UC…) oppure video:ID | emoji. Con l\'ID canale viene caricata la diretta attuale.' : 'Una riga per webcam: città | lat | lon | ID video YouTube | emoji. Trovi ID nuovi con 🔎 (filtro “Dal vivo”).'), ta
+      h('div', { class: 'hint' }, isTV ? 'Una riga per canale: categoria (news|war|sci) | nome | ID canale YouTube (UC…) oppure video:ID | emoji. Con l\'ID canale viene caricata la diretta attuale.' : 'Una riga per webcam: città | lat | lon | link o ID del video YouTube (oppure channel:UC… per la diretta di un canale) | emoji. Trovi webcam nuove con 🔎 (filtro “Dal vivo”): copia il link e incollalo qui.'), ta
     ], [h('button', { class: 'btn red', type: 'button', onclick: () => { Store.del(isTV ? 'tvList' : 'camList'); closeModal(); isTV ? buildTV() : buildCams(); Toast.show('Elenco ripristinato', 'ok'); } }, 'RIPRISTINA'),
       h('button', { class: 'btn', type: 'button', onclick: () => {
         const rows = $('ed-ta').value.split('\n').map(l => l.split('|').map(s => s.trim())).filter(r => r.length >= 3 && r[0]);
         if (isTV) Store.set('tvList', rows.map((r, i) => { const v = /^video:/i.test(r[2]) ? r[2].slice(6) : null; return { id: 'c' + i, cat: ['news', 'war', 'sci'].includes(r[0]) ? r[0] : 'news', label: r[1], ch: v ? '' : r[2].replace(/.*channel\//, ''), video: v ? v.replace(/.*[?&]v=|.*youtu\.be\//, '').slice(0, 11) : null, flag: r[3] || '📺' }; }));
-        else Store.set('camList', rows.map(r => ({ city: r[0], lat: +r[1] || 0, lon: +r[2] || 0, yt: (r[3] || '').replace(/.*[?&]v=|.*youtu\.be\/|.*\/live\//, '').slice(0, 11), flag: r[4] || '📹' })));
+        else Store.set('camList', rows.map(r => { const id = (r[3] || '').trim(), chm = id.match(/(?:channel[:/])?(UC[\w-]{22})/);
+          return { city: r[0], lat: +r[1] || 0, lon: +r[2] || 0, ch: chm ? chm[1] : undefined, yt: chm ? undefined : id.replace(/.*[?&]v=|.*youtu\.be\/|.*\/live\//, '').slice(0, 11), flag: r[4] || '📹' }; }));
         closeModal(); isTV ? buildTV() : buildCams(); Toast.show('✓ Elenco salvato', 'ok');
       } }, '💾 SALVA')]);
   }
@@ -586,6 +608,11 @@ const UI = (() => {
     if (c.lat || c.lon) MapCtl.flyTo(c.lat, c.lon, 6000, { pitch: -28, heading: 30 });
     if (FROM_FILE) { ytPopup(c); fileNotice($('wc-ph'), c, 'La webcam'); return true; }
     $('wc-ph').classList.add('hidden');
+    if (c.ch) {      // canale con dirette 24/7: si carica la diretta attuale, non scade
+      $('wc-iframe').src = `https://www.youtube.com/embed/live_stream?channel=${c.ch}&autoplay=1&mute=1&rel=0&playsinline=1`;
+      checkChannel(c.ch).then(r => { if (camActive === i && r.ok === false) deadNotice($('wc-ph'), $('wc-iframe'), `Il canale di ${c.city} non esiste su YouTube`, 'ID errato', 'cam'); });
+      return true;
+    }
     $('wc-iframe').src = `https://www.youtube.com/embed/${c.yt}?autoplay=1&mute=1&rel=0&playsinline=1`;
     checkVideo(c.yt).then(alive => {         // gli ID delle webcam scadono: lo verifichiamo e lo diciamo chiaramente
       if (alive !== false || camActive !== i) return;
@@ -879,6 +906,8 @@ const UI = (() => {
     Health.set('weather', 'wait', 'su richiesta'); Health.set('geoip', 'wait', 'su richiesta');
     Health.register('imagery', 'Immagini del globo'); Health.register('proxy', 'Proxy CORS');
     bind(); clock(); setInterval(clock, 1000);
+    document.querySelector('.t-logo-sub').textContent = `v${OJO.version} · build ${OJO.build}`;
+    document.querySelector('.t-logo').title = `OJO DE DEUS v${OJO.version} · build ${OJO.build}`;
     const local = await Net.detectLocal();
     const pm = Net.proxyMode;
     Health.set('proxy', pm === 'pubblici' ? 'wait' : 'live', pm === 'locale' ? 'proxy integrato dell\'avviatore (affidabile)' : pm === 'personale' ? 'proxy personale (⚙)' : 'solo proxy pubblici gratuiti (lenti/instabili)');

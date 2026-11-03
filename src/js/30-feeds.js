@@ -380,8 +380,13 @@ async function fetchFIRMS() {
 /* ═════════════ METEO SPAZIALE NOAA SWPC ═════════════ */
 const Space = (() => {
   const B = 'https://services.swpc.noaa.gov/';
-  const rows = d => Array.isArray(d) ? (Array.isArray(d[0]) ? d.slice(1) : d) : [];
-  const pick = (r, i, k) => Array.isArray(r) ? r[i] : r?.[k];
+  // SWPC sta passando (SCN 26-21, 2026) da "prima riga = intestazioni" a oggetti JSON: gestiamo entrambi
+  const objs = d => {
+    if (!Array.isArray(d) || !d.length) return [];
+    if (Array.isArray(d[0])) { const hd = d[0].map(x => String(x).toLowerCase()); return d.slice(1).map(r => Object.fromEntries(hd.map((k, i) => [k, r[i]]))); }
+    return d.map(o => Object.fromEntries(Object.entries(o || {}).map(([k, v]) => [k.toLowerCase(), v])));
+  };
+  const val = (o, ...ks) => { for (const k of ks) { const v = o?.[k]; if (v != null && v !== '' && isFinite(+v)) return +v; } return null; };
   const flare = f => { if (!(f > 0)) return '--'; const cl = f < 1e-7 ? ['A', 1e-8] : f < 1e-6 ? ['B', 1e-7] : f < 1e-5 ? ['C', 1e-6] : f < 1e-4 ? ['M', 1e-5] : ['X', 1e-4]; return cl[0] + (f / cl[1]).toFixed(1); };
   async function fetch() {
     const get = u => Net.get(B + u, { timeout: 12000 }).then(r => r.data);
@@ -389,12 +394,12 @@ const Space = (() => {
       get('json/planetary_k_index_1m.json'), get('products/noaa-planetary-k-index.json'), get('products/solar-wind/plasma-5-minute.json'),
       get('products/solar-wind/mag-5-minute.json'), get('products/noaa-scales.json'), get('json/goes/primary/xrays-6-hour.json')]);
     const sp = S.space; let ok = 0;
-    if (kp1.status === 'fulfilled') { const l = rows(kp1.value).at(-1); const v = +(l?.estimated_kp ?? l?.kp_index ?? l?.kp); if (isFinite(v)) { sp.kp = v; ok++; } }
-    if (kp3.status === 'fulfilled') { sp.kpHist = rows(kp3.value).map(r => +pick(r, 1, 'Kp') || +pick(r, 1, 'kp') || 0).filter(isFinite).slice(-24); ok++; if (sp.kp == null) sp.kp = sp.kpHist.at(-1); }
-    if (pl.status === 'fulfilled') { const r = rows(pl.value).filter(x => pick(x, 2, 'speed') != null).at(-1); if (r) { sp.wind = +pick(r, 2, 'speed'); sp.dens = +pick(r, 1, 'density'); ok++; } }
-    if (mg.status === 'fulfilled') { const r = rows(mg.value).filter(x => pick(x, 3, 'bz_gsm') != null).at(-1); if (r) { sp.bz = +pick(r, 3, 'bz_gsm'); sp.bt = +pick(r, 6, 'bt'); ok++; } }
-    if (sc.status === 'fulfilled') { const n = sc.value?.['0']; if (n) { sp.scales = { R: n.R?.Scale ?? 0, S: n.S?.Scale ?? 0, G: n.G?.Scale ?? 0 }; ok++; } }
-    if (xr.status === 'fulfilled') { const l = rows(xr.value).filter(x => (x.energy || '').startsWith('0.1-0.8')).at(-1); if (l) { sp.xflux = +l.flux; sp.flare = flare(+l.flux); ok++; } }
+    if (kp1.status === 'fulfilled') { const v = val(objs(kp1.value).at(-1), 'estimated_kp', 'kp_index', 'kp'); if (v != null) { sp.kp = v; ok++; } }
+    if (kp3.status === 'fulfilled') { const h = objs(kp3.value).map(r => val(r, 'kp', 'kp_index', 'estimated_kp')).filter(v => v != null).slice(-24); if (h.length) { sp.kpHist = h; ok++; if (sp.kp == null) sp.kp = h.at(-1); } }
+    if (pl.status === 'fulfilled') { const r = objs(pl.value).filter(x => val(x, 'speed') != null).at(-1); if (r) { sp.wind = val(r, 'speed'); sp.dens = val(r, 'density'); ok++; } }
+    if (mg.status === 'fulfilled') { const r = objs(mg.value).filter(x => val(x, 'bz_gsm', 'bz') != null).at(-1); if (r) { sp.bz = val(r, 'bz_gsm', 'bz'); sp.bt = val(r, 'bt'); ok++; } }
+    if (sc.status === 'fulfilled') { const n = sc.value?.['0'] || (Array.isArray(sc.value) ? sc.value[0] : null); if (n) { sp.scales = { R: n.R?.Scale ?? 0, S: n.S?.Scale ?? 0, G: n.G?.Scale ?? 0 }; ok++; } }
+    if (xr.status === 'fulfilled') { const l = objs(xr.value).filter(x => String(x.energy || '').startsWith('0.1-0.8') && val(x, 'flux') > 0).at(-1); if (l) { sp.xflux = val(l, 'flux'); sp.flare = flare(sp.xflux); ok++; } }
     if (ok) Health.ok('space', { items: ok, via: 'NOAA SWPC' }); else Health.fail('space', 'NOAA SWPC non raggiungibile');
     if (sp.kp >= 7) Intel.alert({ key: 'kp' + new Date().toISOString().slice(0, 13), level: 'orn', icon: '☀', title: `Tempesta geomagnetica Kp ${sp.kp.toFixed(1)}`, text: 'Possibili disturbi a GPS, radio HF e reti elettriche; aurore a basse latitudini.', speak: `Tempesta geomagnetica in corso, indice K p ${Math.round(sp.kp)}.` });
     if (/^X/.test(sp.flare || '')) Intel.alert({ key: 'xf' + new Date().toISOString().slice(0, 13), level: 'orn', icon: '☀', title: `Brillamento solare classe ${sp.flare}`, text: 'Possibile blackout radio sul lato diurno.' });

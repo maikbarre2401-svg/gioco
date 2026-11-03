@@ -289,7 +289,7 @@ const Globe3D = (() => {
       baseLayer: false, terrainProvider: new C.EllipsoidTerrainProvider(),
       animation: false, timeline: false, baseLayerPicker: false, geocoder: false, homeButton: false, sceneModePicker: false,
       navigationHelpButton: false, fullscreenButton: false, infoBox: false, selectionIndicator: false, vrButton: false,
-      shouldAnimate: true, showRenderLoopErrors: false, creditContainer: $('credits'), msaaSamples: Settings.get('quality') === 'low' ? 1 : 2,
+      shouldAnimate: true, showRenderLoopErrors: false, creditContainer: $('credits'), msaaSamples: Settings.get('quality') === 'high' ? 4 : 1,
       requestRenderMode: true, maximumRenderTimeChange: 10,
       contextOptions: { webgl: { alpha: false, powerPreference: 'high-performance' } }
     });
@@ -301,7 +301,7 @@ const Globe3D = (() => {
     g.lightingFadeOutDistance = 1.2e6; g.lightingFadeInDistance = 4.5e6;
     g.nightFadeOutDistance = 1.2e6; g.nightFadeInDistance = 4.5e6;
     g.baseColor = C.Color.fromCssColorString('#0b2533');
-    g.maximumScreenSpaceError = 1.8; g.tileCacheSize = 200;
+    g.maximumScreenSpaceError = Settings.get('quality') === 'high' ? 1.5 : Settings.get('quality') === 'low' ? 3 : 2; g.tileCacheSize = 250;
     scene.skyAtmosphere.show = true; scene.fog.enabled = true; scene.fog.density = 2.0e-4;
     scene.screenSpaceCameraController.minimumZoomDistance = 30;
     scene.screenSpaceCameraController.maximumZoomDistance = 8e7;
@@ -359,7 +359,7 @@ const Globe3D = (() => {
       const now = performance.now();
       const fast = state.spin || follow || cockpit;
       const slow = (pulsePts.length && pulsePts.show !== false) || selPts.length || state.vis === 'nvg' || state.vis === 'flir';
-      if (fast || (slow && now - lastAnim > 48)) { lastAnim = now; scene.requestRender(); }
+      if (fast || (slow && now - lastAnim > 80)) { lastAnim = now; scene.requestRender(); }
     }, 33);
     Bus.on('terrain:failed', () => { if (!tok) { viewer.terrainProvider = new C.EllipsoidTerrainProvider(); Toast.show('⚠ Terreno 3D non raggiungibile: globo liscio', 'orn'); } });
 

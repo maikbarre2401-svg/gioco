@@ -19,6 +19,12 @@ L'avviatore fa da proxy **solo** verso i siti usati da OJO e ascolta solo su `lo
 - L'app ora si **autodiagnostica**: se le immagini satellitari non arrivano passa da sola a un'altra mappa; se il terreno ion non risponde usa quello gratuito; le “città fotorealistiche” nascondono il globo solo quando i loro tile arrivano davvero, altrimenti si disattivano da sole.
 - Il terminale `diag` mostra quanti tile sono arrivati da ogni fonte.
 
+### Altre note
+- **Versione**: sotto il logo in alto c'è `build AAAA-MM-GG HH:MM UTC`: confrontala per essere sicuro di usare l'ultima.
+- **TV**: ogni canale viene verificato tramite il suo feed RSS ufficiale di YouTube (vedrai il nome reale con ✓); se un ID è sbagliato l'app lo dice. Se un canale è valido ma in quel momento non trasmette, YouTube mostra “video non disponibile”: prova un altro canale.
+- **Webcam**: gli ID video delle webcam YouTube scadono spesso. L'app controlla se esistono ancora; se no, usa 🔎 (cerca le dirette) e ✎ (incolla il link). “EarthCam · dal vivo” usa un canale con dirette 24/7 e non scade.
+- **Meteo spaziale**: compatibile sia con il vecchio sia con il nuovo formato JSON di NOAA SWPC (avviso SCN 26-21 del 2026).
+
 ---
 
 ## Cosa fa

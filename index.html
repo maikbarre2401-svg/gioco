@@ -778,7 +778,8 @@ kbd{font-family:var(--font);font-size:10px;padding:1px 5px;border:1px solid var(
    Utility, impostazioni, rete con fallback CORS, stato dei feed,
    notifiche, log, voce, suoni, calcoli geografici.
 ═══════════════════════════════════════════════════════════════════ */
-const OJO = { version: '100', started: Date.now() };
+const OJO = { version: '100', build: '2026-11-03 13:28 UTC', started: Date.now() };
+if (OJO.build.startsWith('__')) OJO.build = 'sviluppo';
 
 /* ═══ DOM ═══ */
 const $ = id => document.getElementById(id);
@@ -923,8 +924,11 @@ const Net = (() => {
     { name: 'cors.lol', f: u => `https://api.cors.lol/?url=${encodeURIComponent(u)}` }
   ];
   const fails = new Map();                 // proxy -> fallimenti consecutivi
-  const hostMode = new Map(Object.entries(Store.get('hostmode', {})));   // host -> 'direct'|'proxy'
-  const saveHost = () => Store.set('hostmode', Object.fromEntries(hostMode));
+  // host -> {m:'direct'|'proxy', t}; "solo proxy" scade dopo 6 ore (un errore di rete momentaneo non resta per sempre)
+  const hostMode = new Map(Object.entries(Store.get('hostmode2', {})));
+  const saveHost = () => Store.set('hostmode2', Object.fromEntries(hostMode));
+  const modeOf = h => { const v = hostMode.get(h); if (!v) return null; if (v.m === 'proxy' && Date.now() - v.t > 6 * 3600e3) return null; return v.m; };
+  const setMode = (h, m) => { const v = hostMode.get(h); if (v && v.m === m && (m === 'direct' || Date.now() - v.t < 3600e3)) return; hostMode.set(h, { m, t: Date.now() }); saveHost(); };
   let stats = { direct: 0, proxy: 0, fail: 0 };
 
   async function raw(url, timeout, init = {}) {
@@ -971,7 +975,7 @@ const Net = (() => {
     const type = opt.type || 'json', timeout = opt.timeout || 12000;
     let via = opt.via || 'auto';
     const host = (() => { try { return new URL(url).host; } catch { return ''; } })();
-    if (via === 'auto' && hostMode.get(host) === 'proxy') via = 'proxy-first';
+    if (via === 'auto' && modeOf(host) === 'proxy') via = 'proxy-first';
     const t0 = performance.now();
     const errors = [];
     const check = d => { if (opt.validate && !opt.validate(d)) throw new Error('contenuto non valido'); return d; };
@@ -979,7 +983,7 @@ const Net = (() => {
     const tryDirect = async () => {
       const r = await raw(url, timeout, opt.init);
       const d = check(await body(r, type));
-      if (hostMode.get(host) !== 'direct') { hostMode.set(host, 'direct'); saveHost(); }
+      setMode(host, 'direct');
       stats.direct++;
       return { data: d, via: 'diretto', ms: Math.round(performance.now() - t0) };
     };
@@ -990,15 +994,20 @@ const Net = (() => {
           const d = check(await body(r, type));
           fails.set(p.name, 0); stats.proxy++;
           return { data: d, via: 'proxy ' + p.name, ms: Math.round(performance.now() - t0) };
-        } catch (e) { fails.set(p.name, (fails.get(p.name) || 0) + 1); errors.push(p.name + ': ' + e.message); }
+        } catch (e) {
+          // un 404/410 passato dal proxy locale o personale (affidabili) è la risposta vera dell'origine
+          if ((e.status === 404 || e.status === 410) && (p.name === 'locale' || p.name === 'personale')) throw e;
+          fails.set(p.name, (fails.get(p.name) || 0) + 1); errors.push(p.name + ': ' + e.message);
+        }
       }
       throw new Error('proxy falliti');
     };
+    const fail = err => { stats.fail++; if (err && err.status) throw err; throw new Error(errors.join(' | ') || 'rete'); };
 
     if (via === 'direct') return tryDirect();
-    if (via === 'proxy') return tryProxies().catch(() => { stats.fail++; throw new Error(errors.join(' | ') || 'rete'); });
+    if (via === 'proxy') return tryProxies().catch(fail);
     if (via === 'proxy-first') {
-      try { return await tryProxies(); } catch {}
+      try { return await tryProxies(); } catch (err) { if (err.status) fail(err); }
       try { return await tryDirect(); } catch (e) { errors.push('diretto: ' + e.message); stats.fail++; throw new Error(errors.join(' | ')); }
     }
     try { return await tryDirect(); }
@@ -1009,9 +1018,9 @@ const Net = (() => {
       if (opt.noProxy) { stats.fail++; throw e; }
       try {
         const res = await tryProxies();
-        if (!e.status) { hostMode.set(host, 'proxy'); saveHost(); }   // CORS/rete: ricorda
+        if (!e.status) setMode(host, 'proxy');   // CORS/rete: ricorda (per 6 ore)
         return res;
-      } catch { stats.fail++; throw new Error(errors.join(' | ')); }
+      } catch (err) { fail(err); }
     }
   }
   return { get, raw, detectLocal, get stats() { return stats; }, forget() { hostMode.clear(); saveHost(); },
@@ -1560,6 +1569,7 @@ DATA.TV = [
 ];
 /* Webcam: ID video YouTube (scadono: modificabili dall'interfaccia) */
 DATA.WEBCAMS = [
+  { city: 'EarthCam · dal vivo', flag: '🌎', lat: 0, lon: 0, ch: 'UC6qrG3W8SMK0jior2olka3g' },   // canale con dirette 24/7 (non scade)
   { city: 'Roma', flag: '🇮🇹', lat: 41.9, lon: 12.5, yt: 'Wk4qXuFROnE' },
   { city: 'Venezia', flag: '🇮🇹', lat: 45.43, lon: 12.33, yt: 'A_Cnd2WW9SU' },
   { city: 'New York', flag: '🇺🇸', lat: 40.758, lon: -73.985, yt: 'rnXIjl_Rzy4' },
@@ -1883,7 +1893,7 @@ const Globe3D = (() => {
       baseLayer: false, terrainProvider: new C.EllipsoidTerrainProvider(),
       animation: false, timeline: false, baseLayerPicker: false, geocoder: false, homeButton: false, sceneModePicker: false,
       navigationHelpButton: false, fullscreenButton: false, infoBox: false, selectionIndicator: false, vrButton: false,
-      shouldAnimate: true, showRenderLoopErrors: false, creditContainer: $('credits'), msaaSamples: Settings.get('quality') === 'low' ? 1 : 2,
+      shouldAnimate: true, showRenderLoopErrors: false, creditContainer: $('credits'), msaaSamples: Settings.get('quality') === 'high' ? 4 : 1,
       requestRenderMode: true, maximumRenderTimeChange: 10,
       contextOptions: { webgl: { alpha: false, powerPreference: 'high-performance' } }
     });
@@ -1895,7 +1905,7 @@ const Globe3D = (() => {
     g.lightingFadeOutDistance = 1.2e6; g.lightingFadeInDistance = 4.5e6;
     g.nightFadeOutDistance = 1.2e6; g.nightFadeInDistance = 4.5e6;
     g.baseColor = C.Color.fromCssColorString('#0b2533');
-    g.maximumScreenSpaceError = 1.8; g.tileCacheSize = 200;
+    g.maximumScreenSpaceError = Settings.get('quality') === 'high' ? 1.5 : Settings.get('quality') === 'low' ? 3 : 2; g.tileCacheSize = 250;
     scene.skyAtmosphere.show = true; scene.fog.enabled = true; scene.fog.density = 2.0e-4;
     scene.screenSpaceCameraController.minimumZoomDistance = 30;
     scene.screenSpaceCameraController.maximumZoomDistance = 8e7;
@@ -1953,7 +1963,7 @@ const Globe3D = (() => {
       const now = performance.now();
       const fast = state.spin || follow || cockpit;
       const slow = (pulsePts.length && pulsePts.show !== false) || selPts.length || state.vis === 'nvg' || state.vis === 'flir';
-      if (fast || (slow && now - lastAnim > 48)) { lastAnim = now; scene.requestRender(); }
+      if (fast || (slow && now - lastAnim > 80)) { lastAnim = now; scene.requestRender(); }
     }, 33);
     Bus.on('terrain:failed', () => { if (!tok) { viewer.terrainProvider = new C.EllipsoidTerrainProvider(); Toast.show('⚠ Terreno 3D non raggiungibile: globo liscio', 'orn'); } });
 
@@ -3130,8 +3140,13 @@ async function fetchFIRMS() {
 /* ═════════════ METEO SPAZIALE NOAA SWPC ═════════════ */
 const Space = (() => {
   const B = 'https://services.swpc.noaa.gov/';
-  const rows = d => Array.isArray(d) ? (Array.isArray(d[0]) ? d.slice(1) : d) : [];
-  const pick = (r, i, k) => Array.isArray(r) ? r[i] : r?.[k];
+  // SWPC sta passando (SCN 26-21, 2026) da "prima riga = intestazioni" a oggetti JSON: gestiamo entrambi
+  const objs = d => {
+    if (!Array.isArray(d) || !d.length) return [];
+    if (Array.isArray(d[0])) { const hd = d[0].map(x => String(x).toLowerCase()); return d.slice(1).map(r => Object.fromEntries(hd.map((k, i) => [k, r[i]]))); }
+    return d.map(o => Object.fromEntries(Object.entries(o || {}).map(([k, v]) => [k.toLowerCase(), v])));
+  };
+  const val = (o, ...ks) => { for (const k of ks) { const v = o?.[k]; if (v != null && v !== '' && isFinite(+v)) return +v; } return null; };
   const flare = f => { if (!(f > 0)) return '--'; const cl = f < 1e-7 ? ['A', 1e-8] : f < 1e-6 ? ['B', 1e-7] : f < 1e-5 ? ['C', 1e-6] : f < 1e-4 ? ['M', 1e-5] : ['X', 1e-4]; return cl[0] + (f / cl[1]).toFixed(1); };
   async function fetch() {
     const get = u => Net.get(B + u, { timeout: 12000 }).then(r => r.data);
@@ -3139,12 +3154,12 @@ const Space = (() => {
       get('json/planetary_k_index_1m.json'), get('products/noaa-planetary-k-index.json'), get('products/solar-wind/plasma-5-minute.json'),
       get('products/solar-wind/mag-5-minute.json'), get('products/noaa-scales.json'), get('json/goes/primary/xrays-6-hour.json')]);
     const sp = S.space; let ok = 0;
-    if (kp1.status === 'fulfilled') { const l = rows(kp1.value).at(-1); const v = +(l?.estimated_kp ?? l?.kp_index ?? l?.kp); if (isFinite(v)) { sp.kp = v; ok++; } }
-    if (kp3.status === 'fulfilled') { sp.kpHist = rows(kp3.value).map(r => +pick(r, 1, 'Kp') || +pick(r, 1, 'kp') || 0).filter(isFinite).slice(-24); ok++; if (sp.kp == null) sp.kp = sp.kpHist.at(-1); }
-    if (pl.status === 'fulfilled') { const r = rows(pl.value).filter(x => pick(x, 2, 'speed') != null).at(-1); if (r) { sp.wind = +pick(r, 2, 'speed'); sp.dens = +pick(r, 1, 'density'); ok++; } }
-    if (mg.status === 'fulfilled') { const r = rows(mg.value).filter(x => pick(x, 3, 'bz_gsm') != null).at(-1); if (r) { sp.bz = +pick(r, 3, 'bz_gsm'); sp.bt = +pick(r, 6, 'bt'); ok++; } }
-    if (sc.status === 'fulfilled') { const n = sc.value?.['0']; if (n) { sp.scales = { R: n.R?.Scale ?? 0, S: n.S?.Scale ?? 0, G: n.G?.Scale ?? 0 }; ok++; } }
-    if (xr.status === 'fulfilled') { const l = rows(xr.value).filter(x => (x.energy || '').startsWith('0.1-0.8')).at(-1); if (l) { sp.xflux = +l.flux; sp.flare = flare(+l.flux); ok++; } }
+    if (kp1.status === 'fulfilled') { const v = val(objs(kp1.value).at(-1), 'estimated_kp', 'kp_index', 'kp'); if (v != null) { sp.kp = v; ok++; } }
+    if (kp3.status === 'fulfilled') { const h = objs(kp3.value).map(r => val(r, 'kp', 'kp_index', 'estimated_kp')).filter(v => v != null).slice(-24); if (h.length) { sp.kpHist = h; ok++; if (sp.kp == null) sp.kp = h.at(-1); } }
+    if (pl.status === 'fulfilled') { const r = objs(pl.value).filter(x => val(x, 'speed') != null).at(-1); if (r) { sp.wind = val(r, 'speed'); sp.dens = val(r, 'density'); ok++; } }
+    if (mg.status === 'fulfilled') { const r = objs(mg.value).filter(x => val(x, 'bz_gsm', 'bz') != null).at(-1); if (r) { sp.bz = val(r, 'bz_gsm', 'bz'); sp.bt = val(r, 'bt'); ok++; } }
+    if (sc.status === 'fulfilled') { const n = sc.value?.['0'] || (Array.isArray(sc.value) ? sc.value[0] : null); if (n) { sp.scales = { R: n.R?.Scale ?? 0, S: n.S?.Scale ?? 0, G: n.G?.Scale ?? 0 }; ok++; } }
+    if (xr.status === 'fulfilled') { const l = objs(xr.value).filter(x => String(x.energy || '').startsWith('0.1-0.8') && val(x, 'flux') > 0).at(-1); if (l) { sp.xflux = val(l, 'flux'); sp.flare = flare(sp.xflux); ok++; } }
     if (ok) Health.ok('space', { items: ok, via: 'NOAA SWPC' }); else Health.fail('space', 'NOAA SWPC non raggiungibile');
     if (sp.kp >= 7) Intel.alert({ key: 'kp' + new Date().toISOString().slice(0, 13), level: 'orn', icon: '☀', title: `Tempesta geomagnetica Kp ${sp.kp.toFixed(1)}`, text: 'Possibili disturbi a GPS, radio HF e reti elettriche; aurore a basse latitudini.', speak: `Tempesta geomagnetica in corso, indice K p ${Math.round(sp.kp)}.` });
     if (/^X/.test(sp.flare || '')) Intel.alert({ key: 'xf' + new Date().toISOString().slice(0, 13), level: 'orn', icon: '☀', title: `Brillamento solare classe ${sp.flare}`, text: 'Possibile blackout radio sul lato diurno.' });
@@ -3433,7 +3448,7 @@ const Astro = {
 const Intel = (() => {
   const alerts = [];
   const keys = new Map(Object.entries(Store.get('alertKeys', {})));
-  let scores = {}, glob = { idx: 0, lvl: 5, parts: {} }, lastFlash = 0, lastSpeak = 0, booted = Date.now();
+  let scores = {}, glob = { idx: 0, lvl: 5, parts: {} }, lastFlash = 0, lastSpeak = 0, lastToast = 0, booted = Date.now();
   const H = 3600e3;
 
   function alert(a) {
@@ -3443,8 +3458,11 @@ const Intel = (() => {
     if (keys.size > 400) [...keys.keys()].slice(0, 100).forEach(k => keys.delete(k));
     Store.set('alertKeys', Object.fromEntries(keys));
     a.t = now; alerts.unshift(a); if (alerts.length > 80) alerts.length = 80;
-    Toast.show(`${a.icon || '🚨'} ${a.title}${a.text ? ' — ' + a.text : ''}`, a.level || 'orn', 6000);
-    if (a.level === 'war') Sound.alert(); else Sound.ping();
+    // popup solo per le allerte gravi; le altre al massimo una ogni 25 s (restano tutte nell'elenco 🚨)
+    if (a.level === 'war' || (a.level === 'orn' && now - lastToast > 25e3)) {
+      lastToast = now; Toast.show(`${a.icon || '🚨'} ${a.title}${a.text ? ' — ' + a.text : ''}`, a.level || 'orn', 6000);
+      if (a.level === 'war') Sound.alert(); else Sound.ping();
+    }
     if (Settings.get('ttsAlerts') !== false && a.speak && (a.level === 'war' || now - lastSpeak > 25e3)) { lastSpeak = now; TTS.speak(a.speak, { key: a.key, prio: a.level === 'war' }); }
     EventLog.add(`${a.icon || '🚨'} ${a.title} ${a.text || ''}`, a.level === 'war' ? 'var(--red)' : 'var(--orn)');
     if (Settings.get('autoFlyAlerts') && a.lat != null && a.level === 'war') MapCtl.flyTo(a.lat, a.lon, 900000, { pitch: -45 });
@@ -3490,8 +3508,10 @@ const Intel = (() => {
   /* ── flash notizie gravi ── */
   function analyzeNews(list) {
     const now = Date.now();
+    // "urgente" solo per eventi davvero eccezionali (non ogni titolo con "missile" o "killed")
+    const BIG = /nuclear (?:attack|strike|test|explosion)|test nucleare|attacco nucleare|invasion|invade[sd]?\b|invasione|coup\b|golpe|declares? war|dichiara(?:to)? guerra|martial law|legge marziale|state of emergency|stato di emergenza|tsunami warning|allerta tsunami|ballistic missile|missile balistico|assassinat|assassinio|hijack|dirottat/i;
     for (const n of list.slice(0, 60)) {
-      if (n.sev < 0.8 || now - n.date > 40 * 60e3 || now - lastFlash < 90e3) continue;
+      if (n.sev < 0.7 || !BIG.test(n.title) || now - n.date > 40 * 60e3 || now - lastFlash < 5 * 60e3) continue;
       if (alert({ key: 'nf' + n.id, level: 'war', icon: '⚡', title: 'Notizia urgente', text: `${n.title.slice(0, 110)} (${n.src})`, lat: n.place?.lat, lon: n.place?.lon, ref: { kind: 'news', id: n.id }, speak: 'Notizia urgente. ' + n.title.slice(0, 140) })) lastFlash = now;
     }
   }
@@ -3870,7 +3890,7 @@ const UI = (() => {
       chk('st-fly', 'Vola automaticamente sulle allerte gravi', Settings.get('autoFlyAlerts')), chk('st-labels', 'Etichette degli aerei militari', Settings.get('labels') !== false),
       chk('st-auto', 'Avvio automatico (salta la schermata iniziale)', Settings.get('autostart')),
       h('h4', null, 'Prestazioni'),
-      h('label', null, 'Qualità grafica'), h('select', { id: 'st-q' }, [['auto', 'Automatica'], ['low', 'Bassa (PC lenti)']].map(([v, l]) => h('option', { value: v, selected: Settings.get('quality') === v }, l))),
+      h('label', null, 'Qualità grafica'), h('select', { id: 'st-q' }, [['auto', 'Normale (consigliata)'], ['high', 'Alta (GPU potenti: antialiasing 4×)'], ['low', 'Bassa (PC lenti)']].map(([v, l]) => h('option', { value: v, selected: Settings.get('quality') === v }, l))),
       h('label', null, 'Numero massimo di aerei disegnati'), inp('st-max', String(Settings.get('maxAircraft')), 'number'),
       chk('st-2d', 'Forza la mappa 2D (per computer senza GPU)', Store.get('force2d'))
     ], [
@@ -4134,19 +4154,41 @@ const UI = (() => {
     $('tv-ph').classList.add('hidden');
     $('tv-iframe').src = tvURL(c, 1);
     Toast.show(`📺 ${c.label} (audio disattivato: attivalo dal player)`, 'ok');
+    if (c.ch) checkChannel(c.ch).then(r => {
+      if (tvActive !== id) return;
+      if (r.ok && r.title) setText('tv-name', `${c.flag || ''} ${r.title} ✓`);
+      if (r.ok === false) deadNotice($('tv-ph'), $('tv-iframe'), `Il canale “${c.label}” non esiste su YouTube`, 'l\'ID ' + c.ch + ' è sbagliato o il canale è stato chiuso', 'tv');
+    });
     return true;
+  }
+  function deadNotice(ph, frame, title, why, kind) {
+    frame.src = 'about:blank'; ph.classList.remove('hidden');
+    ph.replaceChildren(h('div', { style: 'font-size:22px' }, kind === 'tv' ? '📺' : '📹'), h('div', null, h('b', null, title), ` (${why}).`),
+      h('div', null, h('button', { class: 'pl-btn', type: 'button', onclick: () => kind === 'tv' ? $('tv-yt').click() : $('wc-search').click() }, '🔎 CERCA SU YOUTUBE'), ' ',
+        h('button', { class: 'pl-btn', type: 'button', onclick: () => editList(kind === 'tv' ? 'tv' : 'cam') }, '✎ CORREGGI')));
+  }
+  const chCache = new Map();
+  async function checkChannel(ch) {    // feed RSS ufficiale del canale: {ok:true,title} | {ok:false} | {ok:null}
+    if (chCache.has(ch)) return chCache.get(ch);
+    let res = { ok: null };
+    try {
+      const r = await Net.get(`https://www.youtube.com/feeds/videos.xml?channel_id=${encodeURIComponent(ch)}`, { type: 'text', timeout: 9000, validate: t => /<feed[\s>]/.test(t) });
+      const m = r.data.match(/<title>([^<]{1,120})<\/title>/); res = { ok: true, title: m ? m[1].replace(/&amp;/g, '&') : '' };
+    } catch (e) { if (e.status === 404 || e.status === 410) res = { ok: false }; }
+    chCache.set(ch, res); return res;
   }
   function editList(kind) {
     const isTV = kind === 'tv';
-    const lines = isTV ? tvList().map(c => [c.cat, c.label, c.video ? 'video:' + c.video : c.ch, c.flag || ''].join(' | ')) : camList().map(c => [c.city, c.lat, c.lon, c.yt, c.flag || ''].join(' | '));
+    const lines = isTV ? tvList().map(c => [c.cat, c.label, c.video ? 'video:' + c.video : c.ch, c.flag || ''].join(' | ')) : camList().map(c => [c.city, c.lat, c.lon, c.ch ? 'channel:' + c.ch : c.yt, c.flag || ''].join(' | '));
     const ta = h('textarea', { id: 'ed-ta', style: 'min-height:260px' }); ta.value = lines.join('\n');
     modal(isTV ? '✎ CANALI TV' : '✎ WEBCAM', [
-      h('div', { class: 'hint' }, isTV ? 'Una riga per canale: categoria (news|war|sci) | nome | ID canale YouTube (UC…) oppure video:ID | emoji. Con l\'ID canale viene caricata la diretta attuale.' : 'Una riga per webcam: città | lat | lon | ID video YouTube | emoji. Trovi ID nuovi con 🔎 (filtro “Dal vivo”).'), ta
+      h('div', { class: 'hint' }, isTV ? 'Una riga per canale: categoria (news|war|sci) | nome | ID canale YouTube (UC…) oppure video:ID | emoji. Con l\'ID canale viene caricata la diretta attuale.' : 'Una riga per webcam: città | lat | lon | link o ID del video YouTube (oppure channel:UC… per la diretta di un canale) | emoji. Trovi webcam nuove con 🔎 (filtro “Dal vivo”): copia il link e incollalo qui.'), ta
     ], [h('button', { class: 'btn red', type: 'button', onclick: () => { Store.del(isTV ? 'tvList' : 'camList'); closeModal(); isTV ? buildTV() : buildCams(); Toast.show('Elenco ripristinato', 'ok'); } }, 'RIPRISTINA'),
       h('button', { class: 'btn', type: 'button', onclick: () => {
         const rows = $('ed-ta').value.split('\n').map(l => l.split('|').map(s => s.trim())).filter(r => r.length >= 3 && r[0]);
         if (isTV) Store.set('tvList', rows.map((r, i) => { const v = /^video:/i.test(r[2]) ? r[2].slice(6) : null; return { id: 'c' + i, cat: ['news', 'war', 'sci'].includes(r[0]) ? r[0] : 'news', label: r[1], ch: v ? '' : r[2].replace(/.*channel\//, ''), video: v ? v.replace(/.*[?&]v=|.*youtu\.be\//, '').slice(0, 11) : null, flag: r[3] || '📺' }; }));
-        else Store.set('camList', rows.map(r => ({ city: r[0], lat: +r[1] || 0, lon: +r[2] || 0, yt: (r[3] || '').replace(/.*[?&]v=|.*youtu\.be\/|.*\/live\//, '').slice(0, 11), flag: r[4] || '📹' })));
+        else Store.set('camList', rows.map(r => { const id = (r[3] || '').trim(), chm = id.match(/(?:channel[:/])?(UC[\w-]{22})/);
+          return { city: r[0], lat: +r[1] || 0, lon: +r[2] || 0, ch: chm ? chm[1] : undefined, yt: chm ? undefined : id.replace(/.*[?&]v=|.*youtu\.be\/|.*\/live\//, '').slice(0, 11), flag: r[4] || '📹' }; }));
         closeModal(); isTV ? buildTV() : buildCams(); Toast.show('✓ Elenco salvato', 'ok');
       } }, '💾 SALVA')]);
   }
@@ -4162,6 +4204,11 @@ const UI = (() => {
     if (c.lat || c.lon) MapCtl.flyTo(c.lat, c.lon, 6000, { pitch: -28, heading: 30 });
     if (FROM_FILE) { ytPopup(c); fileNotice($('wc-ph'), c, 'La webcam'); return true; }
     $('wc-ph').classList.add('hidden');
+    if (c.ch) {      // canale con dirette 24/7: si carica la diretta attuale, non scade
+      $('wc-iframe').src = `https://www.youtube.com/embed/live_stream?channel=${c.ch}&autoplay=1&mute=1&rel=0&playsinline=1`;
+      checkChannel(c.ch).then(r => { if (camActive === i && r.ok === false) deadNotice($('wc-ph'), $('wc-iframe'), `Il canale di ${c.city} non esiste su YouTube`, 'ID errato', 'cam'); });
+      return true;
+    }
     $('wc-iframe').src = `https://www.youtube.com/embed/${c.yt}?autoplay=1&mute=1&rel=0&playsinline=1`;
     checkVideo(c.yt).then(alive => {         // gli ID delle webcam scadono: lo verifichiamo e lo diciamo chiaramente
       if (alive !== false || camActive !== i) return;
@@ -4455,6 +4502,8 @@ const UI = (() => {
     Health.set('weather', 'wait', 'su richiesta'); Health.set('geoip', 'wait', 'su richiesta');
     Health.register('imagery', 'Immagini del globo'); Health.register('proxy', 'Proxy CORS');
     bind(); clock(); setInterval(clock, 1000);
+    document.querySelector('.t-logo-sub').textContent = `v${OJO.version} · build ${OJO.build}`;
+    document.querySelector('.t-logo').title = `OJO DE DEUS v${OJO.version} · build ${OJO.build}`;
     const local = await Net.detectLocal();
     const pm = Net.proxyMode;
     Health.set('proxy', pm === 'pubblici' ? 'wait' : 'live', pm === 'locale' ? 'proxy integrato dell\'avviatore (affidabile)' : pm === 'personale' ? 'proxy personale (⚙)' : 'solo proxy pubblici gratuiti (lenti/instabili)');

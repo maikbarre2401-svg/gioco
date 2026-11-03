@@ -15,6 +15,8 @@ html = html.replace(/<script src="([^"]+)" data-inline><\/script>/g, (_, f) => {
   if (/<\/script/i.test(js)) throw new Error(`${f} contiene "</script": romperebbe l'inline`);
   return `<script>\n/* ── ${f} ── */\n${js}</script>`;
 });
+const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
+html = html.replace(/__OJO_BUILD__/g, stamp);
 html = html.replace('<!DOCTYPE html>', '<!DOCTYPE html>\n<!-- GENERATO da build.mjs: modifica i file in src/ e poi esegui `node build.mjs` -->');
 writeFileSync(join(root, 'index.html'), html);
 console.log(`index.html: ${(html.length / 1024).toFixed(1)} KB`);

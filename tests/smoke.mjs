@@ -91,6 +91,7 @@ ok(await n('#sat-tot') > 100, 'satelliti propagati: ' + await txt('#sat-tot'));
 ok(await n('#eq-tot') > 50, 'terremoti: ' + await txt('#eq-tot'));
 ok((await page.$$('#news-list .ni')).length > 10, 'notizie in elenco: ' + (await page.$$('#news-list .ni')).length);
 ok(/\d/.test(await txt('#kp-v')), 'Kp: ' + await txt('#kp-v'));
+ok((await page.evaluate(() => (S.space.kpHist || []).length)) === 24, 'storico Kp letto dal nuovo formato JSON NOAA 2026');
 ok(/\$/.test(await txt('#sb-btc')), 'BTC: ' + await txt('#sb-btc'));
 ok(/\d/.test(await page.$eval('#mkt-idx .mk-p', e => e.textContent)), 'S&P 500: ' + await page.$eval('#mkt-idx .mk-p', e => e.textContent));
 ok(/ALLERTA [1-5]/.test(await txt('#threat-badge')), 'indice: ' + await txt('#threat-badge'));
@@ -200,6 +201,11 @@ if (FILE) {
   if (pw) await pw.close();
 } else {
   ok(/live_stream\?channel=/.test(await page.$eval('#tv-iframe', e => e.src)), 'TV: diretta da canale ufficiale');
+  await wait(1500); ok(/✓/.test(await txt('#tv-name')), 'TV: canale verificato dal feed RSS ufficiale: ' + await txt('#tv-name'));
+  await page.evaluate(() => Store.set('tvList', [{ id: 'x', cat: 'news', label: 'Canale finto', ch: 'UC0000000000000000000000', flag: '📺' }]));
+  await page.fill('#hk-inp', 'tv 0'); await page.keyboard.press('Enter'); await wait(2500);
+  ok(/non esiste/.test(await txt('#tv-ph')), 'TV: ID di canale sbagliato riconosciuto e spiegato');
+  await page.evaluate(() => Store.del('tvList'));
   ok(/youtube\.com\/embed\//.test(await page.$eval('#wc-iframe', e => e.src)), 'webcam caricata');
 }
 await page.fill('#news-q', ''); await page.dispatchEvent('#news-q', 'input');
@@ -226,7 +232,7 @@ await wait(2500);
 await shot('09-final');
 
 if (!FILE) {
-  await page.fill('#hk-inp', 'cam 5'); await page.keyboard.press('Enter'); await wait(2500);
+  await page.fill('#hk-inp', 'cam 6'); await page.keyboard.press('Enter'); await wait(2500);
   ok(/non esiste più/.test(await txt('#wc-ph')), 'webcam con ID scaduto riconosciuta e spiegata: ' + (await txt('#wc-ph')).slice(0, 60));
 }
 ok(![...requested].some(h => /cartocdn/.test(h)), 'nessuna richiesta a CARTO (ora richiede API key)');

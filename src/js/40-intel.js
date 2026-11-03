@@ -8,7 +8,7 @@
 const Intel = (() => {
   const alerts = [];
   const keys = new Map(Object.entries(Store.get('alertKeys', {})));
-  let scores = {}, glob = { idx: 0, lvl: 5, parts: {} }, lastFlash = 0, lastSpeak = 0, booted = Date.now();
+  let scores = {}, glob = { idx: 0, lvl: 5, parts: {} }, lastFlash = 0, lastSpeak = 0, lastToast = 0, booted = Date.now();
   const H = 3600e3;
 
   function alert(a) {
@@ -18,8 +18,11 @@ const Intel = (() => {
     if (keys.size > 400) [...keys.keys()].slice(0, 100).forEach(k => keys.delete(k));
     Store.set('alertKeys', Object.fromEntries(keys));
     a.t = now; alerts.unshift(a); if (alerts.length > 80) alerts.length = 80;
-    Toast.show(`${a.icon || '🚨'} ${a.title}${a.text ? ' — ' + a.text : ''}`, a.level || 'orn', 6000);
-    if (a.level === 'war') Sound.alert(); else Sound.ping();
+    // popup solo per le allerte gravi; le altre al massimo una ogni 25 s (restano tutte nell'elenco 🚨)
+    if (a.level === 'war' || (a.level === 'orn' && now - lastToast > 25e3)) {
+      lastToast = now; Toast.show(`${a.icon || '🚨'} ${a.title}${a.text ? ' — ' + a.text : ''}`, a.level || 'orn', 6000);
+      if (a.level === 'war') Sound.alert(); else Sound.ping();
+    }
     if (Settings.get('ttsAlerts') !== false && a.speak && (a.level === 'war' || now - lastSpeak > 25e3)) { lastSpeak = now; TTS.speak(a.speak, { key: a.key, prio: a.level === 'war' }); }
     EventLog.add(`${a.icon || '🚨'} ${a.title} ${a.text || ''}`, a.level === 'war' ? 'var(--red)' : 'var(--orn)');
     if (Settings.get('autoFlyAlerts') && a.lat != null && a.level === 'war') MapCtl.flyTo(a.lat, a.lon, 900000, { pitch: -45 });
@@ -65,8 +68,10 @@ const Intel = (() => {
   /* ── flash notizie gravi ── */
   function analyzeNews(list) {
     const now = Date.now();
+    // "urgente" solo per eventi davvero eccezionali (non ogni titolo con "missile" o "killed")
+    const BIG = /nuclear (?:attack|strike|test|explosion)|test nucleare|attacco nucleare|invasion|invade[sd]?\b|invasione|coup\b|golpe|declares? war|dichiara(?:to)? guerra|martial law|legge marziale|state of emergency|stato di emergenza|tsunami warning|allerta tsunami|ballistic missile|missile balistico|assassinat|assassinio|hijack|dirottat/i;
     for (const n of list.slice(0, 60)) {
-      if (n.sev < 0.8 || now - n.date > 40 * 60e3 || now - lastFlash < 90e3) continue;
+      if (n.sev < 0.7 || !BIG.test(n.title) || now - n.date > 40 * 60e3 || now - lastFlash < 5 * 60e3) continue;
       if (alert({ key: 'nf' + n.id, level: 'war', icon: '⚡', title: 'Notizia urgente', text: `${n.title.slice(0, 110)} (${n.src})`, lat: n.place?.lat, lon: n.place?.lon, ref: { kind: 'news', id: n.id }, speak: 'Notizia urgente. ' + n.title.slice(0, 140) })) lastFlash = now;
     }
   }

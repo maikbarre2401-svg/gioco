@@ -324,6 +324,7 @@ DATA.TV = [
 ];
 /* Webcam: ID video YouTube (scadono: modificabili dall'interfaccia) */
 DATA.WEBCAMS = [
+  { city: 'EarthCam · dal vivo', flag: '🌎', lat: 0, lon: 0, ch: 'UC6qrG3W8SMK0jior2olka3g' },   // canale con dirette 24/7 (non scade)
   { city: 'Roma', flag: '🇮🇹', lat: 41.9, lon: 12.5, yt: 'Wk4qXuFROnE' },
   { city: 'Venezia', flag: '🇮🇹', lat: 45.43, lon: 12.33, yt: 'A_Cnd2WW9SU' },
   { city: 'New York', flag: '🇺🇸', lat: 40.758, lon: -73.985, yt: 'rnXIjl_Rzy4' },

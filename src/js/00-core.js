@@ -4,7 +4,8 @@
    Utility, impostazioni, rete con fallback CORS, stato dei feed,
    notifiche, log, voce, suoni, calcoli geografici.
 ═══════════════════════════════════════════════════════════════════ */
-const OJO = { version: '100', started: Date.now() };
+const OJO = { version: '100', build: '__OJO_BUILD__', started: Date.now() };
+if (OJO.build.startsWith('__')) OJO.build = 'sviluppo';
 
 /* ═══ DOM ═══ */
 const $ = id => document.getElementById(id);
@@ -149,8 +150,11 @@ const Net = (() => {
     { name: 'cors.lol', f: u => `https://api.cors.lol/?url=${encodeURIComponent(u)}` }
   ];
   const fails = new Map();                 // proxy -> fallimenti consecutivi
-  const hostMode = new Map(Object.entries(Store.get('hostmode', {})));   // host -> 'direct'|'proxy'
-  const saveHost = () => Store.set('hostmode', Object.fromEntries(hostMode));
+  // host -> {m:'direct'|'proxy', t}; "solo proxy" scade dopo 6 ore (un errore di rete momentaneo non resta per sempre)
+  const hostMode = new Map(Object.entries(Store.get('hostmode2', {})));
+  const saveHost = () => Store.set('hostmode2', Object.fromEntries(hostMode));
+  const modeOf = h => { const v = hostMode.get(h); if (!v) return null; if (v.m === 'proxy' && Date.now() - v.t > 6 * 3600e3) return null; return v.m; };
+  const setMode = (h, m) => { const v = hostMode.get(h); if (v && v.m === m && (m === 'direct' || Date.now() - v.t < 3600e3)) return; hostMode.set(h, { m, t: Date.now() }); saveHost(); };
   let stats = { direct: 0, proxy: 0, fail: 0 };
 
   async function raw(url, timeout, init = {}) {
@@ -197,7 +201,7 @@ const Net = (() => {
     const type = opt.type || 'json', timeout = opt.timeout || 12000;
     let via = opt.via || 'auto';
     const host = (() => { try { return new URL(url).host; } catch { return ''; } })();
-    if (via === 'auto' && hostMode.get(host) === 'proxy') via = 'proxy-first';
+    if (via === 'auto' && modeOf(host) === 'proxy') via = 'proxy-first';
     const t0 = performance.now();
     const errors = [];
     const check = d => { if (opt.validate && !opt.validate(d)) throw new Error('contenuto non valido'); return d; };
@@ -205,7 +209,7 @@ const Net = (() => {
     const tryDirect = async () => {
       const r = await raw(url, timeout, opt.init);
       const d = check(await body(r, type));
-      if (hostMode.get(host) !== 'direct') { hostMode.set(host, 'direct'); saveHost(); }
+      setMode(host, 'direct');
       stats.direct++;
       return { data: d, via: 'diretto', ms: Math.round(performance.now() - t0) };
     };
@@ -216,15 +220,20 @@ const Net = (() => {
           const d = check(await body(r, type));
           fails.set(p.name, 0); stats.proxy++;
           return { data: d, via: 'proxy ' + p.name, ms: Math.round(performance.now() - t0) };
-        } catch (e) { fails.set(p.name, (fails.get(p.name) || 0) + 1); errors.push(p.name + ': ' + e.message); }
+        } catch (e) {
+          // un 404/410 passato dal proxy locale o personale (affidabili) è la risposta vera dell'origine
+          if ((e.status === 404 || e.status === 410) && (p.name === 'locale' || p.name === 'personale')) throw e;
+          fails.set(p.name, (fails.get(p.name) || 0) + 1); errors.push(p.name + ': ' + e.message);
+        }
       }
       throw new Error('proxy falliti');
     };
+    const fail = err => { stats.fail++; if (err && err.status) throw err; throw new Error(errors.join(' | ') || 'rete'); };
 
     if (via === 'direct') return tryDirect();
-    if (via === 'proxy') return tryProxies().catch(() => { stats.fail++; throw new Error(errors.join(' | ') || 'rete'); });
+    if (via === 'proxy') return tryProxies().catch(fail);
     if (via === 'proxy-first') {
-      try { return await tryProxies(); } catch {}
+      try { return await tryProxies(); } catch (err) { if (err.status) fail(err); }
       try { return await tryDirect(); } catch (e) { errors.push('diretto: ' + e.message); stats.fail++; throw new Error(errors.join(' | ')); }
     }
     try { return await tryDirect(); }
@@ -235,9 +244,9 @@ const Net = (() => {
       if (opt.noProxy) { stats.fail++; throw e; }
       try {
         const res = await tryProxies();
-        if (!e.status) { hostMode.set(host, 'proxy'); saveHost(); }   // CORS/rete: ricorda
+        if (!e.status) setMode(host, 'proxy');   // CORS/rete: ricorda (per 6 ore)
         return res;
-      } catch { stats.fail++; throw new Error(errors.join(' | ')); }
+      } catch (err) { fail(err); }
     }
   }
   return { get, raw, detectLocal, get stats() { return stats; }, forget() { hostMode.clear(); saveHost(); },
