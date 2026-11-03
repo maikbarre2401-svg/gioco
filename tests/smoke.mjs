@@ -12,10 +12,17 @@ const { chromium } = require('playwright');
 const HERE = dirname(fileURLToPath(import.meta.url)), ROOT = join(HERE, '..');
 const LIBS = process.env.OJO_LIBS || HERE;
 const args = process.argv.slice(2), MODE2D = args.includes('--2d'), MOBILE = args.includes('--mobile');
+const FILE = args.includes('--file'), LOCALPROXY = args.includes('--local-proxy');   // pagina aperta da disco / avviatore con proxy
 const SHOTS = args.includes('--shots') ? args[args.indexOf('--shots') + 1] : join(HERE, 'shots');
 mkdirSync(SHOTS, { recursive: true });
 
+const localHits = new Set();
 const srv = createServer((req, res) => {
+  if (LOCALPROXY && req.url.startsWith('/ojo-ping')) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end('{"ojo":"local-proxy","v":1}'); }
+  if (LOCALPROXY && req.url.startsWith('/ojo-proxy')) {      // come AVVIA-OJO / ojo-server.py
+    const target = new URL(req.url, 'http://x').searchParams.get('url'); localHits.add(new URL(target).host);
+    const r = respond(target); res.writeHead(r ? r.status : 502, { 'content-type': r ? r.contentType : 'text/plain', 'access-control-allow-origin': '*' }); return res.end(r ? r.body : 'bad');
+  }
   const f = join(ROOT, decodeURIComponent(req.url.split('?')[0]).replace(/^\/+/, '') || 'index.html');
   if (!existsSync(f)) { res.writeHead(404); return res.end('nf'); }
   res.writeHead(200, { 'content-type': { '.html': 'text/html; charset=utf-8', '.js': 'application/javascript', '.css': 'text/css' }[extname(f)] || 'application/octet-stream' });
@@ -46,6 +53,7 @@ await ctx.route('**/*', async route => {
   unknown.add(u.host + u.pathname.slice(0, 40)); return route.abort('failed');
 });
 const page = await ctx.newPage();
+ctx.on('page', p => { if (p !== page) setTimeout(() => p.close().catch(() => {}), 4000); });
 page.on('console', m => { const t = m.text(); log.push(`[${m.type()}] ${t}`); if (m.type() === 'error' && !/Failed to load resource|ERR_FAILED|net::/.test(t)) errors.push(t); });
 page.on('pageerror', e => errors.push('PAGEERROR ' + e.message + '\n' + (e.stack || '').split('\n').slice(0, 4).join('\n')));
 if (MODE2D) await page.addInitScript(() => localStorage.setItem('ojo.force2d', 'true'));
@@ -55,7 +63,8 @@ const txt = sel => page.$eval(sel, e => e.textContent.trim()).catch(() => '');
 const shot = async n => { await page.screenshot({ path: join(SHOTS, `${MOBILE ? 'm-' : MODE2D ? '2d-' : ''}${n}.png`), timeout: 150000 }).catch(e => console.log('    (screenshot ' + n + ' saltato: ' + e.message.split('\n')[0] + ')')); };
 
 console.log(`\n▶ OJO DE DEUS smoke test (${MODE2D ? '2D' : '3D'}${MOBILE ? ', mobile' : ''})`);
-await page.goto(`http://localhost:${PORT}/index.html`);
+await page.goto(FILE ? 'file://' + join(ROOT, 'index.html') : `http://localhost:${PORT}/index.html`);
+if (FILE) ok(await page.isVisible('#boot-file'), 'avviso "aperto da file" con istruzioni per l\'avviatore');
 await wait(600);
 ok(await page.isVisible('#boot-start'), 'schermata di avvio visibile, nessun avvio automatico senza consenso');
 await shot('00-boot');
@@ -89,7 +98,10 @@ ok((await page.$$('#hot-list .ci-item')).length === 10, 'zone calde valutate');
 ok((await page.$$('#alert-list .al-row')).length >= 2, 'allerte automatiche: ' + (await page.$$eval('#alert-list .al-x', es => es.slice(0, 4).map(e => e.firstChild.textContent).join(' | '))));
 ok((await txt('#brief-text')).length > 60, 'briefing generato');
 ok(/[A-Z]/.test(await txt('#ticker-track')), 'ticker notizie');
-ok([...proxied].some(h => /bbci|nytimes/.test(h)), 'RSS senza CORS recuperati via proxy: ' + [...proxied].join(', '));
+if (LOCALPROXY) {
+  ok(/locale/.test((await page.evaluate(() => Health.all().find(f => f.id === 'proxy').msg)) || ''), 'proxy locale dell\'avviatore rilevato');
+  ok([...localHits].some(h => /bbci|nytimes/.test(h)) && ![...proxied].some(h => /bbci/.test(h)), 'RSS senza CORS passati dal proxy LOCALE: ' + [...localHits].join(', '));
+} else ok([...proxied].some(h => /bbci|nytimes/.test(h)), 'RSS senza CORS recuperati via proxy: ' + [...proxied].join(', '));
 
 console.log('— interazione');
 await page.click('#ac-list .row');
@@ -178,8 +190,16 @@ await page.keyboard.press('Escape');
 for (const c of ['help', 'status', 'layers', 'find SAM44', 'sat ISS', 'base dark', 'base sat', 'vis nvg', 'vis nrm', 'exag 2', 'alerts', 'layer bases on', 'news gaza', 'tv 0', 'cam 1', 'flyto 41.9 12.5 50', 'goto Milano', 'pippo']) { await page.fill('#hk-inp', c); await page.keyboard.press('Enter'); await wait(350); }
 const term = await txt('#hk-out');
 ok(/comandi:/.test(term) && /motore/.test(term) && /trovato SAM44/.test(term) && /satellite ISS/.test(term) && /comando sconosciuto/.test(term), 'terminale: comandi eseguiti');
-ok(/live_stream\?channel=/.test(await page.$eval('#tv-iframe', e => e.src)), 'TV: diretta da canale ufficiale');
-ok(/youtube\.com\/embed\//.test(await page.$eval('#wc-iframe', e => e.src)), 'webcam caricata');
+if (FILE) {
+  const pop = page.waitForEvent('popup', { timeout: 8000 }).catch(() => null);
+  await page.click('#tv-grid-news .tv-btn'); const pw = await pop; if (pw) await pw.waitForLoadState('domcontentloaded').catch(() => {});
+  ok(pw && /youtube\.com\/channel\/.+\/live/.test(pw.url()), 'da file: la TV si apre in una finestra YouTube funzionante (' + (pw ? pw.url() : 'nessun popup') + ')');
+  ok(/Errore 153/.test(await txt('#tv-ph')), 'da file: spiegazione Errore 153 nel riquadro TV');
+  if (pw) await pw.close();
+} else {
+  ok(/live_stream\?channel=/.test(await page.$eval('#tv-iframe', e => e.src)), 'TV: diretta da canale ufficiale');
+  ok(/youtube\.com\/embed\//.test(await page.$eval('#wc-iframe', e => e.src)), 'webcam caricata');
+}
 await page.fill('#news-q', ''); await page.dispatchEvent('#news-q', 'input');
 await page.fill('#wx-inp', 'Roma'); await page.click('#wx-btn'); await wait(1500);
 ok(/Roma/.test(await txt('#wx-result')) && /°C/.test(await txt('#wx-result')), 'meteo città');
@@ -193,7 +213,10 @@ await page.click('#btn-settings'); await wait(300); await page.fill('#st-proxy',
 ok((await page.evaluate(() => Settings.get('proxy'))).includes('{url}'), 'impostazioni salvate');
 await page.evaluate(() => Settings.set('proxy', ''));
 await page.click('#btn-help'); await wait(200); ok(/AIUTO/.test(await txt('#modal-title')), 'aiuto'); await page.keyboard.press('Escape');
-await page.click('#tv-expand'); await wait(500); ok(await page.isVisible('#media-modal'), 'modale TV grande'); await page.click('#media-close');
+await page.click('#tv-expand'); await wait(500);
+if (FILE) { ok(/AVVIATORE/.test(await txt('#modal-title')), 'da file: TV grande → istruzioni'); await page.click('[data-close-modal]'); }
+else { ok(await page.isVisible('#media-modal'), 'modale TV grande'); await page.click('#media-close'); }
+await page.click('#btn-reset'); await wait(1200); ok(/ripristinata/.test(await txt('#alert-pop')), 'pulsante 🛠 ripristina mappa');
 await page.click('#tv-edit'); await wait(200); ok(/CANALI/.test(await txt('#modal-title')), 'editor canali TV'); await page.click('[data-close-modal]');
 await page.click('#btn-full'); await wait(800); await shot('08-fullmap'); await page.click('#btn-full'); await wait(400);
 await page.keyboard.press('?'); await wait(200); await page.keyboard.press('Escape');

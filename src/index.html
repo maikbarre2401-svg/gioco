@@ -28,6 +28,7 @@
   </svg>
   <div id="boot-logo">OJO DE <em>DEUS</em></div>
   <div id="boot-sub">v100 · Global Intelligence Monitor 3D · solo dati reali, etichettati</div>
+  <div id="boot-file" class="hidden"></div>
   <div id="boot-cfg">
     <div class="bc-label">🌐 Cesium ion token <span class="dstat off">opzionale</span></div>
     <div class="bc-hint">Senza token: globo 3D reale con terreno 3D gratuito (AWS Terrain), immagini satellitari Esri e luci notturne NASA.
@@ -78,6 +79,7 @@
   <div id="globe3d"></div>
   <div id="map2d"></div>
   <div id="map-msg"><div class="spinner"></div><div id="map-msg-txt">Caricamento motore 3D…</div></div>
+  <div id="map-warn" class="hidden"></div>
 
   <div id="layer-panel" class="sidepanel">
     <div class="sp-hdr"><span class="sp-title">🗂 LAYER</span><button class="sp-close" data-close="layer-panel" type="button">✕</button></div>
@@ -112,6 +114,7 @@
       <button class="mc" id="btn-spin" type="button" title="Rotazione automatica (R)">⟲ SPIN</button>
       <button class="mc" id="btn-me" type="button" title="La mia posizione (G)">📍 IO</button>
       <button class="mc" id="btn-full" type="button" title="Mappa a schermo intero (F)">⛶</button>
+      <button class="mc" id="btn-reset" type="button" title="Ripristina la mappa (se è nera o bloccata)">🛠</button>
     </div>
   </div>
   <div id="vis-bar">

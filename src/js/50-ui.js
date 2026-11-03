@@ -310,11 +310,13 @@ const UI = (() => {
   }
   function openHelp() {
     const K = [['/', 'Ricerca universale'], ['1 2 3', 'Globo 3D / 2.5D / 2D'], ['L', 'Layer'], ['S', 'Stato feed'], ['B', 'Briefing'], ['T', 'Voce on/off'], ['F', 'Mappa a schermo intero'], ['H', 'Vista orbitale'],
-      ['R', 'Rotazione automatica'], ['G', 'La mia posizione'], ['V', 'Cambia visore (NRM/NVG/FLIR/CRT)'], ['A', 'Aerei on/off'], ['Esc', 'Chiudi / smetti di seguire'], ['?', 'Questo aiuto']];
+      ['R', 'Rotazione automatica'], ['G', 'La mia posizione'], ['V', 'Cambia visore (NRM/NVG/FLIR/CRT)'], ['A', 'Aerei on/off'], ['Esc', 'Chiudi / smetti di seguire'], ['?', 'Questo aiuto'], ['🛠', 'Ripristina la mappa']];
     modal('? AIUTO · OJO DE DEUS v100', [
       h('h4', null, 'Scorciatoie'), h('div', { class: 'sg g2' }, K.map(([k, d]) => h('div', { class: 'sc' }, h('kbd', null, k), ' ', d))),
       h('h4', null, 'Come si usa'),
       h('p', null, 'Clicca un oggetto sul globo (aereo, satellite, terremoto, notizia, base…) per il pannello bersaglio: puoi seguirlo, entrare in cockpit (aerei), vedere orbite e passaggi (satelliti). Clic su un punto vuoto = analisi del punto (meteo, quota, luogo, sole). Tasto destro = menu. Rotella/trascina = zoom e rotazione; Ctrl+trascina o tasto centrale = inclinazione 3D.'),
+      h('h4', null, 'Video, aerei o borse non arrivano? Mappa nera?'),
+      h('p', null, 'Apri OJO con l\'avviatore (AVVIA-OJO.bat su Windows, ojo-server.py su Mac/Linux): serve la pagina su http://localhost con un proxy integrato. Se la mappa è nera premi 🛠 o scrivi “reset” nel terminale. ', h('a', { href: '#', onclick: e => { e.preventDefault(); howToServe(); } }, 'Istruzioni dettagliate')),
       h('h4', null, 'Onestà dei dati'),
       h('p', null, 'LIVE = dato reale da API pubblica. CALC = calcolato da dati reali (orbite SGP4, indice OJO, sole). REF = riferimento statico pubblico. STIMA = area indicativa. Molti voli militari non trasmettono ADS-B: l\'assenza di un aereo non significa che non ci sia.'),
       h('h4', null, 'Fonti'),
@@ -354,7 +356,10 @@ const UI = (() => {
     $('ac-list').replaceChildren(...(f.length ? f.map(a => { const c = DATA.AC_CLASS[a.cls] || DATA.AC_CLASS.civil; return h('div', { class: 'row', onclick: () => select({ kind: 'ac', id: a.hex }) },
       h('span', { class: 'row-ico', style: `color:${a.emerg ? '#ff2244' : c.col}` }, a.emerg ? '🆘' : c.icon),
       h('div', { class: 'row-info' }, h('div', { class: 'row-name', style: `color:${a.emerg ? '#ff6680' : c.col}` }, a.cs || a.hex.toUpperCase()), h('div', { class: 'row-sub' }, `${a.emerg || c.label} · ${a.type || '?'}${a.reg ? ' · ' + a.reg : ''}`)),
-      h('span', { class: 'row-r' }, Fmt.n(a.altFt) + ' ft', h('div', { class: 'row-sub' }, Fmt.n(a.gs) + ' kt'))); }) : [h('div', { class: 'empty' }, S.acList.length ? 'Nessun aereo con questo filtro' : 'In attesa dei dati ADS-B…')]));
+      h('span', { class: 'row-r' }, Fmt.n(a.altFt) + ' ft', h('div', { class: 'row-sub' }, Fmt.n(a.gs) + ' kt'))); }) : [S.acList.length ? h('div', { class: 'empty' }, 'Nessun aereo con questo filtro')
+      : Health.status('adsb') === 'err' ? h('div', { class: 'empty', style: 'text-align:left;color:var(--orn)' }, '⚠ Le fonti ADS-B non permettono la lettura diretta dal browser e i proxy pubblici ora non rispondono. ',
+        h('a', { href: '#', onclick: e => { e.preventDefault(); howToServe(); } }, 'Apri OJO con l\'avviatore (proxy integrato)'), ' oppure imposta un proxy personale in ⚙.')
+      : h('div', { class: 'empty' }, 'In attesa dei dati ADS-B…')]));
   }
   function renderNuke() {
     $('nuke-list').replaceChildren(...DATA.NUCLEAR.map((p, i) => { const [bc] = p.risk === 'CRIT' ? ['b-crit'] : p.risk === 'HIGH' ? ['b-high'] : p.risk === 'MED' ? ['b-med'] : ['b-low'];
@@ -513,6 +518,27 @@ const UI = (() => {
   const tvList = () => Store.get('tvList') || DATA.TV;
   const camList = () => Store.get('camList') || DATA.WEBCAMS;
   let tvActive = null;
+  const FROM_FILE = location.protocol === 'file:';
+  const ytPage = c => c.video ? `https://www.youtube.com/watch?v=${c.video}` : c.ch ? `https://www.youtube.com/channel/${c.ch}/live` : `https://www.youtube.com/watch?v=${c.yt}`;
+  function ytPopup(c) { const w = window.open(ytPage(c), 'ojo-yt', 'popup,width=1000,height=600'); if (!w) window.open(ytPage(c), '_blank', 'noopener'); }
+  function fileNotice(ph, c, name) {
+    ph.classList.remove('hidden');
+    ph.replaceChildren(h('div', { style: 'font-size:22px' }, '⚠'),
+      h('div', null, h('b', null, 'YouTube blocca i video nelle pagine aperte come file'), ' (Errore 153). ', name, ' è stato aperto in una finestra a parte.'),
+      h('div', null, h('button', { class: 'pl-btn', type: 'button', onclick: () => ytPopup(c) }, '▶ RIAPRI IN FINESTRA'), ' ', h('button', { class: 'pl-btn', type: 'button', onclick: howToServe }, 'ℹ COME RISOLVERE')));
+  }
+  function howToServe() {
+    modal('ℹ VIDEO, AEREI E BORSE: APRI OJO CON L\'AVVIATORE', [
+      h('p', null, 'Quando apri ', h('code', null, 'index.html'), ' con un doppio clic, il browser lo tratta come “file” e: YouTube rifiuta i video (Errore 153) e varie fonti (aerei ADS-B, borse) non si possono leggere.'),
+      h('h4', null, 'Soluzione 1 — Windows (consigliata)'),
+      h('p', null, 'Metti ', h('b', null, 'AVVIA-OJO.bat'), ' nella stessa cartella di index.html e fai doppio clic. Si apre il browser su ', h('code', null, 'http://localhost:8765'), ' con un proxy integrato: video, notizie, aerei e borse funzionano. Se Windows mostra “PC protetto”, clicca “Ulteriori informazioni → Esegui comunque”.'),
+      h('h4', null, 'Soluzione 2 — Mac / Linux'),
+      h('p', null, 'Nella cartella di index.html: ', h('code', null, 'python3 ojo-server.py')),
+      h('h4', null, 'Soluzione 3 — online'),
+      h('p', null, 'Su GitHub: Settings → Pages → Branch ', h('code', null, 'claude/happy-tesla-ov2h7v'), ' → cartella /root → Save. Dopo un minuto OJO è su https://maikbarre2401-svg.github.io/gioco/ (video OK; per aerei e borse affidabili aggiungi il proxy personale in ⚙).'),
+      h('p', null, 'File scaricabili dal repository: ', h('a', { href: 'https://github.com/maikbarre2401-svg/gioco/tree/claude/happy-tesla-ov2h7v', target: '_blank', rel: 'noopener' }, 'github.com/maikbarre2401-svg/gioco'))
+    ], [h('button', { class: 'btn', type: 'button', onclick: closeModal }, 'OK')]);
+  }
   const tvURL = (c, mute = 1) => c.video ? `https://www.youtube.com/embed/${c.video}?autoplay=1&mute=${mute}&rel=0&playsinline=1` : `https://www.youtube.com/embed/live_stream?channel=${c.ch}&autoplay=1&mute=${mute}&rel=0&playsinline=1`;
   function buildTV() {
     const grids = { news: $('tv-grid-news'), war: $('tv-grid-war'), sci: $('tv-grid-sci') };
@@ -523,7 +549,9 @@ const UI = (() => {
     const c = tvList().find(x => x.id === id); if (!c) return false;
     tvActive = id;
     document.querySelectorAll('.tv-btn').forEach(b => b.classList.toggle('act', b.dataset.tv === id));
-    $('tv-ph').classList.add('hidden'); setText('tv-name', `${c.flag || ''} ${c.label}`);
+    setText('tv-name', `${c.flag || ''} ${c.label}`);
+    if (FROM_FILE) { ytPopup(c); fileNotice($('tv-ph'), c, c.label); return true; }
+    $('tv-ph').classList.add('hidden');
     $('tv-iframe').src = tvURL(c, 1);
     Toast.show(`📺 ${c.label} (audio disattivato: attivalo dal player)`, 'ok');
     return true;
@@ -550,9 +578,11 @@ const UI = (() => {
     const c = camList()[i]; if (!c) return false;
     camActive = i;
     document.querySelectorAll('.wc-m').forEach(b => b.classList.toggle('act', +b.dataset.cam === i));
-    $('wc-ph').classList.add('hidden'); setText('wc-name', `${c.flag || ''} ${c.city}`);
-    $('wc-iframe').src = `https://www.youtube.com/embed/${c.yt}?autoplay=1&mute=1&rel=0&playsinline=1`;
+    setText('wc-name', `${c.flag || ''} ${c.city}`);
     if (c.lat || c.lon) MapCtl.flyTo(c.lat, c.lon, 6000, { pitch: -28, heading: 30 });
+    if (FROM_FILE) { ytPopup(c); fileNotice($('wc-ph'), c, 'La webcam'); return true; }
+    $('wc-ph').classList.add('hidden');
+    $('wc-iframe').src = `https://www.youtube.com/embed/${c.yt}?autoplay=1&mute=1&rel=0&playsinline=1`;
     return true;
   }
   function setWindy(overlay, lat, lon) {
@@ -562,6 +592,7 @@ const UI = (() => {
     $('windy-frame').src = `https://embed.windy.com/embed2.html?lat=${lat.toFixed(2)}&lon=${lon.toFixed(2)}&detailLat=${lat.toFixed(2)}&detailLon=${lon.toFixed(2)}&zoom=${z}&level=surface&overlay=${overlay}&product=ecmwf&menu=&message=true&marker=true&calendar=now&type=map&location=coordinates&metricWind=km%2Fh&metricTemp=%C2%B0C&radarRange=-1`;
   }
   function openMedia(kind) {
+    if (FROM_FILE) { howToServe(); return; }
     const m = $('media-modal'); m.classList.add('open');
     const isTV = kind === 'tv', list = isTV ? tvList() : camList();
     setText('media-title', isTV ? '📺 LIVE TV · YouTube' : '📹 WEBCAM');
@@ -590,6 +621,8 @@ const UI = (() => {
     spin: () => { toggleSpin(); return 'spin ' + (MapCtl.engine?.spin ? 'on' : 'off'); },
     tts: () => { TTS.toggle(); return 'voce ' + (TTS.enabled ? 'on' : 'off'); },
     me: () => { locateMe().then(l => l && MapCtl.flyTo(l.lat, l.lon, 80000, { pitch: -45 })); return 'localizzo…'; },
+    reset: () => { resetMap(); return 'mappa ripristinata'; },
+    diag: () => { const d = MapCtl.engine?.diag; return d ? JSON.stringify(d) : 'motore 2D'; },
     clear: () => '__CLEAR__'
   };
   async function runCmd(raw) {
@@ -674,6 +707,13 @@ const UI = (() => {
     const on = force ?? !MapCtl.engine?.spin; MapCtl.engine?.setSpin(on);
     $('btn-spin').classList.toggle('act', on);
   }
+  function resetMap() {
+    for (const k of ['photo3d', 'osm3d']) if (MapCtl.isOn(k)) MapCtl.setLayer(k, false);
+    setVis('nrm'); $('exag').value = 1.5; setText('exag-v', '1.5×');
+    document.querySelectorAll('[data-scene]').forEach(b => b.classList.toggle('act', b.dataset.scene === '3d'));
+    MapCtl.engine?.resetMap?.();
+    Toast.show('🛠 Mappa ripristinata: satellite, terreno, vista orbitale', 'ok');
+  }
   function togglePanel(id) { const p = $(id); p.classList.toggle('open'); if (id === 'health-panel') Health.render(); $(id === 'layer-panel' ? 'btn-layers' : 'btn-health').classList.toggle('act', p.classList.contains('open')); }
 
   /* ═════ EVENTI ═════ */
@@ -696,6 +736,17 @@ const UI = (() => {
     on('btn-brief', openBriefing); on('threat-badge', openBriefing); on('btn-settings', openSettings); on('btn-help', openHelp);
     on('btn-tts', () => TTS.toggle()); on('btn-full', () => { $('app').classList.toggle('mapfull'); window.dispatchEvent(new Event('resize')); });
     on('btn-home', () => MapCtl.engine?.home()); on('btn-spin', () => toggleSpin());
+    on('btn-reset', resetMap);
+    Bus.on('map:warn', w => {
+      const el = $('map-warn');
+      if (!w) { el.classList.add('hidden'); return; }
+      el.replaceChildren(h('div', null, '⚠ ', w.text), h('div', { class: 'btns' },
+        h('button', { class: 'abtn', type: 'button', onclick: resetMap }, '🛠 RIPRISTINA MAPPA'),
+        h('button', { class: 'abtn', type: 'button', onclick: () => location.reload() }, '↻ RICARICA'),
+        MapCtl.is3d ? h('button', { class: 'abtn', type: 'button', onclick: () => { Store.set('force2d', true); location.reload(); } }, '▦ USA MAPPA 2D') : null,
+        h('button', { class: 'abtn', type: 'button', onclick: () => el.classList.add('hidden') }, '✕')));
+      el.classList.remove('hidden');
+    });
     on('btn-me', async () => { const l = S.user || await locateMe(); if (l) { MapCtl.flyTo(l.lat, l.lon, 60000, { pitch: -45 }); analyzePoint(l.lat, l.lon); } });
     on('base-sel', e => MapCtl.engine?.setBase(e.target.value), 'change');
     on('exag', e => { const v = +e.target.value; setText('exag-v', v + '×'); MapCtl.engine?.setExag(v); }, 'input');
@@ -802,7 +853,13 @@ const UI = (() => {
       'weather:Meteo Open-Meteo', 'geoip:GeoIP / DNS', 'osm3d:Edifici 3D (ion)', 'photo3d:Città 3D (ion)'].forEach(s => { const [id, l] = s.split(':'); Health.register(id, l); });
     if (!ion) { Health.set('osm3d', 'key', 'serve token Cesium ion'); Health.set('photo3d', 'key', 'serve token Cesium ion'); }
     Health.set('weather', 'wait', 'su richiesta'); Health.set('geoip', 'wait', 'su richiesta');
+    Health.register('imagery', 'Immagini del globo'); Health.register('proxy', 'Proxy CORS');
     bind(); clock(); setInterval(clock, 1000);
+    const local = await Net.detectLocal();
+    const pm = Net.proxyMode;
+    Health.set('proxy', pm === 'pubblici' ? 'wait' : 'live', pm === 'locale' ? 'proxy integrato dell\'avviatore (affidabile)' : pm === 'personale' ? 'proxy personale (⚙)' : 'solo proxy pubblici gratuiti (lenti/instabili)');
+    if (local) log('Proxy locale dell\'avviatore attivo: notizie, aerei e borse senza blocchi CORS', 'ok');
+    else if (FROM_FILE) log('Aperto da file: i video YouTube si apriranno in una finestra separata', 'warn');
     buildTV(); buildCams(); renderNuke(); renderMarkets(); buildLayers();
     prog(10); log('Interfaccia pronta');
     log('Caricamento motore 3D CesiumJS (≈ 4 MB, la prima volta può richiedere qualche secondo)…'); prog(20);
@@ -846,6 +903,11 @@ const UI = (() => {
   }
   function initBoot() {
     $('cfg-ion').value = Settings.get('ionToken') || ''; $('cfg-firms').value = Settings.get('firmsKey') || '';
+    if (FROM_FILE) {
+      const b = $('boot-file'); b.classList.remove('hidden');
+      b.replaceChildren(h('b', null, '⚠ Hai aperto la pagina come file.'), ' Il globo funziona, ma YouTube blocca i video (Errore 153) e alcune fonti (aerei, borse) possono non arrivare. Per avere tutto: su Windows fai doppio clic su ',
+        h('code', null, 'AVVIA-OJO.bat'), ' (nella stessa cartella di index.html); su Mac/Linux esegui ', h('code', null, 'python3 ojo-server.py'), '.');
+    }
     $('boot-start').addEventListener('click', start);
     ['cfg-ion', 'cfg-firms'].forEach(id => $(id).addEventListener('keydown', e => { if (e.key === 'Enter') start(); }));
     if (Settings.get('autostart') && Store.get('booted')) {

@@ -85,12 +85,22 @@ const Map2D = (() => {
     if (ref.kind === 'sat') { const s = satData.find(x => x.id === ref.id); return s ? [s.lat, s.lon] : null; }
     return null;
   }
+  const tried = new Set();
   function setBase(key) {
     const b = BASES[key] || BASES.sat;
     const t = L.tileLayer(b[1], { subdomains: 'abcd', maxZoom: 19, maxNativeZoom: b[3], attribution: b[2] });
+    let ok = 0, err = 0; t.on('tileload', () => ok++); t.on('tileerror', () => err++);
     t.addTo(map); t.bringToBack();
     if (tiles.base) { const old = tiles.base; setTimeout(() => map.removeLayer(old), 800); }
     tiles.base = t; Settings.set('base', key);
+    setTimeout(() => {   // autodiagnosi: se nessun tile arriva, prova un'altra mappa
+      if (tiles.base !== t) return;
+      if (ok) { Health.ok('imagery', { via: b[0], items: ok }); return; }
+      tried.add(key); const next = ['sat', 'topo', 'dark', 'osm'].find(k => !tried.has(k));
+      Health.fail('imagery', `${b[0]}: ${err} tile falliti`);
+      if (next) { Toast.show(`⚠ Immagini "${b[0]}" non raggiungibili: passo a "${BASES[next][0]}"`, 'orn', 6000); setBase(next); }
+      else Bus.emit('map:warn', { text: 'Nessun server di mappe risponde: controlla connessione, firewall o blocco pubblicità.', retry: true });
+    }, 12000);
   }
   function getView() { if (!map) return null; const c = map.getCenter(); return { lat: c.lat, lon: ((c.lng + 540) % 360) - 180, alt: Geo.zoomToAlt(map.getZoom()), heading: 0, pitch: -90, centerOnGlobe: true }; }
 
@@ -155,6 +165,7 @@ const Map2D = (() => {
     setFollow(ref) { follow = ref; Bus.emit('follow', ref); }, setCockpit(ref) { Toast.show('ℹ Vista cockpit disponibile solo in 3D', 'orn'); this.setFollow(ref); },
     stopFollow() { follow = null; Bus.emit('follow', null); }, get following() { return follow; },
     home() { if (map) map.flyTo([30, 15], 2.5); },
+    resetMap() { if (!map) return; tried.clear(); setBase('sat'); this.setVisual('nrm'); map.flyTo([30, 15], 2.5); Bus.emit('map:warn', null); },
     terrainHeight() { return null; }, async sampleHeight() { return null; }
   };
 })();

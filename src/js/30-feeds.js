@@ -82,7 +82,7 @@ const ADSB = (() => {
     let lastErr;
     for (const name of pref[kind]) {
       try {
-        const r = await Net.get(urlFn(SRC[name]), { timeout: 12000, validate: d => d && Array.isArray(d.ac ?? d.aircraft) });
+        const r = await Net.get(urlFn(SRC[name]), { timeout: 12000, ptimeout: 25000, validate: d => d && Array.isArray(d.ac ?? d.aircraft) });
         // sposta in testa la fonte funzionante
         pref[kind] = [name, ...pref[kind].filter(n => n !== name)];
         used[kind] = name + (r.via !== 'diretto' ? ' (' + r.via + ')' : '');
@@ -102,7 +102,7 @@ const ADSB = (() => {
     const cost = bbox ? 1 : 4;
     if (!openSkyBudget(cost)) throw new Error('quota giornaliera OpenSky esaurita');
     const q = bbox ? `?lamin=${bbox[0]}&lomin=${bbox[1]}&lamax=${bbox[2]}&lomax=${bbox[3]}` : '';
-    const r = await Net.get('https://opensky-network.org/api/states/all' + q, { timeout: 20000, validate: d => d && 'states' in d });
+    const r = await Net.get('https://opensky-network.org/api/states/all' + q, { timeout: 25000, ptimeout: 40000, validate: d => d && 'states' in d });
     used.global = 'OpenSky' + (r.via !== 'diretto' ? ' (' + r.via + ')' : '');
     const now = Date.now();
     return (r.data.states || []).map(s => fromOpenSky(s, now));

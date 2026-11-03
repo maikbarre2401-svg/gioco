@@ -167,10 +167,21 @@ const Net = (() => {
     if (type === 'blob') return r.blob();
     return r.text();
   }
+  let localProxy = null;            // proxy integrato nell'avviatore AVVIA-OJO / ojo-server.py
+  async function detectLocal() {
+    if (!/^https?:$/.test(location.protocol)) return false;
+    try {
+      const r = await raw(location.origin + '/ojo-ping', 2500, { cache: 'no-store' });
+      const t = await r.text();
+      if (/local-proxy/.test(t)) { localProxy = location.origin + '/ojo-proxy?url={url}'; return true; }
+    } catch {}
+    return false;
+  }
   function customProxy() {
-    const p = (Settings.get('proxy') || '').trim();
+    const own = (Settings.get('proxy') || '').trim();
+    const p = own || localProxy;
     if (!p) return null;
-    return { name: 'personale', f: u => p.includes('{url}') ? p.replace('{url}', encodeURIComponent(u)) : p + encodeURIComponent(u) };
+    return { name: own ? 'personale' : 'locale', f: u => p.includes('{url}') ? p.replace('{url}', encodeURIComponent(u)) : p + encodeURIComponent(u) };
   }
   function proxyList() {
     const list = PROXIES.slice().sort((a, b) => (fails.get(a.name) || 0) - (fails.get(b.name) || 0));
@@ -201,7 +212,7 @@ const Net = (() => {
     const tryProxies = async () => {
       for (const p of proxyList()) {
         try {
-          const r = await raw(p.f(url), timeout + 3000);
+          const r = await raw(p.f(url), opt.ptimeout || timeout + 3000);
           const d = check(await body(r, type));
           fails.set(p.name, 0); stats.proxy++;
           return { data: d, via: 'proxy ' + p.name, ms: Math.round(performance.now() - t0) };
@@ -229,7 +240,8 @@ const Net = (() => {
       } catch { stats.fail++; throw new Error(errors.join(' | ')); }
     }
   }
-  return { get, raw, get stats() { return stats; }, forget() { hostMode.clear(); saveHost(); } };
+  return { get, raw, detectLocal, get stats() { return stats; }, forget() { hostMode.clear(); saveHost(); },
+    get proxyMode() { return (Settings.get('proxy') || '').trim() ? 'personale' : localProxy ? 'locale' : 'pubblici' } };
 })();
 
 /* ═══ HEALTH: stato onesto di ogni feed ═══ */

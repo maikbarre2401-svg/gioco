@@ -2,13 +2,22 @@
 
 Monitor di intelligence globale in un'unica pagina web, con **globo 3D vero** (CesiumJS) e **solo dati pubblici reali**, etichettati onestamente.
 
-**Apri `index.html`** (è un file unico, autonomo). Consigliato servirlo via http(s), per esempio con GitHub Pages o con:
+## Come aprirlo (importante)
 
-```bash
-python3 -m http.server 8000
-```
+`index.html` è un file unico, ma **se lo apri con un doppio clic** il browser lo tratta come “file”: il globo funziona, però YouTube rifiuta i video (**Errore 153**) e varie fonti (aerei ADS-B, borse) non si possono leggere. Per avere tutto:
 
-e poi vai su `http://localhost:8000`. Aperto come file locale (`file://`) funziona quasi tutto, ma i video YouTube possono mostrare “Errore 153” perché YouTube richiede un'origine web.
+| Sistema | Cosa fare |
+|---|---|
+| **Windows** | Metti [`AVVIA-OJO.bat`](AVVIA-OJO.bat) nella **stessa cartella** di `index.html` e fai doppio clic. Si apre `http://localhost:8765` con un **proxy integrato** (nessuna installazione: usa PowerShell di Windows). Se compare “Windows ha protetto il PC”: *Ulteriori informazioni → Esegui comunque*. |
+| **Mac / Linux** (o Windows con Python) | Nella cartella di `index.html`: `python3 ojo-server.py` ([`ojo-server.py`](ojo-server.py)) |
+| **Online** | GitHub → *Settings → Pages → Branch* `claude/happy-tesla-ov2h7v`, cartella `/ (root)` → *Save*. Dopo un minuto: `https://maikbarre2401-svg.github.io/gioco/`. Video OK; per aerei e borse affidabili aggiungi il proxy personale (vedi sotto). |
+
+L'avviatore fa da proxy **solo** verso i siti usati da OJO e ascolta solo su `localhost`. L'app lo rileva da sola (📊 Stato feed → *Proxy CORS: locale*).
+
+### Se la mappa è nera
+- Premi **🛠** (in alto sulla mappa) oppure scrivi `reset` nel terminale: spegne città/edifici 3D, rimette satellite e terreno.
+- L'app ora si **autodiagnostica**: se le immagini satellitari non arrivano passa da sola a un'altra mappa; se il terreno ion non risponde usa quello gratuito; le “città fotorealistiche” nascondono il globo solo quando i loro tile arrivano davvero, altrimenti si disattivano da sole.
+- Il terminale `diag` mostra quanti tile sono arrivati da ogni fonte.
 
 ---
 
@@ -85,7 +94,9 @@ src/js/25-map2d.js    ← mappa 2D di riserva + gestione layer
 src/js/30-feeds.js    ← tutti i feed di dati reali
 src/js/40-intel.js    ← indice, zone calde, anomalie, briefing
 src/js/50-ui.js       ← interfaccia, pannelli, ricerca, terminale, avvio
-proxy/cloudflare-worker.js ← proxy CORS personale opzionale
+AVVIA-OJO.bat         ← avviatore Windows con proxy integrato (PowerShell, nessuna installazione)
+ojo-server.py         ← avviatore Mac/Linux con proxy integrato (Python 3)
+proxy/cloudflare-worker.js ← proxy CORS personale online (opzionale)
 tests/                ← test end-to-end (Chromium headless + API simulate)
 ```
 Dopo aver modificato i file in `src/`:

@@ -118,6 +118,54 @@ const Globe3D = (() => {
     return new C.UrlTemplateImageryProvider({ url, maximumLevel: max, subdomains: sub ? sub.split('') : undefined, credit: new C.Credit(credit, false) });
   }
 
+  /* ── autodiagnosi: conta i tile riusciti/falliti e ripiega da solo ── */
+  const stats = {};
+  function trackImagery(provider, key) {
+    const st = stats[key] = { ok: 0, err: 0, t0: Date.now() };
+    const orig = provider.requestImage.bind(provider);
+    provider.requestImage = (...a) => { const p = orig(...a); if (p && typeof p.then === 'function') p.then(v => { if (v) st.ok++; }, () => { st.err++; }); return p; };
+    return provider;
+  }
+  function trackTerrain(tp, key) {
+    const st = stats[key] = { ok: 0, err: 0, t0: Date.now() };
+    const orig = tp.requestTileGeometry.bind(tp);
+    tp.requestTileGeometry = (...a) => { const p = orig(...a); if (p && typeof p.then === 'function') p.then(() => { st.ok++; }, () => { st.err++; }); return p; };
+    return tp;
+  }
+  const BASE_CHAIN = ['sat', 'topo', 'dark', 'osm'];
+  const triedBase = new Set();
+  function watchBase(key) {
+    const st = stats['base:' + key]; if (!st) return;
+    clearTimeout(scratch.baseWd);
+    const step = n => { scratch.baseWd = setTimeout(() => {
+      if (state.base !== key) return;
+      if (st.ok > 0) { Health.ok('imagery', { via: BASES[key].name, items: st.ok }); Bus.emit('map:warn', null); return; }
+      if (st.err >= 4 || n >= 4) {
+        triedBase.add(key);
+        const next = BASE_CHAIN.find(k => !triedBase.has(k));
+        Health.fail('imagery', `${BASES[key].name}: ${st.err} tile falliti`);
+        if (next) { Toast.show(`⚠ Immagini "${BASES[key].name}" non raggiungibili: passo a "${BASES[next].name}"`, 'orn', 6000); setBase(next); }
+        else Bus.emit('map:warn', { text: 'Nessun server di mappe risponde: controlla la connessione, un firewall/antivirus o un blocco pubblicità che filtra i tile.', retry: true });
+        return;
+      }
+      step(n + 1);
+    }, 5000); };
+    step(0);
+  }
+  function watchTerrain(key) {
+    const st = stats[key]; if (!st) return;
+    clearTimeout(scratch.terWd);
+    scratch.terWd = setTimeout(() => {
+      if (scratch.terKey !== key) return;
+      if (st.ok > 0) { Health.ok('terrain', { via: key === 'ion' ? 'Cesium World Terrain (ion)' : 'AWS Terrain Tiles', items: st.ok }); return; }
+      if (st.err >= 2 || Date.now() - st.t0 > 14000) {
+        Health.fail('terrain', `${key}: nessun tile di terreno ricevuto`);
+        if (key === 'ion') { Toast.show('⚠ Terreno ion non disponibile (token?): uso il terreno gratuito', 'orn', 6000); setTerrain(true, 'free'); }
+        else { Toast.show('⚠ Terreno 3D non raggiungibile: globo liscio', 'orn'); viewer.terrainProvider = new C.EllipsoidTerrainProvider(); scratch.terKey = 'none'; }
+      }
+    }, 9000);
+  }
+
   /* ── Terreno 3D gratuito: tile Terrarium (AWS Open Data) decodificati in heightmap ── */
   function terrariumProvider() {
     const W = 33, Hh = 33, MAXZ = 13;
@@ -252,7 +300,7 @@ const Globe3D = (() => {
     g.showGroundAtmosphere = true; g.depthTestAgainstTerrain = false;
     g.lightingFadeOutDistance = 1.2e6; g.lightingFadeInDistance = 4.5e6;
     g.nightFadeOutDistance = 1.2e6; g.nightFadeInDistance = 4.5e6;
-    g.baseColor = C.Color.fromCssColorString('#020a04');
+    g.baseColor = C.Color.fromCssColorString('#0b2533');
     g.maximumScreenSpaceError = 1.8; g.tileCacheSize = 200;
     scene.skyAtmosphere.show = true; scene.fog.enabled = true; scene.fog.density = 2.0e-4;
     scene.screenSpaceCameraController.minimumZoomDistance = 30;
@@ -299,6 +347,7 @@ const Globe3D = (() => {
       if (n - fpsT > 1000) { setText('sb-fps', Math.round(frames * 1000 / (n - fpsT))); frames = 0; fpsT = n; }
     });
     scene.renderError.addEventListener((s, err) => { console.error('render', err); Bus.emit('engine:fatal', err); });
+    scene.canvas.addEventListener('webglcontextlost', e => { e.preventDefault(); Bus.emit('engine:fatal', new Error('contesto WebGL perso')); });
     camera.percentageChanged = 0.02;
     camera.changed.addEventListener(() => Bus.emit('map:view', getView()));
     setInterval(deadReckon, 500);
@@ -330,39 +379,72 @@ const Globe3D = (() => {
     try {
       let url;
       if (b.probe) { url = await firstOk(b.probe); if (!url) { Toast.show('⚠ ' + b.name + ': servizio NASA non raggiungibile ora', 'orn'); if (!imagery.base) return setBase('sat'); return; } }
-      const layer = b.ion ? C.ImageryLayer.fromProviderAsync(b.make()) : new C.ImageryLayer(b.make(url));
+      const layer = b.ion ? C.ImageryLayer.fromProviderAsync(b.make()) : new C.ImageryLayer(trackImagery(b.make(url), 'base:' + key));
       viewer.imageryLayers.add(layer, 0);
       const old = imagery.base; imagery.base = layer;
       if (old) setTimeout(() => viewer.imageryLayers.remove(old, true), 1500);
       state.base = key; Settings.set('base', key); scene.requestRender();
+      if (!b.ion) watchBase(key);
+      const sel = $('base-sel'); if (sel && sel.value !== key) sel.value = key;
     } catch (e) { console.warn(e); Toast.show('⚠ Base non disponibile', 'orn'); }
   }
-  async function setTerrain(on) {
+  async function setTerrain(on, force) {
     if (!ready) return;
     try {
-      if (!on) { viewer.terrainProvider = new C.EllipsoidTerrainProvider(); Health.set('terrain', 'off', 'disattivato'); return; }
-      if (C.Ion.defaultAccessToken && Settings.get('ionToken')) {
-        viewer.terrainProvider = await C.createWorldTerrainAsync({ requestVertexNormals: true, requestWaterMask: true });
-        Health.ok('terrain', { via: 'Cesium World Terrain (ion)' });
+      if (!on) { viewer.terrainProvider = new C.EllipsoidTerrainProvider(); scratch.terKey = 'none'; Health.set('terrain', 'off', 'disattivato'); return; }
+      if (force !== 'free' && C.Ion.defaultAccessToken && Settings.get('ionToken')) {
+        scratch.terKey = 'ion';
+        const tp = await C.createWorldTerrainAsync({ requestVertexNormals: true, requestWaterMask: true });
+        if (scratch.terKey !== 'ion') return;
+        viewer.terrainProvider = trackTerrain(tp, 'ion'); watchTerrain('ion');
+        Health.set('terrain', 'wait', 'Cesium World Terrain: caricamento…');
       } else {
-        viewer.terrainProvider = terrariumProvider();
+        scratch.terKey = 'free';
+        viewer.terrainProvider = trackTerrain(terrariumProvider(), 'free'); watchTerrain('free');
         Health.set('terrain', 'wait', 'caricamento tile…');
       }
-    } catch (e) { console.warn(e); Health.fail('terrain', e); viewer.terrainProvider = new C.EllipsoidTerrainProvider(); }
+    } catch (e) {
+      console.warn(e); Health.fail('terrain', e);
+      if (force !== 'free') { Toast.show('⚠ Terreno ion rifiutato (' + (e.message || 'token non valido?') + '): uso il terreno gratuito', 'orn', 7000); return setTerrain(true, 'free'); }
+      viewer.terrainProvider = new C.EllipsoidTerrainProvider(); scratch.terKey = 'none';
+    }
   }
   async function setTileset(key, on) {
     if (!ready) return false;
     if (!C.Ion.defaultAccessToken || !Settings.get('ionToken')) { Toast.show('⚠ Edifici 3D: serve un token Cesium ion (⚙)', 'orn'); return false; }
     try {
+      const hid = key === 'osm' ? 'osm3d' : 'photo3d';
       if (on && !tilesets[key]) {
-        tilesets[key] = key === 'osm' ? await C.createOsmBuildingsAsync() : await C.createGooglePhotorealistic3DTileset();
-        scene.primitives.add(tilesets[key]);
+        const ts = key === 'osm' ? await C.createOsmBuildingsAsync() : await C.createGooglePhotorealistic3DTileset();
+        ts._ok = 0; ts._err = 0;
+        ts.tileLoad.addEventListener(() => { ts._ok++; if (ts._ok === 1) Health.ok(hid, { via: 'Cesium ion' }); });
+        ts.tileFailed.addEventListener(() => { ts._err++; });
+        // il globo si nasconde SOLO quando i tile fotorealistici arrivano davvero
+        if (key === 'photo') ts.initialTilesLoaded.addEventListener(() => { if (ts.show && ts._ok > 0) { scene.globe.show = false; scene.requestRender(); } });
+        tilesets[key] = ts; scene.primitives.add(ts);
       }
-      if (tilesets[key]) tilesets[key].show = on;
-      if (key === 'photo') scene.globe.show = !on;
-      Health.ok(key === 'osm' ? 'osm3d' : 'photo3d', { via: 'Cesium ion' });
+      const ts = tilesets[key];
+      if (ts) ts.show = on;
+      if (key === 'photo' && !on) scene.globe.show = true;
+      if (on && ts) {
+        Health.set(hid, 'wait', 'caricamento tile 3D…');
+        clearTimeout(ts._wd);
+        ts._wd = setTimeout(() => {
+          if (!ts.show || ts._ok > 0) return;
+          ts.show = false; scene.globe.show = true; scene.requestRender();
+          Health.fail(hid, `nessun tile ricevuto (${ts._err} errori): asset non abilitato nel tuo account ion o rete bloccata`);
+          Toast.show(`⚠ ${key === 'osm' ? 'Edifici 3D' : 'Città fotorealistiche'} non disponibili con questo token: disattivato`, 'orn', 7000);
+          MapCtl.setLayer(hid, false);
+        }, 15000);
+      }
+      scene.requestRender();
       return true;
-    } catch (e) { console.warn(e); Health.fail(key === 'osm' ? 'osm3d' : 'photo3d', e); Toast.show('⚠ Tileset 3D non disponibile: ' + e.message, 'orn'); return false; }
+    } catch (e) {
+      console.warn(e); scene.globe.show = true; Health.fail(key === 'osm' ? 'osm3d' : 'photo3d', e);
+      Toast.show('⚠ Tileset 3D non disponibile: ' + (e.message || e), 'orn', 7000);
+      setTimeout(() => MapCtl.setLayer(key === 'osm' ? 'osm3d' : 'photo3d', false), 0);
+      return false;
+    }
   }
 
   /* ── input ── */
@@ -776,8 +858,19 @@ const Globe3D = (() => {
     finally { scene.requestRender(); }
   }
 
+  function resetMap() {
+    if (!ready) return;
+    stopFollow(); triedBase.clear();
+    for (const k of ['osm', 'photo']) if (tilesets[k]) tilesets[k].show = false;
+    scene.globe.show = true; setVisual('nrm'); scene.verticalExaggeration = state.exag = 1.5; Settings.set('exag', 1.5);
+    if (scene.mode !== C.SceneMode.SCENE3D) scene.morphTo3D(0);
+    setBase('sat'); setTerrain(Settings.get('terrain') !== false);
+    camera.flyTo({ destination: cart(35, 15, 2.1e7), duration: 1.5 });
+    Bus.emit('map:warn', null);
+  }
   return {
-    kind: '3d', get ready() { return ready; }, get viewer() { return viewer; }, get C() { return C; },
+    kind: '3d', get ready() { return ready; }, get viewer() { return viewer; }, get C() { return C; }, resetMap,
+    get diag() { return { stats, base: state.base, terrain: scratch.terKey, globeShown: scene?.globe.show, tilesLoaded: scene?.globe.tilesLoaded }; },
     bases: () => Object.entries(BASES).map(([k, b]) => ({ key: k, name: b.name, ion: !!b.ion })),
     init, render, setLayer, flyTo, getView, setScene, setBase, setVisual,
     setExag(v) { state.exag = v; if (ready) { scene.verticalExaggeration = v; scene.requestRender(); } Settings.set('exag', v); },
