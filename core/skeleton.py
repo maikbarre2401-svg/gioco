@@ -1,4 +1,4 @@
-"""COCO-17 skeleton: color-coded limbs, glow effect, smooth joints, head circle."""
+"""COCO-17 skeleton: color-coded limbs, glow effect, smooth joints, head circle, motion trails."""
 
 from __future__ import annotations
 
@@ -43,6 +43,8 @@ _KP_ARM_L = {5, 7, 9}
 _KP_ARM_R = {6, 8, 10}
 _KP_LEG_L = {11, 13, 15}
 _KP_LEG_R = {12, 14, 16}
+
+_EXTREMITIES = {9, 10, 15, 16}
 
 
 def _bone_zone_bgr(i: int, j: int) -> Tuple[int, int, int]:
@@ -122,7 +124,6 @@ def _glow_color(bgr: Tuple[int, int, int], alpha: float) -> Tuple[int, int, int]
 def bone_point(
     kps: np.ndarray, name: str, box: Tuple[float, float, float, float]
 ) -> Optional[Tuple[float, float]]:
-    """Return named skeletal point from keypoints, or None if confidence too low."""
     if kps is None or kps.shape[0] < 17:
         return None
 
@@ -163,7 +164,6 @@ def bone_point(
 def heuristic_point(
     name: str, box: Tuple[float, float, float, float]
 ) -> Tuple[float, float]:
-    """Return a named point from box geometry when pose is unavailable."""
     x1, y1, x2, y2 = box
     cx = (x1 + x2) / 2.0
     bh = y2 - y1
@@ -173,7 +173,6 @@ def heuristic_point(
 
 
 def head_radius(kps: np.ndarray, box: Tuple[float, float, float, float], min_conf: float = 0.3) -> float:
-    """Estimate head radius from ear-to-ear distance or box width."""
     if kps is not None and kps.shape[0] >= 5:
         if float(kps[3, 2]) >= min_conf and float(kps[4, 2]) >= min_conf:
             dx = float(kps[3, 0]) - float(kps[4, 0])
@@ -183,6 +182,25 @@ def head_radius(kps: np.ndarray, box: Tuple[float, float, float, float], min_con
     return max(8.0, bw * 0.14)
 
 
+def _spine_midpoint(kps: np.ndarray, min_conf: float) -> Optional[Tuple[float, float]]:
+    """Compute spine midpoint (between shoulders and hips) for torso centre."""
+    s5 = float(kps[5, 2]) >= min_conf
+    s6 = float(kps[6, 2]) >= min_conf
+    h11 = float(kps[11, 2]) >= min_conf
+    h12 = float(kps[12, 2]) >= min_conf
+    if (s5 or s6) and (h11 or h12):
+        sx = 0.0
+        sy = 0.0
+        sn = 0
+        for idx in (5, 6, 11, 12):
+            if float(kps[idx, 2]) >= min_conf:
+                sx += float(kps[idx, 0])
+                sy += float(kps[idx, 1])
+                sn += 1
+        return (sx / sn, sy / sn)
+    return None
+
+
 def draw(
     frame: np.ndarray,
     kps: np.ndarray,
@@ -190,37 +208,50 @@ def draw(
     th: int = 2,
     min_conf: float = 0.3,
 ) -> None:
-    """Draw color-coded skeleton with glow effect and head circle on frame."""
+    """Draw color-coded skeleton with layered glow, head circle, and confidence-scaled joints."""
     if kps is None or kps.shape[0] < 17:
         return
 
     overlay = frame.copy()
 
     for i, j in BONES:
-        if float(kps[i, 2]) < min_conf or float(kps[j, 2]) < min_conf:
+        ci = float(kps[i, 2])
+        cj = float(kps[j, 2])
+        if ci < min_conf or cj < min_conf:
             continue
         pt1 = (int(kps[i, 0]), int(kps[i, 1]))
         pt2 = (int(kps[j, 0]), int(kps[j, 1]))
         zone_c = _bone_zone_bgr(i, j)
-        glow = _glow_color(zone_c, 0.4)
-        cv2.line(overlay, pt1, pt2, glow, th + 4, cv2.LINE_AA)
+        conf_avg = (ci + cj) / 2.0
+        alpha_outer = 0.25 + 0.2 * conf_avg
+        cv2.line(overlay, pt1, pt2, _glow_color(zone_c, alpha_outer), th + 6, cv2.LINE_AA)
+        cv2.line(overlay, pt1, pt2, _glow_color(zone_c, 0.55), th + 3, cv2.LINE_AA)
         cv2.line(overlay, pt1, pt2, zone_c, th, cv2.LINE_AA)
 
     for k in range(17):
-        if float(kps[k, 2]) < min_conf:
+        conf = float(kps[k, 2])
+        if conf < min_conf:
             continue
         pt = (int(kps[k, 0]), int(kps[k, 1]))
         kc = _kp_color_bgr(k)
-        r = 4 if k in _KP_HEAD else 3
-        cv2.circle(overlay, pt, r + 2, _glow_color(kc, 0.3), -1, cv2.LINE_AA)
+        r = 5 if k in _KP_HEAD else (4 if k in _EXTREMITIES else 3)
+        conf_scale = 0.5 + 0.5 * min(1.0, conf)
+        glow_r = int(r * 1.8)
+        cv2.circle(overlay, pt, glow_r, _glow_color(kc, 0.2 * conf_scale), -1, cv2.LINE_AA)
+        cv2.circle(overlay, pt, r + 1, _glow_color(kc, 0.45 * conf_scale), -1, cv2.LINE_AA)
         cv2.circle(overlay, pt, r, kc, -1, cv2.LINE_AA)
-        cv2.circle(overlay, pt, max(1, r - 1), (255, 255, 255), -1, cv2.LINE_AA)
+        cv2.circle(overlay, pt, max(1, r - 2), (255, 255, 255), -1, cv2.LINE_AA)
 
     if float(kps[0, 2]) >= min_conf:
         nose = (int(kps[0, 0]), int(kps[0, 1]))
         hr = int(head_radius(kps, (0, 0, 100, 200), min_conf))
+        cv2.circle(overlay, nose, hr + 3, _glow_color(COLOR_HEAD_BGR, 0.2), 2, cv2.LINE_AA)
         cv2.circle(overlay, nose, hr, COLOR_HEAD_BGR, 2, cv2.LINE_AA)
-        cv2.circle(overlay, nose, hr + 2, _glow_color(COLOR_HEAD_BGR, 0.3), 2, cv2.LINE_AA)
+
+    spine = _spine_midpoint(kps, min_conf)
+    if spine is not None:
+        sp = (int(spine[0]), int(spine[1]))
+        cv2.circle(overlay, sp, 3, COLOR_TORSO_BGR, -1, cv2.LINE_AA)
 
     cv2.addWeighted(overlay, 0.85, frame, 0.15, 0, frame)
 
@@ -228,26 +259,30 @@ def draw(
 def draw_overlay_items(
     kps: np.ndarray, min_conf: float, box: Tuple[float, float, float, float]
 ) -> list:
-    """Build overlay draw items with per-zone colors, glow lines, and head circle."""
+    """Build overlay draw items with per-zone colors, layered glow lines, and head circle."""
     items: list = []
     if kps is None or kps.shape[0] < 17:
         return items
 
     for i, j in BONES:
-        if float(kps[i, 2]) < min_conf or float(kps[j, 2]) < min_conf:
+        ci = float(kps[i, 2])
+        cj = float(kps[j, 2])
+        if ci < min_conf or cj < min_conf:
             continue
         zone_hex = _bone_zone_hex(i, j)
-        glow_hex = _dim_hex(zone_hex, 0.45)
+        glow_hex = _dim_hex(zone_hex, 0.3)
+        mid_hex = _dim_hex(zone_hex, 0.6)
         x1, y1 = int(kps[i, 0]), int(kps[i, 1])
         x2, y2 = int(kps[j, 0]), int(kps[j, 1])
-        items.append(("line", x1, y1, x2, y2, glow_hex, 5))
+        items.append(("line", x1, y1, x2, y2, glow_hex, 7))
+        items.append(("line", x1, y1, x2, y2, mid_hex, 4))
         items.append(("line", x1, y1, x2, y2, zone_hex, 2))
 
     for k in range(17):
         if float(kps[k, 2]) < min_conf:
             continue
         kc = _kp_color_hex(k)
-        r = 5 if k in _KP_HEAD else 4
+        r = 6 if k in _KP_HEAD else (5 if k in _EXTREMITIES else 4)
         items.append(("dot", int(kps[k, 0]), int(kps[k, 1]), r, kc))
 
     if float(kps[0, 2]) >= min_conf:

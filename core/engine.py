@@ -29,6 +29,32 @@ from core.vision import Detection, Vision
 logger = logging.getLogger(__name__)
 
 
+class _BoxSmoother:
+    """Kalman-smooth bounding box coordinates to prevent jitter."""
+
+    def __init__(self) -> None:
+        self._axes = [Axis(process_noise=120.0, measurement_noise=8.0) for _ in range(4)]
+        self._valid = False
+
+    def reset(self) -> None:
+        for ax in self._axes:
+            ax._initialised = False
+        self._valid = False
+
+    def feed(self, box: Tuple[float, float, float, float], dt: float) -> Tuple[float, float, float, float]:
+        results = []
+        for ax, val in zip(self._axes, box):
+            ax.predict(dt)
+            results.append(ax.update(val))
+        self._valid = True
+        return (results[0], results[1], results[2], results[3])
+
+    def predict(self, dt: float) -> Optional[Tuple[float, float, float, float]]:
+        if not self._valid:
+            return None
+        return tuple(ax.predict(dt) for ax in self._axes)
+
+
 class _KpSmoother:
     """Per-keypoint Kalman smoothing for 17 COCO joints (x, y each)."""
 
@@ -79,6 +105,98 @@ class _KpSmoother:
         self._valid = True
         return out
 
+    def extrapolate(self, dt: float) -> Optional[np.ndarray]:
+        """Predict keypoint positions forward without a measurement (pure velocity extrapolation)."""
+        if not self._valid or self._last_kps is None:
+            return None
+        out = self._last_kps.copy()
+        for k in range(self._n):
+            if out[k, 2] > 0.1:
+                out[k, 0] = self._axes_x[k].lead(dt)
+                out[k, 1] = self._axes_y[k].lead(dt)
+        return out
+
+
+class _AsyncPose:
+    """Runs pose inference in a dedicated thread, decoupled from the engine tick."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._request_event = threading.Event()
+        self._stop = False
+        self._thread: Optional[threading.Thread] = None
+
+        self._req_frame: Optional[np.ndarray] = None
+        self._req_box: Optional[Tuple[float, float, float, float]] = None
+        self._req_stamp: float = 0.0
+
+        self._result_kps: Optional[np.ndarray] = None
+        self._result_stamp: float = 0.0
+        self._result_consumed: bool = True
+
+        self._vision: Optional[Vision] = None
+        self._busy = False
+
+    def start(self, vision: Vision) -> None:
+        self._vision = vision
+        self._stop = False
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop = True
+        self._request_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+            self._thread = None
+
+    def submit(self, frame: np.ndarray, box: Tuple[float, float, float, float]) -> None:
+        with self._lock:
+            if self._busy:
+                return
+            self._req_frame = frame
+            self._req_box = box
+            self._req_stamp = time.perf_counter()
+        self._request_event.set()
+
+    def poll(self) -> Tuple[Optional[np.ndarray], float, bool]:
+        """Return (keypoints, stamp, is_new). Non-blocking."""
+        with self._lock:
+            if not self._result_consumed and self._result_kps is not None:
+                self._result_consumed = True
+                return (self._result_kps.copy(), self._result_stamp, True)
+            return (None, 0.0, False)
+
+    def _run(self) -> None:
+        while not self._stop:
+            self._request_event.wait(timeout=0.5)
+            self._request_event.clear()
+            if self._stop:
+                break
+
+            with self._lock:
+                frame = self._req_frame
+                box = self._req_box
+                stamp = self._req_stamp
+                self._req_frame = None
+                self._req_box = None
+                if frame is None or box is None:
+                    continue
+                self._busy = True
+
+            kps = None
+            try:
+                if self._vision is not None:
+                    kps = self._vision.keypoints(frame, box)
+            except Exception:
+                logger.debug("Async pose inference failed", exc_info=True)
+
+            with self._lock:
+                self._result_kps = kps
+                self._result_stamp = stamp
+                self._result_consumed = False
+                self._busy = False
+
 
 class Engine(threading.Thread):
     """Aim-assist engine running detection and aim in a background thread."""
@@ -104,6 +222,8 @@ class Engine(threading.Thread):
         self._humanizer = Humanizer(cfg)
         self._aim = Aim(cfg, self._humanizer)
         self._kp_smoother = _KpSmoother()
+        self._box_smoother = _BoxSmoother()
+        self._async_pose = _AsyncPose()
 
         self._frame_lock = threading.Lock()
         self._annotated_frame: Optional[np.ndarray] = None
@@ -113,6 +233,9 @@ class Engine(threading.Thread):
         self._focused: bool = False
         self._trigger_pending: bool = False
         self._trigger_time: float = 0.0
+
+        self._last_pose_stamp: float = 0.0
+        self._cached_smooth_kps: Optional[np.ndarray] = None
 
     @property
     def enabled(self) -> bool:
@@ -125,6 +248,7 @@ class Engine(threading.Thread):
             self._mouse.release()
             self._aim.release()
             self._kp_smoother.reset()
+            self._box_smoother.reset()
 
     @property
     def aiming(self) -> bool:
@@ -138,25 +262,21 @@ class Engine(threading.Thread):
             self._aim.release()
 
     def get_annotated_frame(self) -> Optional[np.ndarray]:
-        """Return the latest annotated frame (thread-safe copy)."""
         with self._frame_lock:
             if self._annotated_frame is not None:
                 return self._annotated_frame.copy()
         return None
 
     def get_target_crop(self) -> Optional[np.ndarray]:
-        """Return the latest 200x200 target crop (thread-safe copy)."""
         with self._frame_lock:
             if self._target_crop is not None:
                 return self._target_crop.copy()
         return None
 
     def get_overlay_items(self) -> list:
-        """Return overlay draw items for the current frame."""
         return list(self._overlay_items) if hasattr(self, "_overlay_items") else []
 
     def run(self) -> None:
-        """Thread entry: run the engine loop with watchdog restart."""
         self._running = True
         while self._running:
             try:
@@ -165,15 +285,16 @@ class Engine(threading.Thread):
             except Exception:
                 logger.exception("Engine crashed, restarting in 700ms")
                 self._log("Engine error, restarting...")
+                self._async_pose.stop()
                 time.sleep(0.7)
 
     def stop(self) -> None:
-        """Signal the engine to stop."""
         self._running = False
+        self._async_pose.stop()
         self._mouse.release()
 
     def _init_systems(self) -> None:
-        """Initialise capture and vision systems."""
+        self._async_pose.stop()
         if self._capturer is not None:
             self._capturer.release()
             self._capturer = None
@@ -181,10 +302,10 @@ class Engine(threading.Thread):
         self._capturer = Capturer(self._cfg.capture)
         self._log("Initialising vision...")
         self._vision = Vision(self._cfg, self._log)
+        self._async_pose.start(self._vision)
         self._log("Engine ready")
 
     def _loop(self) -> None:
-        """Main engine cycle loop."""
         tick_s = 1.0 / self._cfg.tick_hz
         self._overlay_items: list = []
 
@@ -220,35 +341,52 @@ class Engine(threading.Thread):
 
             picked = self._aim.pick(detections, w, h)
 
-            raw_kps: Optional[np.ndarray] = None
             smooth_kps: Optional[np.ndarray] = None
             target_point: Optional[Tuple[float, float]] = None
 
             if picked is not None:
-                bx1, by1, bx2, by2 = picked
+                raw_box = picked
 
                 if not self._aim.engaged:
                     self._aim.begin()
                     self._metrics.lock()
                     self._kp_smoother.reset()
+                    self._box_smoother.reset()
+                    self._cached_smooth_kps = None
+
+                smoothed_box = self._box_smoother.feed(raw_box, tick_s)
+                bx1, by1, bx2, by2 = smoothed_box
 
                 if self._cfg.use_pose and self._vision:
-                    try:
-                        raw_kps = self._vision.keypoints(frame, picked)
-                    except Exception:
-                        raw_kps = None
+                    self._async_pose.submit(frame, (bx1, by1, bx2, by2))
 
-                smooth_kps = self._kp_smoother.feed(raw_kps, tick_s)
+                    pose_kps, pose_stamp, is_new = self._async_pose.poll()
+                    if is_new and pose_kps is not None:
+                        smooth_kps = self._kp_smoother.feed(pose_kps, tick_s)
+                        self._last_pose_stamp = time.perf_counter()
+                        self._cached_smooth_kps = smooth_kps
+                    else:
+                        since_pose = time.perf_counter() - self._last_pose_stamp
+                        if since_pose < 0.25:
+                            smooth_kps = self._kp_smoother.extrapolate(since_pose)
+                            if smooth_kps is not None:
+                                self._cached_smooth_kps = smooth_kps
+                        else:
+                            smooth_kps = self._kp_smoother.feed(None, tick_s)
+                            if smooth_kps is not None:
+                                self._cached_smooth_kps = smooth_kps
+
+                display_box = (bx1, by1, bx2, by2)
 
                 if smooth_kps is not None:
-                    target_point = bone_point(smooth_kps, self._cfg.bone, picked)
+                    target_point = bone_point(smooth_kps, self._cfg.bone, display_box)
                     if self._cfg.overlay_skeleton:
                         draw_skeleton(ann, smooth_kps, (0, 0, 0), th=2, min_conf=self._cfg.kp_conf)
-                        ov_items = draw_overlay_items(smooth_kps, self._cfg.kp_conf, picked)
+                        ov_items = draw_overlay_items(smooth_kps, self._cfg.kp_conf, display_box)
                         overlay_items.extend(ov_items)
 
                 if target_point is None:
-                    target_point = heuristic_point(self._cfg.bone, picked)
+                    target_point = heuristic_point(self._cfg.bone, display_box)
                     px, py = target_point
                     cv2.drawMarker(
                         ann, (int(px), int(py)), main_color,
@@ -275,12 +413,14 @@ class Engine(threading.Thread):
 
                     self._handle_trigger(dist)
 
-                self._update_crop(frame, picked)
+                self._update_crop(frame, raw_box)
             else:
                 self._aim.release()
                 self._mouse.release()
                 self._trigger_pending = False
                 self._kp_smoother.reset()
+                self._box_smoother.reset()
+                self._cached_smooth_kps = None
 
             self._overlay_items = overlay_items
             with self._frame_lock:
@@ -294,7 +434,6 @@ class Engine(threading.Thread):
                 time.sleep(sleep_time)
 
     def _handle_trigger(self, distance: float) -> None:
-        """Handle triggerbot logic."""
         if not self._cfg.trigger:
             return
         if distance <= self._cfg.trigger_radius:
@@ -315,7 +454,6 @@ class Engine(threading.Thread):
     def _update_crop(
         self, frame: np.ndarray, box: Tuple[float, float, float, float]
     ) -> None:
-        """Extract and resize a 200x200 crop around the target box."""
         x1, y1, x2, y2 = box
         fh, fw = frame.shape[:2]
         cx1 = max(0, int(x1) - 10)
@@ -330,7 +468,6 @@ class Engine(threading.Thread):
 
     @staticmethod
     def _hex_bgr(hex_color: str) -> Tuple[int, int, int]:
-        """Convert '#rrggbb' to BGR tuple."""
         h = hex_color.lstrip("#")
         r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
         return (b, g, r)
