@@ -1,4 +1,4 @@
-"""YOLO detection and pose estimation with multi-scale and IoU tracking."""
+"""YOLO detection and pose estimation with multi-scale, TTA, and IoU tracking."""
 
 from __future__ import annotations
 
@@ -17,7 +17,6 @@ Detection = Tuple[float, float, float, float, float]
 
 
 def _iou(a: Tuple[float, float, float, float], b: Tuple[float, float, float, float]) -> float:
-    """Compute IoU between two (x1, y1, x2, y2) boxes."""
     ix1 = max(a[0], b[0])
     iy1 = max(a[1], b[1])
     ix2 = min(a[2], b[2])
@@ -34,7 +33,6 @@ def _iou(a: Tuple[float, float, float, float], b: Tuple[float, float, float, flo
 
 
 def _nms(dets: List[Detection], iou_thr: float = 0.5) -> List[Detection]:
-    """Simple greedy NMS on a list of (x1, y1, x2, y2, conf)."""
     if not dets:
         return []
     dets = sorted(dets, key=lambda d: d[4], reverse=True)
@@ -58,17 +56,17 @@ class Vision:
         self._log = log
         self._device = self._resolve_device()
         self._half = cfg.half and self._device != "cpu"
-        log(f"Vision device: {self._device}, half: {self._half}")
+        log(f"Vision device: {self._device}, FP16: {self._half}")
 
         self._det_model = YOLO(cfg.det_model)
         self._det_model.to(self._device)
         if self._half:
-            self._det_model.half()
+            self._det_model.model.half()
 
         self._pose_model = YOLO(cfg.pose_model)
         self._pose_model.to(self._device)
         if self._half:
-            self._pose_model.half()
+            self._pose_model.model.half()
 
         log("Models loaded")
 
@@ -80,7 +78,6 @@ class Vision:
         return self._cfg.device
 
     def _parse_results(self, results) -> List[Detection]:
-        """Extract person detections from YOLO results."""
         dets: List[Detection] = []
         for r in results:
             if r.boxes is None:
@@ -104,7 +101,6 @@ class Vision:
             device=self._device,
             verbose=False,
             classes=[0],
-            half=self._half,
         )
         detections = self._parse_results(results)
 
@@ -116,7 +112,6 @@ class Vision:
                 device=self._device,
                 verbose=False,
                 classes=[0],
-                half=self._half,
             )
             dets_far = self._parse_results(results_far)
             detections = _nms(detections + dets_far, iou_thr=0.50)
@@ -174,7 +169,6 @@ class Vision:
             conf=max(0.15, self._cfg.kp_conf - 0.10),
             device=self._device,
             verbose=False,
-            half=self._half,
         )
 
         target_in_crop = (x1 - cx1, y1 - cy1, x2 - cx1, y2 - cy1)

@@ -228,7 +228,7 @@ class Aim:
         pred_x, pred_y = self._tracker.predict(lead_s)
 
         miss_dx, miss_dy = self._human.miss_offset()
-        deg_per_px = self._cfg.hfov_deg / 1920.0
+        deg_per_px = self._cfg.hfov_deg / max(1.0, float(w))
         err_x_px = pred_x - cx + miss_dx / deg_per_px
         err_y_px = pred_y - cy + miss_dy / deg_per_px
 
@@ -261,8 +261,9 @@ class Aim:
             step_x *= sticky
             step_y *= sticky
         else:
-            step_x = err_x_deg
-            step_y = err_y_deg
+            gain = min(1.0, 0.6 + 0.4 * min(1.0, distance / max(1.0, self._cfg.fov_px * 0.5)))
+            step_x = err_x_deg * gain
+            step_y = err_y_deg * gain
 
         counts = self._cfg.counts_per_deg * ads
         dx = step_x * counts

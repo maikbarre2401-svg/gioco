@@ -39,7 +39,7 @@ class _BoxSmoother:
     """
 
     def __init__(self) -> None:
-        self._axes = [Axis(process_noise=60.0, measurement_noise=3.0) for _ in range(4)]
+        self._axes = [Axis(process_noise=45.0, measurement_noise=2.0) for _ in range(4)]
         self._valid = False
 
     def reset(self) -> None:
@@ -75,8 +75,8 @@ class _KpSmoother:
 
     def __init__(self, n_kp: int = 17) -> None:
         self._n = n_kp
-        self._axes_x: List[Axis] = [Axis(process_noise=40.0, measurement_noise=3.0) for _ in range(n_kp)]
-        self._axes_y: List[Axis] = [Axis(process_noise=40.0, measurement_noise=3.0) for _ in range(n_kp)]
+        self._axes_x: List[Axis] = [Axis(process_noise=30.0, measurement_noise=2.0) for _ in range(n_kp)]
+        self._axes_y: List[Axis] = [Axis(process_noise=30.0, measurement_noise=2.0) for _ in range(n_kp)]
         self._last_kps: Optional[np.ndarray] = None
         self._valid = False
         self._miss_count: List[int] = [0] * n_kp
@@ -139,8 +139,9 @@ class _KpSmoother:
                     out[k, 2] = float(self._last_kps[k, 2]) * 0.95
                 continue
             self._miss_count[k] = 0
-            self._axes_x[k]._R = max(0.5, 8.0 - conf * 10.0)
-            self._axes_y[k]._R = max(0.5, 8.0 - conf * 10.0)
+            adaptive_r = max(0.5, 8.0 - conf * 10.0)
+            self._axes_x[k]._R_base = adaptive_r
+            self._axes_y[k]._R_base = adaptive_r
             self._axes_x[k].predict(real_dt)
             self._axes_y[k].predict(real_dt)
             sx = self._axes_x[k].update(float(kps[k, 0]))
