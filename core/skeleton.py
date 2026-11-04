@@ -156,13 +156,13 @@ def _interpolate_kps(kps: np.ndarray, min_conf: float) -> np.ndarray:
         nbrs = _NEIGHBORS.get(k, [])
         valid = []
         for n in nbrs:
-            if n < out.shape[0] and float(out[n, 2]) >= min_conf:
+            if n < out.shape[0] and float(out[n, 2]) >= min_conf * 0.5:
                 valid.append((float(out[n, 0]), float(out[n, 1]), float(out[n, 2])))
-        if len(valid) >= 2:
+        if len(valid) >= 1:
             tw = sum(v[2] for v in valid)
             out[k, 0] = sum(v[0] * v[2] for v in valid) / tw
             out[k, 1] = sum(v[1] * v[2] for v in valid) / tw
-            out[k, 2] = min(v[2] for v in valid) * 0.45
+            out[k, 2] = min(v[2] for v in valid) * (0.55 if len(valid) >= 2 else 0.35)
     return out
 
 
@@ -520,7 +520,7 @@ def draw(
     c = _hex_to_bgr(color_hex)
     depths = _estimate_depths(kps, box, min_conf)
     sorted_bones = _sort_bones_by_depth(kps, depths, min_conf)
-    render_conf = min_conf * 0.4
+    render_conf = min_conf * 0.2
 
     if prev_kps_list:
         _draw_motion_trails(frame, prev_kps_list + [kps], c, min_conf)
@@ -650,7 +650,7 @@ def draw_overlay_items(
     kps = _interpolate_kps(kps, min_conf)
     depths = _estimate_depths(kps, box, min_conf)
     sorted_bones = _sort_bones_by_depth(kps, depths, min_conf)
-    render_conf = min_conf * 0.4
+    render_conf = min_conf * 0.2
 
     if prev_kps_list and len(prev_kps_list) >= 2:
         trail_kps = [0, 9, 10, 15, 16]

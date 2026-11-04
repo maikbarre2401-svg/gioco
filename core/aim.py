@@ -222,7 +222,7 @@ class Aim:
         err_y_deg = err_y_px * deg_per_px
 
         if distance < self._cfg.deadzone:
-            if self._cfg.human and distance > self._cfg.deadzone * 0.3:
+            if self._cfg.human and distance > self._cfg.deadzone * 0.15:
                 mc_x, mc_y = self._human.micro_correction(err_x_deg, err_y_deg, dt)
                 counts = self._cfg.counts_per_deg * ads
                 dx = mc_x * counts
@@ -237,7 +237,7 @@ class Aim:
                 return (0.0, 0.0, distance)
 
             step_x, step_y = self._human.spring(err_x_deg, err_y_deg, dt, distance)
-            trem_x, trem_y = self._human.tremor(dt)
+            trem_x, trem_y = self._human.tremor(dt, distance)
             step_x += trem_x * deg_per_px
             step_y += trem_y * deg_per_px
 

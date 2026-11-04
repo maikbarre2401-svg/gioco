@@ -164,16 +164,19 @@ class Humanizer:
         return (step_x, step_y)
 
     def micro_correction(self, err_x_deg: float, err_y_deg: float, dt: float) -> Tuple[float, float]:
-        """Fine-grained sub-deadzone corrections for precision tracking."""
+        """Fine-grained sub-deadzone corrections with smooth cubic gain curve."""
         dist_deg = math.hypot(err_x_deg, err_y_deg)
-        if dist_deg < 0.001:
+        if dist_deg < 0.0005:
             return (0.0, 0.0)
-        gain = 0.35 * min(1.0, dist_deg / 0.5)
-        jitter = random.gauss(0, 0.02) * dt * 60
-        return (err_x_deg * gain + jitter, err_y_deg * gain + jitter)
+        t = min(1.0, dist_deg / 0.6)
+        gain = 0.45 * (t * t * (3.0 - 2.0 * t))
+        jitter_scale = 0.012 * (1.0 - t * 0.7)
+        jx = random.gauss(0, jitter_scale) * dt * 60
+        jy = random.gauss(0, jitter_scale) * dt * 60
+        return (err_x_deg * gain + jx, err_y_deg * gain + jy)
 
-    def tremor(self, dt: float) -> Tuple[float, float]:
-        """Return smooth 2-axis tremor + breathing rhythm offset."""
+    def tremor(self, dt: float, distance_px: float = 0.0) -> Tuple[float, float]:
+        """Return smooth 2-axis tremor + breathing, reduced when close to target."""
         if self._cfg.tremor <= 0:
             return (0.0, 0.0)
         self._tremor_t += dt
@@ -189,6 +192,10 @@ class Humanizer:
         scale = self._cfg.tremor / len(self._tremor_phases) * 2.0
         fat = self.fatigue()
         scale *= (0.8 + 0.2 * fat)
+
+        if distance_px > 0:
+            proximity_damp = min(1.0, distance_px / max(1.0, self._cfg.fov_px * 0.3))
+            scale *= 0.3 + 0.7 * proximity_damp
 
         breath_freq = 0.22
         breath_amp = self._cfg.tremor * 0.18

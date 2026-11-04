@@ -47,10 +47,32 @@ def _send_input(inp: INPUT) -> None:
 
 
 class MouseOutput:
-    """Win32 SendInput mouse mover."""
+    """Win32 SendInput mouse mover with sub-pixel accumulation."""
 
     def __init__(self) -> None:
         self._button_down = False
+        self._accum_x: float = 0.0
+        self._accum_y: float = 0.0
+
+    def move_precise(self, dx: float, dy: float) -> None:
+        """Accumulate fractional mouse movement and send integer part."""
+        self._accum_x += dx
+        self._accum_y += dy
+        ix = int(self._accum_x)
+        iy = int(self._accum_y)
+        if ix == 0 and iy == 0:
+            return
+        self._accum_x -= ix
+        self._accum_y -= iy
+        inp = INPUT()
+        inp.type = INPUT_MOUSE
+        inp.mi.dx = ix
+        inp.mi.dy = iy
+        inp.mi.dwFlags = MOUSEEVENTF_MOVE
+        inp.mi.mouseData = 0
+        inp.mi.time = 0
+        inp.mi.dwExtraInfo = ctypes.pointer(ctypes.c_ulong(0))
+        _send_input(inp)
 
     def move(self, dx: int, dy: int) -> None:
         """Send a relative mouse move."""

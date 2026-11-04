@@ -8,7 +8,7 @@ import numpy as np
 class Axis:
     """1D constant-acceleration Kalman filter with 3x3 state [position, velocity, acceleration]."""
 
-    def __init__(self, process_noise: float = 100.0, measurement_noise: float = 4.0) -> None:
+    def __init__(self, process_noise: float = 80.0, measurement_noise: float = 2.5) -> None:
         self._x = np.zeros(3, dtype=np.float64)
         self._P = np.eye(3, dtype=np.float64) * 500.0
         self._Q_base = process_noise
@@ -44,12 +44,16 @@ class Axis:
         if not self._initialised:
             self.reset(measurement)
             return measurement
-        H = np.array([[1.0, 0.0, 0.0]], dtype=np.float64)
         S = float(self._P[0, 0] + self._R)
         if abs(S) < 1e-12:
             S = 1e-12
-        K = self._P[:, 0] / S
         y = measurement - self._x[0]
+        gate = y * y / S
+        if gate > 16.0:
+            self._R = min(self._R * 2.0, 50.0)
+        else:
+            self._R = max(self._R * 0.98, 1.0)
+        K = self._P[:, 0] / S
         self._x += K * y
         self._P = self._P - np.outer(K, self._P[0, :])
         return float(self._x[0])

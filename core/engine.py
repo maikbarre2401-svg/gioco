@@ -34,7 +34,7 @@ class _BoxSmoother:
     """Kalman-smooth bounding box coordinates to prevent jitter."""
 
     def __init__(self) -> None:
-        self._axes = [Axis(process_noise=120.0, measurement_noise=8.0) for _ in range(4)]
+        self._axes = [Axis(process_noise=60.0, measurement_noise=3.0) for _ in range(4)]
         self._valid = False
 
     def reset(self) -> None:
@@ -61,10 +61,12 @@ class _KpSmoother:
 
     def __init__(self, n_kp: int = 17) -> None:
         self._n = n_kp
-        self._axes_x: List[Axis] = [Axis(process_noise=50.0, measurement_noise=5.0) for _ in range(n_kp)]
-        self._axes_y: List[Axis] = [Axis(process_noise=50.0, measurement_noise=5.0) for _ in range(n_kp)]
+        self._axes_x: List[Axis] = [Axis(process_noise=40.0, measurement_noise=3.0) for _ in range(n_kp)]
+        self._axes_y: List[Axis] = [Axis(process_noise=40.0, measurement_noise=3.0) for _ in range(n_kp)]
         self._last_kps: Optional[np.ndarray] = None
         self._valid = False
+        self._miss_count: List[int] = [0] * n_kp
+        self._max_hold: int = 12
 
     def reset(self) -> None:
         for ax in self._axes_x:
@@ -73,6 +75,7 @@ class _KpSmoother:
             ay._initialised = False
         self._last_kps = None
         self._valid = False
+        self._miss_count = [0] * self._n
 
     def feed(self, kps: Optional[np.ndarray], dt: float) -> Optional[np.ndarray]:
         """Feed raw keypoints, return smoothed (17,3) array or last valid if kps is None."""
@@ -80,12 +83,16 @@ class _KpSmoother:
             if self._valid and self._last_kps is not None:
                 out = self._last_kps.copy()
                 for k in range(self._n):
-                    if out[k, 2] > 0.1:
+                    self._miss_count[k] += 1
+                    if out[k, 2] > 0.05 and self._miss_count[k] <= self._max_hold:
                         self._axes_x[k].predict(dt)
                         self._axes_y[k].predict(dt)
                         out[k, 0] = self._axes_x[k]._x[0]
                         out[k, 1] = self._axes_y[k]._x[0]
-                        out[k, 2] *= 0.93
+                        decay = 0.97 if self._miss_count[k] <= 4 else 0.92
+                        out[k, 2] *= decay
+                    elif self._miss_count[k] > self._max_hold:
+                        out[k, 2] = 0.0
                 self._last_kps = out
                 return out
             return None
@@ -93,10 +100,18 @@ class _KpSmoother:
         out = kps.copy()
         for k in range(self._n):
             conf = float(kps[k, 2])
-            if conf < 0.08:
+            if conf < 0.05:
+                if self._last_kps is not None and float(self._last_kps[k, 2]) > 0.1 and self._miss_count[k] < self._max_hold:
+                    self._miss_count[k] += 1
+                    self._axes_x[k].predict(dt)
+                    self._axes_y[k].predict(dt)
+                    out[k, 0] = self._axes_x[k]._x[0]
+                    out[k, 1] = self._axes_y[k]._x[0]
+                    out[k, 2] = float(self._last_kps[k, 2]) * 0.95
                 continue
-            self._axes_x[k]._R = max(1.0, 12.0 - conf * 14.0)
-            self._axes_y[k]._R = max(1.0, 12.0 - conf * 14.0)
+            self._miss_count[k] = 0
+            self._axes_x[k]._R = max(0.5, 8.0 - conf * 10.0)
+            self._axes_y[k]._R = max(0.5, 8.0 - conf * 10.0)
             self._axes_x[k].predict(dt)
             self._axes_y[k].predict(dt)
             sx = self._axes_x[k].update(float(kps[k, 0]))
@@ -109,12 +124,12 @@ class _KpSmoother:
         return out
 
     def extrapolate(self, dt: float) -> Optional[np.ndarray]:
-        """Predict keypoint positions forward without a measurement (pure velocity extrapolation)."""
+        """Predict keypoint positions forward using Kalman lead (velocity+acceleration)."""
         if not self._valid or self._last_kps is None:
             return None
         out = self._last_kps.copy()
         for k in range(self._n):
-            if out[k, 2] > 0.1:
+            if out[k, 2] > 0.05 and self._miss_count[k] < self._max_hold:
                 out[k, 0] = self._axes_x[k].lead(dt)
                 out[k, 1] = self._axes_y[k].lead(dt)
         return out
@@ -247,7 +262,7 @@ class Engine(threading.Thread):
         self._target_state: str = "SEARCH"
         self._lock_time: float = 0.0
         self._prev_kps_history: List[Optional[np.ndarray]] = []
-        self._max_kps_history: int = 6
+        self._max_kps_history: int = 10
         self._prev_target_cx: float = 0.0
         self._prev_target_cy: float = 0.0
         self._target_vx: float = 0.0
@@ -502,7 +517,7 @@ class Engine(threading.Thread):
                         self._cached_smooth_kps = smooth_kps
                     else:
                         since_pose = time.perf_counter() - self._last_pose_stamp
-                        if since_pose < 0.25:
+                        if since_pose < 0.5:
                             smooth_kps = self._kp_smoother.extrapolate(since_pose)
                             if smooth_kps is not None:
                                 self._cached_smooth_kps = smooth_kps
@@ -657,9 +672,9 @@ class Engine(threading.Thread):
                 if speed > 20:
                     pred_x = int(px + self._target_vx * lead_ms / 1000.0)
                     pred_y = int(py + self._target_vy * lead_ms / 1000.0)
-                    pred_conf = max(0.1, 1.0 - accel_mag / 600.0) if 'accel_mag' in dir() else 0.5
-                    ax, ay = self._aim._tracker.kx.acceleration, self._aim._tracker.ky.acceleration
-                    pred_conf = max(0.1, 1.0 - math.hypot(ax, ay) / 600.0)
+                    p_ax = self._aim._tracker.kx.acceleration
+                    p_ay = self._aim._tracker.ky.acceleration
+                    pred_conf = max(0.1, 1.0 - math.hypot(p_ax, p_ay) / 600.0)
                     conf_radius = int(8 + (1.0 - pred_conf) * 16)
                     ghost_c = self._hex_bgr(self._dim_hex(skel_hex, 0.10 + pred_conf * 0.15))
                     cv2.circle(ann, (pred_x, pred_y), conf_radius, ghost_c, 1, cv2.LINE_AA)
@@ -747,8 +762,8 @@ class Engine(threading.Thread):
                         self._cfg.omega = saved_omega
                         self._cfg.zeta = saved_zeta
                         self._cfg.human = saved_human
-                    if abs(dx) > 0.5 or abs(dy) > 0.5:
-                        self._mouse.move(int(round(dx)), int(round(dy)))
+                    if abs(dx) > 0.3 or abs(dy) > 0.3:
+                        self._mouse.move_precise(dx, dy)
 
                     if dist < self._cfg.deadzone * 3:
                         self._metrics.snap()
