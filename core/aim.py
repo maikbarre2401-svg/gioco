@@ -111,6 +111,22 @@ class Aim:
         cooldown_ok = (now - self._last_switch) * 1000.0 >= self._cfg.switch_cooldown_ms
 
         if self._target_box is not None and cooldown_ok:
+            top_iou = -1.0
+            top_iou_cand = None
+            for c in candidates:
+                iou = _iou((c[0], c[1], c[2], c[3]), self._target_box)
+                if iou > top_iou:
+                    top_iou = iou
+                    top_iou_cand = c
+
+            if top_iou > 0.6 and top_iou_cand is not None:
+                c = top_iou_cand
+                self._target_box = (c[0], c[1], c[2], c[3])
+                self._last_target_cx = (c[0] + c[2]) / 2.0
+                self._last_target_cy = (c[1] + c[3]) / 2.0
+                self._consecutive_track += 1
+                return self._target_box
+
             best_score = -1.0
             best_cand = None
 

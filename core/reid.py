@@ -18,6 +18,10 @@ class AppearanceTracker:
         self._aspect_ratio: float = 1.0
         self._avg_color: Optional[np.ndarray] = None
         self._stable_count: int = 0
+        self._buf_resized = np.empty((128, 64, 3), dtype=np.uint8)
+        self._buf_hsv = np.empty((128, 64, 3), dtype=np.uint8)
+        self._buf_lab = np.empty((128, 64, 3), dtype=np.uint8)
+        self._buf_score_resized = np.empty((32, 32, 3), dtype=np.uint8)
 
     def reset(self) -> None:
         self._history.clear()
@@ -50,8 +54,8 @@ class AppearanceTracker:
         new_ar = bw / max(1.0, bh)
         self._aspect_ratio = self._aspect_ratio * 0.8 + new_ar * 0.2
 
-        resized = cv2.resize(crop, (32, 32), interpolation=cv2.INTER_AREA)
-        avg_c = resized.mean(axis=(0, 1))
+        cv2.resize(crop, (32, 32), interpolation=cv2.INTER_AREA, dst=self._buf_score_resized)
+        avg_c = self._buf_score_resized.mean(axis=(0, 1))
         if self._avg_color is None:
             self._avg_color = avg_c
         else:
@@ -85,8 +89,8 @@ class AppearanceTracker:
 
         color_sim = 0.5
         if self._avg_color is not None:
-            resized = cv2.resize(crop, (32, 32), interpolation=cv2.INTER_AREA)
-            avg_c = resized.mean(axis=(0, 1))
+            cv2.resize(crop, (32, 32), interpolation=cv2.INTER_AREA, dst=self._buf_score_resized)
+            avg_c = self._buf_score_resized.mean(axis=(0, 1))
             diff = np.linalg.norm(avg_c - self._avg_color)
             color_sim = max(0.0, 1.0 - diff / 120.0)
 
@@ -113,9 +117,12 @@ class AppearanceTracker:
 
     def _extract(self, crop: np.ndarray) -> np.ndarray:
         """Extract multi-region HSV+LAB histogram feature vector."""
-        resized = cv2.resize(crop, (64, 128), interpolation=cv2.INTER_AREA)
-        hsv = cv2.cvtColor(resized, cv2.COLOR_BGR2HSV)
-        lab = cv2.cvtColor(resized, cv2.COLOR_BGR2LAB)
+        cv2.resize(crop, (64, 128), interpolation=cv2.INTER_AREA, dst=self._buf_resized)
+        cv2.cvtColor(self._buf_resized, cv2.COLOR_BGR2HSV, dst=self._buf_hsv)
+        cv2.cvtColor(self._buf_resized, cv2.COLOR_BGR2LAB, dst=self._buf_lab)
+        resized = self._buf_resized
+        hsv = self._buf_hsv
+        lab = self._buf_lab
 
         h_third = hsv.shape[0] // 3
         regions = [

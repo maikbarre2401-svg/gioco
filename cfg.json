@@ -28,6 +28,7 @@
   "zeta": 0.62,
   "overshoot": 0.18,
   "fitts": true,
+  "fitts": true,
   "tremor": 0.55,
   "tremor_hz": 7.5,
   "fatigue": true,
@@ -60,6 +61,10 @@
   "snap_duration_ms": 250,
   "snap_omega": 55.0,
   "snap_zeta": 0.85,
+  "third_person": true,
+  "self_zone_w": 120,
+  "self_zone_h": 300,
+  "self_zone_offset_y": 30,
   "process": "fortniteclient-win64-shipping.exe",
   "log_metrics": true,
   "ads_mult": {

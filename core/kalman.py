@@ -12,6 +12,7 @@ class Axis:
         self._x = np.zeros(3, dtype=np.float64)
         self._P = np.eye(3, dtype=np.float64) * 500.0
         self._Q_base = process_noise
+        self._R_base = measurement_noise
         self._R = measurement_noise
         self._initialised = False
 
@@ -20,6 +21,7 @@ class Axis:
         self._x[1] = 0.0
         self._x[2] = 0.0
         self._P = np.eye(3, dtype=np.float64) * 500.0
+        self._R = self._R_base
         self._initialised = True
 
     def predict(self, dt: float) -> float:
@@ -50,9 +52,9 @@ class Axis:
         y = measurement - self._x[0]
         gate = y * y / S
         if gate > 16.0:
-            self._R = min(self._R * 2.0, 50.0)
+            self._R = min(self._R * 2.0, self._R_base * 20.0)
         else:
-            self._R = max(self._R * 0.98, 1.0)
+            self._R += (self._R_base - self._R) * 0.15
         K = self._P[:, 0] / S
         self._x += K * y
         self._P = self._P - np.outer(K, self._P[0, :])
