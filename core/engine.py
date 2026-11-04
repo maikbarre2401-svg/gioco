@@ -373,7 +373,8 @@ class Engine(threading.Thread):
                 )
 
             h, w = frame.shape[:2]
-            detections = self._vision.detect(frame) if self._vision else []
+            trk_box = self._aim.target_box
+            detections = self._vision.detect(frame, tracked_box=trk_box) if self._vision else []
 
             overlay_items: list = []
             ann = frame.copy()
@@ -518,10 +519,14 @@ class Engine(threading.Thread):
                 display_box = (bx1, by1, bx2, by2)
 
                 snap_phase = False
+                snap_blend = 0.0
                 if self._snap_active:
                     snap_elapsed = time.perf_counter() - self._snap_start
-                    if snap_elapsed < self._cfg.snap_duration_ms / 1000.0:
+                    snap_dur = self._cfg.snap_duration_ms / 1000.0
+                    if snap_elapsed < snap_dur:
                         snap_phase = True
+                        t = snap_elapsed / snap_dur
+                        snap_blend = 1.0 - t * t * (3.0 - 2.0 * t)
                     else:
                         self._snap_active = False
 
@@ -652,10 +657,16 @@ class Engine(threading.Thread):
                 if speed > 20:
                     pred_x = int(px + self._target_vx * lead_ms / 1000.0)
                     pred_y = int(py + self._target_vy * lead_ms / 1000.0)
-                    ghost_c = self._hex_bgr(self._dim_hex(skel_hex, 0.15))
-                    cv2.circle(ann, (pred_x, pred_y), 8, ghost_c, 1, cv2.LINE_AA)
+                    pred_conf = max(0.1, 1.0 - accel_mag / 600.0) if 'accel_mag' in dir() else 0.5
+                    ax, ay = self._aim._tracker.kx.acceleration, self._aim._tracker.ky.acceleration
+                    pred_conf = max(0.1, 1.0 - math.hypot(ax, ay) / 600.0)
+                    conf_radius = int(8 + (1.0 - pred_conf) * 16)
+                    ghost_c = self._hex_bgr(self._dim_hex(skel_hex, 0.10 + pred_conf * 0.15))
+                    cv2.circle(ann, (pred_x, pred_y), conf_radius, ghost_c, 1, cv2.LINE_AA)
+                    cv2.circle(ann, (pred_x, pred_y), 4, ghost_c, -1, cv2.LINE_AA)
                     cv2.drawMarker(ann, (pred_x, pred_y), ghost_c, cv2.MARKER_CROSS, 6, 1, cv2.LINE_AA)
-                    overlay_items.append(("circle", pred_x + sox, pred_y + soy, 8, self._dim_hex(skel_hex, 0.15)))
+                    overlay_items.append(("circle", pred_x + sox, pred_y + soy, conf_radius, self._dim_hex(skel_hex, 0.10 + pred_conf * 0.15)))
+                    overlay_items.append(("dot", pred_x + sox, pred_y + soy, 4, self._dim_hex(skel_hex, 0.10 + pred_conf * 0.15)))
 
                 active = self._enabled and self._aiming and (self._focused or self._cfg.always_active)
                 if active and target_point is not None:
@@ -725,8 +736,8 @@ class Engine(threading.Thread):
                         saved_omega = self._cfg.omega
                         saved_zeta = self._cfg.zeta
                         saved_human = self._cfg.human
-                        self._cfg.omega = self._cfg.snap_omega
-                        self._cfg.zeta = self._cfg.snap_zeta
+                        self._cfg.omega = saved_omega + (self._cfg.snap_omega - saved_omega) * snap_blend
+                        self._cfg.zeta = saved_zeta + (self._cfg.snap_zeta - saved_zeta) * snap_blend
                         self._cfg.human = True
                         self._humanizer.skip_reaction()
 
@@ -796,13 +807,17 @@ class Engine(threading.Thread):
     def _classify_movement(self) -> str:
         speed = math.hypot(self._target_vx, self._target_vy)
         vy = abs(self._target_vy)
-        if vy > 200 and self._target_vy < -100:
+        ax, ay = self._aim._tracker.kx.acceleration, self._aim._tracker.ky.acceleration
+        accel_mag = math.hypot(ax, ay)
+        if self._target_vy < -100 and (vy > 200 or ay < -400):
             return "JUMP"
-        if speed < 8:
+        if speed < 8 and accel_mag < 50:
             return "STILL"
         if speed < 80:
             return "WALK"
         if speed < 250:
+            if accel_mag > 300:
+                return "FAST"
             return "RUN"
         return "FAST"
 

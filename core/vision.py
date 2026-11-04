@@ -88,7 +88,9 @@ class Vision:
                 dets.append((x1, y1, x2, y2, conf))
         return dets
 
-    def detect(self, frame: np.ndarray) -> List[Detection]:
+    def detect(
+        self, frame: np.ndarray, tracked_box: tuple[float, float, float, float] | None = None
+    ) -> List[Detection]:
         """Run detection with optional multi-scale for distant targets."""
         results = self._det_model.predict(
             frame,
@@ -111,6 +113,15 @@ class Vision:
             )
             dets_far = self._parse_results(results_far)
             detections = _nms(detections + dets_far, iou_thr=0.50)
+
+        if tracked_box is not None:
+            boosted = []
+            for x1, y1, x2, y2, conf in detections:
+                overlap = _iou((x1, y1, x2, y2), tracked_box)
+                if overlap > 0.3:
+                    conf = min(1.0, conf + overlap * 0.08)
+                boosted.append((x1, y1, x2, y2, conf))
+            detections = boosted
 
         return detections
 

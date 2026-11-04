@@ -37,6 +37,10 @@ class Humanizer:
         self._flick_boost: float = 0.0
         self._momentum_x: float = 0.0
         self._momentum_y: float = 0.0
+        self._breath_t: float = random.uniform(0, 2 * math.pi)
+        self._prev_step_x: float = 0.0
+        self._prev_step_y: float = 0.0
+        self._accel_limit: float = 800.0
 
     def start_engagement(self, distance_px: float) -> None:
         """Begin a new aim engagement: set reaction deadline and miss flag."""
@@ -105,11 +109,18 @@ class Humanizer:
         self._prev_err_x = err_x
         self._prev_err_y = err_y
 
-    def spring(self, err_x_deg: float, err_y_deg: float, dt: float) -> Tuple[float, float]:
-        """Second-order spring with wind-up, flick boost, and momentum continuation."""
+    def spring(self, err_x_deg: float, err_y_deg: float, dt: float, distance_px: float = 0.0) -> Tuple[float, float]:
+        """Second-order spring with distance-adaptive params, flick boost, and acceleration limiting."""
         fat = self.fatigue()
         omega = self._cfg.omega / fat
         zeta = self._cfg.zeta / fat
+
+        if distance_px > 0:
+            fov = self._cfg.fov_px
+            norm_dist = min(1.0, distance_px / max(1.0, fov))
+            omega *= 0.7 + 0.6 * norm_dist
+            zeta_adj = 0.15 * (1.0 - norm_dist)
+            zeta = min(0.98, zeta + zeta_adj)
 
         self.detect_flick(err_x_deg, err_y_deg, dt)
 
@@ -129,6 +140,17 @@ class Humanizer:
 
         step_x = self._spring_vel_x * dt
         step_y = self._spring_vel_y * dt
+
+        if dt > 0.0001:
+            accel_x = (step_x - self._prev_step_x) / dt
+            accel_y = (step_y - self._prev_step_y) / dt
+            accel_mag = math.hypot(accel_x, accel_y)
+            if accel_mag > self._accel_limit:
+                scale = self._accel_limit / accel_mag
+                step_x = self._prev_step_x + (step_x - self._prev_step_x) * scale
+                step_y = self._prev_step_y + (step_y - self._prev_step_y) * scale
+        self._prev_step_x = step_x
+        self._prev_step_y = step_y
 
         self._momentum_x = self._momentum_x * 0.92 + step_x * 0.08
         self._momentum_y = self._momentum_y * 0.92 + step_y * 0.08
@@ -151,10 +173,11 @@ class Humanizer:
         return (err_x_deg * gain + jitter, err_y_deg * gain + jitter)
 
     def tremor(self, dt: float) -> Tuple[float, float]:
-        """Return smooth 2-axis tremor offset built from summed sines."""
+        """Return smooth 2-axis tremor + breathing rhythm offset."""
         if self._cfg.tremor <= 0:
             return (0.0, 0.0)
         self._tremor_t += dt
+        self._breath_t += dt
         tx = 0.0
         ty = 0.0
         for i, (freq, phase) in enumerate(self._tremor_phases):
@@ -166,7 +189,13 @@ class Humanizer:
         scale = self._cfg.tremor / len(self._tremor_phases) * 2.0
         fat = self.fatigue()
         scale *= (0.8 + 0.2 * fat)
-        return (tx * scale, ty * scale)
+
+        breath_freq = 0.22
+        breath_amp = self._cfg.tremor * 0.18
+        breath_y = math.sin(2.0 * math.pi * breath_freq * self._breath_t) * breath_amp
+        breath_x = math.sin(2.0 * math.pi * breath_freq * 0.5 * self._breath_t + 0.7) * breath_amp * 0.3
+
+        return (tx * scale + breath_x, ty * scale + breath_y)
 
     def miss_offset(self) -> Tuple[float, float]:
         """Return the miss offset in degrees if this engagement was flagged as a miss."""

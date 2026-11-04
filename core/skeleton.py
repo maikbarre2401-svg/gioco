@@ -109,6 +109,45 @@ def _conf_color_hex(base_hex: str, conf: float) -> str:
     return _blend_hex(amber, red, t)
 
 
+_BONE_LENGTH_RATIOS = {
+    (5, 7): (0.12, 0.35), (6, 8): (0.12, 0.35),
+    (7, 9): (0.10, 0.32), (8, 10): (0.10, 0.32),
+    (5, 11): (0.20, 0.55), (6, 12): (0.20, 0.55),
+    (11, 13): (0.15, 0.42), (12, 14): (0.15, 0.42),
+    (13, 15): (0.12, 0.38), (14, 16): (0.12, 0.38),
+    (5, 6): (0.06, 0.30), (11, 12): (0.04, 0.25),
+}
+
+
+def _enforce_bone_lengths(kps: np.ndarray, box: Tuple[float, float, float, float], min_conf: float) -> np.ndarray:
+    """Clamp keypoints so no bone exceeds anatomically plausible length ratios vs box height."""
+    bh = max(1.0, box[3] - box[1])
+    out = kps.copy()
+    for (i, j), (lo, hi) in _BONE_LENGTH_RATIOS.items():
+        if i >= out.shape[0] or j >= out.shape[0]:
+            continue
+        ci, cj = float(out[i, 2]), float(out[j, 2])
+        if ci < min_conf * 0.3 or cj < min_conf * 0.3:
+            continue
+        dx = float(out[j, 0]) - float(out[i, 0])
+        dy = float(out[j, 1]) - float(out[i, 1])
+        length = math.hypot(dx, dy)
+        ratio = length / bh
+        if ratio > hi:
+            scale = (hi * bh) / max(length, 1e-6)
+            mx = (float(out[i, 0]) + float(out[j, 0])) / 2
+            my = (float(out[i, 1]) + float(out[j, 1])) / 2
+            if ci < cj:
+                out[i, 0] = mx - dx * scale * 0.5
+                out[i, 1] = my - dy * scale * 0.5
+                out[i, 2] = ci * 0.85
+            else:
+                out[j, 0] = mx + dx * scale * 0.5
+                out[j, 1] = my + dy * scale * 0.5
+                out[j, 2] = cj * 0.85
+    return out
+
+
 def _interpolate_kps(kps: np.ndarray, min_conf: float) -> np.ndarray:
     out = kps.copy()
     for k in range(min(17, kps.shape[0])):
@@ -476,6 +515,7 @@ def draw(
     if kps is None or kps.shape[0] < 17:
         return
 
+    kps = _enforce_bone_lengths(kps, box, min_conf)
     kps = _interpolate_kps(kps, min_conf)
     c = _hex_to_bgr(color_hex)
     depths = _estimate_depths(kps, box, min_conf)
@@ -606,6 +646,7 @@ def draw_overlay_items(
     if kps is None or kps.shape[0] < 17:
         return items
 
+    kps = _enforce_bone_lengths(kps, box, min_conf)
     kps = _interpolate_kps(kps, min_conf)
     depths = _estimate_depths(kps, box, min_conf)
     sorted_bones = _sort_bones_by_depth(kps, depths, min_conf)

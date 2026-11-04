@@ -236,7 +236,7 @@ class Aim:
             if self._human.reacting():
                 return (0.0, 0.0, distance)
 
-            step_x, step_y = self._human.spring(err_x_deg, err_y_deg, dt)
+            step_x, step_y = self._human.spring(err_x_deg, err_y_deg, dt, distance)
             trem_x, trem_y = self._human.tremor(dt)
             step_x += trem_x * deg_per_px
             step_y += trem_y * deg_per_px
