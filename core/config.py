@@ -77,6 +77,10 @@ class Config:
     snap_duration_ms: int = 250
     snap_omega: float = 55.0
     snap_zeta: float = 0.85
+    third_person: bool = True
+    self_zone_w: int = 120
+    self_zone_h: int = 300
+    self_zone_offset_y: int = 30
     process: str = "fortniteclient-win64-shipping.exe"
     log_metrics: bool = True
     ads_mult: Dict[str, float] = field(

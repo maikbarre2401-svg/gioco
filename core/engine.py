@@ -422,6 +422,9 @@ class Engine(threading.Thread):
                 self._adaptive_fov = target_fov_shrink
             eff_fov = int(fov_r * self._adaptive_fov)
 
+            if self._cfg.third_person and detections:
+                detections = self._filter_self(detections, scx, scy, w, h)
+
             self._all_detections_for_radar = list(detections)
 
             fov_detections: List[Detection] = []
@@ -835,6 +838,34 @@ class Engine(threading.Thread):
                 return "FAST"
             return "RUN"
         return "FAST"
+
+    def _filter_self(
+        self, dets: List[Detection], cx: int, cy: int, w: int, h: int
+    ) -> List[Detection]:
+        """Remove the player's own character detection (3rd person, center-bottom)."""
+        zw = self._cfg.self_zone_w
+        zh = self._cfg.self_zone_h
+        oy = self._cfg.self_zone_offset_y
+        zone_x1 = cx - zw / 2.0
+        zone_x2 = cx + zw / 2.0
+        zone_y1 = cy + oy
+        zone_y2 = min(h, cy + oy + zh)
+
+        kept: List[Detection] = []
+        for x1, y1, x2, y2, conf in dets:
+            mx = (x1 + x2) / 2.0
+            my = (y1 + y2) / 2.0
+            bw = x2 - x1
+            bh = y2 - y1
+            in_zone = zone_x1 <= mx <= zone_x2 and zone_y1 <= my <= zone_y2
+            large = bh > h * 0.35
+            if in_zone and (large or bh > h * 0.20):
+                continue
+            kept.append((x1, y1, x2, y2, conf))
+
+        if not kept and dets:
+            return list(dets)
+        return kept
 
     def _calc_hit_prob(self, dist_px: float, avg_conf: float, speed: float, box_h: float) -> float:
         dist_score = max(0.0, 1.0 - dist_px / max(1.0, self._cfg.fov_px))
