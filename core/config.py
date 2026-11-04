@@ -82,6 +82,13 @@ class Config:
     self_zone_w: int = 120
     self_zone_h: int = 300
     self_zone_offset_y: int = 30
+    gamepad: bool = True
+    gamepad_aim_trigger: str = "lt"
+    gamepad_trigger_threshold: int = 80
+    head_snap: bool = True
+    head_snap_omega: float = 70.0
+    head_snap_zeta: float = 0.80
+    head_snap_duration_ms: int = 180
     process: str = "fortniteclient-win64-shipping.exe"
     log_metrics: bool = True
     ads_mult: Dict[str, float] = field(

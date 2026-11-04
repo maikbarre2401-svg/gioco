@@ -490,6 +490,31 @@ class App:
         self._make_slider(g4, "self_zone_h", "Zone Height", 100, 600, 10, 0, 2)
         self._make_slider(g4, "self_zone_offset_y", "Zone Y Offset", -100, 200, 10, 1, 0)
 
+        g5 = ttk.LabelFrame(f, text="Gamepad (XInput)")
+        g5.grid(row=3, column=0, sticky="nsew", padx=6, pady=4)
+
+        self._make_check(g5, "gamepad", "Abilita Gamepad", 0, 0, colspan=2)
+
+        ttk.Label(g5, text="Aim Trigger:").grid(row=1, column=0, sticky="w", padx=6, pady=3)
+        self._gp_trigger_var = tk.StringVar(value=self._cfg.gamepad_aim_trigger)
+        gp_combo = ttk.Combobox(
+            g5, textvariable=self._gp_trigger_var,
+            values=["lt", "rt", "lb", "rb"], state="readonly", width=6,
+        )
+        gp_combo.grid(row=1, column=1, padx=6, pady=3)
+        gp_combo.bind("<<ComboboxSelected>>",
+                       lambda e: setattr(self._cfg, "gamepad_aim_trigger", self._gp_trigger_var.get()))
+
+        self._make_slider(g5, "gamepad_trigger_threshold", "Soglia Trigger", 10, 255, 5, 2, 0)
+
+        g6 = ttk.LabelFrame(f, text="Head Snap (Gamepad)")
+        g6.grid(row=3, column=1, sticky="nsew", padx=6, pady=4)
+
+        self._make_check(g6, "head_snap", "Head Snap Attivo", 0, 0, colspan=2)
+        self._make_slider(g6, "head_snap_omega", "Omega", 20.0, 120.0, 1.0, 1, 0)
+        self._make_slider(g6, "head_snap_zeta", "Zeta", 0.3, 1.0, 0.01, 2, 0)
+        self._make_slider(g6, "head_snap_duration_ms", "Durata (ms)", 50, 500, 10, 3, 0)
+
     def _build_status_bar(self) -> None:
         bar = tk.Frame(self._root, bg=BG3, height=24)
         bar.pack(fill="x", padx=0, side="bottom")
@@ -669,6 +694,7 @@ class App:
         self._bone_var.set(self._cfg.bone)
         self._hold_var.set(self._cfg.hold_button)
         self._process_var.set(self._cfg.process)
+        self._gp_trigger_var.set(self._cfg.gamepad_aim_trigger)
         self._capture_var.set(self._cfg.capture)
         self._color_btn.config(bg=self._cfg.overlay_color)
         self._skel_color_btn.config(bg=self._cfg.overlay_skeleton_color)

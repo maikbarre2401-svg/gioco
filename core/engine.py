@@ -15,6 +15,7 @@ import numpy as np
 from core.aim import Aim
 from core.capture import Capturer
 from core.config import Config
+from core.gamepad import Gamepad
 from core.human import Humanizer
 from core.kalman import Axis, Tracker
 from core.metrics import MetricsCollector
@@ -458,6 +459,10 @@ class Engine(threading.Thread):
         self._async_pose = _AsyncPose()
         self._async_detect = _AsyncDetect()
         self._self_tracker = _SelfTracker()
+        self._gamepad = Gamepad(
+            aim_trigger=cfg.gamepad_aim_trigger,
+            trigger_threshold=cfg.gamepad_trigger_threshold,
+        )
         self._det_generation: int = -1
         self._last_box_stamp: float = 0.0
         self._smoothed_box: Tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
@@ -477,6 +482,7 @@ class Engine(threading.Thread):
         self._cached_smooth_kps: Optional[np.ndarray] = None
         self._snap_start: float = 0.0
         self._snap_active: bool = False
+        self._head_snap_active: bool = False
         self._screen_ox: int = 0
         self._screen_oy: int = 0
 
@@ -527,14 +533,22 @@ class Engine(threading.Thread):
 
     @aiming.setter
     def aiming(self, value: bool) -> None:
+        was_aiming = self._aiming
         self._aiming = value
         if value:
             self._snap_start = time.perf_counter()
             self._snap_active = True
+            self._head_snap_active = self._cfg.head_snap and self._gamepad.aim_down
         else:
             self._mouse.release()
             self._aim.release()
             self._snap_active = False
+            self._head_snap_active = False
+
+    def aiming_from_gamepad(self, pressed: bool) -> None:
+        """Called by gamepad callbacks — sets aiming and head snap flag."""
+        self._head_snap_active = self._cfg.head_snap and pressed
+        self.aiming = pressed
 
     def get_annotated_frame(self) -> Optional[np.ndarray]:
         with self._frame_lock:
@@ -560,12 +574,14 @@ class Engine(threading.Thread):
             except Exception:
                 logger.exception("Engine crashed, restarting in 700ms")
                 self._log("Engine error, restarting...")
+                self._gamepad.stop()
                 self._async_pose.stop()
                 self._async_detect.stop()
                 time.sleep(0.7)
 
     def stop(self) -> None:
         self._running = False
+        self._gamepad.stop()
         self._async_pose.stop()
         self._async_detect.stop()
         self._mouse.release()
@@ -584,6 +600,13 @@ class Engine(threading.Thread):
         self._async_detect.start(self._vision)
         self._self_tracker.reset()
         self._det_generation = -1
+        if self._cfg.gamepad:
+            self._gamepad.configure(self._cfg.gamepad_aim_trigger, self._cfg.gamepad_trigger_threshold)
+            self._gamepad.set_callbacks(
+                on_press=lambda: self.aiming_from_gamepad(True),
+                on_release=lambda: self.aiming_from_gamepad(False),
+            )
+            self._gamepad.start()
         try:
             sw, sh = screen_size()
             cap = self._cfg.capture
@@ -792,13 +815,17 @@ class Engine(threading.Thread):
                 snap_blend = 0.0
                 if self._snap_active:
                     snap_elapsed = time.perf_counter() - self._snap_start
-                    snap_dur = self._cfg.snap_duration_ms / 1000.0
+                    if self._head_snap_active:
+                        snap_dur = self._cfg.head_snap_duration_ms / 1000.0
+                    else:
+                        snap_dur = self._cfg.snap_duration_ms / 1000.0
                     if snap_elapsed < snap_dur:
                         snap_phase = True
                         t = snap_elapsed / snap_dur
                         snap_blend = 1.0 - t * t * (3.0 - 2.0 * t)
                     else:
                         self._snap_active = False
+                        self._head_snap_active = False
 
                 avg_kp_conf = float(smooth_kps[:, 2].mean()) if smooth_kps is not None else 0.0
                 self._confidence_trend.append(avg_kp_conf)
@@ -839,7 +866,12 @@ class Engine(threading.Thread):
                 else:
                     self._target_state = "LOCK"
 
-                preferred_bone = "head" if snap_phase else self._aim.auto_bone(h)
+                if self._head_snap_active and snap_phase:
+                    preferred_bone = "head"
+                elif snap_phase:
+                    preferred_bone = "head"
+                else:
+                    preferred_bone = self._aim.auto_bone(h)
 
                 if smooth_kps is not None:
                     skel_point_val, actual_bone = progressive_bone(
@@ -1010,8 +1042,14 @@ class Engine(threading.Thread):
                         saved_omega = self._cfg.omega
                         saved_zeta = self._cfg.zeta
                         saved_human = self._cfg.human
-                        self._cfg.omega = saved_omega + (self._cfg.snap_omega - saved_omega) * snap_blend
-                        self._cfg.zeta = saved_zeta + (self._cfg.snap_zeta - saved_zeta) * snap_blend
+                        if self._head_snap_active:
+                            target_omega = self._cfg.head_snap_omega
+                            target_zeta = self._cfg.head_snap_zeta
+                        else:
+                            target_omega = self._cfg.snap_omega
+                            target_zeta = self._cfg.snap_zeta
+                        self._cfg.omega = saved_omega + (target_omega - saved_omega) * snap_blend
+                        self._cfg.zeta = saved_zeta + (target_zeta - saved_zeta) * snap_blend
                         self._cfg.human = True
                         self._humanizer.skip_reaction()
 
