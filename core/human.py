@@ -1,4 +1,4 @@
-"""Humanised aim: reaction gate, spring dynamics, tremor, fatigue, sticky aim."""
+"""Humanised aim: reaction gate, spring dynamics, tremor, fatigue, sticky aim, micro-corrections."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from core.utils import clamp
 
 
 class Humanizer:
-    """Produces human-like aim adjustments: spring physics, tremor, fatigue."""
+    """Produces human-like aim adjustments: spring physics, tremor, fatigue, wind-up, micro-corrections."""
 
     def __init__(self, cfg: Config) -> None:
         self._cfg = cfg
@@ -31,6 +31,12 @@ class Humanizer:
             for _ in range(4)
         ]
         self._tremor_t: float = 0.0
+        self._windup_t: float = 0.0
+        self._prev_err_x: float = 0.0
+        self._prev_err_y: float = 0.0
+        self._flick_boost: float = 0.0
+        self._momentum_x: float = 0.0
+        self._momentum_y: float = 0.0
 
     def start_engagement(self, distance_px: float) -> None:
         """Begin a new aim engagement: set reaction deadline and miss flag."""
@@ -47,6 +53,10 @@ class Humanizer:
         self._residual_x = 0.0
         self._residual_y = 0.0
         self._tremor_t = 0.0
+        self._windup_t = 0.0
+        self._flick_boost = 0.0
+        self._momentum_x = 0.0
+        self._momentum_y = 0.0
         self._missed = random.random() < cfg.miss_rate
         if self._missed:
             angle = random.uniform(0, 2 * math.pi)
@@ -75,11 +85,39 @@ class Humanizer:
         f = 1.0 + engage_s * self._cfg.fatigue_rate + session_s * 0.0009
         return clamp(f, 1.0, 2.2)
 
+    def _windup_factor(self, dt: float) -> float:
+        """Smooth acceleration curve: starts slow, ramps to full speed over ~80ms."""
+        self._windup_t += dt
+        t = min(1.0, self._windup_t / 0.08)
+        return 0.3 + 0.7 * (3 * t * t - 2 * t * t * t)
+
+    def detect_flick(self, err_x: float, err_y: float, dt: float) -> None:
+        """Detect sudden direction changes and boost response temporarily."""
+        if dt < 0.0001:
+            return
+        derr_x = (err_x - self._prev_err_x) / dt
+        derr_y = (err_y - self._prev_err_y) / dt
+        change_rate = math.hypot(derr_x, derr_y)
+        if change_rate > 800.0:
+            self._flick_boost = min(1.0, change_rate / 2000.0)
+        else:
+            self._flick_boost *= max(0.0, 1.0 - dt * 8.0)
+        self._prev_err_x = err_x
+        self._prev_err_y = err_y
+
     def spring(self, err_x_deg: float, err_y_deg: float, dt: float) -> Tuple[float, float]:
-        """Second-order spring dynamics returning (step_x_deg, step_y_deg)."""
+        """Second-order spring with wind-up, flick boost, and momentum continuation."""
         fat = self.fatigue()
         omega = self._cfg.omega / fat
         zeta = self._cfg.zeta / fat
+
+        self.detect_flick(err_x_deg, err_y_deg, dt)
+
+        flick_omega_mult = 1.0 + self._flick_boost * 0.6
+        omega *= flick_omega_mult
+
+        windup = self._windup_factor(dt)
+        omega *= windup
 
         omega_sq = omega * omega
 
@@ -92,11 +130,25 @@ class Humanizer:
         step_x = self._spring_vel_x * dt
         step_y = self._spring_vel_y * dt
 
+        self._momentum_x = self._momentum_x * 0.92 + step_x * 0.08
+        self._momentum_y = self._momentum_y * 0.92 + step_y * 0.08
+        step_x += self._momentum_x * 0.15
+        step_y += self._momentum_y * 0.15
+
         if self._cfg.overshoot > 0 and zeta < 1.0:
             self._residual_x *= (1.0 - dt * 2.0)
             self._residual_y *= (1.0 - dt * 2.0)
 
         return (step_x, step_y)
+
+    def micro_correction(self, err_x_deg: float, err_y_deg: float, dt: float) -> Tuple[float, float]:
+        """Fine-grained sub-deadzone corrections for precision tracking."""
+        dist_deg = math.hypot(err_x_deg, err_y_deg)
+        if dist_deg < 0.001:
+            return (0.0, 0.0)
+        gain = 0.35 * min(1.0, dist_deg / 0.5)
+        jitter = random.gauss(0, 0.02) * dt * 60
+        return (err_x_deg * gain + jitter, err_y_deg * gain + jitter)
 
     def tremor(self, dt: float) -> Tuple[float, float]:
         """Return smooth 2-axis tremor offset built from summed sines."""
@@ -112,6 +164,8 @@ class Humanizer:
             else:
                 ty += math.sin(angle)
         scale = self._cfg.tremor / len(self._tremor_phases) * 2.0
+        fat = self.fatigue()
+        scale *= (0.8 + 0.2 * fat)
         return (tx * scale, ty * scale)
 
     def miss_offset(self) -> Tuple[float, float]:
@@ -124,12 +178,13 @@ class Humanizer:
         return (0.0, 0.0)
 
     def sticky(self, distance_px: float) -> float:
-        """Return aim slowdown gain: sticky_gain below sticky_radius, ramping to 1.0."""
+        """Smooth cubic sticky aim curve: strong slow-down near target, smooth ramp-out."""
         cfg = self._cfg
-        if distance_px < cfg.sticky_radius:
-            return cfg.sticky_gain
-        ramp_zone = cfg.sticky_radius * 0.5
-        if distance_px < cfg.sticky_radius + ramp_zone:
-            t = (distance_px - cfg.sticky_radius) / ramp_zone
-            return cfg.sticky_gain + t * (1.0 - cfg.sticky_gain)
-        return 1.0
+        sr = cfg.sticky_radius
+        if distance_px >= sr * 1.5:
+            return 1.0
+        if distance_px < sr * 0.3:
+            return cfg.sticky_gain * 0.8
+        t = clamp(distance_px / (sr * 1.5), 0.0, 1.0)
+        cubic = t * t * (3.0 - 2.0 * t)
+        return cfg.sticky_gain + cubic * (1.0 - cfg.sticky_gain)

@@ -127,6 +127,28 @@ def _interpolate_kps(kps: np.ndarray, min_conf: float) -> np.ndarray:
     return out
 
 
+def pose_stability(kps: np.ndarray, prev_kps_list: Optional[List[np.ndarray]], min_conf: float = 0.3) -> float:
+    """Compute pose stability 0-1 from temporal variance of keypoint positions."""
+    if prev_kps_list is None or len(prev_kps_list) < 3 or kps is None:
+        return 0.5
+    all_frames = prev_kps_list[-5:] + [kps]
+    total_var = 0.0
+    n_valid = 0
+    for k in range(min(17, kps.shape[0])):
+        xs, ys = [], []
+        for fkps in all_frames:
+            if fkps.shape[0] > k and float(fkps[k, 2]) >= min_conf:
+                xs.append(float(fkps[k, 0]))
+                ys.append(float(fkps[k, 1]))
+        if len(xs) >= 3:
+            total_var += np.var(xs) + np.var(ys)
+            n_valid += 1
+    if n_valid == 0:
+        return 0.5
+    avg_var = total_var / n_valid
+    return max(0.0, min(1.0, 1.0 - avg_var / 400.0))
+
+
 def _estimate_depths(kps: np.ndarray, box: Tuple[float, float, float, float], min_conf: float) -> np.ndarray:
     depths = np.full(min(17, kps.shape[0]), 0.5)
     bh = max(1.0, box[3] - box[1])
@@ -140,16 +162,31 @@ def _estimate_depths(kps: np.ndarray, box: Tuple[float, float, float, float], mi
 
     if kps.shape[0] >= 13 and float(kps[5, 2]) >= min_conf and float(kps[6, 2]) >= min_conf:
         scx = (float(kps[5, 0]) + float(kps[6, 0])) / 2
+        shoulder_w = abs(float(kps[5, 0]) - float(kps[6, 0]))
+
         for arm_kps, shoulder in [([7, 9], 5), ([8, 10], 6)]:
             max_ext = 0.0
             for ak in arm_kps:
                 if ak < kps.shape[0] and float(kps[ak, 2]) >= min_conf * 0.5:
                     max_ext = max(max_ext, abs(float(kps[ak, 0]) - scx))
             if max_ext > bw * 0.3:
+                ext_ratio = min(1.0, max_ext / (bw * 0.5))
                 for ak in arm_kps:
                     if ak < kps.shape[0]:
-                        depths[ak] = min(1.0, depths[ak] + 0.25)
-                depths[shoulder] = min(1.0, depths[shoulder] + 0.12)
+                        depths[ak] = min(1.0, depths[ak] + 0.25 * ext_ratio)
+                depths[shoulder] = min(1.0, depths[shoulder] + 0.12 * ext_ratio)
+
+        if kps.shape[0] >= 17:
+            l_hip = kps[11] if kps.shape[0] > 11 else None
+            r_hip = kps[12] if kps.shape[0] > 12 else None
+            if l_hip is not None and r_hip is not None:
+                hip_w = abs(float(l_hip[0]) - float(r_hip[0]))
+                if shoulder_w > 5 and hip_w > 5:
+                    ratio = hip_w / shoulder_w
+                    if ratio < 0.6:
+                        for k in [11, 12, 13, 14, 15, 16]:
+                            if k < kps.shape[0]:
+                                depths[k] = min(1.0, depths[k] + 0.1)
 
     if kps.shape[0] >= 17:
         for leg_kps, hip in [([13, 15], 11), ([14, 16], 12)]:

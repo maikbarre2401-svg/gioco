@@ -22,7 +22,7 @@ from core.output import MouseOutput
 from core.skeleton import (
     BONES, bone_point, progressive_bone, multi_bone_aim, target_silhouette,
     draw as draw_skeleton, draw_overlay_items,
-    heuristic_point, head_radius, body_center, body_radius,
+    heuristic_point, head_radius, body_center, body_radius, pose_stability,
 )
 from core.utils import clamp, foreground_exe, screen_size
 from core.vision import Detection, Vision
@@ -263,6 +263,12 @@ class Engine(threading.Thread):
         self._movement_class: str = "STILL"
         self._hit_probability: float = 0.0
         self._all_detections_for_radar: List[Detection] = []
+        self._occlusion_warning: bool = False
+        self._target_edge_dist: float = 999.0
+        self._confidence_trend: List[float] = []
+        self._max_conf_trend: int = 20
+        self._state_blend: float = 0.0
+        self._tracking_score: float = 0.0
 
     @property
     def enabled(self) -> bool:
@@ -446,6 +452,7 @@ class Engine(threading.Thread):
             )
 
             self._aim.set_frame(frame)
+            self._aim.set_velocity(self._target_vx, self._target_vy, self._movement_class)
             picked = self._aim.pick(fov_detections, w, h)
             self._tick_count += 1
 
@@ -518,9 +525,41 @@ class Engine(threading.Thread):
                     else:
                         self._snap_active = False
 
+                avg_kp_conf = float(smooth_kps[:, 2].mean()) if smooth_kps is not None else 0.0
+                self._confidence_trend.append(avg_kp_conf)
+                if len(self._confidence_trend) > self._max_conf_trend:
+                    self._confidence_trend.pop(0)
+
+                edge_margin = 30.0
+                self._target_edge_dist = min(
+                    tcx_now - 0, w - tcx_now, tcy_now - 0, h - tcy_now
+                )
+                speed = math.hypot(self._target_vx, self._target_vy)
+                conf_dropping = False
+                if len(self._confidence_trend) >= 6:
+                    recent = self._confidence_trend[-3:]
+                    older = self._confidence_trend[-6:-3]
+                    conf_dropping = sum(recent) / 3 < sum(older) / 3 * 0.75
+                self._occlusion_warning = (
+                    self._target_edge_dist < edge_margin and speed > 30
+                ) or conf_dropping
+
+                reid_factor = min(1.0, self._last_reid_score / 0.7) if self._last_reid_score > 0 else 0.5
+                speed_penalty = max(0.0, 1.0 - speed / 500.0)
+                track_dur = min(1.0, (time.perf_counter() - self._lock_time) / 2.0)
+                stability = pose_stability(
+                    smooth_kps, self._prev_kps_history[:-1] if len(self._prev_kps_history) > 1 else None,
+                    self._cfg.kp_conf,
+                )
+                self._tracking_score = (
+                    avg_kp_conf * 0.25 + reid_factor * 0.20 +
+                    speed_penalty * 0.15 + track_dur * 0.10 + stability * 0.20 + 0.10
+                )
+                self._tracking_score = max(0.0, min(1.0, self._tracking_score))
+
                 if snap_phase:
                     self._target_state = "SNAP"
-                elif smooth_kps is not None and float(smooth_kps[:, 2].mean()) > 0.4:
+                elif smooth_kps is not None and avg_kp_conf > 0.4:
                     self._target_state = "TRACK"
                 else:
                     self._target_state = "LOCK"
@@ -626,17 +665,16 @@ class Engine(threading.Thread):
 
                 hud_x = int(display_box[2]) + 6
                 hud_y = int(display_box[1])
-                avg_conf = float(smooth_kps[:, 2].mean()) if smooth_kps is not None else 0.0
                 box_h = display_box[3] - display_box[1]
                 dist_to_tgt = math.hypot(px - scx, py - scy)
-                self._hit_probability = self._calc_hit_prob(dist_to_tgt, avg_conf, speed, box_h)
+                self._hit_probability = self._calc_hit_prob(dist_to_tgt, avg_kp_conf, speed, box_h)
 
                 if smooth_kps is not None:
                     bar_h = 40
                     bar_w = 4
                     cv2.rectangle(ann, (hud_x, hud_y), (hud_x + bar_w, hud_y + bar_h), (40, 40, 40), -1)
-                    bar_len = int(min(bar_h, avg_conf * bar_h * 1.25))
-                    bar_color = (0, 255, 100) if avg_conf > 0.5 else (0, 180, 255)
+                    bar_len = int(min(bar_h, avg_kp_conf * bar_h * 1.25))
+                    bar_color = (0, 255, 100) if avg_kp_conf > 0.5 else (0, 180, 255)
                     cv2.rectangle(ann, (hud_x, hud_y + bar_h - bar_len), (hud_x + bar_w, hud_y + bar_h), bar_color, -1)
 
                     reid_x = hud_x + bar_w + 2
@@ -651,10 +689,22 @@ class Engine(threading.Thread):
                     hit_color = (100, 255, 100) if self._hit_probability > 0.7 else (0, 200, 255) if self._hit_probability > 0.4 else (50, 50, 200)
                     cv2.rectangle(ann, (hit_x, hud_y + bar_h - hit_len), (hit_x + bar_w, hud_y + bar_h), hit_color, -1)
 
+                    trk_x = hit_x + bar_w + 2
+                    cv2.rectangle(ann, (trk_x, hud_y), (trk_x + bar_w, hud_y + bar_h), (40, 40, 40), -1)
+                    trk_len = int(min(bar_h, self._tracking_score * bar_h))
+                    trk_color = (200, 200, 50) if self._tracking_score > 0.6 else (100, 100, 150)
+                    cv2.rectangle(ann, (trk_x, hud_y + bar_h - trk_len), (trk_x + bar_w, hud_y + bar_h), trk_color, -1)
+
+                if self._occlusion_warning:
+                    occ_y = int(display_box[1]) - 26
+                    cv2.putText(ann, "! OCCLUDE", (int(display_box[0]), occ_y),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.28, (0, 80, 255), 1, cv2.LINE_AA)
+                    overlay_items.append(("text", int(display_box[0]) + sox, occ_y + soy, "! OCCLUDE", "#ff5000", 8))
+
                 lock_dur = time.perf_counter() - self._lock_time
                 state_label = self._target_state
                 hud_text = f"{state_label} {self._movement_class} {dist_to_tgt:.0f}px"
-                hud_text2 = f"HIT:{self._hit_probability:.0%} T:{lock_dur:.1f}s"
+                hud_text2 = f"HIT:{self._hit_probability:.0%} TRK:{self._tracking_score:.0%} T:{lock_dur:.1f}s"
                 cv2.putText(ann, hud_text, (int(display_box[0]), int(display_box[1]) - 14),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.32, main_color, 1, cv2.LINE_AA)
                 cv2.putText(ann, hud_text2, (int(display_box[0]), int(display_box[1]) - 4),
@@ -663,11 +713,10 @@ class Engine(threading.Thread):
                 overlay_items.append(("text", int(display_box[0]) + sox, int(display_box[1]) - 4 + soy, hud_text2, self._dim_hex(main_hex, 0.7), 8))
 
                 box_h_ratio = box_h / h
-                auto_sens = 1.0
-                if box_h_ratio > 0.4:
-                    auto_sens = 0.7
-                elif box_h_ratio > 0.25:
-                    auto_sens = 0.85
+                size_sens = 1.0 - 0.3 * min(1.0, max(0.0, (box_h_ratio - 0.15) / 0.35))
+                speed_sens = 1.0 - 0.15 * min(1.0, speed / 300.0)
+                trk_bonus = 0.05 * min(1.0, self._tracking_score)
+                auto_sens = clamp(size_sens * speed_sens + trk_bonus, 0.55, 1.0)
 
                 dt = tick_s
                 active = self._enabled and self._aiming and (self._focused or self._cfg.always_active)
@@ -713,6 +762,9 @@ class Engine(threading.Thread):
                 self._aim_trail.clear()
                 self._hit_probability = 0.0
                 self._movement_class = "STILL"
+                self._occlusion_warning = False
+                self._confidence_trend.clear()
+                self._tracking_score = 0.0
 
             elapsed = time.perf_counter() - t0
             self._tick_times.append(elapsed)
