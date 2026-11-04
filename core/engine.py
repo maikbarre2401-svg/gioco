@@ -31,7 +31,12 @@ logger = logging.getLogger(__name__)
 
 
 class _BoxSmoother:
-    """Kalman-smooth bounding box coordinates to prevent jitter."""
+    """Kalman-smooth bounding box coordinates to prevent jitter.
+
+    Time is advanced by advance(dt) once per engine tick; correct(box) folds in a
+    new measurement without advancing time again. This keeps the filter correct
+    when detections arrive less often than ticks.
+    """
 
     def __init__(self) -> None:
         self._axes = [Axis(process_noise=60.0, measurement_noise=3.0) for _ in range(4)]
@@ -42,18 +47,21 @@ class _BoxSmoother:
             ax._initialised = False
         self._valid = False
 
-    def feed(self, box: Tuple[float, float, float, float], dt: float) -> Tuple[float, float, float, float]:
-        results = []
-        for ax, val in zip(self._axes, box):
-            ax.predict(dt)
-            results.append(ax.update(val))
-        self._valid = True
-        return (results[0], results[1], results[2], results[3])
-
-    def predict(self, dt: float) -> Optional[Tuple[float, float, float, float]]:
+    def advance(self, dt: float) -> Optional[Tuple[float, float, float, float]]:
+        """Step the filter forward by dt without a measurement."""
         if not self._valid:
             return None
         return tuple(ax.predict(dt) for ax in self._axes)
+
+    def correct(self, box: Tuple[float, float, float, float]) -> Tuple[float, float, float, float]:
+        """Fold in a measurement at the current filter time."""
+        results = [ax.update(val) for ax, val in zip(self._axes, box)]
+        self._valid = True
+        return (results[0], results[1], results[2], results[3])
+
+    def feed(self, box: Tuple[float, float, float, float], dt: float) -> Tuple[float, float, float, float]:
+        self.advance(dt)
+        return self.correct(box)
 
 
 class _KpSmoother:
@@ -216,6 +224,190 @@ class _AsyncPose:
                 self._busy = False
 
 
+class _AsyncDetect:
+    """Runs YOLO detection in a dedicated thread so the aim loop runs at full tick rate."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._request_event = threading.Event()
+        self._stop = False
+        self._thread: Optional[threading.Thread] = None
+
+        self._req_frame: Optional[np.ndarray] = None
+        self._req_box: Optional[Tuple[float, float, float, float]] = None
+
+        self._result: List[Detection] = []
+        self._result_stamp: float = 0.0
+        self._generation: int = 0
+
+        self._vision: Optional[Vision] = None
+        self._busy = False
+
+    def start(self, vision: Vision) -> None:
+        self._vision = vision
+        self._stop = False
+        self._result = []
+        self._generation = 0
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop = True
+        self._request_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+            self._thread = None
+
+    def submit(self, frame: np.ndarray, tracked_box: Optional[Tuple[float, float, float, float]]) -> None:
+        """Queue a frame for detection. Skipped while a detection is in flight."""
+        with self._lock:
+            if self._busy:
+                return
+            self._req_frame = frame
+            self._req_box = tracked_box
+        self._request_event.set()
+
+    def latest(self) -> Tuple[List[Detection], float, int]:
+        """Return (detections, stamp, generation). Never blocks; may be slightly stale."""
+        with self._lock:
+            return (list(self._result), self._result_stamp, self._generation)
+
+    def _run(self) -> None:
+        while not self._stop:
+            self._request_event.wait(timeout=0.5)
+            self._request_event.clear()
+            if self._stop:
+                break
+
+            with self._lock:
+                frame = self._req_frame
+                box = self._req_box
+                self._req_frame = None
+                self._req_box = None
+                if frame is None:
+                    continue
+                self._busy = True
+
+            dets: List[Detection] = []
+            try:
+                if self._vision is not None:
+                    dets = self._vision.detect(frame, tracked_box=box)
+            except Exception:
+                logger.debug("Async detection failed", exc_info=True)
+
+            with self._lock:
+                self._result = dets
+                self._result_stamp = time.perf_counter()
+                self._generation += 1
+                self._busy = False
+
+
+class _SelfTracker:
+    """Identifies the player's own character in 3rd person by positional stability.
+
+    The player's body sits in a fixed screen region and barely moves in screen
+    space because the camera follows it. Enemies that cross that region move.
+    So a candidate must stay put for several frames before it is treated as self,
+    and from then on it is excluded by box identity rather than by position.
+    """
+
+    def __init__(self) -> None:
+        self._box: Optional[Tuple[float, float, float, float]] = None
+        self._hits: int = 0
+        self._misses: int = 0
+        self._locked: bool = False
+        self._lock_frames: int = 15
+        self._max_misses: int = 25
+
+    def reset(self) -> None:
+        self._box = None
+        self._hits = 0
+        self._misses = 0
+        self._locked = False
+
+    @property
+    def locked(self) -> bool:
+        return self._locked
+
+    @property
+    def box(self) -> Optional[Tuple[float, float, float, float]]:
+        return self._box if self._locked else None
+
+    def update(
+        self, dets: List[Detection], cx: float, cy: float, h: int, cfg: Config
+    ) -> None:
+        """Advance the self-track against this frame's detections."""
+        zone_x1 = cx - cfg.self_zone_w / 2.0
+        zone_x2 = cx + cfg.self_zone_w / 2.0
+        zone_y1 = cy + cfg.self_zone_offset_y
+        zone_y2 = cy + cfg.self_zone_offset_y + cfg.self_zone_h
+
+        best = None
+        best_score = -1.0
+        for d in dets:
+            mx = (d[0] + d[2]) / 2.0
+            my = (d[1] + d[3]) / 2.0
+            bh = d[3] - d[1]
+            if not (zone_x1 <= mx <= zone_x2 and zone_y1 <= my <= zone_y2):
+                continue
+            if bh < h * 0.18:
+                continue
+            score = bh / max(1.0, float(h))
+            if self._box is not None:
+                score += _iou_box(d[:4], self._box) * 2.0
+            if score > best_score:
+                best_score = score
+                best = d
+
+        if best is None:
+            self._misses += 1
+            if self._misses > self._max_misses:
+                self.reset()
+            return
+
+        cand = (best[0], best[1], best[2], best[3])
+        if self._box is None:
+            self._box = cand
+            self._hits = 1
+            self._misses = 0
+            return
+
+        overlap = _iou_box(cand, self._box)
+        if overlap > 0.55:
+            self._hits += 1
+            self._misses = 0
+            a = 0.25
+            self._box = tuple(
+                self._box[i] * (1.0 - a) + cand[i] * a for i in range(4)
+            )
+            if self._hits >= self._lock_frames:
+                self._locked = True
+        else:
+            self._hits = max(0, self._hits - 2)
+            self._misses += 1
+            if self._hits == 0:
+                self._box = cand
+                self._locked = False
+
+    def is_self(self, det: Detection) -> bool:
+        """True if this detection is the tracked player character."""
+        if not self._locked or self._box is None:
+            return False
+        return _iou_box(det[:4], self._box) > 0.45
+
+
+def _iou_box(a, b) -> float:
+    ix1 = max(a[0], b[0])
+    iy1 = max(a[1], b[1])
+    ix2 = min(a[2], b[2])
+    iy2 = min(a[3], b[3])
+    inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+    aa = max(0.0, (a[2] - a[0]) * (a[3] - a[1]))
+    ab = max(0.0, (b[2] - b[0]) * (b[3] - b[1]))
+    union = aa + ab - inter
+    return inter / union if union > 1e-6 else 0.0
+
+
 class Engine(threading.Thread):
     """Aim-assist engine running detection and aim in a background thread."""
 
@@ -242,6 +434,13 @@ class Engine(threading.Thread):
         self._kp_smoother = _KpSmoother()
         self._box_smoother = _BoxSmoother()
         self._async_pose = _AsyncPose()
+        self._async_detect = _AsyncDetect()
+        self._self_tracker = _SelfTracker()
+        self._det_generation: int = -1
+        self._last_box_stamp: float = 0.0
+        self._smoothed_box: Tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
+        self._det_intervals: List[float] = []
+        self._last_det_tick: float = 0.0
 
         self._frame_lock = threading.Lock()
         self._annotated_frame: Optional[np.ndarray] = None
@@ -340,15 +539,18 @@ class Engine(threading.Thread):
                 logger.exception("Engine crashed, restarting in 700ms")
                 self._log("Engine error, restarting...")
                 self._async_pose.stop()
+                self._async_detect.stop()
                 time.sleep(0.7)
 
     def stop(self) -> None:
         self._running = False
         self._async_pose.stop()
+        self._async_detect.stop()
         self._mouse.release()
 
     def _init_systems(self) -> None:
         self._async_pose.stop()
+        self._async_detect.stop()
         if self._capturer is not None:
             self._capturer.release()
             self._capturer = None
@@ -357,6 +559,9 @@ class Engine(threading.Thread):
         self._log("Initialising vision...")
         self._vision = Vision(self._cfg, self._log)
         self._async_pose.start(self._vision)
+        self._async_detect.start(self._vision)
+        self._self_tracker.reset()
+        self._det_generation = -1
         try:
             sw, sh = screen_size()
             cap = self._cfg.capture
@@ -389,7 +594,11 @@ class Engine(threading.Thread):
 
             h, w = frame.shape[:2]
             trk_box = self._aim.target_box
-            detections = self._vision.detect(frame, tracked_box=trk_box) if self._vision else []
+            self._async_detect.submit(frame, trk_box)
+            detections, det_stamp, det_gen = self._async_detect.latest()
+            det_is_new = det_gen != self._det_generation
+            if det_is_new:
+                self._det_generation = det_gen
 
             overlay_items: list = []
             ann = frame.copy()
@@ -422,8 +631,17 @@ class Engine(threading.Thread):
                 self._adaptive_fov = target_fov_shrink
             eff_fov = int(fov_r * self._adaptive_fov)
 
-            if self._cfg.third_person and detections:
-                detections = self._filter_self(detections, scx, scy, w, h)
+            self_box: Optional[Tuple[float, float, float, float]] = None
+            if self._cfg.third_person:
+                if det_is_new:
+                    self._self_tracker.update(detections, scx, scy, h, self._cfg)
+                self_box = self._self_tracker.box
+                if self_box is not None:
+                    detections = [d for d in detections if not self._self_tracker.is_self(d)]
+                    sx1, sy1, sx2, sy2 = (int(v) for v in self_box)
+                    cv2.rectangle(ann, (sx1, sy1), (sx2, sy2), (70, 70, 70), 1, cv2.LINE_AA)
+                    cv2.putText(ann, "SELF", (sx1, sy1 - 4),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.3, (90, 90, 90), 1, cv2.LINE_AA)
 
             self._all_detections_for_radar = list(detections)
 
@@ -497,18 +715,30 @@ class Engine(threading.Thread):
                     self._prev_target_cy = (raw_box[1] + raw_box[3]) / 2
                     self._target_vx = 0.0
                     self._target_vy = 0.0
+                    self._last_box_stamp = time.perf_counter()
+                    self._smoothed_box = raw_box
 
-                smoothed_box = self._box_smoother.feed(raw_box, tick_s)
+                advanced = self._box_smoother.advance(tick_s)
+                if det_is_new:
+                    smoothed_box = self._box_smoother.correct(raw_box)
+                    now_p = time.perf_counter()
+                    box_dt = max(0.001, now_p - self._last_box_stamp)
+                    self._last_box_stamp = now_p
+                    tcx_now = (smoothed_box[0] + smoothed_box[2]) / 2.0
+                    tcy_now = (smoothed_box[1] + smoothed_box[3]) / 2.0
+                    raw_vx = (tcx_now - self._prev_target_cx) / box_dt
+                    raw_vy = (tcy_now - self._prev_target_cy) / box_dt
+                    self._target_vx = self._target_vx * self._vel_smooth + raw_vx * (1 - self._vel_smooth)
+                    self._target_vy = self._target_vy * self._vel_smooth + raw_vy * (1 - self._vel_smooth)
+                    self._prev_target_cx = tcx_now
+                    self._prev_target_cy = tcy_now
+                else:
+                    smoothed_box = advanced if advanced is not None else self._smoothed_box
+                    tcx_now = (smoothed_box[0] + smoothed_box[2]) / 2.0
+                    tcy_now = (smoothed_box[1] + smoothed_box[3]) / 2.0
+
+                self._smoothed_box = smoothed_box
                 bx1, by1, bx2, by2 = smoothed_box
-
-                tcx_now = (bx1 + bx2) / 2.0
-                tcy_now = (by1 + by2) / 2.0
-                raw_vx = (tcx_now - self._prev_target_cx) / max(tick_s, 0.001)
-                raw_vy = (tcy_now - self._prev_target_cy) / max(tick_s, 0.001)
-                self._target_vx = self._target_vx * self._vel_smooth + raw_vx * (1 - self._vel_smooth)
-                self._target_vy = self._target_vy * self._vel_smooth + raw_vy * (1 - self._vel_smooth)
-                self._prev_target_cx = tcx_now
-                self._prev_target_cy = tcy_now
 
                 if self._cfg.use_pose and self._vision:
                     self._async_pose.submit(frame, (bx1, by1, bx2, by2))
@@ -802,7 +1032,17 @@ class Engine(threading.Thread):
             avg_tick = sum(self._tick_times) / len(self._tick_times) if self._tick_times else tick_s
             fps = int(1.0 / max(avg_tick, 0.001))
 
-            fps_text = f"FPS:{fps}"
+            if det_is_new:
+                self._det_intervals.append(time.perf_counter() - self._last_det_tick)
+                self._last_det_tick = time.perf_counter()
+                if len(self._det_intervals) > 30:
+                    self._det_intervals.pop(0)
+            det_fps = 0
+            if self._det_intervals:
+                avg_det = sum(self._det_intervals) / len(self._det_intervals)
+                det_fps = int(1.0 / max(avg_det, 0.001))
+
+            fps_text = f"FPS:{fps} DET:{det_fps}"
             cv2.putText(ann, fps_text, (8, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (180, 180, 180), 1, cv2.LINE_AA)
             overlay_items.append(("text", 8 + sox, 16 + soy, fps_text, "#b0b0b0", 9))
 
@@ -838,34 +1078,6 @@ class Engine(threading.Thread):
                 return "FAST"
             return "RUN"
         return "FAST"
-
-    def _filter_self(
-        self, dets: List[Detection], cx: int, cy: int, w: int, h: int
-    ) -> List[Detection]:
-        """Remove the player's own character detection (3rd person, center-bottom)."""
-        zw = self._cfg.self_zone_w
-        zh = self._cfg.self_zone_h
-        oy = self._cfg.self_zone_offset_y
-        zone_x1 = cx - zw / 2.0
-        zone_x2 = cx + zw / 2.0
-        zone_y1 = cy + oy
-        zone_y2 = min(h, cy + oy + zh)
-
-        kept: List[Detection] = []
-        for x1, y1, x2, y2, conf in dets:
-            mx = (x1 + x2) / 2.0
-            my = (y1 + y2) / 2.0
-            bw = x2 - x1
-            bh = y2 - y1
-            in_zone = zone_x1 <= mx <= zone_x2 and zone_y1 <= my <= zone_y2
-            large = bh > h * 0.35
-            if in_zone and (large or bh > h * 0.20):
-                continue
-            kept.append((x1, y1, x2, y2, conf))
-
-        if not kept and dets:
-            return list(dets)
-        return kept
 
     def _calc_hit_prob(self, dist_px: float, avg_conf: float, speed: float, box_h: float) -> float:
         dist_score = max(0.0, 1.0 - dist_px / max(1.0, self._cfg.fov_px))

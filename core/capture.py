@@ -59,12 +59,17 @@ class Capturer:
             self._mss_inst = None
 
     def grab(self) -> Optional[np.ndarray]:
-        """Return a BGR ndarray of the capture region, or None on failure."""
+        """Return an independent BGR ndarray of the capture region, or None.
+
+        The returned array is always a private copy: dxcam hands back a reference
+        to its internal buffer, which its capture thread overwrites in place, and
+        the detection and pose threads keep reading the frame after this returns.
+        """
         if not self._use_mss and self._dxcam_cam is not None:
             try:
                 frame = self._dxcam_cam.get_latest_frame()
                 if frame is not None:
-                    return np.ascontiguousarray(frame)
+                    return np.ascontiguousarray(frame).copy()
             except Exception:
                 logger.warning("dxcam grab failed, switching to mss", exc_info=True)
                 self._release_dxcam()
