@@ -332,6 +332,53 @@ def progressive_bone(
     return None, preferred
 
 
+def multi_bone_aim(
+    kps: np.ndarray, preferred: str, box: Tuple[float, float, float, float], min_conf: float = 0.3
+) -> Optional[Tuple[float, float]]:
+    """Confidence-weighted blend of all visible bone points biased toward preferred.
+    Returns a single aim point that uses information from every visible bone."""
+    if kps is None or kps.shape[0] < 17:
+        return None
+    weights_map = {"head": 3.0, "neck": 1.5, "chest": 1.0, "pelvis": 0.5}
+    if preferred in weights_map:
+        weights_map[preferred] *= 2.5
+
+    total_w = 0.0
+    wx, wy = 0.0, 0.0
+    for name, base_w in weights_map.items():
+        pt = bone_point(kps, name, box)
+        if pt is None:
+            continue
+        idx_map = {"head": 0, "neck": 5, "chest": 5, "pelvis": 11}
+        ci = idx_map.get(name, 0)
+        conf = float(kps[ci, 2]) if kps.shape[0] > ci else 0.0
+        if conf < min_conf * 0.5:
+            continue
+        w = base_w * conf
+        wx += pt[0] * w
+        wy += pt[1] * w
+        total_w += w
+    if total_w < 0.01:
+        return None
+    return (wx / total_w, wy / total_w)
+
+
+def target_silhouette(
+    kps: np.ndarray, box: Tuple[float, float, float, float], min_conf: float = 0.3
+) -> Optional[np.ndarray]:
+    """Return convex hull points from confident keypoints for silhouette outline."""
+    if kps is None or kps.shape[0] < 17:
+        return None
+    pts = []
+    for k in range(min(17, kps.shape[0])):
+        if float(kps[k, 2]) >= min_conf:
+            pts.append([int(kps[k, 0]), int(kps[k, 1])])
+    if len(pts) < 4:
+        return None
+    hull = cv2.convexHull(np.array(pts, dtype=np.int32))
+    return hull
+
+
 def heuristic_point(
     name: str, box: Tuple[float, float, float, float]
 ) -> Tuple[float, float]:

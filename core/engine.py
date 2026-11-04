@@ -20,7 +20,8 @@ from core.kalman import Axis, Tracker
 from core.metrics import MetricsCollector
 from core.output import MouseOutput
 from core.skeleton import (
-    BONES, bone_point, progressive_bone, draw as draw_skeleton, draw_overlay_items,
+    BONES, bone_point, progressive_bone, multi_bone_aim, target_silhouette,
+    draw as draw_skeleton, draw_overlay_items,
     heuristic_point, head_radius, body_center, body_radius,
 )
 from core.utils import clamp, foreground_exe, screen_size
@@ -255,6 +256,14 @@ class Engine(threading.Thread):
         self._last_reid_score: float = 0.0
         self._tick_count: int = 0
 
+        self._aim_trail: List[Tuple[int, int]] = []
+        self._max_aim_trail: int = 18
+        self._adaptive_fov: float = 0.0
+        self._tick_times: List[float] = []
+        self._movement_class: str = "STILL"
+        self._hit_probability: float = 0.0
+        self._all_detections_for_radar: List[Detection] = []
+
     @property
     def enabled(self) -> bool:
         return self._enabled
@@ -380,18 +389,39 @@ class Engine(threading.Thread):
             cv2.drawMarker(ann, (scx, scy), main_color, cv2.MARKER_CROSS, 16, 1, cv2.LINE_AA)
             cv2.circle(ann, (scx, scy), fov_r, self._hex_bgr(skel_hex), 1, cv2.LINE_AA)
 
+            if self._target_state == "TRACK" or self._target_state == "SNAP":
+                target_fov_shrink = 0.92
+            elif self._target_state == "LOCK":
+                target_fov_shrink = 0.96
+            else:
+                target_fov_shrink = 1.0
+            self._adaptive_fov += (target_fov_shrink - self._adaptive_fov) * 0.08 if self._adaptive_fov > 0 else 0
+            if self._adaptive_fov == 0:
+                self._adaptive_fov = target_fov_shrink
+            eff_fov = int(fov_r * self._adaptive_fov)
+
+            self._all_detections_for_radar = list(detections)
+
             fov_detections: List[Detection] = []
             for x1, y1, x2, y2, conf in detections:
                 mx = (x1 + x2) / 2.0
                 my = (y1 + y2) / 2.0
                 dist_to_center = math.hypot(mx - scx, my - scy)
-                if dist_to_center <= fov_r:
+                if dist_to_center <= eff_fov:
                     fov_detections.append((x1, y1, x2, y2, conf))
 
             if self._cfg.overlay_boxes:
                 for x1, y1, x2, y2, conf in fov_detections:
-                    cv2.rectangle(ann, (int(x1), int(y1)), (int(x2), int(y2)), main_color, 2)
-                    overlay_items.append(("box", int(x1) + sox, int(y1) + soy, int(x2) + sox, int(y2) + soy, main_hex))
+                    mx = (x1 + x2) / 2.0
+                    my = (y1 + y2) / 2.0
+                    cdist = math.hypot(mx - scx, my - scy)
+                    prox = max(0.0, 1.0 - cdist / max(1.0, eff_fov))
+                    box_hex = self._threat_hex(main_hex, prox * 0.6)
+                    cv2.rectangle(ann, (int(x1), int(y1)), (int(x2), int(y2)), self._hex_bgr(box_hex), 2)
+                    overlay_items.append(("box", int(x1) + sox, int(y1) + soy, int(x2) + sox, int(y2) + soy, box_hex))
+                    conf_label = f"{conf:.0%}"
+                    cv2.putText(ann, conf_label, (int(x1), int(y2) + 12),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.3, self._hex_bgr(box_hex), 1, cv2.LINE_AA)
 
             n_in_fov = len(fov_detections)
             threat_factor = 0.0
@@ -400,15 +430,20 @@ class Engine(threading.Thread):
                     math.hypot((d[0] + d[2]) / 2 - scx, (d[1] + d[3]) / 2 - scy)
                     for d in fov_detections
                 )
-                threat_factor = max(0.0, 1.0 - closest_dist / fov_r)
+                threat_factor = max(0.0, 1.0 - closest_dist / eff_fov)
                 threat_hex = self._threat_hex(skel_hex, threat_factor)
-                cv2.circle(ann, (scx, scy), fov_r, self._hex_bgr(threat_hex), 2, cv2.LINE_AA)
-                overlay_items.append(("circle", scx + sox, scy + soy, fov_r + 2, threat_hex))
+                cv2.circle(ann, (scx, scy), eff_fov, self._hex_bgr(threat_hex), 2, cv2.LINE_AA)
+                overlay_items.append(("circle", scx + sox, scy + soy, eff_fov + 2, threat_hex))
                 label = str(n_in_fov)
-                lx = scx + fov_r - 12
-                ly = scy - fov_r + 14
+                lx = scx + eff_fov - 12
+                ly = scy - eff_fov + 14
                 cv2.putText(ann, label, (lx, ly), cv2.FONT_HERSHEY_SIMPLEX, 0.4, self._hex_bgr(threat_hex), 1, cv2.LINE_AA)
                 overlay_items.append(("text", lx + sox, ly + soy, label, threat_hex, 10))
+
+            self._draw_radar(
+                ann, overlay_items, self._all_detections_for_radar, fov_detections,
+                scx, scy, eff_fov, w, h, sox, soy, main_hex,
+            )
 
             self._aim.set_frame(frame)
             picked = self._aim.pick(fov_detections, w, h)
@@ -496,20 +531,33 @@ class Engine(threading.Thread):
                     skel_point_val, actual_bone = progressive_bone(
                         smooth_kps, preferred_bone, display_box, self._cfg.kp_conf
                     )
+                    multi_pt = multi_bone_aim(smooth_kps, preferred_bone, display_box, self._cfg.kp_conf)
                     heur_point_val = heuristic_point(actual_bone, display_box)
 
                     if skel_point_val is not None:
                         avg_conf = float(smooth_kps[:, 2].mean())
-                        if avg_conf >= 0.55:
+                        if avg_conf >= 0.60:
                             target_point = skel_point_val
-                        elif avg_conf >= 0.25:
-                            blend = (avg_conf - 0.25) / 0.30
+                        elif avg_conf >= 0.40 and multi_pt is not None:
+                            blend = (avg_conf - 0.40) / 0.20
                             target_point = (
-                                skel_point_val[0] * blend + heur_point_val[0] * (1.0 - blend),
-                                skel_point_val[1] * blend + heur_point_val[1] * (1.0 - blend),
+                                skel_point_val[0] * blend + multi_pt[0] * (1 - blend),
+                                skel_point_val[1] * blend + multi_pt[1] * (1 - blend),
+                            )
+                        elif avg_conf >= 0.25:
+                            blend = (avg_conf - 0.25) / 0.15
+                            base = multi_pt if multi_pt else heur_point_val
+                            target_point = (
+                                base[0] * blend + heur_point_val[0] * (1 - blend),
+                                base[1] * blend + heur_point_val[1] * (1 - blend),
                             )
                         else:
                             target_point = heur_point_val
+
+                    hull = target_silhouette(smooth_kps, display_box, self._cfg.kp_conf)
+                    if hull is not None:
+                        sil_c = self._hex_bgr(self._dim_hex(skel_hex, 0.12))
+                        cv2.polylines(ann, [hull], True, sil_c, 1, cv2.LINE_AA)
 
                     if self._cfg.overlay_skeleton:
                         skel_hex = self._cfg.overlay_skeleton_color
@@ -544,15 +592,31 @@ class Engine(threading.Thread):
                     overlay_items.append(("dot", int(px) + sox, int(py) + soy, 7, self._dim_hex(main_hex, 0.3)))
                     overlay_items.append(("dot", int(px) + sox, int(py) + soy, 4, main_hex))
 
+                self._aim_trail.append((int(px), int(py)))
+                if len(self._aim_trail) > self._max_aim_trail:
+                    self._aim_trail.pop(0)
+                self._draw_aim_trail(ann, overlay_items, sox, soy, main_hex)
+
                 speed = math.hypot(self._target_vx, self._target_vy)
+                self._movement_class = self._classify_movement()
+
                 if speed > 15.0:
                     arrow_scale = min(40.0, speed * 0.15)
                     norm = max(1.0, speed)
-                    ax = int(tcx_now + self._target_vx / norm * arrow_scale)
-                    ay = int(tcy_now + self._target_vy / norm * arrow_scale)
+                    arx = int(tcx_now + self._target_vx / norm * arrow_scale)
+                    ary = int(tcy_now + self._target_vy / norm * arrow_scale)
                     vel_color = self._hex_bgr(self._dim_hex(main_hex, 0.5))
-                    cv2.arrowedLine(ann, (int(tcx_now), int(tcy_now)), (ax, ay), vel_color, 2, cv2.LINE_AA, tipLength=0.3)
-                    overlay_items.append(("line", int(tcx_now) + sox, int(tcy_now) + soy, ax + sox, ay + soy, self._dim_hex(main_hex, 0.4), 2))
+                    cv2.arrowedLine(ann, (int(tcx_now), int(tcy_now)), (arx, ary), vel_color, 2, cv2.LINE_AA, tipLength=0.3)
+                    overlay_items.append(("line", int(tcx_now) + sox, int(tcy_now) + soy, arx + sox, ary + soy, self._dim_hex(main_hex, 0.4), 2))
+
+                lead_ms = self._cfg.lead_ms
+                if speed > 20:
+                    pred_x = int(px + self._target_vx * lead_ms / 1000.0)
+                    pred_y = int(py + self._target_vy * lead_ms / 1000.0)
+                    ghost_c = self._hex_bgr(self._dim_hex(skel_hex, 0.15))
+                    cv2.circle(ann, (pred_x, pred_y), 8, ghost_c, 1, cv2.LINE_AA)
+                    cv2.drawMarker(ann, (pred_x, pred_y), ghost_c, cv2.MARKER_CROSS, 6, 1, cv2.LINE_AA)
+                    overlay_items.append(("circle", pred_x + sox, pred_y + soy, 8, self._dim_hex(skel_hex, 0.15)))
 
                 active = self._enabled and self._aiming and (self._focused or self._cfg.always_active)
                 if active and target_point is not None:
@@ -562,8 +626,12 @@ class Engine(threading.Thread):
 
                 hud_x = int(display_box[2]) + 6
                 hud_y = int(display_box[1])
+                avg_conf = float(smooth_kps[:, 2].mean()) if smooth_kps is not None else 0.0
+                box_h = display_box[3] - display_box[1]
+                dist_to_tgt = math.hypot(px - scx, py - scy)
+                self._hit_probability = self._calc_hit_prob(dist_to_tgt, avg_conf, speed, box_h)
+
                 if smooth_kps is not None:
-                    avg_conf = float(smooth_kps[:, 2].mean())
                     bar_h = 40
                     bar_w = 4
                     cv2.rectangle(ann, (hud_x, hud_y), (hud_x + bar_w, hud_y + bar_h), (40, 40, 40), -1)
@@ -577,13 +645,29 @@ class Engine(threading.Thread):
                     reid_color = (255, 200, 0) if self._last_reid_score > 0.6 else (100, 100, 200)
                     cv2.rectangle(ann, (reid_x, hud_y + bar_h - reid_len), (reid_x + bar_w, hud_y + bar_h), reid_color, -1)
 
+                    hit_x = reid_x + bar_w + 2
+                    cv2.rectangle(ann, (hit_x, hud_y), (hit_x + bar_w, hud_y + bar_h), (40, 40, 40), -1)
+                    hit_len = int(min(bar_h, self._hit_probability * bar_h))
+                    hit_color = (100, 255, 100) if self._hit_probability > 0.7 else (0, 200, 255) if self._hit_probability > 0.4 else (50, 50, 200)
+                    cv2.rectangle(ann, (hit_x, hud_y + bar_h - hit_len), (hit_x + bar_w, hud_y + bar_h), hit_color, -1)
+
                 lock_dur = time.perf_counter() - self._lock_time
                 state_label = self._target_state
-                dist_to_tgt = math.hypot(px - scx, py - scy)
-                hud_text = f"{state_label} {dist_to_tgt:.0f}px {lock_dur:.1f}s"
-                cv2.putText(ann, hud_text, (int(display_box[0]), int(display_box[1]) - 6),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.35, main_color, 1, cv2.LINE_AA)
-                overlay_items.append(("text", int(display_box[0]) + sox, int(display_box[1]) - 6 + soy, hud_text, main_hex, 9))
+                hud_text = f"{state_label} {self._movement_class} {dist_to_tgt:.0f}px"
+                hud_text2 = f"HIT:{self._hit_probability:.0%} T:{lock_dur:.1f}s"
+                cv2.putText(ann, hud_text, (int(display_box[0]), int(display_box[1]) - 14),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.32, main_color, 1, cv2.LINE_AA)
+                cv2.putText(ann, hud_text2, (int(display_box[0]), int(display_box[1]) - 4),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.28, self._hex_bgr(self._dim_hex(main_hex, 0.7)), 1, cv2.LINE_AA)
+                overlay_items.append(("text", int(display_box[0]) + sox, int(display_box[1]) - 14 + soy, hud_text, main_hex, 9))
+                overlay_items.append(("text", int(display_box[0]) + sox, int(display_box[1]) - 4 + soy, hud_text2, self._dim_hex(main_hex, 0.7), 8))
+
+                box_h_ratio = box_h / h
+                auto_sens = 1.0
+                if box_h_ratio > 0.4:
+                    auto_sens = 0.7
+                elif box_h_ratio > 0.25:
+                    auto_sens = 0.85
 
                 dt = tick_s
                 active = self._enabled and self._aiming and (self._focused or self._cfg.always_active)
@@ -597,7 +681,7 @@ class Engine(threading.Thread):
                         self._cfg.human = True
                         self._humanizer.skip_reaction()
 
-                    dx, dy, dist = self._aim.step(target_point, w, h, dt, self._ads_mult)
+                    dx, dy, dist = self._aim.step(target_point, w, h, dt, self._ads_mult * auto_sens)
 
                     if snap_phase:
                         self._cfg.omega = saved_omega
@@ -626,6 +710,26 @@ class Engine(threading.Thread):
                 self._target_vx = 0.0
                 self._target_vy = 0.0
                 self._last_reid_score = 0.0
+                self._aim_trail.clear()
+                self._hit_probability = 0.0
+                self._movement_class = "STILL"
+
+            elapsed = time.perf_counter() - t0
+            self._tick_times.append(elapsed)
+            if len(self._tick_times) > 60:
+                self._tick_times.pop(0)
+            avg_tick = sum(self._tick_times) / len(self._tick_times) if self._tick_times else tick_s
+            fps = int(1.0 / max(avg_tick, 0.001))
+
+            fps_text = f"FPS:{fps}"
+            cv2.putText(ann, fps_text, (8, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (180, 180, 180), 1, cv2.LINE_AA)
+            overlay_items.append(("text", 8 + sox, 16 + soy, fps_text, "#b0b0b0", 9))
+
+            state_text = f"[{self._target_state}]"
+            st_color = {"SEARCH": (100, 100, 100), "LOCK": (0, 200, 255), "TRACK": (0, 255, 100), "SNAP": (100, 100, 255)}
+            cv2.putText(ann, state_text, (8, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.4, st_color.get(self._target_state, (180, 180, 180)), 1, cv2.LINE_AA)
+            st_hex = {"SEARCH": "#646464", "LOCK": "#ffc800", "TRACK": "#64ff00", "SNAP": "#6464ff"}
+            overlay_items.append(("text", 8 + sox, 32 + soy, state_text, st_hex.get(self._target_state, "#b0b0b0"), 9))
 
             self._overlay_items = overlay_items
             with self._frame_lock:
@@ -633,10 +737,86 @@ class Engine(threading.Thread):
                 if picked is None:
                     self._target_crop = None
 
-            elapsed = time.perf_counter() - t0
             sleep_time = tick_s - elapsed
             if sleep_time > 0:
                 time.sleep(sleep_time)
+
+    def _classify_movement(self) -> str:
+        speed = math.hypot(self._target_vx, self._target_vy)
+        vy = abs(self._target_vy)
+        if vy > 200 and self._target_vy < -100:
+            return "JUMP"
+        if speed < 8:
+            return "STILL"
+        if speed < 80:
+            return "WALK"
+        if speed < 250:
+            return "RUN"
+        return "FAST"
+
+    def _calc_hit_prob(self, dist_px: float, avg_conf: float, speed: float, box_h: float) -> float:
+        dist_score = max(0.0, 1.0 - dist_px / max(1.0, self._cfg.fov_px))
+        conf_score = min(1.0, avg_conf / 0.7)
+        speed_penalty = max(0.0, 1.0 - speed / 400.0)
+        size_score = min(1.0, box_h / 120.0)
+        reid_bonus = self._last_reid_score * 0.1
+        raw = dist_score * 0.30 + conf_score * 0.25 + speed_penalty * 0.20 + size_score * 0.15 + reid_bonus + 0.10
+        return max(0.0, min(1.0, raw))
+
+    def _draw_radar(
+        self, ann: np.ndarray, overlay_items: list,
+        all_dets: List[Detection], fov_dets: List[Detection],
+        cx: int, cy: int, fov_r: int, w: int, h: int,
+        sox: int, soy: int, main_hex: str,
+    ) -> None:
+        radar_r = 45
+        radar_cx = w - radar_r - 10
+        radar_cy = radar_r + 10
+        cv2.circle(ann, (radar_cx, radar_cy), radar_r, (40, 40, 40), -1, cv2.LINE_AA)
+        cv2.circle(ann, (radar_cx, radar_cy), radar_r, (80, 80, 80), 1, cv2.LINE_AA)
+        cv2.circle(ann, (radar_cx, radar_cy), radar_r // 2, (60, 60, 60), 1, cv2.LINE_AA)
+        cv2.line(ann, (radar_cx - radar_r, radar_cy), (radar_cx + radar_r, radar_cy), (60, 60, 60), 1)
+        cv2.line(ann, (radar_cx, radar_cy - radar_r), (radar_cx, radar_cy + radar_r), (60, 60, 60), 1)
+
+        scale = radar_r / max(w / 2.0, 1.0)
+        for x1, y1, x2, y2, conf in all_dets:
+            dx = ((x1 + x2) / 2.0 - cx) * scale
+            dy = ((y1 + y2) / 2.0 - cy) * scale
+            rpx = int(radar_cx + dx)
+            rpy = int(radar_cy + dy)
+            if math.hypot(rpx - radar_cx, rpy - radar_cy) <= radar_r - 2:
+                in_fov = any(
+                    abs((f[0] + f[2]) / 2 - (x1 + x2) / 2) < 3 and abs((f[1] + f[3]) / 2 - (y1 + y2) / 2) < 3
+                    for f in fov_dets
+                )
+                dot_c = (0, 255, 100) if in_fov else (0, 100, 200)
+                dot_r = 4 if in_fov else 3
+                cv2.circle(ann, (rpx, rpy), dot_r, dot_c, -1, cv2.LINE_AA)
+
+        cv2.circle(ann, (radar_cx, radar_cy), 2, (255, 255, 255), -1)
+        fov_radar = int(fov_r * scale)
+        if fov_radar > 2:
+            cv2.circle(ann, (radar_cx, radar_cy), fov_radar, (100, 100, 200), 1, cv2.LINE_AA)
+
+        overlay_items.append(("dot", radar_cx + sox, radar_cy + soy, radar_r, "#1a1a1a"))
+        overlay_items.append(("circle", radar_cx + sox, radar_cy + soy, radar_r, "#505050"))
+
+    def _draw_aim_trail(self, ann: np.ndarray, overlay_items: list, sox: int, soy: int, main_hex: str) -> None:
+        n = len(self._aim_trail)
+        if n < 2:
+            return
+        for i in range(n - 1):
+            alpha = (i + 1) / n
+            c = int(60 + alpha * 140)
+            trail_color = (c // 3, c // 2, c)
+            th = max(1, int(alpha * 2))
+            cv2.line(ann, self._aim_trail[i], self._aim_trail[i + 1], trail_color, th, cv2.LINE_AA)
+        if n >= 2:
+            dim = self._dim_hex(main_hex, 0.15)
+            for i in range(n - 1):
+                x1, y1 = self._aim_trail[i]
+                x2, y2 = self._aim_trail[i + 1]
+                overlay_items.append(("line", x1 + sox, y1 + soy, x2 + sox, y2 + soy, dim, 1))
 
     def _handle_trigger(self, distance: float) -> None:
         if not self._cfg.trigger:
