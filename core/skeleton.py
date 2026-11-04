@@ -1,4 +1,4 @@
-"""Advanced 3D-style skeleton: neon glow, depth ordering, joint interpolation, head halo."""
+"""Ultra-advanced skeleton: confidence-gradient bones, motion trails, spine curve, energy field, 3D neon glow."""
 
 from __future__ import annotations
 
@@ -17,6 +17,9 @@ BONES: List[Tuple[int, int]] = [
 ]
 
 _KP_HEAD = {0, 1, 2, 3, 4}
+_KP_TORSO = {5, 6, 11, 12}
+_KP_ARMS = {7, 8, 9, 10}
+_KP_LEGS = {13, 14, 15, 16}
 
 _NEIGHBORS: Dict[int, List[int]] = {
     0: [1, 2, 5, 6], 1: [0, 3], 2: [0, 4], 3: [1], 4: [2],
@@ -25,6 +28,8 @@ _NEIGHBORS: Dict[int, List[int]] = {
     11: [5, 12, 13], 12: [6, 11, 14],
     13: [11, 15], 14: [12, 16], 15: [13], 16: [14],
 }
+
+_SPINE_CHAIN = [0, (5, 6), (5, 6, 11, 12), (11, 12)]
 
 
 def _hex_to_bgr(h: str) -> Tuple[int, int, int]:
@@ -45,6 +50,14 @@ def _brighten_bgr(bgr: Tuple[int, int, int], f: float) -> Tuple[int, int, int]:
     )
 
 
+def _blend_bgr(a: Tuple[int, int, int], b: Tuple[int, int, int], t: float) -> Tuple[int, int, int]:
+    return (
+        int(a[0] * (1 - t) + b[0] * t),
+        int(a[1] * (1 - t) + b[1] * t),
+        int(a[2] * (1 - t) + b[2] * t),
+    )
+
+
 def _dim_hex(hex_color: str, factor: float) -> str:
     h = hex_color.lstrip("#")
     r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
@@ -60,8 +73,43 @@ def _brighten_hex(hex_color: str, factor: float) -> str:
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
+def _blend_hex(hex_a: str, hex_b: str, t: float) -> str:
+    a = hex_a.lstrip("#")
+    b = hex_b.lstrip("#")
+    ra, ga, ba = int(a[0:2], 16), int(a[2:4], 16), int(a[4:6], 16)
+    rb, gb, bb = int(b[0:2], 16), int(b[2:4], 16), int(b[4:6], 16)
+    r = int(ra * (1 - t) + rb * t)
+    g = int(ga * (1 - t) + gb * t)
+    b = int(ba * (1 - t) + bb * t)
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def _conf_color_bgr(base: Tuple[int, int, int], conf: float) -> Tuple[int, int, int]:
+    """Shift color based on confidence: high=base, mid=amber, low=red."""
+    if conf >= 0.7:
+        return base
+    amber = (0, 170, 255)
+    red = (60, 60, 255)
+    if conf >= 0.4:
+        t = (0.7 - conf) / 0.3
+        return _blend_bgr(base, amber, t)
+    t = min(1.0, (0.4 - conf) / 0.3)
+    return _blend_bgr(amber, red, t)
+
+
+def _conf_color_hex(base_hex: str, conf: float) -> str:
+    if conf >= 0.7:
+        return base_hex
+    amber = "#ffaa00"
+    red = "#ff3c3c"
+    if conf >= 0.4:
+        t = (0.7 - conf) / 0.3
+        return _blend_hex(base_hex, amber, t)
+    t = min(1.0, (0.4 - conf) / 0.3)
+    return _blend_hex(amber, red, t)
+
+
 def _interpolate_kps(kps: np.ndarray, min_conf: float) -> np.ndarray:
-    """Fill in missing joints by interpolating from confident neighbors."""
     out = kps.copy()
     for k in range(min(17, kps.shape[0])):
         if float(out[k, 2]) >= min_conf:
@@ -80,7 +128,6 @@ def _interpolate_kps(kps: np.ndarray, min_conf: float) -> np.ndarray:
 
 
 def _estimate_depths(kps: np.ndarray, box: Tuple[float, float, float, float], min_conf: float) -> np.ndarray:
-    """Per-keypoint pseudo-depth (0=far, 1=close) from body proportions."""
     depths = np.full(min(17, kps.shape[0]), 0.5)
     bh = max(1.0, box[3] - box[1])
     bw = max(1.0, box[2] - box[0])
@@ -116,7 +163,6 @@ def _estimate_depths(kps: np.ndarray, box: Tuple[float, float, float, float], mi
 
 
 def _sort_bones_by_depth(kps: np.ndarray, depths: np.ndarray, min_conf: float) -> List[Tuple[int, int]]:
-    """Sort bones back-to-front for proper 3D occlusion."""
     bone_depths = []
     n = min(17, kps.shape[0])
     for i, j in BONES:
@@ -128,6 +174,104 @@ def _sort_bones_by_depth(kps: np.ndarray, depths: np.ndarray, min_conf: float) -
         bone_depths.append(((i, j), avg_d))
     bone_depths.sort(key=lambda x: x[1])
     return [b for b, _ in bone_depths]
+
+
+def _spine_points(kps: np.ndarray, box: Tuple[float, float, float, float], min_conf: float) -> List[Tuple[int, int]]:
+    """Extract spine control points: nose, neck, chest, pelvis."""
+    pts = []
+    rc = min_conf * 0.3
+    if float(kps[0, 2]) >= rc:
+        pts.append((int(kps[0, 0]), int(kps[0, 1])))
+    if float(kps[5, 2]) >= rc and float(kps[6, 2]) >= rc:
+        nx = (float(kps[5, 0]) + float(kps[6, 0])) / 2
+        ny = (float(kps[5, 1]) + float(kps[6, 1])) / 2
+        pts.append((int(nx), int(ny)))
+        bh = box[3] - box[1]
+        pts.append((int(nx), int(ny + bh * 0.15)))
+    if float(kps[11, 2]) >= rc and float(kps[12, 2]) >= rc:
+        px = (float(kps[11, 0]) + float(kps[12, 0])) / 2
+        py = (float(kps[11, 1]) + float(kps[12, 1])) / 2
+        pts.append((int(px), int(py)))
+    return pts
+
+
+def _draw_catmull_rom(img: np.ndarray, pts: List[Tuple[int, int]], color: Tuple[int, int, int], thickness: int) -> None:
+    """Draw a smooth Catmull-Rom spline through the given points."""
+    if len(pts) < 2:
+        return
+    if len(pts) == 2:
+        cv2.line(img, pts[0], pts[1], color, thickness, cv2.LINE_AA)
+        return
+
+    all_pts = [pts[0]] + pts + [pts[-1]]
+    curve = []
+    for seg in range(len(all_pts) - 3):
+        p0, p1, p2, p3 = all_pts[seg], all_pts[seg + 1], all_pts[seg + 2], all_pts[seg + 3]
+        steps = 12
+        for step in range(steps + 1):
+            t = step / steps
+            t2, t3 = t * t, t * t * t
+            x = 0.5 * (
+                (2 * p1[0]) +
+                (-p0[0] + p2[0]) * t +
+                (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2 +
+                (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3
+            )
+            y = 0.5 * (
+                (2 * p1[1]) +
+                (-p0[1] + p2[1]) * t +
+                (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 +
+                (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3
+            )
+            curve.append((int(x), int(y)))
+
+    for i in range(len(curve) - 1):
+        cv2.line(img, curve[i], curve[i + 1], color, thickness, cv2.LINE_AA)
+
+
+def _draw_motion_trails(
+    img: np.ndarray, prev_kps_list: List[np.ndarray], color: Tuple[int, int, int], min_conf: float
+) -> None:
+    """Draw fading motion trails from previous keypoint frames."""
+    n_frames = len(prev_kps_list)
+    if n_frames < 2:
+        return
+    trail_kps = [0, 9, 10, 15, 16]
+    for k in trail_kps:
+        pts = []
+        for frame_kps in prev_kps_list:
+            if frame_kps.shape[0] > k and float(frame_kps[k, 2]) >= min_conf * 0.5:
+                pts.append((int(frame_kps[k, 0]), int(frame_kps[k, 1])))
+        if len(pts) < 2:
+            continue
+        for i in range(len(pts) - 1):
+            alpha = (i + 1) / len(pts)
+            trail_c = _scale_bgr(color, alpha * 0.4)
+            th = max(1, int(alpha * 2))
+            cv2.line(img, pts[i], pts[i + 1], trail_c, th, cv2.LINE_AA)
+
+
+def _draw_energy_field(
+    img: np.ndarray, kps: np.ndarray, box: Tuple[float, float, float, float],
+    color: Tuple[int, int, int], min_conf: float, frame_hash: int
+) -> None:
+    """Draw ambient energy particles near confident keypoints."""
+    rng = np.random.RandomState(frame_hash & 0x7FFFFFFF)
+    bh = max(1.0, box[3] - box[1])
+    spread = max(8.0, bh * 0.06)
+    particle_c = _scale_bgr(color, 0.35)
+
+    for k in range(min(17, kps.shape[0])):
+        if float(kps[k, 2]) < min_conf:
+            continue
+        n_particles = 2 if k in _KP_TORSO else 1
+        for _ in range(n_particles):
+            ox = rng.normal(0, spread)
+            oy = rng.normal(0, spread)
+            px = int(kps[k, 0] + ox)
+            py = int(kps[k, 1] + oy)
+            r = rng.randint(1, 3)
+            cv2.circle(img, (px, py), r, particle_c, -1, cv2.LINE_AA)
 
 
 def bone_point(
@@ -165,6 +309,27 @@ def bone_point(
             )
         return None
     return None
+
+
+def progressive_bone(
+    kps: np.ndarray, preferred: str, box: Tuple[float, float, float, float], min_conf: float = 0.35
+) -> Tuple[Optional[Tuple[float, float]], str]:
+    """Try preferred bone, then fall back through head→neck→chest→pelvis.
+    Returns (point, actual_bone_used)."""
+    chain = ["head", "neck", "chest", "pelvis"]
+    try:
+        start = chain.index(preferred)
+    except ValueError:
+        start = 0
+    order = chain[start:] + chain[:start]
+    for name in order:
+        pt = bone_point(kps, name, box)
+        if pt is not None:
+            idx_map = {"head": 0, "neck": 5, "chest": 5, "pelvis": 11}
+            check_idx = idx_map.get(name, 0)
+            if kps.shape[0] > check_idx and float(kps[check_idx, 2]) >= min_conf:
+                return pt, name
+    return None, preferred
 
 
 def heuristic_point(
@@ -221,8 +386,9 @@ def draw(
     th: int = 2,
     min_conf: float = 0.3,
     draw_fov_circle: bool = True,
+    prev_kps_list: Optional[List[np.ndarray]] = None,
 ) -> None:
-    """3D neon skeleton: glow blur pass, depth-ordered bones, halo joints, head rings."""
+    """Ultra-advanced skeleton: confidence-gradient glow, motion trails, spine curve, energy field."""
     if kps is None or kps.shape[0] < 17:
         return
 
@@ -231,6 +397,12 @@ def draw(
     depths = _estimate_depths(kps, box, min_conf)
     sorted_bones = _sort_bones_by_depth(kps, depths, min_conf)
     render_conf = min_conf * 0.4
+
+    if prev_kps_list:
+        _draw_motion_trails(frame, prev_kps_list + [kps], c, min_conf)
+
+    frame_hash = int(kps[0, 0] * 1000 + kps[0, 1] * 777) if kps.shape[0] > 0 else 0
+    _draw_energy_field(frame, kps, box, c, min_conf, frame_hash)
 
     glow = np.zeros_like(frame)
 
@@ -244,10 +416,11 @@ def draw(
         di = depths[min(i, len(depths) - 1)]
         dj = depths[min(j, len(depths) - 1)]
         avg_d = (di + dj) / 2.0
-        conf_f = min(1.0, (ci + cj) / 2.0 / 0.8)
+        avg_conf = (ci + cj) / 2.0
+        conf_f = min(1.0, avg_conf / 0.8)
         brightness = (0.5 + avg_d * 0.5) * conf_f
         glow_th = int((th + 3) * (1.0 + avg_d * 0.8))
-        glow_c = _scale_bgr(c, brightness * 1.3)
+        glow_c = _conf_color_bgr(_scale_bgr(c, brightness * 1.3), avg_conf)
         cv2.line(glow, pt1, pt2, glow_c, glow_th, cv2.LINE_AA)
 
     for k in range(min(17, kps.shape[0])):
@@ -255,8 +428,9 @@ def draw(
             continue
         pt = (int(kps[k, 0]), int(kps[k, 1]))
         d = depths[min(k, len(depths) - 1)]
+        conf = float(kps[k, 2])
         r = 7 if k in _KP_HEAD else 6
-        gc = _scale_bgr(c, 0.6 + d * 0.4)
+        gc = _conf_color_bgr(_scale_bgr(c, 0.6 + d * 0.4), conf)
         cv2.circle(glow, pt, r + 4, gc, -1, cv2.LINE_AA)
 
     if float(kps[0, 2]) >= min_conf:
@@ -264,8 +438,12 @@ def draw(
         hr = int(head_radius(kps, box, min_conf))
         cv2.circle(glow, nose, hr + 8, _scale_bgr(c, 0.9), 3, cv2.LINE_AA)
 
-    glow = cv2.GaussianBlur(glow, (0, 0), sigmaX=7, sigmaY=7)
-    cv2.addWeighted(glow, 0.65, frame, 1.0, 0, frame)
+    glow = cv2.GaussianBlur(glow, (0, 0), sigmaX=8, sigmaY=8)
+    cv2.addWeighted(glow, 0.7, frame, 1.0, 0, frame)
+
+    spine_pts = _spine_points(kps, box, min_conf)
+    if len(spine_pts) >= 3:
+        _draw_catmull_rom(frame, spine_pts, _scale_bgr(c, 0.3), max(1, th - 1))
 
     for i, j in sorted_bones:
         ci = float(kps[i, 2])
@@ -277,10 +455,12 @@ def draw(
         di = depths[min(i, len(depths) - 1)]
         dj = depths[min(j, len(depths) - 1)]
         avg_d = (di + dj) / 2.0
-        conf_f = min(1.0, (ci + cj) / 2.0 / 0.8)
+        avg_conf = (ci + cj) / 2.0
+        conf_f = min(1.0, avg_conf / 0.8)
         core_th = max(1, int(th * (0.8 + avg_d * 0.6)))
         brightness = (0.7 + avg_d * 0.3) * conf_f
-        cv2.line(frame, pt1, pt2, _scale_bgr(c, brightness), core_th, cv2.LINE_AA)
+        bone_color = _conf_color_bgr(_scale_bgr(c, brightness), avg_conf)
+        cv2.line(frame, pt1, pt2, bone_color, core_th, cv2.LINE_AA)
 
     for k in range(min(17, kps.shape[0])):
         conf = float(kps[k, 2])
@@ -290,14 +470,26 @@ def draw(
         d = depths[min(k, len(depths) - 1)]
         conf_f = min(1.0, conf / 0.7)
         brightness = (0.6 + d * 0.4) * conf_f
+        jc = _conf_color_bgr(_scale_bgr(c, brightness), conf)
 
-        r = 4 if k in _KP_HEAD else 3
-        r = max(2, int(r * (0.8 + d * 0.5)))
-
-        cv2.circle(frame, pt, r + 2, _scale_bgr(c, brightness * 0.5), -1, cv2.LINE_AA)
-        cv2.circle(frame, pt, r, _scale_bgr(c, brightness), -1, cv2.LINE_AA)
-        if r >= 2:
-            cv2.circle(frame, pt, max(1, r - 1), _brighten_bgr(c, brightness * 0.5), -1, cv2.LINE_AA)
+        if k in _KP_TORSO:
+            r = max(3, int(4 * (0.8 + d * 0.5)))
+            half = r
+            diamond = np.array([
+                [pt[0], pt[1] - half],
+                [pt[0] + half, pt[1]],
+                [pt[0], pt[1] + half],
+                [pt[0] - half, pt[1]],
+            ], dtype=np.int32)
+            cv2.fillPoly(frame, [diamond], _scale_bgr(jc, 0.5), cv2.LINE_AA)
+            cv2.polylines(frame, [diamond], True, jc, 1, cv2.LINE_AA)
+        else:
+            r = 4 if k in _KP_HEAD else 3
+            r = max(2, int(r * (0.8 + d * 0.5)))
+            cv2.circle(frame, pt, r + 2, _scale_bgr(jc, 0.5), -1, cv2.LINE_AA)
+            cv2.circle(frame, pt, r, jc, -1, cv2.LINE_AA)
+            if r >= 2:
+                cv2.circle(frame, pt, max(1, r - 1), _brighten_bgr(jc, 0.5), -1, cv2.LINE_AA)
 
     if float(kps[0, 2]) >= min_conf:
         nose = (int(kps[0, 0]), int(kps[0, 1]))
@@ -323,8 +515,9 @@ def draw_overlay_items(
     box: Tuple[float, float, float, float],
     color_hex: str = "#7a5cff",
     draw_fov_circle: bool = True,
+    prev_kps_list: Optional[List[np.ndarray]] = None,
 ) -> list:
-    """Overlay items: 3-pass glow bones, halo joints, head rings, body circle."""
+    """Overlay items: confidence-gradient bones, motion trails, enhanced joints."""
     items: list = []
     if kps is None or kps.shape[0] < 17:
         return items
@@ -334,54 +527,82 @@ def draw_overlay_items(
     sorted_bones = _sort_bones_by_depth(kps, depths, min_conf)
     render_conf = min_conf * 0.4
 
+    if prev_kps_list and len(prev_kps_list) >= 2:
+        trail_kps = [0, 9, 10, 15, 16]
+        all_frames = prev_kps_list + [kps]
+        for k in trail_kps:
+            pts = []
+            for fkps in all_frames:
+                if fkps.shape[0] > k and float(fkps[k, 2]) >= min_conf * 0.5:
+                    pts.append((int(fkps[k, 0]), int(fkps[k, 1])))
+            if len(pts) >= 2:
+                for i in range(len(pts) - 1):
+                    alpha = (i + 1) / len(pts)
+                    trail_hex = _dim_hex(color_hex, alpha * 0.3)
+                    items.append(("line", pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1], trail_hex, max(1, int(alpha * 2))))
+
     glow_hex = _dim_hex(color_hex, 0.2)
     mid_hex = _dim_hex(color_hex, 0.5)
 
     for i, j in sorted_bones:
-        if float(kps[i, 2]) < render_conf or float(kps[j, 2]) < render_conf:
+        ci = float(kps[i, 2])
+        cj = float(kps[j, 2])
+        if ci < render_conf or cj < render_conf:
             continue
         x1, y1 = int(kps[i, 0]), int(kps[i, 1])
         x2, y2 = int(kps[j, 0]), int(kps[j, 1])
         di = depths[min(i, len(depths) - 1)]
         dj = depths[min(j, len(depths) - 1)]
         avg_d = (di + dj) / 2.0
+        avg_conf = (ci + cj) / 2.0
         gw = int(7 + avg_d * 5)
-        items.append(("line", x1, y1, x2, y2, glow_hex, gw))
+        conf_glow = _conf_color_hex(glow_hex, avg_conf)
+        items.append(("line", x1, y1, x2, y2, conf_glow, gw))
 
     for i, j in sorted_bones:
-        if float(kps[i, 2]) < render_conf or float(kps[j, 2]) < render_conf:
+        ci = float(kps[i, 2])
+        cj = float(kps[j, 2])
+        if ci < render_conf or cj < render_conf:
             continue
         x1, y1 = int(kps[i, 0]), int(kps[i, 1])
         x2, y2 = int(kps[j, 0]), int(kps[j, 1])
         di = depths[min(i, len(depths) - 1)]
         dj = depths[min(j, len(depths) - 1)]
         avg_d = (di + dj) / 2.0
+        avg_conf = (ci + cj) / 2.0
         mw = int(4 + avg_d * 3)
-        items.append(("line", x1, y1, x2, y2, mid_hex, mw))
+        conf_mid = _conf_color_hex(mid_hex, avg_conf)
+        items.append(("line", x1, y1, x2, y2, conf_mid, mw))
 
     for i, j in sorted_bones:
-        if float(kps[i, 2]) < render_conf or float(kps[j, 2]) < render_conf:
+        ci = float(kps[i, 2])
+        cj = float(kps[j, 2])
+        if ci < render_conf or cj < render_conf:
             continue
         x1, y1 = int(kps[i, 0]), int(kps[i, 1])
         x2, y2 = int(kps[j, 0]), int(kps[j, 1])
         di = depths[min(i, len(depths) - 1)]
         dj = depths[min(j, len(depths) - 1)]
         avg_d = (di + dj) / 2.0
+        avg_conf = (ci + cj) / 2.0
         cw = max(1, int(2 + avg_d * 1.5))
-        bright = _brighten_hex(color_hex, avg_d * 0.25)
+        bright = _conf_color_hex(_brighten_hex(color_hex, avg_d * 0.25), avg_conf)
         items.append(("line", x1, y1, x2, y2, bright, cw))
 
     for k in range(min(17, kps.shape[0])):
-        if float(kps[k, 2]) < render_conf:
+        conf = float(kps[k, 2])
+        if conf < render_conf:
             continue
         x, y = int(kps[k, 0]), int(kps[k, 1])
         d = depths[min(k, len(depths) - 1)]
         r = 5 if k in _KP_HEAD else 4
         r = max(2, int(r * (0.8 + d * 0.5)))
-        items.append(("dot", x, y, r + 4, glow_hex))
-        items.append(("dot", x, y, r + 2, mid_hex))
-        bright = _brighten_hex(color_hex, d * 0.25)
-        items.append(("dot", x, y, r, bright))
+        conf_glow_j = _conf_color_hex(glow_hex, conf)
+        conf_mid_j = _conf_color_hex(mid_hex, conf)
+        conf_bright_j = _conf_color_hex(_brighten_hex(color_hex, d * 0.25), conf)
+        items.append(("dot", x, y, r + 4, conf_glow_j))
+        items.append(("dot", x, y, r + 2, conf_mid_j))
+        items.append(("dot", x, y, r, conf_bright_j))
 
     if float(kps[0, 2]) >= min_conf:
         hr = int(head_radius(kps, box, min_conf))

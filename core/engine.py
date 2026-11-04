@@ -20,7 +20,7 @@ from core.kalman import Axis, Tracker
 from core.metrics import MetricsCollector
 from core.output import MouseOutput
 from core.skeleton import (
-    BONES, bone_point, draw as draw_skeleton, draw_overlay_items,
+    BONES, bone_point, progressive_bone, draw as draw_skeleton, draw_overlay_items,
     heuristic_point, head_radius, body_center, body_radius,
 )
 from core.utils import clamp, foreground_exe, screen_size
@@ -243,6 +243,18 @@ class Engine(threading.Thread):
         self._screen_ox: int = 0
         self._screen_oy: int = 0
 
+        self._target_state: str = "SEARCH"
+        self._lock_time: float = 0.0
+        self._prev_kps_history: List[Optional[np.ndarray]] = []
+        self._max_kps_history: int = 6
+        self._prev_target_cx: float = 0.0
+        self._prev_target_cy: float = 0.0
+        self._target_vx: float = 0.0
+        self._target_vy: float = 0.0
+        self._vel_smooth: float = 0.85
+        self._last_reid_score: float = 0.0
+        self._tick_count: int = 0
+
     @property
     def enabled(self) -> bool:
         return self._enabled
@@ -255,6 +267,8 @@ class Engine(threading.Thread):
             self._aim.release()
             self._kp_smoother.reset()
             self._box_smoother.reset()
+            self._target_state = "SEARCH"
+            self._prev_kps_history.clear()
 
     @property
     def aiming(self) -> bool:
@@ -380,17 +394,25 @@ class Engine(threading.Thread):
                     overlay_items.append(("box", int(x1) + sox, int(y1) + soy, int(x2) + sox, int(y2) + soy, main_hex))
 
             n_in_fov = len(fov_detections)
+            threat_factor = 0.0
             if n_in_fov > 0:
-                cv2.circle(ann, (scx, scy), fov_r, self._hex_bgr(fov_bright), 2, cv2.LINE_AA)
-                overlay_items.append(("circle", scx + sox, scy + soy, fov_r + 2, fov_bright))
+                closest_dist = min(
+                    math.hypot((d[0] + d[2]) / 2 - scx, (d[1] + d[3]) / 2 - scy)
+                    for d in fov_detections
+                )
+                threat_factor = max(0.0, 1.0 - closest_dist / fov_r)
+                threat_hex = self._threat_hex(skel_hex, threat_factor)
+                cv2.circle(ann, (scx, scy), fov_r, self._hex_bgr(threat_hex), 2, cv2.LINE_AA)
+                overlay_items.append(("circle", scx + sox, scy + soy, fov_r + 2, threat_hex))
                 label = str(n_in_fov)
                 lx = scx + fov_r - 12
                 ly = scy - fov_r + 14
-                cv2.putText(ann, label, (lx, ly), cv2.FONT_HERSHEY_SIMPLEX, 0.4, self._hex_bgr(fov_bright), 1, cv2.LINE_AA)
-                overlay_items.append(("text", lx + sox, ly + soy, label, fov_bright, 10))
+                cv2.putText(ann, label, (lx, ly), cv2.FONT_HERSHEY_SIMPLEX, 0.4, self._hex_bgr(threat_hex), 1, cv2.LINE_AA)
+                overlay_items.append(("text", lx + sox, ly + soy, label, threat_hex, 10))
 
             self._aim.set_frame(frame)
             picked = self._aim.pick(fov_detections, w, h)
+            self._tick_count += 1
 
             smooth_kps: Optional[np.ndarray] = None
             target_point: Optional[Tuple[float, float]] = None
@@ -399,15 +421,33 @@ class Engine(threading.Thread):
                 raw_box = picked
                 self._aim.update_reid(frame)
 
+                if self._aim._reid.ready and self._aim._frame_ref is not None:
+                    self._last_reid_score = self._aim._reid.score(self._aim._frame_ref, raw_box)
+
                 if not self._aim.engaged:
                     self._aim.begin()
                     self._metrics.lock()
                     self._kp_smoother.reset()
                     self._box_smoother.reset()
                     self._cached_smooth_kps = None
+                    self._lock_time = time.perf_counter()
+                    self._prev_kps_history.clear()
+                    self._prev_target_cx = (raw_box[0] + raw_box[2]) / 2
+                    self._prev_target_cy = (raw_box[1] + raw_box[3]) / 2
+                    self._target_vx = 0.0
+                    self._target_vy = 0.0
 
                 smoothed_box = self._box_smoother.feed(raw_box, tick_s)
                 bx1, by1, bx2, by2 = smoothed_box
+
+                tcx_now = (bx1 + bx2) / 2.0
+                tcy_now = (by1 + by2) / 2.0
+                raw_vx = (tcx_now - self._prev_target_cx) / max(tick_s, 0.001)
+                raw_vy = (tcy_now - self._prev_target_cy) / max(tick_s, 0.001)
+                self._target_vx = self._target_vx * self._vel_smooth + raw_vx * (1 - self._vel_smooth)
+                self._target_vy = self._target_vy * self._vel_smooth + raw_vy * (1 - self._vel_smooth)
+                self._prev_target_cx = tcx_now
+                self._prev_target_cy = tcy_now
 
                 if self._cfg.use_pose and self._vision:
                     self._async_pose.submit(frame, (bx1, by1, bx2, by2))
@@ -428,6 +468,11 @@ class Engine(threading.Thread):
                             if smooth_kps is not None:
                                 self._cached_smooth_kps = smooth_kps
 
+                if smooth_kps is not None:
+                    self._prev_kps_history.append(smooth_kps.copy())
+                    if len(self._prev_kps_history) > self._max_kps_history:
+                        self._prev_kps_history.pop(0)
+
                 display_box = (bx1, by1, bx2, by2)
 
                 snap_phase = False
@@ -438,24 +483,33 @@ class Engine(threading.Thread):
                     else:
                         self._snap_active = False
 
-                active_bone = "head" if snap_phase else self._aim.auto_bone(h)
+                if snap_phase:
+                    self._target_state = "SNAP"
+                elif smooth_kps is not None and float(smooth_kps[:, 2].mean()) > 0.4:
+                    self._target_state = "TRACK"
+                else:
+                    self._target_state = "LOCK"
+
+                preferred_bone = "head" if snap_phase else self._aim.auto_bone(h)
 
                 if smooth_kps is not None:
-                    skel_point = bone_point(smooth_kps, active_bone, display_box)
-                    heur_point = heuristic_point(active_bone, display_box)
+                    skel_point_val, actual_bone = progressive_bone(
+                        smooth_kps, preferred_bone, display_box, self._cfg.kp_conf
+                    )
+                    heur_point_val = heuristic_point(actual_bone, display_box)
 
-                    if skel_point is not None:
+                    if skel_point_val is not None:
                         avg_conf = float(smooth_kps[:, 2].mean())
                         if avg_conf >= 0.55:
-                            target_point = skel_point
+                            target_point = skel_point_val
                         elif avg_conf >= 0.25:
                             blend = (avg_conf - 0.25) / 0.30
                             target_point = (
-                                skel_point[0] * blend + heur_point[0] * (1.0 - blend),
-                                skel_point[1] * blend + heur_point[1] * (1.0 - blend),
+                                skel_point_val[0] * blend + heur_point_val[0] * (1.0 - blend),
+                                skel_point_val[1] * blend + heur_point_val[1] * (1.0 - blend),
                             )
                         else:
-                            target_point = heur_point
+                            target_point = heur_point_val
 
                     if self._cfg.overlay_skeleton:
                         skel_hex = self._cfg.overlay_skeleton_color
@@ -463,17 +517,19 @@ class Engine(threading.Thread):
                             ann, smooth_kps, skel_hex, display_box,
                             th=2, min_conf=self._cfg.kp_conf,
                             draw_fov_circle=self._cfg.overlay_aim_circle,
+                            prev_kps_list=self._prev_kps_history[:-1] if len(self._prev_kps_history) > 1 else None,
                         )
                         ov_items = draw_overlay_items(
                             smooth_kps, self._cfg.kp_conf, display_box,
                             color_hex=skel_hex,
                             draw_fov_circle=self._cfg.overlay_aim_circle,
+                            prev_kps_list=self._prev_kps_history[:-1] if len(self._prev_kps_history) > 1 else None,
                         )
                         for oi in ov_items:
                             overlay_items.append(self._offset_item(oi, sox, soy))
 
                 if target_point is None:
-                    target_point = heuristic_point(active_bone, display_box)
+                    target_point = heuristic_point(preferred_bone, display_box)
                     px, py = target_point
                     cv2.drawMarker(
                         ann, (int(px), int(py)), main_color,
@@ -488,20 +544,46 @@ class Engine(threading.Thread):
                     overlay_items.append(("dot", int(px) + sox, int(py) + soy, 7, self._dim_hex(main_hex, 0.3)))
                     overlay_items.append(("dot", int(px) + sox, int(py) + soy, 4, main_hex))
 
+                speed = math.hypot(self._target_vx, self._target_vy)
+                if speed > 15.0:
+                    arrow_scale = min(40.0, speed * 0.15)
+                    norm = max(1.0, speed)
+                    ax = int(tcx_now + self._target_vx / norm * arrow_scale)
+                    ay = int(tcy_now + self._target_vy / norm * arrow_scale)
+                    vel_color = self._hex_bgr(self._dim_hex(main_hex, 0.5))
+                    cv2.arrowedLine(ann, (int(tcx_now), int(tcy_now)), (ax, ay), vel_color, 2, cv2.LINE_AA, tipLength=0.3)
+                    overlay_items.append(("line", int(tcx_now) + sox, int(tcy_now) + soy, ax + sox, ay + soy, self._dim_hex(main_hex, 0.4), 2))
+
                 active = self._enabled and self._aiming and (self._focused or self._cfg.always_active)
                 if active and target_point is not None:
                     aim_c = self._hex_bgr(self._dim_hex(main_hex, 0.4))
                     cv2.line(ann, (scx, scy), (int(px), int(py)), aim_c, 1, cv2.LINE_AA)
                     overlay_items.append(("line", scx + sox, scy + soy, int(px) + sox, int(py) + soy, self._dim_hex(main_hex, 0.25), 1))
 
+                hud_x = int(display_box[2]) + 6
+                hud_y = int(display_box[1])
                 if smooth_kps is not None:
                     avg_conf = float(smooth_kps[:, 2].mean())
-                    bar_len = int(min(40, avg_conf * 50))
-                    bar_x = int(display_box[2]) + 4
-                    bar_y = int(display_box[1])
-                    cv2.rectangle(ann, (bar_x, bar_y), (bar_x + 4, bar_y + 40), (40, 40, 40), -1)
+                    bar_h = 40
+                    bar_w = 4
+                    cv2.rectangle(ann, (hud_x, hud_y), (hud_x + bar_w, hud_y + bar_h), (40, 40, 40), -1)
+                    bar_len = int(min(bar_h, avg_conf * bar_h * 1.25))
                     bar_color = (0, 255, 100) if avg_conf > 0.5 else (0, 180, 255)
-                    cv2.rectangle(ann, (bar_x, bar_y + 40 - bar_len), (bar_x + 4, bar_y + 40), bar_color, -1)
+                    cv2.rectangle(ann, (hud_x, hud_y + bar_h - bar_len), (hud_x + bar_w, hud_y + bar_h), bar_color, -1)
+
+                    reid_x = hud_x + bar_w + 2
+                    cv2.rectangle(ann, (reid_x, hud_y), (reid_x + bar_w, hud_y + bar_h), (40, 40, 40), -1)
+                    reid_len = int(min(bar_h, self._last_reid_score * bar_h))
+                    reid_color = (255, 200, 0) if self._last_reid_score > 0.6 else (100, 100, 200)
+                    cv2.rectangle(ann, (reid_x, hud_y + bar_h - reid_len), (reid_x + bar_w, hud_y + bar_h), reid_color, -1)
+
+                lock_dur = time.perf_counter() - self._lock_time
+                state_label = self._target_state
+                dist_to_tgt = math.hypot(px - scx, py - scy)
+                hud_text = f"{state_label} {dist_to_tgt:.0f}px {lock_dur:.1f}s"
+                cv2.putText(ann, hud_text, (int(display_box[0]), int(display_box[1]) - 6),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.35, main_color, 1, cv2.LINE_AA)
+                overlay_items.append(("text", int(display_box[0]) + sox, int(display_box[1]) - 6 + soy, hud_text, main_hex, 9))
 
                 dt = tick_s
                 active = self._enabled and self._aiming and (self._focused or self._cfg.always_active)
@@ -539,6 +621,11 @@ class Engine(threading.Thread):
                 self._kp_smoother.reset()
                 self._box_smoother.reset()
                 self._cached_smooth_kps = None
+                self._target_state = "SEARCH"
+                self._prev_kps_history.clear()
+                self._target_vx = 0.0
+                self._target_vy = 0.0
+                self._last_reid_score = 0.0
 
             self._overlay_items = overlay_items
             with self._frame_lock:
@@ -595,6 +682,18 @@ class Engine(threading.Thread):
         h = hex_color.lstrip("#")
         r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
         return f"#{int(r * factor):02x}{int(g * factor):02x}{int(b * factor):02x}"
+
+    @staticmethod
+    def _threat_hex(base_hex: str, threat: float) -> str:
+        """Blend base color toward red based on threat factor (0-1)."""
+        h = base_hex.lstrip("#")
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        t = min(1.0, threat)
+        tr, tg, tb = 255, 60, 40
+        r = int(r * (1 - t) + tr * t)
+        g = int(g * (1 - t) + tg * t)
+        b = int(b * (1 - t) + tb * t)
+        return f"#{r:02x}{g:02x}{b:02x}"
 
     @staticmethod
     def _offset_item(item: tuple, ox: int, oy: int) -> tuple:
