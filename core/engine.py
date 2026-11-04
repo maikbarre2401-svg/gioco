@@ -638,10 +638,6 @@ class Engine(threading.Thread):
                 self_box = self._self_tracker.box
                 if self_box is not None:
                     detections = [d for d in detections if not self._self_tracker.is_self(d)]
-                    sx1, sy1, sx2, sy2 = (int(v) for v in self_box)
-                    cv2.rectangle(ann, (sx1, sy1), (sx2, sy2), (70, 70, 70), 1, cv2.LINE_AA)
-                    cv2.putText(ann, "SELF", (sx1, sy1 - 4),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.3, (90, 90, 90), 1, cv2.LINE_AA)
 
             self._all_detections_for_radar = list(detections)
 
