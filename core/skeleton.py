@@ -574,7 +574,7 @@ def draw(
         avg_conf = (ci + cj) / 2.0
         conf_f = min(1.0, avg_conf / 0.8)
         brightness = (0.5 + avg_d * 0.5) * conf_f
-        glow_th = int((th + 3) * (1.0 + avg_d * 0.8))
+        glow_th = max(1, int((th + 3) * (1.0 + avg_d * 0.8)))
         glow_c = _conf_color_bgr(_scale_bgr(c, brightness * 1.3), avg_conf)
         cv2.line(glow_local, pt1, pt2, glow_c, glow_th, cv2.LINE_AA)
 
@@ -716,7 +716,7 @@ def draw_overlay_items(
         dj = depths[min(j, len(depths) - 1)]
         avg_d = (di + dj) / 2.0
         avg_conf = (ci + cj) / 2.0
-        gw = int(7 + avg_d * 5)
+        gw = max(1, int(7 + avg_d * 5))
         conf_glow = _conf_color_hex(glow_hex, avg_conf)
         items.append(("line", x1, y1, x2, y2, conf_glow, gw))
 
@@ -731,7 +731,7 @@ def draw_overlay_items(
         dj = depths[min(j, len(depths) - 1)]
         avg_d = (di + dj) / 2.0
         avg_conf = (ci + cj) / 2.0
-        mw = int(4 + avg_d * 3)
+        mw = max(1, int(4 + avg_d * 3))
         conf_mid = _conf_color_hex(mid_hex, avg_conf)
         items.append(("line", x1, y1, x2, y2, conf_mid, mw))
 
