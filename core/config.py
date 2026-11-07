@@ -17,7 +17,7 @@ _CFG_PATH = Path("cfg.json")
 class Config:
     """All tunables for the aim-assist system."""
 
-    schema: int = 2
+    schema: int = 3
     det_model: str = "yolov8n.pt"
     pose_model: str = "yolov8n-pose.pt"
     imgsz: int = 640
@@ -138,3 +138,26 @@ class Config:
         known = {f.name for f in fields(cls)}
         filtered = {k: v for k, v in raw.items() if k in known}
         return cls(**filtered)
+
+
+def migrate(cfg: Config, screen_w: int) -> bool:
+    """Bring an older config up to the current schema. True if anything changed.
+
+    schema 2 derived degrees-per-pixel from the capture width instead of the
+    monitor width, so every degree-denominated tunable was off by
+    screen_w / capture (3x at 1920 with a 640 capture) and aim sensitivity
+    silently changed whenever the capture size did. Rescale the two settings
+    that feed the mouse delta so the existing feel is preserved exactly.
+    """
+    if cfg.schema >= 3:
+        return False
+    if screen_w > 0 and cfg.capture > 0:
+        ratio = screen_w / float(cfg.capture)
+        cfg.counts_per_deg *= ratio
+        cfg.miss_deg /= ratio
+        logger.info(
+            "Config migrated to schema 3: counts_per_deg x%.3f, miss_deg /%.3f",
+            ratio, ratio,
+        )
+    cfg.schema = 3
+    return True

@@ -56,6 +56,17 @@ class Aim:
         self._last_target_cx: float = 0.0
         self._last_target_cy: float = 0.0
         self._consecutive_track: int = 0
+        self._screen_w: float = 0.0
+
+    def set_screen_width(self, width: float) -> None:
+        """Monitor width in pixels, used for the pixel-to-degree conversion.
+
+        hfov_deg is the game's field of view across the whole monitor, and the
+        capture is a 1:1 centred crop, so degrees-per-pixel is a property of the
+        monitor. Deriving it from the crop width instead made aim sensitivity
+        change whenever the capture size changed.
+        """
+        self._screen_w = float(width)
 
     @property
     def target_box(self) -> Optional[Tuple[float, float, float, float]]:
@@ -231,7 +242,8 @@ class Aim:
         pred_x, pred_y = self._tracker.predict(lead_s)
 
         miss_dx, miss_dy = self._human.miss_offset()
-        deg_per_px = self._cfg.hfov_deg / max(1.0, float(w))
+        ref_w = self._screen_w if self._screen_w > 0.0 else float(w)
+        deg_per_px = self._cfg.hfov_deg / max(1.0, ref_w)
         err_x_px = pred_x - cx + miss_dx / deg_per_px
         err_y_px = pred_y - cy + miss_dy / deg_per_px
 

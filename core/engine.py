@@ -614,6 +614,7 @@ class Engine(threading.Thread):
             cap = self._cfg.capture
             self._screen_ox = (sw - cap) // 2
             self._screen_oy = (sh - cap) // 2
+            self._aim.set_screen_width(sw)
         except Exception:
             self._screen_ox = 0
             self._screen_oy = 0
@@ -818,19 +819,20 @@ class Engine(threading.Thread):
 
                     pose_kps, pose_stamp, is_new = self._async_pose.poll()
                     if is_new and pose_kps is not None:
-                        smooth_kps = self._kp_smoother.feed(pose_kps, tick_s)
-                        self._last_pose_stamp = time.perf_counter()
-                        self._cached_smooth_kps = smooth_kps
+                        self._kp_smoother.feed(pose_kps, tick_s)
+                        # Stamp the frame the pose was computed from, not the moment
+                        # the result was collected. The gap between them is the
+                        # inference latency, and ignoring it left the aim point
+                        # trailing the target by exactly that much.
+                        self._last_pose_stamp = pose_stamp
+
+                    since_pose = time.perf_counter() - self._last_pose_stamp
+                    if since_pose < 0.5:
+                        smooth_kps = self._kp_smoother.extrapolate(since_pose)
                     else:
-                        since_pose = time.perf_counter() - self._last_pose_stamp
-                        if since_pose < 0.5:
-                            smooth_kps = self._kp_smoother.extrapolate(since_pose)
-                            if smooth_kps is not None:
-                                self._cached_smooth_kps = smooth_kps
-                        else:
-                            smooth_kps = self._kp_smoother.feed(None, tick_s)
-                            if smooth_kps is not None:
-                                self._cached_smooth_kps = smooth_kps
+                        smooth_kps = self._kp_smoother.feed(None, tick_s)
+                    if smooth_kps is not None:
+                        self._cached_smooth_kps = smooth_kps
 
                 if smooth_kps is not None:
                     self._prev_kps_history.append(smooth_kps.copy())

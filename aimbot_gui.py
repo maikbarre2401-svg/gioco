@@ -16,7 +16,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageTk
 
-from core.config import Config
+from core.config import Config, migrate as migrate_config
 from core.engine import Engine
 from core.metrics import MetricsCollector
 from core.overlay import Overlay
@@ -71,6 +71,11 @@ class App:
         set_dpi_aware()
         ensure_profiles()
         self._cfg = Config.load()
+        try:
+            if migrate_config(self._cfg, screen_size()[0]):
+                self._cfg.save()
+        except Exception:
+            logger.warning("Config migration skipped", exc_info=True)
         self._metrics = MetricsCollector()
         self._engine: Optional[Engine] = None
         self._overlay: Optional[Overlay] = None
@@ -376,7 +381,7 @@ class App:
 
         self._make_slider(g1, "fov_px", "FOV (px)", 50, 800, 10, 0, 0)
         self._make_slider(g1, "hfov_deg", "HFOV (deg)", 40, 120, 1, 1, 0)
-        self._make_slider(g1, "counts_per_deg", "Counts/deg", 100, 5000, 50, 2, 0)
+        self._make_slider(g1, "counts_per_deg", "Counts/deg", 100, 20000, 50, 2, 0)
 
         g2 = ttk.LabelFrame(f, text="Movimento")
         g2.grid(row=0, column=1, sticky="nsew", padx=6, pady=4)
