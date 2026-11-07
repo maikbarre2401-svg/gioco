@@ -5,8 +5,8 @@ from __future__ import annotations
 import ctypes
 import logging
 import os
+import subprocess
 import sys
-import threading
 import time
 import tkinter as tk
 from tkinter import colorchooser, ttk
@@ -52,9 +52,12 @@ def _elevate() -> None:
     """Self-elevate via UAC if not admin."""
     if is_admin():
         return
+    # list2cmdline applies Windows quoting rules; a plain join breaks as soon as
+    # the install path contains a space, e.g. "...\Downloads\gioco (13)\".
+    params = subprocess.list2cmdline([os.path.abspath(sys.argv[0])] + sys.argv[1:])
     try:
         ctypes.windll.shell32.ShellExecuteW(
-            None, "runas", sys.executable, " ".join(sys.argv), None, 1
+            None, "runas", sys.executable, params, os.getcwd(), 1
         )
         sys.exit(0)
     except Exception:
@@ -75,6 +78,8 @@ class App:
         self._toggle_aim_state = False
         self._listener = None
         self._ctrl_held = False
+        self._poll_failed = False
+        self._settle_drawn = -1
 
         self._build_gui()
         self._setup_hotkeys()
@@ -95,7 +100,11 @@ class App:
         self._root.configure(bg=BG)
         self._root.minsize(900, 700)
         self._slider_labels: dict = {}
+        self._slider_bounds: dict = {}
         self._check_vars: dict = {}
+        self._restart_attrs: set = set()
+        self._pending_restart: set = set()
+        self._syncing = False
 
         self._setup_styles()
         self._build_toolbar()
@@ -125,13 +134,43 @@ class App:
                      font=("Segoe UI", 9, "bold"))
         s.configure("TButton", background=BG2, foreground=FG, font=("Segoe UI", 9))
         s.configure("TCheckbutton", background=BG, foreground=FG, font=("Segoe UI", 9))
-        s.configure("TCombobox", fieldbackground=BG2, foreground=FG)
         s.configure("Horizontal.TScale", background=BG, troughcolor=BG2)
-        s.configure("TSpinbox", fieldbackground=BG2, foreground=FG)
+
+        # Comboboxes and spinboxes need their states mapped explicitly, otherwise
+        # clam paints a readonly combobox with its own light palette and the text
+        # is unreadable on the dark panel.
+        s.configure("TCombobox", fieldbackground=BG2, background=BG2,
+                     foreground=FG, arrowcolor=FG, borderwidth=1)
+        s.map(
+            "TCombobox",
+            fieldbackground=[("readonly", BG2), ("disabled", BG3)],
+            foreground=[("readonly", FG), ("disabled", FG_DIM)],
+            selectbackground=[("readonly", BG2)],
+            selectforeground=[("readonly", FG)],
+            arrowcolor=[("readonly", ACCENT2)],
+        )
+        s.configure("TSpinbox", fieldbackground=BG2, background=BG2,
+                     foreground=FG, arrowcolor=FG, borderwidth=1)
+        s.map("TSpinbox", fieldbackground=[("readonly", BG2)],
+               foreground=[("readonly", FG)])
+        s.configure("TEntry", fieldbackground=BG2, foreground=FG,
+                     insertcolor=FG, borderwidth=1)
+        s.configure("Vertical.TScrollbar", background=BG2, troughcolor=BG3,
+                     arrowcolor=FG, borderwidth=0)
+        s.map("Vertical.TScrollbar", background=[("active", ACCENT2)])
+
+        # the dropdown list is a classic Tk listbox, styled through the option db
+        self._root.option_add("*TCombobox*Listbox.background", BG2)
+        self._root.option_add("*TCombobox*Listbox.foreground", FG)
+        self._root.option_add("*TCombobox*Listbox.selectBackground", ACCENT2)
+        self._root.option_add("*TCombobox*Listbox.selectForeground", "#ffffff")
+        self._root.option_add("*TCombobox*Listbox.font", "Consolas 9")
         s.configure("Dim.TLabel", background=BG, foreground=FG_DIM, font=("Segoe UI", 8))
         s.configure("Status.TLabel", background=BG3, foreground=FG_DIM,
                      font=("Consolas", 9))
         s.configure("StatusAccent.TLabel", background=BG3, foreground=ACCENT,
+                     font=("Consolas", 9, "bold"))
+        s.configure("StatusWarn.TLabel", background=BG3, foreground=YELLOW,
                      font=("Consolas", 9, "bold"))
 
     def _build_toolbar(self) -> None:
@@ -241,26 +280,54 @@ class App:
         nb = ttk.Notebook(self._root)
         nb.pack(fill="both", expand=True, padx=8, pady=4)
 
-        self._det_tab = ttk.Frame(nb)
-        self._aim_tab = ttk.Frame(nb)
-        self._human_tab = ttk.Frame(nb)
-        self._trigger_tab = ttk.Frame(nb)
-        self._overlay_tab = ttk.Frame(nb)
-        self._adv_tab = ttk.Frame(nb)
-
-        nb.add(self._det_tab, text=" RILEVAMENTO ")
-        nb.add(self._aim_tab, text=" MIRA ")
-        nb.add(self._human_tab, text=" UMANO ")
-        nb.add(self._trigger_tab, text=" TRIGGER ")
-        nb.add(self._overlay_tab, text=" OVERLAY ")
-        nb.add(self._adv_tab, text=" AVANZATO ")
+        self._det_tab = self._add_tab(nb, " RILEVAMENTO ")
+        self._aim_tab = self._add_tab(nb, " MIRA ")
+        self._human_tab = self._add_tab(nb, " UMANO ")
+        self._trigger_tab = self._add_tab(nb, " TRIGGER ")
+        self._gamepad_tab = self._add_tab(nb, " GAMEPAD ")
+        self._overlay_tab = self._add_tab(nb, " OVERLAY ")
+        self._adv_tab = self._add_tab(nb, " SISTEMA ")
 
         self._build_det_tab()
         self._build_aim_tab()
         self._build_human_tab()
         self._build_trigger_tab()
+        self._build_gamepad_tab()
         self._build_overlay_tab()
         self._build_adv_tab()
+
+    def _add_tab(self, nb: ttk.Notebook, title: str) -> ttk.Frame:
+        """Add a notebook page whose content scrolls when the window is small."""
+        outer = ttk.Frame(nb)
+        nb.add(outer, text=title)
+
+        canvas = tk.Canvas(outer, bg=BG, highlightthickness=0)
+        vsb = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        vsb.pack(side="right", fill="y")
+
+        inner = ttk.Frame(canvas)
+        window = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        def _on_inner_resize(_event: object) -> None:
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def _on_canvas_resize(event: object) -> None:
+            canvas.itemconfigure(window, width=event.width)
+
+        inner.bind("<Configure>", _on_inner_resize)
+        canvas.bind("<Configure>", _on_canvas_resize)
+
+        def _on_wheel(event: object) -> None:
+            first, last = canvas.yview()
+            if first <= 0.0 and last >= 1.0:
+                return  # everything already fits; leave the wheel alone
+            canvas.yview_scroll(-1 * (event.delta // 120), "units")
+
+        canvas.bind("<Enter>", lambda _e: canvas.bind_all("<MouseWheel>", _on_wheel))
+        canvas.bind("<Leave>", lambda _e: canvas.unbind_all("<MouseWheel>"))
+        return inner
 
     def _build_det_tab(self) -> None:
         f = self._det_tab
@@ -284,18 +351,20 @@ class App:
         g3 = ttk.LabelFrame(f, text="Cattura")
         g3.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=6, pady=4)
 
-        ttk.Label(g3, text="Capture Size:").grid(row=0, column=0, sticky="w", padx=6, pady=3)
+        ttk.Label(g3, text="Capture Size *:").grid(row=0, column=0, sticky="w", padx=6, pady=3)
+        self._restart_attrs.add("capture")
         self._capture_var = tk.IntVar(value=self._cfg.capture)
         cap_combo = ttk.Combobox(
             g3, textvariable=self._capture_var,
             values=[320, 480, 640, 800, 960], state="readonly", width=8,
         )
         cap_combo.grid(row=0, column=1, padx=6, pady=3)
-        cap_combo.bind("<<ComboboxSelected>>",
-                        lambda e: setattr(self._cfg, "capture", self._capture_var.get()))
+        cap_combo.bind("<<ComboboxSelected>>", lambda e: self._on_capture_change())
 
-        self._make_check(g3, "half", "FP16 (GPU)", 0, 2)
+        self._make_check(g3, "half", "FP16 (GPU)", 0, 2, restart=True)
         self._make_check(g3, "use_pose", "Use Pose", 0, 4)
+
+        self._restart_legend(f, row=2)
 
     def _build_aim_tab(self) -> None:
         f = self._aim_tab
@@ -314,7 +383,7 @@ class App:
 
         self._make_slider(g2, "max_step", "Max Step", 10, 500, 5, 0, 0)
         self._make_slider(g2, "deadzone", "Deadzone", 0.1, 5.0, 0.1, 1, 0)
-        self._make_slider(g2, "tick_hz", "Tick Hz", 60, 500, 10, 2, 0)
+        self._make_slider(g2, "tick_hz", "Tick Hz", 60, 500, 10, 2, 0, restart=True)
 
         g3 = ttk.LabelFrame(f, text="Target Switching")
         g3.grid(row=1, column=0, sticky="nsew", padx=6, pady=4)
@@ -348,6 +417,8 @@ class App:
                          lambda e: setattr(self._cfg, "bone", self._bone_var.get()))
 
         self._make_check(g5, "bone_by_distance", "Auto bone by distance", 1, 0, colspan=2)
+
+        self._restart_legend(f, row=3)
 
     def _build_human_tab(self) -> None:
         f = self._human_tab
@@ -490,30 +561,54 @@ class App:
         self._make_slider(g4, "self_zone_h", "Zone Height", 100, 600, 10, 0, 2)
         self._make_slider(g4, "self_zone_offset_y", "Zone Y Offset", -100, 200, 10, 1, 0)
 
-        g5 = ttk.LabelFrame(f, text="Gamepad (XInput)")
-        g5.grid(row=3, column=0, sticky="nsew", padx=6, pady=4)
+    def _build_gamepad_tab(self) -> None:
+        f = self._gamepad_tab
+        f.columnconfigure(0, weight=1)
+        f.columnconfigure(1, weight=1)
 
-        self._make_check(g5, "gamepad", "Abilita Gamepad", 0, 0, colspan=2)
+        g1 = ttk.LabelFrame(f, text="Controller (XInput)")
+        g1.grid(row=0, column=0, sticky="nsew", padx=6, pady=4)
 
-        ttk.Label(g5, text="Aim Trigger:").grid(row=1, column=0, sticky="w", padx=6, pady=3)
+        self._make_check(g1, "gamepad", "Abilita Gamepad", 0, 0, colspan=3)
+
+        ttk.Label(g1, text="Tasto Mira:").grid(row=1, column=0, sticky="w", padx=6, pady=3)
         self._gp_trigger_var = tk.StringVar(value=self._cfg.gamepad_aim_trigger)
         gp_combo = ttk.Combobox(
-            g5, textvariable=self._gp_trigger_var,
+            g1, textvariable=self._gp_trigger_var,
             values=["lt", "rt", "lb", "rb"], state="readonly", width=6,
         )
-        gp_combo.grid(row=1, column=1, padx=6, pady=3)
+        gp_combo.grid(row=1, column=1, sticky="w", padx=6, pady=3)
         gp_combo.bind("<<ComboboxSelected>>",
                        lambda e: setattr(self._cfg, "gamepad_aim_trigger", self._gp_trigger_var.get()))
 
-        self._make_slider(g5, "gamepad_trigger_threshold", "Soglia Trigger", 10, 255, 5, 2, 0)
+        self._make_slider(g1, "gamepad_trigger_threshold", "Soglia Trigger", 10, 255, 5, 2, 0)
 
-        g6 = ttk.LabelFrame(f, text="Head Snap (Gamepad)")
-        g6.grid(row=3, column=1, sticky="nsew", padx=6, pady=4)
+        self._gp_status = ttk.Label(g1, text="Controller: —", style="Dim.TLabel")
+        self._gp_status.grid(row=3, column=0, columnspan=3, sticky="w", padx=6, pady=(4, 2))
+        ttk.Label(
+            g1, text="Soglia = quanto premere il grilletto analogico (0-255).",
+            style="Dim.TLabel",
+        ).grid(row=4, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 2))
 
-        self._make_check(g6, "head_snap", "Head Snap Attivo", 0, 0, colspan=2)
-        self._make_slider(g6, "head_snap_omega", "Omega", 20.0, 120.0, 1.0, 1, 0)
-        self._make_slider(g6, "head_snap_zeta", "Zeta", 0.3, 1.0, 0.01, 2, 0)
-        self._make_slider(g6, "head_snap_duration_ms", "Durata (ms)", 50, 500, 10, 3, 0)
+        g2 = ttk.LabelFrame(f, text="Head Snap")
+        g2.grid(row=0, column=1, sticky="nsew", padx=6, pady=4)
+
+        self._make_check(g2, "head_snap", "Snap alla testa alla mira", 0, 0, colspan=3)
+        self._make_slider(g2, "head_snap_omega", "Omega", 20.0, 120.0, 1.0, 1, 0)
+        self._make_slider(g2, "head_snap_zeta", "Zeta", 0.3, 1.0, 0.01, 2, 0)
+        self._make_slider(g2, "head_snap_duration_ms", "Durata (ms)", 50, 500, 10, 3, 0)
+        ttk.Label(
+            g2,
+            text="Si applica quando la mira parte dal controller.\n"
+                 "Omega alto = snap più rapido, Zeta alto = meno rimbalzo.",
+            style="Dim.TLabel", justify="left",
+        ).grid(row=4, column=0, columnspan=3, sticky="w", padx=6, pady=(4, 2))
+
+        ttk.Label(
+            f,
+            text="Lo snap standard (usato dalla mira col mouse) è nella scheda MIRA.",
+            style="Dim.TLabel",
+        ).grid(row=1, column=0, columnspan=2, sticky="w", padx=12, pady=(2, 4))
 
     def _build_status_bar(self) -> None:
         bar = tk.Frame(self._root, bg=BG3, height=24)
@@ -530,6 +625,9 @@ class App:
 
         self._status_state = ttk.Label(bar, text="SEARCH", style="StatusAccent.TLabel")
         self._status_state.pack(side="left", padx=(0, 16))
+
+        self._status_restart = ttk.Label(bar, text="", style="StatusWarn.TLabel")
+        self._status_restart.pack(side="left", padx=(0, 16))
 
         self._status_hotkeys = ttk.Label(
             bar, text="F8:Aim  F9:Trigger  F10:Quit  Ctrl+Arrows:Offset",
@@ -556,45 +654,79 @@ class App:
     def _make_slider(
         self, parent: ttk.Frame, attr: str, label: str,
         lo: float, hi: float, step: float, row: int, col: int,
+        restart: bool = False,
     ) -> None:
-        lbl = ttk.Label(parent, text=label)
+        text = f"{label} *" if restart else label
+        lbl = ttk.Label(parent, text=text)
         lbl.grid(row=row, column=col, sticky="w", padx=6, pady=2)
+        if restart:
+            self._restart_attrs.add(attr)
 
-        var = tk.DoubleVar(value=float(getattr(self._cfg, attr)))
+        # An int setting gets an IntVar so the box reads "180", not "180.0".
+        is_int = type(getattr(self._cfg, attr)) is int
+        if is_int:
+            var: tk.Variable = tk.IntVar(value=int(getattr(self._cfg, attr)))
+        else:
+            var = tk.DoubleVar(value=float(getattr(self._cfg, attr)))
+
         scale = ttk.Scale(
             parent, from_=lo, to=hi, variable=var, orient="horizontal", length=150,
-            command=lambda val, a=attr, v=var: self._on_slider(a, v),
         )
         scale.grid(row=row, column=col + 1, padx=4, pady=2, sticky="ew")
 
-        field_type = type(getattr(self._cfg, attr))
-        if field_type is int:
-            spin = ttk.Spinbox(
-                parent, from_=lo, to=hi, increment=step, width=7,
-                textvariable=var, command=lambda a=attr, v=var: self._on_slider(a, v),
-            )
-        else:
-            spin = ttk.Spinbox(
-                parent, from_=lo, to=hi, increment=step, width=7,
-                textvariable=var, format="%.3f",
-                command=lambda a=attr, v=var: self._on_slider(a, v),
-            )
+        spin_kw = {} if is_int else {"format": "%.3f"}
+        spin = ttk.Spinbox(
+            parent, from_=lo, to=hi, increment=step, width=7,
+            textvariable=var, **spin_kw,
+        )
         spin.grid(row=row, column=col + 2, padx=(2, 6), pady=2)
+
+        # Trace the shared variable rather than wiring each widget's own callback:
+        # a Scale's command fires only on drag and a Spinbox's only on its arrows,
+        # so a value typed into the box never reached the config.
+        var.trace_add("write", lambda *_, a=attr, v=var: self._on_slider(a, v))
 
         parent.columnconfigure(col + 1, weight=1)
         self._slider_labels[attr] = (var, spin)
+        self._slider_bounds[attr] = (lo, hi)
 
     def _make_check(
         self, parent: ttk.Frame, attr: str, label: str,
-        row: int, col: int, colspan: int = 1,
+        row: int, col: int, colspan: int = 1, restart: bool = False,
     ) -> None:
+        if restart:
+            self._restart_attrs.add(attr)
         var = tk.BooleanVar(value=getattr(self._cfg, attr))
         cb = ttk.Checkbutton(
-            parent, text=label, variable=var,
+            parent, text=f"{label} *" if restart else label, variable=var,
             command=lambda a=attr, v=var: self._on_check(a, v),
         )
         cb.grid(row=row, column=col, columnspan=colspan, sticky="w", padx=6, pady=2)
         self._check_vars[attr] = var
+
+    def _restart_legend(self, parent: ttk.Frame, row: int) -> None:
+        ttk.Label(
+            parent, text="*  si applica al prossimo avvio dell'engine",
+            style="Dim.TLabel",
+        ).grid(row=row, column=0, columnspan=2, sticky="w", padx=12, pady=(2, 6))
+
+    def _note_restart(self, attr: str) -> None:
+        """Flag a setting the running engine only picks up when it is restarted."""
+        label = getattr(self, "_status_restart", None)
+        if label is None:
+            return
+        if self._engine is None or not self._engine.is_alive():
+            return
+        if attr in self._pending_restart:
+            return
+        self._pending_restart.add(attr)
+        label.config(text=f"⟳ riavvia per: {', '.join(sorted(self._pending_restart))}")
+
+    def _clear_restart_note(self) -> None:
+        self._pending_restart.clear()
+        label = getattr(self, "_status_restart", None)
+        if label is not None:
+            label.config(text="")
 
     def _pick_color(self, attr: str, button: tk.Button) -> None:
         current = getattr(self._cfg, attr)
@@ -605,16 +737,25 @@ class App:
 
     # ── Callbacks ─────────────────────────────────────────────────────
 
-    def _on_slider(self, attr: str, var: tk.DoubleVar) -> None:
-        try:
-            value = var.get()
-        except tk.TclError:
+    def _on_slider(self, attr: str, var: tk.Variable) -> None:
+        if self._syncing:
             return
-        field_type = type(getattr(self._cfg, attr))
-        if field_type is int:
+        try:
+            value = float(var.get())
+        except tk.TclError:
+            # An IntVar rejects "45.5"; fall back to the literal text so typing a
+            # decimal into an int field rounds instead of being silently dropped.
+            value = self._raw_spin_value(attr)
+            if value is None:
+                return  # half-typed text; wait for something parseable
+        lo, hi = self._slider_bounds.get(attr, (float("-inf"), float("inf")))
+        value = max(lo, min(hi, value))
+        if type(getattr(self._cfg, attr)) is int:
             setattr(self._cfg, attr, int(round(value)))
         else:
             setattr(self._cfg, attr, value)
+        if attr in self._restart_attrs:
+            self._note_restart(attr)
 
     def _on_check(self, attr: str, var: tk.BooleanVar) -> None:
         setattr(self._cfg, attr, var.get())
@@ -624,6 +765,22 @@ class App:
             elif not var.get() and self._overlay is not None:
                 self._overlay.destroy()
                 self._overlay = None
+        if attr in self._restart_attrs:
+            self._note_restart(attr)
+
+    def _raw_spin_value(self, attr: str) -> Optional[float]:
+        """Parse whatever text is literally in the spinbox, or None if unusable."""
+        entry = self._slider_labels.get(attr)
+        if entry is None:
+            return None
+        try:
+            return float(entry[1].get().strip().replace(",", "."))
+        except (ValueError, tk.TclError):
+            return None
+
+    def _on_capture_change(self) -> None:
+        self._cfg.capture = self._capture_var.get()
+        self._note_restart("capture")
 
     def _on_ads_change(self, zoom: str, var: tk.DoubleVar) -> None:
         try:
@@ -635,6 +792,7 @@ class App:
         if self._engine is not None and self._engine.is_alive():
             return
         self._log_gui("Starting engine...")
+        self._clear_restart_note()
         self._engine = Engine(self._cfg, self._log_gui, self._metrics)
         self._engine.start()
         self._start_btn.config(state="disabled", bg="#555")
@@ -646,6 +804,7 @@ class App:
         if self._engine is not None:
             self._engine.stop()
             self._engine = None
+        self._clear_restart_note()
         self._start_btn.config(state="normal", bg=GREEN)
         self._stop_btn.config(state="disabled", bg="#444")
         self._status_engine.config(text="● OFFLINE", foreground=FG_DIM)
@@ -675,6 +834,8 @@ class App:
             "human", "reaction_ms", "reaction_var", "omega", "zeta",
             "overshoot", "tremor", "tremor_hz", "fatigue", "fatigue_rate",
             "miss_rate", "miss_deg", "sticky_gain", "sticky_radius",
+            "snap_duration_ms", "snap_omega", "snap_zeta",
+            "head_snap", "head_snap_omega", "head_snap_zeta", "head_snap_duration_ms",
         ]
         data = {f: getattr(self._cfg, f) for f in fields}
         save_profile(name, data)
@@ -686,21 +847,27 @@ class App:
         self._log_gui("Config saved to cfg.json")
 
     def _sync_ui_from_config(self) -> None:
-        for attr, (var, _) in self._slider_labels.items():
-            val = float(getattr(self._cfg, attr))
-            var.set(val)
-        for attr, var in self._check_vars.items():
-            var.set(getattr(self._cfg, attr))
-        self._bone_var.set(self._cfg.bone)
-        self._hold_var.set(self._cfg.hold_button)
-        self._process_var.set(self._cfg.process)
-        self._gp_trigger_var.set(self._cfg.gamepad_aim_trigger)
-        self._capture_var.set(self._cfg.capture)
-        self._color_btn.config(bg=self._cfg.overlay_color)
-        self._skel_color_btn.config(bg=self._cfg.overlay_skeleton_color)
-        for zoom, var in self._ads_entries.items():
-            if zoom in self._cfg.ads_mult:
-                var.set(self._cfg.ads_mult[zoom])
+        # The slider variables are traced, so suppress write-back while we push
+        # config values into them or every set() would bounce straight back.
+        self._syncing = True
+        try:
+            for attr, (var, _) in self._slider_labels.items():
+                val = getattr(self._cfg, attr)
+                var.set(int(val) if isinstance(var, tk.IntVar) else float(val))
+            for attr, var in self._check_vars.items():
+                var.set(getattr(self._cfg, attr))
+            self._bone_var.set(self._cfg.bone)
+            self._hold_var.set(self._cfg.hold_button)
+            self._process_var.set(self._cfg.process)
+            self._gp_trigger_var.set(self._cfg.gamepad_aim_trigger)
+            self._capture_var.set(self._cfg.capture)
+            self._color_btn.config(bg=self._cfg.overlay_color)
+            self._skel_color_btn.config(bg=self._cfg.overlay_skeleton_color)
+            for zoom, var in self._ads_entries.items():
+                if zoom in self._cfg.ads_mult:
+                    var.set(self._cfg.ads_mult[zoom])
+        finally:
+            self._syncing = False
 
     def _create_overlay(self) -> None:
         try:
@@ -722,18 +889,20 @@ class App:
                 "x2": mouse.Button.x2,
                 "middle": mouse.Button.middle,
             }
-            aim_button = btn_map.get(self._cfg.hold_button, mouse.Button.x2)
 
             def on_mouse_click(x, y, button, pressed):
-                if button == aim_button:
-                    if self._cfg.toggle_mode:
-                        if pressed:
-                            self._toggle_aim_state = not self._toggle_aim_state
-                            if self._engine:
-                                self._engine.aiming = self._toggle_aim_state
-                    else:
-                        if self._engine:
-                            self._engine.aiming = pressed
+                # Resolved per click, so changing Hold Button in the GUI takes
+                # effect immediately instead of only on the next launch.
+                if button != btn_map.get(self._cfg.hold_button, mouse.Button.x2):
+                    return
+                if not self._engine:
+                    return
+                if self._cfg.toggle_mode:
+                    if pressed:
+                        self._toggle_aim_state = not self._toggle_aim_state
+                        self._engine.aiming = self._toggle_aim_state
+                else:
+                    self._engine.aiming = pressed
 
             def on_key_press(key):
                 try:
@@ -813,7 +982,11 @@ class App:
 
             self._update_settle_graph()
         except Exception:
-            pass
+            # Logged once rather than swallowed: a repeating GUI fault used to be
+            # completely invisible here.
+            if not self._poll_failed:
+                self._poll_failed = True
+                logger.warning("GUI poll failed, continuing", exc_info=True)
 
         self._poll_id = self._root.after(33, self._poll)
 
@@ -837,9 +1010,13 @@ class App:
             pass
 
     def _update_settle_graph(self) -> None:
+        samples = list(self._metrics.settle_samples)
+        if len(samples) == self._settle_drawn:
+            return  # nothing new; don't repaint 30x a second
+        self._settle_drawn = len(samples)
+
         c = self._settle_canvas
         c.delete("all")
-        samples = list(self._metrics.settle_samples)
         if not samples:
             c.create_text(90, 45, text="No settle data", fill=FG_DIM,
                           font=("Consolas", 9))
@@ -893,6 +1070,18 @@ class App:
         self._status_det.config(text=f"DET: {det_fps}")
         state_colors = {"SEARCH": FG_DIM, "LOCK": YELLOW, "TRACK": GREEN, "SNAP": ACCENT2}
         self._status_state.config(text=state, foreground=state_colors.get(state, FG))
+
+        pad = getattr(eng, "_gamepad", None)
+        if pad is not None:
+            if not self._cfg.gamepad:
+                text = "Controller: disabilitato"
+            elif not pad.available:
+                text = "Controller: XInput non disponibile"
+            elif pad.connected:
+                text = f"Controller: collegato{'  ◉ MIRA' if pad.aim_down else ''}"
+            else:
+                text = "Controller: nessuno rilevato"
+            self._gp_status.config(text=text)
 
     def _log_gui(self, msg: str) -> None:
         def _append():
