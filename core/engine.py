@@ -463,6 +463,7 @@ class Engine(threading.Thread):
             aim_trigger=cfg.gamepad_aim_trigger,
             trigger_threshold=cfg.gamepad_trigger_threshold,
         )
+        self._gp_applied: Optional[Tuple[bool, str, int]] = None
         self._det_generation: int = -1
         self._last_box_stamp: float = 0.0
         self._smoothed_box: Tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
@@ -533,12 +534,15 @@ class Engine(threading.Thread):
 
     @aiming.setter
     def aiming(self, value: bool) -> None:
-        was_aiming = self._aiming
+        self._set_aiming(value, from_gamepad=False)
+
+    def _set_aiming(self, value: bool, from_gamepad: bool) -> None:
+        """Engage or release aim. Gamepad presses additionally arm the head snap."""
         self._aiming = value
         if value:
             self._snap_start = time.perf_counter()
             self._snap_active = True
-            self._head_snap_active = self._cfg.head_snap and self._gamepad.aim_down
+            self._head_snap_active = from_gamepad and self._cfg.head_snap
         else:
             self._mouse.release()
             self._aim.release()
@@ -546,9 +550,8 @@ class Engine(threading.Thread):
             self._head_snap_active = False
 
     def aiming_from_gamepad(self, pressed: bool) -> None:
-        """Called by gamepad callbacks — sets aiming and head snap flag."""
-        self._head_snap_active = self._cfg.head_snap and pressed
-        self.aiming = pressed
+        """Called from the gamepad poll thread on aim trigger edges."""
+        self._set_aiming(pressed, from_gamepad=True)
 
     def get_annotated_frame(self) -> Optional[np.ndarray]:
         with self._frame_lock:
@@ -600,13 +603,12 @@ class Engine(threading.Thread):
         self._async_detect.start(self._vision)
         self._self_tracker.reset()
         self._det_generation = -1
-        if self._cfg.gamepad:
-            self._gamepad.configure(self._cfg.gamepad_aim_trigger, self._cfg.gamepad_trigger_threshold)
-            self._gamepad.set_callbacks(
-                on_press=lambda: self.aiming_from_gamepad(True),
-                on_release=lambda: self.aiming_from_gamepad(False),
-            )
-            self._gamepad.start()
+        self._gamepad.set_callbacks(
+            on_press=lambda: self.aiming_from_gamepad(True),
+            on_release=lambda: self.aiming_from_gamepad(False),
+        )
+        self._gp_applied = None
+        self._sync_gamepad()
         try:
             sw, sh = screen_size()
             cap = self._cfg.capture
@@ -616,6 +618,31 @@ class Engine(threading.Thread):
             self._screen_ox = 0
             self._screen_oy = 0
         self._log("Engine ready")
+
+    def _sync_gamepad(self) -> None:
+        """Apply gamepad config edits made in the GUI without restarting the engine."""
+        desired = (
+            self._cfg.gamepad,
+            self._cfg.gamepad_aim_trigger,
+            self._cfg.gamepad_trigger_threshold,
+        )
+        if desired == self._gp_applied:
+            return
+        self._gp_applied = desired
+        enabled, trigger, threshold = desired
+
+        if not enabled:
+            if self._gamepad.running:
+                self._gamepad.stop()
+                if self._aiming:
+                    self._set_aiming(False, from_gamepad=False)
+                self._log("Gamepad disabled")
+            return
+
+        self._gamepad.configure(trigger, threshold)
+        if not self._gamepad.running:
+            self._gamepad.start()
+            self._log(f"Gamepad enabled ({trigger}, soglia {threshold})")
 
     def _loop(self) -> None:
         tick_s = 1.0 / self._cfg.tick_hz
@@ -636,6 +663,7 @@ class Engine(threading.Thread):
                 self._focused = (
                     self._cfg.process.lower() in fg if fg else False
                 )
+                self._sync_gamepad()
 
             h, w = frame.shape[:2]
             trk_box = self._aim.target_box
@@ -866,12 +894,7 @@ class Engine(threading.Thread):
                 else:
                     self._target_state = "LOCK"
 
-                if self._head_snap_active and snap_phase:
-                    preferred_bone = "head"
-                elif snap_phase:
-                    preferred_bone = "head"
-                else:
-                    preferred_bone = self._aim.auto_bone(h)
+                preferred_bone = "head" if snap_phase else self._aim.auto_bone(h)
 
                 if smooth_kps is not None:
                     skel_point_val, actual_bone = progressive_bone(
@@ -1038,27 +1061,26 @@ class Engine(threading.Thread):
                 dt = tick_s
                 active = self._enabled and self._aiming and (self._focused or self._cfg.always_active)
                 if active and target_point is not None:
+                    snap_omega: Optional[float] = None
+                    snap_zeta: Optional[float] = None
                     if snap_phase:
-                        saved_omega = self._cfg.omega
-                        saved_zeta = self._cfg.zeta
-                        saved_human = self._cfg.human
                         if self._head_snap_active:
-                            target_omega = self._cfg.head_snap_omega
-                            target_zeta = self._cfg.head_snap_zeta
+                            peak_omega = self._cfg.head_snap_omega
+                            peak_zeta = self._cfg.head_snap_zeta
                         else:
-                            target_omega = self._cfg.snap_omega
-                            target_zeta = self._cfg.snap_zeta
-                        self._cfg.omega = saved_omega + (target_omega - saved_omega) * snap_blend
-                        self._cfg.zeta = saved_zeta + (target_zeta - saved_zeta) * snap_blend
-                        self._cfg.human = True
+                            peak_omega = self._cfg.snap_omega
+                            peak_zeta = self._cfg.snap_zeta
+                        base_omega = self._cfg.omega
+                        base_zeta = self._cfg.zeta
+                        snap_omega = base_omega + (peak_omega - base_omega) * snap_blend
+                        snap_zeta = base_zeta + (peak_zeta - base_zeta) * snap_blend
                         self._humanizer.skip_reaction()
 
-                    dx, dy, dist = self._aim.step(target_point, w, h, dt, self._ads_mult * auto_sens)
+                    dx, dy, dist = self._aim.step(
+                        target_point, w, h, dt, self._ads_mult * auto_sens,
+                        omega=snap_omega, zeta=snap_zeta, force_human=snap_phase,
+                    )
 
-                    if snap_phase:
-                        self._cfg.omega = saved_omega
-                        self._cfg.zeta = saved_zeta
-                        self._cfg.human = saved_human
                     if abs(dx) > 0.3 or abs(dy) > 0.3:
                         self._mouse.move_precise(dx, dy)
 

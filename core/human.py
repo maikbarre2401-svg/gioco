@@ -41,6 +41,7 @@ class Humanizer:
         self._prev_step_x: float = 0.0
         self._prev_step_y: float = 0.0
         self._accel_limit: float = 800.0
+        self._needs_overshoot: bool = False
 
     def start_engagement(self, distance_px: float) -> None:
         """Begin a new aim engagement: set reaction deadline and miss flag."""
@@ -61,6 +62,7 @@ class Humanizer:
         self._flick_boost = 0.0
         self._momentum_x = 0.0
         self._momentum_y = 0.0
+        self._needs_overshoot = True
         self._missed = random.random() < cfg.miss_rate
         if self._missed:
             angle = random.uniform(0, 2 * math.pi)
@@ -109,11 +111,31 @@ class Humanizer:
         self._prev_err_x = err_x
         self._prev_err_y = err_y
 
-    def spring(self, err_x_deg: float, err_y_deg: float, dt: float, distance_px: float = 0.0) -> Tuple[float, float]:
-        """Second-order spring with distance-adaptive params, flick boost, and acceleration limiting."""
+    def spring(
+        self,
+        err_x_deg: float,
+        err_y_deg: float,
+        dt: float,
+        distance_px: float = 0.0,
+        omega_override: float | None = None,
+        zeta_override: float | None = None,
+    ) -> Tuple[float, float]:
+        """Second-order spring with distance-adaptive params, flick boost, and acceleration limiting.
+
+        omega_override/zeta_override replace the configured values for this call only, so the
+        engine can blend in snap dynamics without mutating shared config from its own thread.
+        """
         fat = self.fatigue()
-        omega = self._cfg.omega / fat
-        zeta = self._cfg.zeta / fat
+        base_omega = self._cfg.omega if omega_override is None else omega_override
+        base_zeta = self._cfg.zeta if zeta_override is None else zeta_override
+        omega = base_omega / fat
+        zeta = base_zeta / fat
+
+        if self._needs_overshoot:
+            self._needs_overshoot = False
+            if self._cfg.overshoot > 0 and math.hypot(err_x_deg, err_y_deg) > 0.5:
+                self._residual_x = err_x_deg * self._cfg.overshoot
+                self._residual_y = err_y_deg * self._cfg.overshoot
 
         if distance_px > 0:
             fov = self._cfg.fov_px
@@ -157,9 +179,9 @@ class Humanizer:
         step_x += self._momentum_x * 0.15
         step_y += self._momentum_y * 0.15
 
-        if self._cfg.overshoot > 0 and zeta < 1.0:
-            self._residual_x *= (1.0 - dt * 2.0)
-            self._residual_y *= (1.0 - dt * 2.0)
+        decay = max(0.0, 1.0 - dt * 6.0)
+        self._residual_x *= decay
+        self._residual_y *= decay
 
         return (step_x, step_y)
 

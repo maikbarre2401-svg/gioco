@@ -216,6 +216,9 @@ class Aim:
         h: int,
         dt: float,
         ads: float,
+        omega: float | None = None,
+        zeta: float | None = None,
+        force_human: bool = False,
     ) -> Tuple[float, float, float]:
         cx = w / 2.0 + self._cfg.crosshair_offset_x
         cy = h / 2.0 + self._cfg.crosshair_offset_y
@@ -237,8 +240,10 @@ class Aim:
         err_x_deg = err_x_px * deg_per_px
         err_y_deg = err_y_px * deg_per_px
 
+        use_human = self._cfg.human or force_human
+
         if distance < self._cfg.deadzone:
-            if self._cfg.human and distance > self._cfg.deadzone * 0.15:
+            if use_human and distance > self._cfg.deadzone * 0.15:
                 mc_x, mc_y = self._human.micro_correction(err_x_deg, err_y_deg, dt)
                 counts = self._cfg.counts_per_deg * ads
                 dx = mc_x * counts
@@ -248,11 +253,14 @@ class Aim:
                 return (dx, dy, distance)
             return (0.0, 0.0, distance)
 
-        if self._cfg.human:
-            if self._human.reacting():
+        if use_human:
+            if not force_human and self._human.reacting():
                 return (0.0, 0.0, distance)
 
-            step_x, step_y = self._human.spring(err_x_deg, err_y_deg, dt, distance)
+            step_x, step_y = self._human.spring(
+                err_x_deg, err_y_deg, dt, distance,
+                omega_override=omega, zeta_override=zeta,
+            )
             trem_x, trem_y = self._human.tremor(dt, distance)
             step_x += trem_x * deg_per_px
             step_y += trem_y * deg_per_px

@@ -103,6 +103,10 @@ class Gamepad:
         return self._available
 
     @property
+    def running(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    @property
     def connected(self) -> bool:
         return self._connected
 
@@ -122,6 +126,8 @@ class Gamepad:
         if not self._available:
             logger.info("XInput not available — gamepad disabled")
             return
+        if self.running:
+            return
         self._stop = False
         self._thread = threading.Thread(target=self._poll_loop, daemon=True)
         self._thread.start()
@@ -136,9 +142,16 @@ class Gamepad:
         self._aim_trigger = AIM_TRIGGER_MAP.get(aim_trigger, "left_trigger")
         self._threshold = threshold
 
+    def _find_controller(self, state: _XINPUT_STATE) -> Optional[int]:
+        """Scan all four XInput slots for a connected pad, return its index."""
+        for idx in range(4):
+            if self._get_state(idx, ctypes.byref(state)) == ERROR_SUCCESS:
+                return idx
+        return None
+
     def _poll_loop(self) -> None:
         state = _XINPUT_STATE()
-        check_interval = 0
+        misses = 0
         while not self._stop:
             result = self._get_state(self._user_index, ctypes.byref(state))
 
@@ -147,12 +160,13 @@ class Gamepad:
                     self._connected = False
                     self._aim_down = False
                     logger.info("Gamepad disconnected")
-                check_interval += 1
-                if check_interval < 30:
-                    time.sleep(self._poll_interval)
-                else:
-                    time.sleep(1.0)
-                continue
+                found = self._find_controller(state)
+                if found is None:
+                    misses += 1
+                    time.sleep(self._poll_interval if misses < 30 else 1.0)
+                    continue
+                self._user_index = found
+                result = ERROR_SUCCESS
 
             if result != ERROR_SUCCESS:
                 time.sleep(self._poll_interval)
@@ -160,7 +174,7 @@ class Gamepad:
 
             if not self._connected:
                 self._connected = True
-                check_interval = 0
+                misses = 0
                 logger.info("Gamepad connected (index %d)", self._user_index)
 
             gp = state.Gamepad

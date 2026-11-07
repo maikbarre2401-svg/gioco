@@ -57,7 +57,8 @@ class Axis:
             self._R += (self._R_base - self._R) * 0.15
         K = self._P[:, 0] / S
         self._x += K * y
-        self._P = self._P - np.outer(K, self._P[0, :])
+        P = self._P - np.outer(K, self._P[0, :])
+        self._P = (P + P.T) * 0.5
         return float(self._x[0])
 
     def lead(self, seconds: float) -> float:
